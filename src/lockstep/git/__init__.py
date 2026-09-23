@@ -5,3 +5,19 @@ worktree management and the mutation boundary that only the Supervisor
 role is permitted to cross. Callers depend on this package rather than
 shelling out to Git directly.
 """
+
+from lockstep.git.repository import (
+    DirtyRepositoryError,
+    GitCommandError,
+    GitRepositorySnapshot,
+    inspect_repository,
+    require_clean_repository,
+)
+
+__all__ = [
+    "DirtyRepositoryError",
+    "GitCommandError",
+    "GitRepositorySnapshot",
+    "inspect_repository",
+    "require_clean_repository",
+]
