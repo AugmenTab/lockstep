@@ -58,6 +58,11 @@ select = [
 # alias must not be split into its own import block by isort.
 "tests/test_domain_planning_artifacts.py" = ["I001", "N802"]
 "tests/test_domain_execution_artifacts.py" = ["I001", "N802"]
+# The Sub-phase 1.5 state store test is Planner-authored and frozen
+# verbatim; its intentional `import lockstep.persistence.state_store as
+# state_store` (needed so the frozen test can monkeypatch `state_store.os`)
+# must not be reordered relative to `import pytest` by isort.
+"tests/test_state_store.py" = ["I001", "N802"]
 
 [tool.ruff.format]
 quote-style = "double"
