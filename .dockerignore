@@ -1,0 +1,42 @@
+# Version control
+.git
+.gitignore
+
+# Host-only manual planner/implementer workflow artifacts.
+# .local/ MUST NOT enter the image; it holds plans, retros, and PRDs.
+.local
+
+# Local virtual environments
+.venv
+venv
+env
+
+# Python bytecode and packaging output
+__pycache__
+*.py[cod]
+*$py.class
+*.egg-info
+build
+dist
+wheels
+
+# Test / type / lint caches
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+.coverage.*
+htmlcov
+
+# Editor / OS scratch files
+.idea
+.vscode
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Docker artifacts themselves — no need to copy the build recipe into the image.
+Dockerfile
+.dockerignore

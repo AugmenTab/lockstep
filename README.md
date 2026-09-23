@@ -54,3 +54,17 @@ These are developer actions and are intentionally kept out of `./scripts/check`.
 ```bash
 pytest
 ```
+
+## Docker
+
+Lockstep ships a reproducible container image that runs the installed CLI as a
+non-root user. The image build executes `./scripts/check` internally, so a
+successful build implies a green repository.
+
+```bash
+docker build -t lockstep:dev .
+docker run --rm lockstep:dev --help
+docker run --rm lockstep:dev --version
+```
+
+No host bind mount is required.
