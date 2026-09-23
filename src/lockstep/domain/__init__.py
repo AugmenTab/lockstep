@@ -8,6 +8,20 @@ any UI-specific behavior so that it can be safely imported by every
 other layer.
 """
 
+from lockstep.domain.artifacts import (
+    AcceptanceCriterion,
+    ContextImprovementCandidate,
+    ImplementationReport,
+    MasterPlan,
+    PhasePlan,
+    ReviewDecision,
+    ReviewFinding,
+    SubphaseContract,
+    SubphaseOutline,
+    TestSpecification,
+    VerificationFinding,
+    VerificationReport,
+)
 from lockstep.domain.enums import (
     AgentRole,
     BillingMode,
@@ -27,17 +41,29 @@ from lockstep.domain.identifiers import (
 )
 
 __all__ = [
+    "AcceptanceCriterion",
     "AgentRole",
     "AttemptNumber",
     "BillingMode",
+    "ContextImprovementCandidate",
+    "ImplementationReport",
+    "MasterPlan",
     "PhaseId",
+    "PhasePlan",
     "ProjectId",
     "QuotaStatus",
+    "ReviewDecision",
+    "ReviewFinding",
     "ReviewVerdict",
     "RunId",
     "RunStatus",
     "SchemaVersion",
     "StopReason",
+    "SubphaseContract",
     "SubphaseId",
+    "SubphaseOutline",
     "TestExpectation",
+    "TestSpecification",
+    "VerificationFinding",
+    "VerificationReport",
 ]
