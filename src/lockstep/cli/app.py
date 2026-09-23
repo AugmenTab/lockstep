@@ -4,7 +4,6 @@ import typer
 
 from lockstep import __version__
 
-
 app = typer.Typer(
     name="lockstep",
     help="Lockstep: local-first supervised AI software-development orchestration.",

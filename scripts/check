@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Canonical Lockstep repository health check.
+#
+# Runs all required quality gates in a fixed order. Exits non-zero on the
+# first failure. Does not modify tracked repository content and does not
+# install dependencies; assumes `python -m pip install -e ".[dev]"` has
+# already been run.
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+run_gate() {
+    local label="$1"
+    shift
+    echo "==> $label"
+    "$@"
+}
+
+run_gate "ruff format --check" ruff format --check .
+run_gate "ruff check"          ruff check .
+run_gate "mypy"                mypy src/lockstep
+run_gate "pytest"              pytest
+
+echo "All checks passed."

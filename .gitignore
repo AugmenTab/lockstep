@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Lockstep manual planner/implementer workflow artifacts
+.local/

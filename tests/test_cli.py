@@ -3,7 +3,6 @@ from typer.testing import CliRunner
 import lockstep
 from lockstep.cli.app import app
 
-
 runner = CliRunner()
 
 

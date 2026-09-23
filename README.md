@@ -9,8 +9,9 @@ not the AI agents — owns execution state, Git history, verification policy, an
 hard stops.
 
 > **Status:** Under active early development. This repository is currently at
-> Phase 0, Sub-phase 0.1 — installable project and CLI scaffold. No planning,
-> orchestration, or agent behavior is implemented yet.
+> Phase 0, Sub-phase 0.2 — installable project, CLI scaffold, and repository
+> quality gates. No planning, orchestration, or agent behavior is implemented
+> yet.
 
 ## Requirements
 
@@ -18,11 +19,37 @@ hard stops.
 
 ## Local install
 
+Install the project along with its development tooling into your environment:
+
 ```bash
 python -m pip install -e ".[dev]"
 ```
 
-## Running tests
+## Repository health check
+
+Lockstep exposes a single canonical, non-mutating command that runs every
+required quality gate (Ruff format check, Ruff lint, mypy, pytest):
+
+```bash
+./scripts/check
+```
+
+It exits `0` only when the repository is healthy. It never modifies tracked
+files and never installs dependencies.
+
+## Developer repair commands
+
+The health check reports problems but does not fix them. To apply formatting
+and lint auto-fixes locally, run the underlying tools directly:
+
+```bash
+ruff format .
+ruff check --fix .
+```
+
+These are developer actions and are intentionally kept out of `./scripts/check`.
+
+## Running tests only
 
 ```bash
 pytest
