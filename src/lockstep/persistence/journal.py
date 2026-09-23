@@ -34,8 +34,15 @@ _EVENT_ADAPTER: TypeAdapter[_ConcreteEvent] = TypeAdapter(LockstepEvent)
 class JournalIntegrityError(Exception):
     """Raised when the on-disk journal violates a structural invariant."""
 
-    def __init__(self, message: str, *, line_number: int | None = None) -> None:
+    def __init__(self, reason: str, *, line_number: int | None = None) -> None:
+        self.reason = reason
         self.line_number = line_number
+
+        if line_number is None:
+            message = f"event journal integrity error: {reason}"
+        else:
+            message = f"event journal integrity error at line {line_number}: {reason}"
+
         super().__init__(message)
 
 
@@ -59,14 +66,14 @@ def read_events(path: Path) -> tuple[_ConcreteEvent, ...]:
         line_number = offset + 1
         if not raw_line:
             raise JournalIntegrityError(
-                f"empty line at line {line_number}",
+                "empty line",
                 line_number=line_number,
             )
         try:
             event = _EVENT_ADAPTER.validate_json(raw_line)
         except ValidationError as exc:
             raise JournalIntegrityError(
-                f"malformed event at line {line_number}: {exc}",
+                f"malformed event: {exc}",
                 line_number=line_number,
             ) from exc
         events.append(event)
@@ -113,18 +120,17 @@ def _validate_journal_invariants(events: list[_ConcreteEvent]) -> None:
         expected_sequence = offset + 1
         if event.run_id != run_id:
             raise JournalIntegrityError(
-                f"run_id changed at line {line_number}",
+                "run_id changed",
                 line_number=line_number,
             )
         if event.sequence != expected_sequence:
             raise JournalIntegrityError(
-                f"non-contiguous sequence at line {line_number}: "
-                f"expected {expected_sequence}, got {event.sequence}",
+                f"non-contiguous sequence: expected {expected_sequence}, got {event.sequence}",
                 line_number=line_number,
             )
         if isinstance(event, RunCreatedEvent):
             raise JournalIntegrityError(
-                f"unexpected second RunCreatedEvent at line {line_number}",
+                "unexpected second RunCreatedEvent",
                 line_number=line_number,
             )
 
