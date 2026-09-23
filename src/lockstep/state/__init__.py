@@ -13,9 +13,11 @@ from lockstep.state.machine import (
     run_status_for,
     transition,
 )
+from lockstep.state.snapshot import RunStateSnapshot
 
 __all__ = [
     "InvalidTransitionError",
+    "RunStateSnapshot",
     "WorkflowState",
     "allowed_transitions",
     "run_status_for",

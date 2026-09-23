@@ -18,13 +18,28 @@ from lockstep.persistence.journal import (
     append_event,
     read_events,
 )
+from lockstep.persistence.replay import ReplayError, replay_events
+from lockstep.persistence.state_store import (
+    StateConsistencyError,
+    StatePersistenceError,
+    load_verified_state,
+    read_state,
+    write_state,
+)
 
 __all__ = [
     "JournalIntegrityError",
     "LockstepEvent",
+    "ReplayError",
     "RunCreatedEvent",
     "RunHaltedEvent",
+    "StateConsistencyError",
+    "StatePersistenceError",
     "StateTransitionedEvent",
     "append_event",
+    "load_verified_state",
     "read_events",
+    "read_state",
+    "replay_events",
+    "write_state",
 ]
