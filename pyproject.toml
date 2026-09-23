@@ -50,6 +50,9 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["N802"]
+# The architecture test is Planner-authored and frozen verbatim; its
+# import block spacing must not be reformatted by ruff's isort rule.
+"tests/test_architecture_packages.py" = ["I001", "N802"]
 
 [tool.ruff.format]
 quote-style = "double"
