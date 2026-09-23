@@ -1,7 +1,30 @@
 """Durable serialization and storage of Lockstep run state.
 
-Eventually owns the on-disk representation of canonical run state and
-the event history that supports resumption and audit. All file-format
-choices, repository abstractions, and storage interfaces belong here so
-that the domain layer never encodes storage concerns directly.
+Owns the on-disk representation of the append-only event journal that
+records every Lockstep run. Consumers import event models and journal
+operations from this package rather than from its submodules so the
+public persistence surface stays explicit. Storage-format decisions,
+JSONL layout, and crash-tail semantics all live inside this package.
 """
+
+from lockstep.persistence.events import (
+    LockstepEvent,
+    RunCreatedEvent,
+    RunHaltedEvent,
+    StateTransitionedEvent,
+)
+from lockstep.persistence.journal import (
+    JournalIntegrityError,
+    append_event,
+    read_events,
+)
+
+__all__ = [
+    "JournalIntegrityError",
+    "LockstepEvent",
+    "RunCreatedEvent",
+    "RunHaltedEvent",
+    "StateTransitionedEvent",
+    "append_event",
+    "read_events",
+]
