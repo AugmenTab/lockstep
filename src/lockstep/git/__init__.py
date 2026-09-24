@@ -6,6 +6,11 @@ role is permitted to cross. Callers depend on this package rather than
 shelling out to Git directly.
 """
 
+from lockstep.git.commit import (
+    GitCommitPolicyError,
+    GitCommitResult,
+    commit_exact_paths,
+)
 from lockstep.git.repository import (
     DirtyRepositoryError,
     GitCommandError,
@@ -21,8 +26,11 @@ from lockstep.git.worktree import (
 __all__ = [
     "DirtyRepositoryError",
     "GitCommandError",
+    "GitCommitPolicyError",
+    "GitCommitResult",
     "GitRepositorySnapshot",
     "WorktreeCreationError",
+    "commit_exact_paths",
     "create_run_worktree",
     "inspect_repository",
     "require_clean_repository",
