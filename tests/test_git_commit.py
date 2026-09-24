@@ -289,7 +289,7 @@ def test_repository_commit_hooks_are_not_executed(tmp_path: Path) -> None:
     before = inspect_repository(worktree)
     marker = tmp_path / "hook-ran"
 
-    hooks = Path(_git_stdout(source, "rev-parse", "--git-path", "hooks"))
+    hooks = Path(_git_stdout(source, "rev-parse", "--absolute-git-dir")) / "hooks"
     hooks.mkdir(parents=True, exist_ok=True)
 
     pre_commit = hooks / "pre-commit"
