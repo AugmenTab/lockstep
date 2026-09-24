@@ -13,11 +13,17 @@ from lockstep.git.repository import (
     inspect_repository,
     require_clean_repository,
 )
+from lockstep.git.worktree import (
+    WorktreeCreationError,
+    create_run_worktree,
+)
 
 __all__ = [
     "DirtyRepositoryError",
     "GitCommandError",
     "GitRepositorySnapshot",
+    "WorktreeCreationError",
+    "create_run_worktree",
     "inspect_repository",
     "require_clean_repository",
 ]
