@@ -7,6 +7,10 @@ Git, verification) route their process calls through this package
 rather than invoking subprocess machinery directly.
 """
 
+from lockstep.process.environment import (
+    EnvironmentPolicyError,
+    build_process_environment,
+)
 from lockstep.process.runner import (
     ProcessConfigurationError,
     ProcessLaunchError,
@@ -16,9 +20,11 @@ from lockstep.process.runner import (
 )
 
 __all__ = [
+    "EnvironmentPolicyError",
     "ProcessConfigurationError",
     "ProcessLaunchError",
     "ProcessResult",
     "ProcessTimeoutError",
+    "build_process_environment",
     "run_process",
 ]
