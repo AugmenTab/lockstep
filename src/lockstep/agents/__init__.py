@@ -8,6 +8,8 @@ neutral interface only.
 """
 
 from lockstep.agents.codex import (
+    CodexAdapter,
+    CodexAdapterError,
     CodexCliStatus,
     CodexPreflightError,
     probe_codex_cli,
@@ -26,6 +28,8 @@ __all__ = [
     "AgentCommand",
     "AgentInvocationRequest",
     "AgentInvocationResult",
+    "CodexAdapter",
+    "CodexAdapterError",
     "CodexCliStatus",
     "CodexPreflightError",
     "invoke_agent",

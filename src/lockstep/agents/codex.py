@@ -1,12 +1,14 @@
-"""Codex CLI subscription and capability preflight.
+"""Codex CLI subscription/capability preflight and provider adapter.
 
 Answers deterministic yes/no questions about a configured Codex
 executable — is it usable, does it expose the exec options Lockstep's
-future adapter needs, is its stored authentication explicitly
-ChatGPT-backed, and are stored API-key credentials absent — without
-executing any model turn. All external commands are executed through
+adapter needs, is its stored authentication explicitly ChatGPT-backed,
+and are stored API-key credentials absent — without executing any
+model turn. Also constructs deterministic Codex ``exec`` invocations
+for the subscription-backed Planner, Implementer, and Reviewer roles
+via :class:`CodexAdapter`. All external commands are executed through
 :mod:`lockstep.process`; ambient OpenAI/Codex API credentials are
-structurally excluded from the probe environment.
+structurally excluded from every probe and every adapter command.
 """
 
 from __future__ import annotations
@@ -18,6 +20,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
+from lockstep.agents.invocation import (
+    AgentCommand,
+    AgentInvocationRequest,
+)
+from lockstep.domain import AgentRole, BillingMode
 from lockstep.process import (
     ProcessResult,
     build_process_environment,
@@ -29,6 +36,11 @@ _REQUIRED_EXEC_CAPABILITIES: tuple[str, ...] = (
     "--ignore-user-config",
     "--sandbox",
     "--color",
+)
+
+_ADDITIONAL_HELP_TOKENS: tuple[str, ...] = (
+    "--ignore-rules",
+    "--output-schema",
 )
 
 _AUTH_CHECK_KEY = "auth.credentials"
@@ -43,8 +55,19 @@ _REQUIRED_AUTH_CHECK_STATUS = "ok"
 
 _FLAG_TOKEN_PATTERN: dict[str, re.Pattern[str]] = {
     flag: re.compile(rf"(?<![A-Za-z0-9_\-]){re.escape(flag)}(?![A-Za-z0-9_\-])")
-    for flag in _REQUIRED_EXEC_CAPABILITIES
+    for flag in (*_REQUIRED_EXEC_CAPABILITIES, *_ADDITIONAL_HELP_TOKENS)
 }
+
+_SUPPORTED_ADAPTER_ROLES: frozenset[AgentRole] = frozenset(
+    {AgentRole.PLANNER, AgentRole.IMPLEMENTER, AgentRole.REVIEWER}
+)
+_ROLE_SANDBOX: Mapping[AgentRole, str] = MappingProxyType(
+    {
+        AgentRole.PLANNER: "workspace-write",
+        AgentRole.IMPLEMENTER: "workspace-write",
+        AgentRole.REVIEWER: "read-only",
+    }
+)
 
 _EMPTY_EXPLICIT_ENV: Mapping[str, str] = MappingProxyType({})
 
@@ -78,6 +101,9 @@ class CodexCliStatus:
     supports_exec_ignore_user_config: bool
     supports_exec_sandbox: bool
     supports_exec_color: bool
+
+    supports_exec_ignore_rules: bool = False
+    supports_exec_output_schema: bool = False
 
 
 class CodexPreflightError(Exception):
@@ -317,6 +343,8 @@ def probe_codex_cli(
         supports_exec_ignore_user_config=_flag_supported(help_text, "--ignore-user-config"),
         supports_exec_sandbox=_flag_supported(help_text, "--sandbox"),
         supports_exec_color=_flag_supported(help_text, "--color"),
+        supports_exec_ignore_rules=_flag_supported(help_text, "--ignore-rules"),
+        supports_exec_output_schema=_flag_supported(help_text, "--output-schema"),
     )
 
 
@@ -373,3 +401,155 @@ def require_codex_subscription_ready(status: CodexCliStatus) -> CodexCliStatus:
             reason=("a stored API-key credential is present; SUBSCRIPTION_ONLY requires none"),
         )
     return status
+
+
+class CodexAdapterError(Exception):
+    """Codex adapter rejected its role/billing/model/schema configuration.
+
+    Carries a short sanitized ``reason``. Never carries the request
+    prompt, the child stdin payload, environment values, stored Codex
+    auth contents, or raw process output.
+    """
+
+    def __init__(self, *, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"Codex adapter error: {reason}")
+
+
+def _require_nonblank_config(*, field: str, value: str) -> str:
+    if not isinstance(value, str):
+        raise CodexAdapterError(reason=f"{field} must be a string")
+    if not value.strip():
+        raise CodexAdapterError(reason=f"{field} must not be blank")
+    if "\x00" in value:
+        raise CodexAdapterError(reason=f"{field} must not contain NUL")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class CodexAdapter:
+    """Subscription-backed Codex ``exec`` command builder.
+
+    A :class:`CodexAdapter` is role-bound: it constructs deterministic
+    Codex ``exec`` invocations for exactly one of the Planner,
+    Implementer, or Reviewer roles under
+    :attr:`BillingMode.SUBSCRIPTION_ONLY`. Construction requires
+    subscription-ready capability evidence via
+    :func:`require_codex_subscription_ready` plus the additional
+    ``--ignore-rules`` capability and, for Reviewer, the
+    ``--output-schema`` capability. The prompt is transported through
+    :attr:`AgentCommand.stdin_text`; it never appears in argv or in
+    the explicit environment. ``build_command`` performs no process,
+    filesystem, or network work.
+    """
+
+    role: AgentRole
+    status: CodexCliStatus
+    model: str
+    reasoning_effort: str
+    codex_home: Path | None = None
+    review_output_schema_path: Path | None = None
+
+    @property
+    def name(self) -> str:
+        return "codex"
+
+    def __post_init__(self) -> None:
+        if self.role not in _SUPPORTED_ADAPTER_ROLES:
+            raise CodexAdapterError(
+                reason=f"unsupported role {self.role.value!r}",
+            )
+
+        _require_nonblank_config(field="model", value=self.model)
+        _require_nonblank_config(field="reasoning_effort", value=self.reasoning_effort)
+
+        if self.role is AgentRole.REVIEWER:
+            if self.review_output_schema_path is None:
+                raise CodexAdapterError(
+                    reason="Reviewer requires a review_output_schema_path",
+                )
+            resolved_schema = Path(self.review_output_schema_path).resolve()
+            object.__setattr__(self, "review_output_schema_path", resolved_schema)
+        elif self.review_output_schema_path is not None:
+            raise CodexAdapterError(
+                reason=(
+                    "review_output_schema_path is only valid for Reviewer; "
+                    f"got role {self.role.value!r}"
+                ),
+            )
+
+        if self.codex_home is not None:
+            resolved_home = Path(self.codex_home).resolve()
+            object.__setattr__(self, "codex_home", resolved_home)
+
+        require_codex_subscription_ready(self.status)
+
+        if not self.status.supports_exec_ignore_rules:
+            raise CodexPreflightError(
+                stage="capabilities",
+                reason="codex exec is missing required option(s): --ignore-rules",
+            )
+        if self.role is AgentRole.REVIEWER and not self.status.supports_exec_output_schema:
+            raise CodexPreflightError(
+                stage="capabilities",
+                reason="codex exec is missing required option(s): --output-schema",
+            )
+
+    def build_command(self, request: AgentInvocationRequest) -> AgentCommand:
+        """Construct the deterministic Codex ``exec`` command for *request*.
+
+        Validates that *request*'s role matches this adapter and that
+        the billing mode is :attr:`BillingMode.SUBSCRIPTION_ONLY`, then
+        assembles the fixed argv described by the Sub-phase 5.3 contract
+        with the prompt bound only to :attr:`AgentCommand.stdin_text`
+        and ``CODEX_HOME`` bound only to :attr:`AgentCommand.explicit_env`
+        when configured.
+        """
+        if request.role is not self.role:
+            raise CodexAdapterError(
+                reason="request role does not match configured Codex adapter role",
+            )
+        if request.billing_mode is not BillingMode.SUBSCRIPTION_ONLY:
+            raise CodexAdapterError(
+                reason=(
+                    "Codex adapter supports SUBSCRIPTION_ONLY billing only; "
+                    f"got {request.billing_mode.value!r}"
+                ),
+            )
+
+        sandbox = _ROLE_SANDBOX[self.role]
+        reasoning_config = f"model_reasoning_effort={json.dumps(self.reasoning_effort)}"
+
+        argv: list[str] = [
+            self.status.executable,
+            "exec",
+            "--ephemeral",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--color",
+            "never",
+            "--sandbox",
+            sandbox,
+            "--model",
+            self.model,
+            "-c",
+            reasoning_config,
+        ]
+        if self.role is AgentRole.REVIEWER:
+            assert self.review_output_schema_path is not None
+            argv.extend(("--output-schema", str(self.review_output_schema_path)))
+        argv.append("-")
+
+        explicit_env: Mapping[str, str]
+        if self.codex_home is None:
+            explicit_env = _EMPTY_EXPLICIT_ENV
+        else:
+            explicit_env = MappingProxyType({"CODEX_HOME": str(self.codex_home)})
+
+        return AgentCommand(
+            argv=tuple(argv),
+            inherit_names=(),
+            explicit_env=explicit_env,
+            required_names=("HOME", "PATH"),
+            stdin_text=request.prompt,
+        )
