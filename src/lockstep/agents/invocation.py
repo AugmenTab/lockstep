@@ -70,6 +70,7 @@ class AgentCommand:
         repr=False,
     )
     required_names: tuple[str, ...] = ()
+    stdin_text: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -134,6 +135,7 @@ def invoke_agent(
         timeout_seconds=request.timeout_seconds,
         max_output_bytes=request.max_output_bytes,
         termination_grace_seconds=request.termination_grace_seconds,
+        stdin_text=command.stdin_text,
     )
 
     return AgentInvocationResult(

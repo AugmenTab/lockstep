@@ -105,6 +105,17 @@ def _validate_argv(argv: Sequence[str]) -> tuple[str, ...]:
     return tuple(normalized)
 
 
+def _validate_stdin_text(stdin_text: object) -> bytes | None:
+    if stdin_text is None:
+        return None
+    if not isinstance(stdin_text, str):
+        raise ProcessConfigurationError(f"stdin_text must be str, got {type(stdin_text).__name__}")
+    try:
+        return stdin_text.encode("utf-8", errors="strict")
+    except UnicodeEncodeError:
+        raise ProcessConfigurationError("stdin_text must be valid UTF-8 text") from None
+
+
 def _validate_env(env: Mapping[str, str]) -> dict[str, str]:
     validated: dict[str, str] = {}
     for key, value in env.items():
@@ -174,13 +185,17 @@ def run_process(
     timeout_seconds: float,
     max_output_bytes: int = _DEFAULT_MAX_OUTPUT_BYTES,
     termination_grace_seconds: float = 0.25,
+    stdin_text: str | None = None,
 ) -> ProcessResult:
     """Execute *argv* deterministically and return its result.
 
     The child is launched with the exact caller-supplied environment
-    and working directory, closed stdin, bounded stdout/stderr capture,
-    and a hard timeout. Non-zero exits return a ``ProcessResult``;
-    launch failure, invalid configuration, and timeout raise.
+    and working directory, bounded stdout/stderr capture, and a hard
+    timeout. Stdin defaults to ``DEVNULL``; when ``stdin_text`` is
+    supplied its UTF-8 encoding is written to a private temporary file
+    that the child reads to EOF. Non-zero exits return a
+    ``ProcessResult``; launch failure, invalid configuration, and
+    timeout raise.
     """
     validated_argv = _validate_argv(argv)
     if timeout_seconds <= 0:
@@ -191,19 +206,28 @@ def run_process(
         raise ProcessConfigurationError(
             f"termination_grace_seconds must be >= 0, got {termination_grace_seconds}"
         )
+    stdin_bytes = _validate_stdin_text(stdin_text)
     validated_env = _validate_env(env)
     resolved_cwd = cwd.resolve()
 
-    with (
-        tempfile.TemporaryFile() as stdout_handle,
-        tempfile.TemporaryFile() as stderr_handle,
-    ):
+    with contextlib.ExitStack() as stack:
+        stdout_handle = stack.enter_context(tempfile.TemporaryFile())
+        stderr_handle = stack.enter_context(tempfile.TemporaryFile())
+        if stdin_bytes is None:
+            child_stdin: int | BinaryIO = subprocess.DEVNULL
+        else:
+            stdin_handle = stack.enter_context(tempfile.TemporaryFile())
+            stdin_handle.write(stdin_bytes)
+            stdin_handle.flush()
+            stdin_handle.seek(0)
+            child_stdin = stdin_handle
+
         try:
             proc: subprocess.Popen[bytes] = subprocess.Popen(
                 validated_argv,
                 cwd=str(resolved_cwd),
                 env=validated_env,
-                stdin=subprocess.DEVNULL,
+                stdin=child_stdin,
                 stdout=stdout_handle,
                 stderr=stderr_handle,
                 shell=False,
