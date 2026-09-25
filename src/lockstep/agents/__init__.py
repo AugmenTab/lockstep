@@ -22,6 +22,10 @@ from lockstep.agents.invocation import (
     AgentInvocationResult,
     invoke_agent,
 )
+from lockstep.agents.openai_schema import (
+    OpenAIStrictSchemaError,
+    to_openai_strict_json_schema,
+)
 
 __all__ = [
     "AgentAdapter",
@@ -32,7 +36,9 @@ __all__ = [
     "CodexAdapterError",
     "CodexCliStatus",
     "CodexPreflightError",
+    "OpenAIStrictSchemaError",
     "invoke_agent",
     "probe_codex_cli",
     "require_codex_subscription_ready",
+    "to_openai_strict_json_schema",
 ]
