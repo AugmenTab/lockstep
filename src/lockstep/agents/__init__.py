@@ -15,6 +15,7 @@ from lockstep.agents.codex import (
     probe_codex_cli,
     require_codex_subscription_ready,
 )
+from lockstep.agents.codex_review import materialize_codex_review_schema
 from lockstep.agents.invocation import (
     AgentAdapter,
     AgentCommand,
@@ -38,6 +39,7 @@ __all__ = [
     "CodexPreflightError",
     "OpenAIStrictSchemaError",
     "invoke_agent",
+    "materialize_codex_review_schema",
     "probe_codex_cli",
     "require_codex_subscription_ready",
     "to_openai_strict_json_schema",
