@@ -7,6 +7,12 @@ provider-specific behavior lives; the rest of Lockstep depends on the
 neutral interface only.
 """
 
+from lockstep.agents.codex import (
+    CodexCliStatus,
+    CodexPreflightError,
+    probe_codex_cli,
+    require_codex_subscription_ready,
+)
 from lockstep.agents.invocation import (
     AgentAdapter,
     AgentCommand,
@@ -20,5 +26,9 @@ __all__ = [
     "AgentCommand",
     "AgentInvocationRequest",
     "AgentInvocationResult",
+    "CodexCliStatus",
+    "CodexPreflightError",
     "invoke_agent",
+    "probe_codex_cli",
+    "require_codex_subscription_ready",
 ]
