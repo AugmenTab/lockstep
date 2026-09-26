@@ -1,13 +1,16 @@
-"""Claude Code CLI subscription and capability preflight.
+"""Claude Code CLI subscription/capability preflight and provider adapter.
 
 Answers deterministic yes/no questions about a configured Claude Code
 executable — is it a supported version, does its help surface advertise
-the flags Lockstep's future adapter will require, and does its stored
+the flags Lockstep's adapter requires, and does its stored
 authentication describe an active claude.ai first-party paid
-subscription — without executing any model turn. All external commands
-are executed through :mod:`lockstep.process`; ambient Anthropic and
-cloud-provider credential variables are structurally excluded from
-every probe by the allowlist-based environment builder.
+subscription — without executing any model turn. Also constructs
+deterministic Claude Code print-mode invocations for the
+subscription-backed Planner, Implementer, and Reviewer roles via
+:class:`ClaudeAdapter`. All external commands are executed through
+:mod:`lockstep.process`; ambient Anthropic and cloud-provider
+credential variables are structurally excluded from every probe and
+every adapter command by the allowlist-based environment builder.
 """
 
 from __future__ import annotations
@@ -19,6 +22,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
+from lockstep.agents.invocation import (
+    AgentCommand,
+    AgentInvocationRequest,
+)
+from lockstep.domain import AgentRole, BillingMode, ReviewDecision
 from lockstep.process import (
     ProcessResult,
     build_process_environment,
@@ -43,10 +51,13 @@ _CAPABILITY_FLAG_NAMES: tuple[str, ...] = (
     "--permission-prompts",
     "--no-session-persistence",
     "--restricted",
+    "--safe-mode",
     "--bare",
     "--tools",
     "--disallowedTools",
     "--disallowed-tools",
+    "--allowedTools",
+    "--allowed-tools",
 )
 
 _FLAG_TOKEN_PATTERN: dict[str, re.Pattern[str]] = {
@@ -55,6 +66,18 @@ _FLAG_TOKEN_PATTERN: dict[str, re.Pattern[str]] = {
 }
 
 _EMPTY_EXPLICIT_ENV: Mapping[str, str] = MappingProxyType({})
+
+_SUPPORTED_ADAPTER_ROLES: frozenset[AgentRole] = frozenset(
+    {AgentRole.PLANNER, AgentRole.IMPLEMENTER, AgentRole.REVIEWER}
+)
+_ROLE_TOOLS: Mapping[AgentRole, str] = MappingProxyType(
+    {
+        AgentRole.PLANNER: "Read,Write,Edit,Glob,Grep",
+        AgentRole.IMPLEMENTER: "Read,Write,Edit,Glob,Grep",
+        AgentRole.REVIEWER: "Read,Glob,Grep",
+    }
+)
+_DISALLOWED_TOOLS = "mcp__*"
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,8 +88,10 @@ class ClaudeCliStatus:
     the four fields Lockstep reads from ``claude auth status``
     (``loggedIn``, ``authMethod``, ``apiProvider``, ``subscriptionType``),
     and one boolean per Phase-6 CLI flag observed in the installed help
-    surface. Deliberately excludes email, organization identifiers,
-    credential paths, and any auth-token material.
+    surface. ``supports_bare`` is diagnostic only: ``--bare`` is
+    incompatible with claude.ai subscription OAuth and is never used by
+    :class:`ClaudeAdapter`. Deliberately excludes email, organization
+    identifiers, credential paths, and any auth-token material.
     """
 
     executable: str
@@ -89,6 +114,9 @@ class ClaudeCliStatus:
     supports_bare: bool
     supports_tools: bool
     supports_disallowed_tools: bool
+
+    supports_safe_mode: bool = False
+    supports_allowed_tools: bool = False
 
 
 class ClaudePreflightError(Exception):
@@ -315,6 +343,11 @@ def probe_claude_cli(
             _flag_supported(help_text, "--disallowedTools")
             or _flag_supported(help_text, "--disallowed-tools")
         ),
+        supports_safe_mode=_flag_supported(help_text, "--safe-mode"),
+        supports_allowed_tools=(
+            _flag_supported(help_text, "--allowedTools")
+            or _flag_supported(help_text, "--allowed-tools")
+        ),
     )
 
 
@@ -359,3 +392,164 @@ def require_claude_subscription_ready(status: ClaudeCliStatus) -> ClaudeCliStatu
             ),
         )
     return status
+
+
+class ClaudeAdapterError(Exception):
+    """Claude adapter rejected its role/billing/model configuration.
+
+    Carries a short sanitized ``reason``. Never carries the request
+    prompt, the child stdin payload, environment values, stored Claude
+    auth contents, or raw process output.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"Claude adapter error: {reason}")
+
+
+def _require_nonblank_config(*, field: str, value: str) -> str:
+    if not isinstance(value, str):
+        raise ClaudeAdapterError(f"{field} must be a string")
+    if not value.strip():
+        raise ClaudeAdapterError(f"{field} must not be blank")
+    if "\x00" in value:
+        raise ClaudeAdapterError(f"{field} must not contain NUL")
+    return value
+
+
+def _require_adapter_capabilities(status: ClaudeCliStatus, role: AgentRole) -> None:
+    required: list[tuple[str, bool]] = [
+        ("-p/--print", status.supports_print),
+        ("--model", status.supports_model),
+        ("--effort", status.supports_effort),
+        ("--output-format", status.supports_output_format),
+        ("--permission-prompts", status.supports_permission_prompts),
+        ("--no-session-persistence", status.supports_no_session_persistence),
+        ("--restricted", status.supports_restricted),
+        ("--safe-mode", status.supports_safe_mode),
+        ("--tools", status.supports_tools),
+        ("--allowedTools", status.supports_allowed_tools),
+        ("--disallowedTools", status.supports_disallowed_tools),
+    ]
+    if role is AgentRole.REVIEWER:
+        required.append(("--json-schema", status.supports_json_schema))
+    missing = [flag for flag, supported in required if not supported]
+    if missing:
+        raise ClaudePreflightError(
+            stage="capabilities",
+            reason="claude is missing required option(s): " + ", ".join(missing),
+        )
+
+
+def _canonical_review_schema_json() -> str:
+    return json.dumps(
+        ReviewDecision.model_json_schema(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ClaudeAdapter:
+    """Subscription-backed Claude Code print-mode command builder.
+
+    A :class:`ClaudeAdapter` is role-bound: it constructs deterministic
+    ``claude -p`` invocations for exactly one of the Planner,
+    Implementer, or Reviewer roles under
+    :attr:`BillingMode.SUBSCRIPTION_ONLY`. Construction requires
+    subscription readiness via :func:`require_claude_subscription_ready`
+    plus the adapter's CLI capability surface (``--safe-mode`` and
+    ``--allowedTools`` included; ``--bare`` never). Every command pins
+    the configured model and effort, runs in safe, restricted,
+    non-persistent print mode with permission prompts disabled and text
+    output, exposes an explicit role-specific tool list, and denies MCP
+    tools. The Reviewer additionally receives the canonical
+    :class:`ReviewDecision` JSON Schema inline so its stdout is the raw
+    canonical artifact. The prompt is transported only through
+    :attr:`AgentCommand.stdin_text`. Construction and ``build_command``
+    perform no process, filesystem, or network work.
+    """
+
+    role: AgentRole
+    status: ClaudeCliStatus
+    model: str
+    effort: str
+    claude_config_dir: Path | None = None
+
+    @property
+    def name(self) -> str:
+        return "claude"
+
+    def __post_init__(self) -> None:
+        if self.role not in _SUPPORTED_ADAPTER_ROLES:
+            raise ClaudeAdapterError(f"unsupported role {self.role.value!r}")
+
+        _require_nonblank_config(field="model", value=self.model)
+        _require_nonblank_config(field="effort", value=self.effort)
+
+        if self.claude_config_dir is not None:
+            resolved = Path(self.claude_config_dir).resolve()
+            object.__setattr__(self, "claude_config_dir", resolved)
+
+        require_claude_subscription_ready(self.status)
+        _require_adapter_capabilities(self.status, self.role)
+
+    def build_command(self, request: AgentInvocationRequest) -> AgentCommand:
+        """Construct the deterministic Claude Code command for *request*.
+
+        Validates that *request*'s role matches this adapter and that
+        the billing mode is :attr:`BillingMode.SUBSCRIPTION_ONLY`, then
+        assembles the fixed Sub-phase 6.3 argv with the prompt bound
+        only to :attr:`AgentCommand.stdin_text` and
+        ``CLAUDE_CONFIG_DIR`` bound only to
+        :attr:`AgentCommand.explicit_env` when configured.
+        """
+        if request.role is not self.role:
+            raise ClaudeAdapterError(
+                "request role does not match configured Claude adapter role",
+            )
+        if request.billing_mode is not BillingMode.SUBSCRIPTION_ONLY:
+            raise ClaudeAdapterError(
+                "Claude adapter supports SUBSCRIPTION_ONLY billing only; "
+                f"got {request.billing_mode.value!r}",
+            )
+
+        tools = _ROLE_TOOLS[self.role]
+        argv: list[str] = [
+            self.status.executable,
+            "-p",
+            "--safe-mode",
+            "--restricted",
+            "--no-session-persistence",
+            "--permission-prompts",
+            "none",
+            "--model",
+            self.model,
+            "--effort",
+            self.effort,
+            "--output-format",
+            "text",
+            "--tools",
+            tools,
+            "--allowedTools",
+            tools,
+            "--disallowedTools",
+            _DISALLOWED_TOOLS,
+        ]
+        if self.role is AgentRole.REVIEWER:
+            argv.extend(("--json-schema", _canonical_review_schema_json()))
+
+        explicit_env: Mapping[str, str]
+        if self.claude_config_dir is None:
+            explicit_env = _EMPTY_EXPLICIT_ENV
+        else:
+            explicit_env = MappingProxyType({"CLAUDE_CONFIG_DIR": str(self.claude_config_dir)})
+
+        return AgentCommand(
+            argv=tuple(argv),
+            inherit_names=(),
+            explicit_env=explicit_env,
+            required_names=("HOME", "PATH"),
+            stdin_text=request.prompt,
+        )

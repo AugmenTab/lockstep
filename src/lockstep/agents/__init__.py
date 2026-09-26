@@ -8,6 +8,8 @@ neutral interface only.
 """
 
 from lockstep.agents.claude import (
+    ClaudeAdapter,
+    ClaudeAdapterError,
     ClaudeCliStatus,
     ClaudePreflightError,
     probe_claude_cli,
@@ -39,6 +41,8 @@ __all__ = [
     "AgentCommand",
     "AgentInvocationRequest",
     "AgentInvocationResult",
+    "ClaudeAdapter",
+    "ClaudeAdapterError",
     "ClaudeCliStatus",
     "ClaudePreflightError",
     "CodexAdapter",
