@@ -376,14 +376,14 @@ def test_master_plan_json_replace_failure_leaves_orphan_markdown_and_no_json(
     project_root, _runtime_dir = _roots(tmp_path)
     plan = _valid_plan()
     json_path = _master_plan_json_path(project_root)
-    real_replace = planning_store.os.replace
+    real_replace = planning_store._replace_atomically
 
     def fail_only_json(source: object, target: object) -> None:
         if Path(str(target)) == json_path:
             raise OSError("simulated json replace failure")
         real_replace(source, target)
 
-    monkeypatch.setattr(planning_store.os, "replace", fail_only_json)
+    monkeypatch.setattr(planning_store, "_replace_atomically", fail_only_json)
 
     with pytest.raises(PlanningStoreError):
         freeze_master_plan(project_root, plan)
@@ -408,7 +408,7 @@ def test_phase_plan_replace_failure_preserves_previous_plan(
     def fail_replace(source: object, target: object) -> None:
         raise OSError("simulated replace failure")
 
-    monkeypatch.setattr(planning_store.os, "replace", fail_replace)
+    monkeypatch.setattr(planning_store, "_replace_atomically", fail_replace)
 
     plan_b = _revise_subphases(frozen_plan.phases[0], (_outline("01"),))
 
@@ -428,13 +428,76 @@ def test_active_contract_replace_failure_leaves_no_active_contract(
     def fail_replace(source: object, target: object) -> None:
         raise OSError("simulated replace failure")
 
-    monkeypatch.setattr(planning_store.os, "replace", fail_replace)
+    monkeypatch.setattr(planning_store, "_replace_atomically", fail_replace)
 
     with pytest.raises(PlanningStoreError):
         freeze_subphase_contract(project_root, runtime_dir, _contract())
 
     assert not _active_contract_json_path(runtime_dir).exists()
     assert list((runtime_dir / "contracts").glob(".active.json.*.tmp")) == []
+
+
+# ---------------------------------------------------------------------------
+# Private atomic-replace seam (PROCESS_DEBT #8 regression protection)
+# ---------------------------------------------------------------------------
+
+
+def _call_names(tree: ast.AST) -> set[str]:
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            names.add(node.func.id)
+    return names
+
+
+def test_atomic_write_bytes_calls_private_replace_seam() -> None:
+    source = inspect.getsource(planning_store._atomic_write_bytes)
+    called = _call_names(ast.parse(source))
+
+    assert "_replace_atomically" in called
+    assert "replace" not in called
+
+
+def test_replace_atomically_is_a_thin_wrapper_around_os_replace() -> None:
+    source = inspect.getsource(planning_store._replace_atomically)
+    tree = ast.parse(source)
+
+    os_replace_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "replace"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "os"
+    ]
+    assert len(os_replace_calls) == 1
+
+
+def test_no_test_ever_patches_the_shared_os_replace_seam() -> None:
+    test_source = Path(__file__).read_text(encoding="utf-8")
+    tree = ast.parse(test_source)
+
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "setattr"
+            and len(node.args) >= 2
+        ):
+            continue
+
+        target_arg, name_arg = node.args[0], node.args[1]
+        if not (isinstance(name_arg, ast.Constant) and name_arg.value == "replace"):
+            continue
+
+        is_bare_os = isinstance(target_arg, ast.Name) and target_arg.id == "os"
+        is_module_os_attr = isinstance(target_arg, ast.Attribute) and target_arg.attr == "os"
+        assert not is_bare_os, "test must not patch the shared os.replace function"
+        assert not is_module_os_attr, (
+            "test must not patch planning_store.os.replace; "
+            "patch planning_store._replace_atomically instead"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1133,13 +1196,13 @@ def test_planning_store_writes_stay_within_managed_directories(
     project_root, runtime_dir = _roots(tmp_path)
     written_paths: list[Path] = []
 
-    real_replace = planning_store.os.replace
+    real_replace = planning_store._replace_atomically
 
     def tracking_replace(source: object, target: object) -> None:
         written_paths.append(Path(str(target)))
         real_replace(source, target)
 
-    monkeypatch.setattr(planning_store.os, "replace", tracking_replace)
+    monkeypatch.setattr(planning_store, "_replace_atomically", tracking_replace)
 
     plan = _valid_plan()
     freeze_master_plan(project_root, plan)
