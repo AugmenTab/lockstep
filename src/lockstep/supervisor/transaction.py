@@ -26,6 +26,7 @@ from lockstep.agents import (
 )
 from lockstep.domain import (
     AgentRole,
+    AttemptNumber,
     BillingMode,
     PhaseId,
     ProjectId,
@@ -173,6 +174,27 @@ def _persist_transition(
     append_event(journal_path, event)
     snapshot = replay_events(read_events(journal_path))
     write_state(state_path, snapshot)
+
+
+# A single-Sub-phase transaction currently drives exactly one Reviewer
+# invocation; there is no automated REWORK loop yet (Phase 9 concern), so
+# the transaction's authoritative attempt number is always the first.
+_TRANSACTION_ATTEMPT = AttemptNumber.model_validate(1)
+
+
+def _require_review_matches_transaction(
+    review: ReviewDecision,
+    request: SingleSubphaseTransactionRequest,
+) -> None:
+    if (
+        review.phase_id != request.phase_id
+        or review.subphase_id != request.subphase_id
+        or review.attempt != _TRANSACTION_ATTEMPT
+    ):
+        raise SupervisorTransactionError(
+            stage="review",
+            reason="reviewer decision does not match current transaction",
+        )
 
 
 def _agent_request(
@@ -439,6 +461,8 @@ def run_single_subphase_transaction(
             stage="review",
             reason="reviewer output is not a valid ReviewDecision",
         ) from exc
+
+    _require_review_matches_transaction(review, request)
 
     if review.verdict is not ReviewVerdict.APPROVE:
         raise SupervisorTransactionError(
