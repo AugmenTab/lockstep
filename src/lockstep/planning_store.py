@@ -160,6 +160,10 @@ def _fsync_directory(directory: Path) -> None:
         os.close(fd)
 
 
+def _replace_atomically(source: Path, target: Path) -> None:
+    os.replace(source, target)
+
+
 def _atomic_write_bytes(path: Path, payload: bytes, *, artifact_name: str) -> None:
     parent = path.parent
     try:
@@ -189,7 +193,7 @@ def _atomic_write_bytes(path: Path, payload: bytes, *, artifact_name: str) -> No
             ) from exc
 
         try:
-            os.replace(temp_path, path)
+            _replace_atomically(temp_path, path)
         except OSError as exc:
             raise PlanningStoreError(f"cannot publish {artifact_name}", path=path) from exc
 
