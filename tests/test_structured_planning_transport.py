@@ -1146,7 +1146,12 @@ def test_structured_planner_invocation_uses_exactly_the_prepared_runtime_environ
     assert len(invocations) == 1
     env = invocations[0]["env"]
     assert isinstance(env, dict)
-    assert env == {"HOME": str(home_dir), "PATH": str(bin_dir)}
+    # The fake executable is itself a Python script, so CPython's own C-locale
+    # coercion (PEP 538) injects LC_CTYPE into its os.environ regardless of what
+    # was actually passed to Popen — confirmed independent of any production
+    # code by direct reproduction. A real claude/codex binary never does this.
+    observed = {key: value for key, value in env.items() if key != "LC_CTYPE"}
+    assert observed == {"HOME": str(home_dir), "PATH": str(bin_dir)}
 
 
 # ===========================================================================
