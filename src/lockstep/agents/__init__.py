@@ -35,12 +35,22 @@ from lockstep.agents.openai_schema import (
     OpenAIStrictSchemaError,
     to_openai_strict_json_schema,
 )
+from lockstep.agents.routing import (
+    AgentProvider,
+    AgentRoleRoute,
+    AgentRoutingPolicy,
+    AgentRoutingPolicyError,
+)
 
 __all__ = [
     "AgentAdapter",
     "AgentCommand",
     "AgentInvocationRequest",
     "AgentInvocationResult",
+    "AgentProvider",
+    "AgentRoleRoute",
+    "AgentRoutingPolicy",
+    "AgentRoutingPolicyError",
     "ClaudeAdapter",
     "ClaudeAdapterError",
     "ClaudeCliStatus",
