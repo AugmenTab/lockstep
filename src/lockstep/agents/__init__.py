@@ -24,6 +24,12 @@ from lockstep.agents.codex import (
     require_codex_subscription_ready,
 )
 from lockstep.agents.codex_review import materialize_codex_review_schema
+from lockstep.agents.diagnostics import (
+    AgentProviderDiagnostics,
+    ProviderDiagnosticsError,
+    ProviderRuntimeOverrides,
+    diagnose_agent_providers,
+)
 from lockstep.agents.invocation import (
     AgentAdapter,
     AgentCommand,
@@ -55,6 +61,7 @@ __all__ = [
     "AgentInvocationRequest",
     "AgentInvocationResult",
     "AgentProvider",
+    "AgentProviderDiagnostics",
     "AgentProviderStatuses",
     "AgentRoleRoute",
     "AgentRoutingPolicy",
@@ -68,7 +75,10 @@ __all__ = [
     "CodexCliStatus",
     "CodexPreflightError",
     "OpenAIStrictSchemaError",
+    "ProviderDiagnosticsError",
+    "ProviderRuntimeOverrides",
     "ResolvedAgentAdapters",
+    "diagnose_agent_providers",
     "invoke_agent",
     "materialize_codex_review_schema",
     "probe_claude_cli",
