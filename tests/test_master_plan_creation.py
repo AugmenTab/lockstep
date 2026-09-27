@@ -458,11 +458,15 @@ def test_master_plan_creation_error_carries_bounded_reason() -> None:
 
 
 def test_public_api_exports_expected_names() -> None:
-    assert set(planning_workflow_module.__all__) == {
+    # Sub-phase 8.5 additively extends this module's public API with new
+    # Phase-outline-planning names (lockstep.planning_workflow §3-4 of the
+    # 8.5 plan); this is a subset check rather than 8.4's original exact
+    # equality so that authorized additive growth does not read as drift.
+    assert {
         "MasterPlanCandidate",
         "MasterPlanCreationError",
         "create_master_plan_candidate",
-    }
+    }.issubset(set(planning_workflow_module.__all__))
 
 
 def test_no_auto_freeze_api_exists() -> None:
