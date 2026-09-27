@@ -37,9 +37,19 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
+from pydantic import BaseModel
+
 from lockstep.agents import AgentInvocationResult
-from lockstep.domain import MasterPlan, PhaseId, PhasePlan, ProjectId
-from lockstep.planning import validate_master_plan
+from lockstep.domain import (
+    MasterPlan,
+    PhaseId,
+    PhasePlan,
+    ProjectId,
+    SubphaseContract,
+    SubphaseId,
+    SubphaseOutline,
+)
+from lockstep.planning import validate_master_plan, validate_subphase_contract
 from lockstep.planning_store import (
     load_active_subphase_contract,
     load_frozen_master_plan,
@@ -274,7 +284,7 @@ def _find_frozen_phase(master_plan: MasterPlan, phase_id: PhaseId) -> PhasePlan 
     return None
 
 
-def _canonical_json(model: MasterPlan | PhasePlan) -> str:
+def _canonical_json(model: BaseModel) -> str:
     return json.dumps(model.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":"))
 
 
@@ -385,11 +395,234 @@ def create_phase_plan_candidate(
     return PhasePlanCandidate(plan=candidate_plan, invocation=result.invocation)
 
 
+# ---------------------------------------------------------------------------
+# Sub-phase Contract candidate creation (Sub-phase 8.6)
+# ---------------------------------------------------------------------------
+
+_PHASE_PLAN_LABEL = "Current Phase plan:"
+_TARGET_SUBPHASE_LABEL = "Target subphase_id:"
+_TARGET_OUTLINE_LABEL = "Target subphase outline:"
+
+_SUBPHASE_CONTRACT_INSTRUCTIONS = (
+    "You are planning exactly one implementation Sub-phase.\n"
+    "The supplied Master Plan and current Phase plan are planning truth.\n"
+    "Use exactly the supplied target phase_id and subphase_id for the "
+    "returned SubphaseContract.\n"
+    "The selected Sub-phase identity is fixed.\n"
+    "Produce exactly one SubphaseContract.\n"
+    "Do not implement code.\n"
+    "Do not write files.\n"
+    "Do not author executable test files yet.\n"
+    "Do not plan another Sub-phase.\n"
+    "The Contract's title/objective may refine the provisional outline's "
+    "prose; only phase_id/subphase_id identity is rigidly binding.\n"
+    "Acceptance criteria must be specific, observable, independently "
+    "falsifiable where practical, bounded to this Sub-phase, and "
+    "traceable to the stated objective. Avoid vague criteria such as "
+    "'code is good' or 'works correctly' unless made concrete by "
+    "evidence. Criterion ids must be unique.\n"
+    "Use TestSpecification entries as a test-authoring specification, "
+    "not as executable test contents: each identifies an intended test "
+    "path, a baseline expectation (red, green_regression, or "
+    "green_characterization), and acceptance-criterion references.\n"
+    "allowed_paths, protected_paths, and forbidden_paths are opaque "
+    "scope declarations; ground them conservatively in the current "
+    "repository, but do not invent glob, prefix, or containment "
+    "semantics.\n"
+    "verification_commands must be concrete commands relevant to the "
+    "repository and selected Sub-phase that can later provide "
+    "deterministic evidence; do not execute them.\n"
+    "The Sub-phase must be safe to land independently: keep "
+    "buildability, type/lint/test health, compatibility, configuration "
+    "completeness, and migration safety in mind where relevant. Do not "
+    "intentionally require a later Sub-phase merely to restore "
+    "repository health.\n"
+    "Include one primary conceptual change plus any dependency "
+    "necessary for that behavior to exist safely; do not absorb "
+    "unrelated future outline items and do not leave unresolved "
+    "architecture that requires the Implementer to silently choose "
+    "product direction.\n"
+    "Inspect the repository read-only when useful to make paths, "
+    "tests, commands, constraints, and existing architecture concrete. "
+    "Do not modify files.\n"
+    "Return only the structured SubphaseContract requested by the "
+    "supplied schema.\n"
+)
+
+
+class SubphaseContractPlanningError(Exception):
+    """A Sub-phase Contract candidate could not be created.
+
+    Carries a short, bounded, deterministic ``reason``. Never carries
+    Master Plan content, Phase plan content, prompt text, raw provider
+    output, or filesystem paths. Used only for workflow-owned failures:
+    an unfrozen Master Plan, an unpublished current Phase plan, a
+    published Phase plan for a different Phase, a requested Sub-phase
+    absent from the current published outline, an active Sub-phase
+    Contract, or a wrong-Phase/wrong-Sub-phase/wrong-type Planner
+    artifact. Lower-layer typed failures
+    (:class:`~lockstep.planning_transport.PlanningTransportError`,
+    :class:`~lockstep.planning.PlanningValidationError`,
+    :class:`~lockstep.planning_store.PlanningStoreError`, and provider or
+    process errors) propagate unwrapped and are never represented by
+    this exception.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"subphase contract planning error: {reason}")
+
+
+@dataclass(frozen=True, slots=True)
+class SubphaseContractCandidate:
+    """A validated Sub-phase Contract candidate awaiting explicit freeze.
+
+    Carries exactly the hydrated, semantically validated contract and
+    the bounded provenance of the Planner invocation that produced it.
+    Neither field appears in :func:`repr`, so logging a candidate never
+    dumps contract contents or raw provider output. Creating a
+    candidate never freezes it; see
+    :func:`~lockstep.planning_store.freeze_subphase_contract` for the
+    explicit durable-adoption boundary.
+    """
+
+    contract: SubphaseContract = field(repr=False)
+    invocation: AgentInvocationResult = field(repr=False)
+
+
+def _find_outline(phase_plan: PhasePlan, subphase_id: SubphaseId) -> SubphaseOutline | None:
+    for outline in phase_plan.subphases:
+        if outline.subphase_id == subphase_id:
+            return outline
+    return None
+
+
+def _build_subphase_contract_prompt(
+    master_plan: MasterPlan,
+    phase_plan: PhasePlan,
+    target_outline: SubphaseOutline,
+    phase_id: PhaseId,
+    subphase_id: SubphaseId,
+) -> str:
+    return (
+        f"{_MASTER_PLAN_LABEL}\n"
+        f"{_canonical_json(master_plan)}\n"
+        "\n"
+        f"{_PHASE_PLAN_LABEL}\n"
+        f"{_canonical_json(phase_plan)}\n"
+        "\n"
+        f"{_TARGET_PHASE_LABEL}\n"
+        f"{phase_id.root}\n"
+        "\n"
+        f"{_TARGET_SUBPHASE_LABEL}\n"
+        f"{subphase_id.root}\n"
+        "\n"
+        f"{_TARGET_OUTLINE_LABEL}\n"
+        f"{_canonical_json(target_outline)}\n"
+        "\n"
+        f"{_SUBPHASE_CONTRACT_INSTRUCTIONS}"
+    )
+
+
+def create_subphase_contract_candidate(
+    runtime: AgentRuntime,
+    *,
+    phase_id: PhaseId,
+    subphase_id: SubphaseId,
+    timeout_seconds: float,
+    max_output_bytes: int = 1_048_576,
+    termination_grace_seconds: float = 0.25,
+) -> SubphaseContractCandidate:
+    """Ask the configured Planner for one validated Sub-phase Contract candidate.
+
+    Performs, in order: a frozen-Master-Plan check
+    (:func:`~lockstep.planning_store.load_frozen_master_plan`), a
+    published-current-Phase-plan check
+    (:func:`~lockstep.planning_store.load_phase_plan`), exact
+    ``phase_id`` binding of that Phase plan, an
+    active-Sub-phase-Contract check
+    (:func:`~lockstep.planning_store.load_active_subphase_contract`)
+    that fails closed before any inference, resolution of
+    ``subphase_id`` against the current published outline, exactly one
+    structured Planner inference
+    (:func:`~lockstep.planning_transport.invoke_planner_artifact`),
+    artifact-kind/type verification, exact ``phase_id``/``subphase_id``
+    binding, and semantic validation of the effective Master Plan (the
+    frozen Master Plan with its matching Phase replaced by the current
+    published Phase plan) via
+    :func:`~lockstep.planning.validate_subphase_contract`. Returns a
+    :class:`SubphaseContractCandidate` for the caller to freeze or
+    discard; it never freezes the candidate itself, and it never
+    retries, repairs, or falls back to another provider or model.
+    Provider selection comes entirely from *runtime*; this function has
+    no provider, model, effort, billing, or schema parameter of its
+    own. Sub-phase identity is never inferred: *phase_id* and
+    *subphase_id* are always the caller's explicit choice.
+    """
+    master_plan = load_frozen_master_plan(runtime.project_root)
+    if master_plan is None:
+        raise SubphaseContractPlanningError("master plan is not frozen")
+
+    phase_plan = load_phase_plan(runtime.project_root, runtime.runtime_dir)
+    if phase_plan is None:
+        raise SubphaseContractPlanningError("current phase plan is not published")
+
+    if phase_plan.phase_id != phase_id:
+        raise SubphaseContractPlanningError("published phase plan does not match requested phase")
+
+    if load_active_subphase_contract(runtime.project_root, runtime.runtime_dir) is not None:
+        raise SubphaseContractPlanningError("a subphase contract is already active")
+
+    target_outline = _find_outline(phase_plan, subphase_id)
+    if target_outline is None:
+        raise SubphaseContractPlanningError(
+            "requested subphase is not present in the current phase plan"
+        )
+
+    prompt = _build_subphase_contract_prompt(
+        master_plan, phase_plan, target_outline, phase_id, subphase_id
+    )
+
+    result = invoke_planner_artifact(
+        runtime,
+        kind=PlanningArtifactKind.SUBPHASE_CONTRACT,
+        prompt=prompt,
+        timeout_seconds=timeout_seconds,
+        max_output_bytes=max_output_bytes,
+        termination_grace_seconds=termination_grace_seconds,
+    )
+
+    if result.kind is not PlanningArtifactKind.SUBPHASE_CONTRACT or not isinstance(
+        result.artifact, SubphaseContract
+    ):
+        raise SubphaseContractPlanningError("planner returned an unexpected artifact")
+
+    contract = result.artifact
+    if contract.phase_id != phase_id:
+        raise SubphaseContractPlanningError("planner returned a contract for the wrong phase")
+    if contract.subphase_id != subphase_id:
+        raise SubphaseContractPlanningError("planner returned a contract for the wrong subphase")
+
+    effective_master_plan = master_plan.model_copy(
+        update={
+            "phases": tuple(
+                phase_plan if phase.phase_id == phase_id else phase for phase in master_plan.phases
+            )
+        }
+    )
+    validate_subphase_contract(effective_master_plan, contract)
+
+    return SubphaseContractCandidate(contract=contract, invocation=result.invocation)
+
+
 __all__ = [
     "MasterPlanCandidate",
     "MasterPlanCreationError",
     "PhaseOutlinePlanningError",
     "PhasePlanCandidate",
+    "SubphaseContractCandidate",
+    "SubphaseContractPlanningError",
     "create_master_plan_candidate",
     "create_phase_plan_candidate",
+    "create_subphase_contract_candidate",
 ]
