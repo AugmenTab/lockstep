@@ -822,8 +822,14 @@ def test_active_contract_blocks_candidate_generation_codex_schema_untouched(
     tmp_path: Path,
 ) -> None:
     runtime, bin_dir, _mp, _pp = _setup_published_phase(tmp_path, provider="codex")
-    contract = SubphaseContract.model_validate(_contract_payload("01", "01"))
-    freeze_subphase_contract(runtime.project_root, runtime.runtime_dir, contract)
+
+    candidate = create_subphase_contract_candidate(
+        runtime,
+        phase_id=_phase_id("01"),
+        subphase_id=_subphase_id("01"),
+        timeout_seconds=5.0,
+    )
+    freeze_subphase_contract(runtime.project_root, runtime.runtime_dir, candidate.contract)
 
     schema_path = (
         runtime.runtime_dir / "providers" / "codex" / "planning" / "subphase-contract.schema.json"
@@ -841,6 +847,10 @@ def test_active_contract_blocks_candidate_generation_codex_schema_untouched(
 
     assert len(_read_invocations(bin_dir)) == invocation_count_before
     assert schema_path.read_bytes() == schema_bytes_before
+    assert (
+        load_active_subphase_contract(runtime.project_root, runtime.runtime_dir)
+        == candidate.contract
+    )
 
 
 # ===========================================================================
@@ -1253,7 +1263,9 @@ def test_semantic_validator_receives_effective_plan_and_exact_contract(
         "01", subphases=[_outline_payload("01"), _outline_payload("02")]
     )
     runtime, _bin_dir, master_plan, phase_plan = _setup_published_phase(
-        tmp_path, phase_plan_payload=phase_plan_payload
+        tmp_path,
+        master_plan_payload=_two_phase_master_plan_payload(),
+        phase_plan_payload=phase_plan_payload,
     )
 
     captured: list[tuple[MasterPlan, SubphaseContract]] = []
@@ -1270,11 +1282,16 @@ def test_semantic_validator_receives_effective_plan_and_exact_contract(
 
     assert len(captured) == 1
     effective_plan, validated_contract = captured[0]
-    effective_phase = next(p for p in effective_plan.phases if p.phase_id == _phase_id("01"))
-    assert effective_phase.subphases == phase_plan.subphases
+
+    effective_phase_01 = next(p for p in effective_plan.phases if p.phase_id == _phase_id("01"))
+    assert effective_phase_01 == phase_plan
+    assert effective_phase_01.subphases == phase_plan.subphases
+
+    effective_phase_02 = next(p for p in effective_plan.phases if p.phase_id == _phase_id("02"))
+    frozen_phase_02 = next(p for p in master_plan.phases if p.phase_id == _phase_id("02"))
+    assert effective_phase_02 == frozen_phase_02
+
     assert validated_contract is candidate.contract
-    other_phase = next(p for p in effective_plan.phases if p.phase_id != _phase_id("01"))
-    assert other_phase == master_plan.phases[master_plan.phases.index(other_phase)] or True
 
 
 # ===========================================================================
