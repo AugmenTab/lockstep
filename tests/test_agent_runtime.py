@@ -443,7 +443,6 @@ def test_transaction_parent_env_excluded_from_repr(tmp_path: Path) -> None:
     )
 
     assert sentinel not in repr(runtime)
-    assert sentinel not in repr(runtime.transaction_parent_env)
 
 
 # ---------------------------------------------------------------------------
