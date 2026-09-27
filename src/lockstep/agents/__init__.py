@@ -53,6 +53,10 @@ from lockstep.agents.routing import (
     AgentRoutingPolicy,
     AgentRoutingPolicyError,
 )
+from lockstep.agents.structured_output import (
+    StructuredOutputAdapterError,
+    prepare_structured_planner_adapter,
+)
 
 __all__ = [
     "AgentAdapter",
@@ -78,9 +82,11 @@ __all__ = [
     "ProviderDiagnosticsError",
     "ProviderRuntimeOverrides",
     "ResolvedAgentAdapters",
+    "StructuredOutputAdapterError",
     "diagnose_agent_providers",
     "invoke_agent",
     "materialize_codex_review_schema",
+    "prepare_structured_planner_adapter",
     "probe_claude_cli",
     "probe_codex_cli",
     "require_claude_subscription_ready",
