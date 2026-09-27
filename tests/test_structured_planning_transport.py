@@ -1627,24 +1627,21 @@ def test_structured_output_module_os_usage_is_limited_to_durability_primitives()
 
 
 def test_frozen_concrete_provider_adapters_are_unmodified_by_8_3() -> None:
-    import subprocess
+    import hashlib
 
     repo_root = Path(__file__).resolve().parent.parent
-    frozen_relative_paths = (
-        "src/lockstep/agents/claude.py",
-        "src/lockstep/agents/codex.py",
-    )
+    expected_sha256 = {
+        "src/lockstep/agents/claude.py": (
+            "26b0083327ee5315eba86005ba5e4740cf3107f04f1c02f519f2925e8d66906c"
+        ),
+        "src/lockstep/agents/codex.py": (
+            "537d21f01fbd6d889c75b402155883108e5b44ccb3da41b63b91cd3aaaabb21d"
+        ),
+    }
 
-    for relative_path in frozen_relative_paths:
-        tracked = subprocess.run(
-            ["git", "show", f"HEAD:{relative_path}"],
-            cwd=repo_root,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-        working = (repo_root / relative_path).read_text(encoding="utf-8")
-        assert working == tracked, f"{relative_path} must remain byte-identical through 8.3"
+    for relative_path, expected in expected_sha256.items():
+        digest = hashlib.sha256((repo_root / relative_path).read_bytes()).hexdigest()
+        assert digest == expected, f"{relative_path} must remain byte-identical through 8.3"
 
 
 # ===========================================================================
