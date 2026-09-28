@@ -264,10 +264,13 @@ def author_planner_tests(
     normal writable Planner invocation
     (:func:`~lockstep.agents.invoke_agent` against
     ``runtime.adapters.planner``), and deterministic post-invocation
-    Git/filesystem scope verification (HEAD/branch unchanged, no staged
-    changes, exact changed-path set, no deletion, no symlink, then
-    non-zero-exit rejection). Returns exact-byte SHA-256 hashes for each
-    authored file in Contract order. Performs no Git mutation, no
+    Git/filesystem scope verification, in priority order: HEAD/branch
+    unchanged, no staged changes, no unexpected/out-of-contract path,
+    no unsafe deletion/symlink/non-regular mutation among the Contract
+    paths the Planner actually touched, then a non-zero Planner process
+    exit, and only then a merely-missing expected path. Returns
+    exact-byte SHA-256 hashes for each authored file in Contract order.
+    Performs no Git mutation, no
     planning-state mutation, no baseline test execution, and invokes no
     role other than Planner.
     """
@@ -362,19 +365,22 @@ def author_planner_tests(
             reason="planner modified paths outside the contract test specification"
         )
 
-    missing_paths = test_path_set - changed_paths
-    if missing_paths:
-        raise TestAuthoringError(reason="required test path was not changed by the planner")
-
+    changed_test_paths = test_path_set & changed_paths
     for path in test_paths:
-        _require_present(resolved_worktree, path)
+        if path in changed_test_paths:
+            _require_present(resolved_worktree, path)
     for path in test_paths:
-        _require_regular_file(resolved_worktree, path)
+        if path in changed_test_paths:
+            _require_regular_file(resolved_worktree, path)
 
     if not invocation.process.succeeded:
         raise TestAuthoringError(
             reason=f"planner process exited with status {invocation.process.returncode}"
         )
+
+    missing_paths = test_path_set - changed_paths
+    if missing_paths:
+        raise TestAuthoringError(reason="required test path was not changed by the planner")
 
     files = tuple(
         AuthoredTestFile(
