@@ -8,17 +8,11 @@ narrowly scoped plans and pre-existing tests. A deterministic control plane —
 not the AI agents — owns execution state, Git history, verification policy, and
 hard stops.
 
-> **Status:** Under active early development. The core control plane is now
-> implemented and internally qualified: domain model, event journal, state
-> machine, Git worktree and commit primitives, process runner and environment
-> filtering, agent invocation interface, Codex CLI adapter with subscription
-> preflight and provider-boundary strict-schema normalization, and a
-> single-subphase Supervisor transaction that drives Planner → test-quality →
-> RED baseline → test commit → Implementer → verification → Reviewer →
-> implementation commit end-to-end. Phase 5, Sub-phase 5.5 is the latest merged
-> work; Sub-phase 5.4 has been qualified against a real subscription-backed
-> Codex CLI. The public CLI still exposes only `--help` and `--version`; a
-> user-facing orchestration command is not yet wired up.
+> **Status:** Under active early development. The Planner/Implementer
+> orchestration described above is implemented internally, including Claude
+> and Codex CLI support, but is not yet exposed through the CLI. The public
+> CLI currently only supports `--help` and `--version`; a user-facing
+> orchestration command is not yet wired up.
 
 ## Requirements
 
