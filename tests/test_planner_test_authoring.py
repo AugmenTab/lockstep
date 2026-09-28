@@ -79,7 +79,7 @@ from lockstep.domain import (
     SubphaseContract,
     SubphaseId,
 )
-from lockstep.git import GitCommandError
+from lockstep.git import GitCommandError, inspect_repository
 from lockstep.planning_store import (
     PlanningStoreError,
     freeze_master_plan,
@@ -133,6 +133,41 @@ def _init_worktree(
             tracked_names.append(rel_path)
 
     _git(repo, "add", *tracked_names)
+    _git(repo, "commit", "-m", "initial")
+    _git(repo, "branch", "-M", "main")
+
+    return repo
+
+
+def _init_worktree_with_committed_symlink(
+    tmp_path: Path,
+    *,
+    name: str,
+    link_path: str,
+    link_target: Path,
+) -> Path:
+    """Build a worktree whose *initial commit* already contains a symlink.
+
+    Unlike :func:`_init_worktree`, the dangerous symlink is created and
+    staged before the one and only commit, so the resulting worktree is
+    genuinely clean (no staged/unstaged/untracked paths) while still
+    containing the symlink — required to exercise a symlink-specific
+    rejection path without the earlier clean-baseline check firing first.
+    """
+    repo = tmp_path / name
+    repo.mkdir()
+
+    _git(repo, "init")
+    _git(repo, "config", "user.name", "Lockstep Tests")
+    _git(repo, "config", "user.email", "lockstep-tests@example.invalid")
+
+    (repo / "README.md").write_text("initial\n", encoding="utf-8")
+
+    link = repo / link_path
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(link_target)
+
+    _git(repo, "add", "README.md", link_path)
     _git(repo, "commit", "-m", "initial")
     _git(repo, "branch", "-M", "main")
 
@@ -525,8 +560,9 @@ def _freeze_contract(runtime: AgentRuntime, payload: dict[str, object]) -> Subph
 # ---------------------------------------------------------------------------
 
 
-def _setup_active_contract(
+def _setup_active_contract_with_worktree(
     tmp_path: Path,
+    worktree_path: Path,
     *,
     provider: str = "claude",
     phase_id: str = "01",
@@ -537,11 +573,7 @@ def _setup_active_contract(
     planner_stdout: str = "",
     planner_max_output_bytes: int | None = None,
     parent_env: Mapping[str, str] | None = None,
-    extra_worktree_files: Mapping[str, str] | None = None,
-    worktree_name: str = "worktree",
 ) -> tuple[AgentRuntime, Path, Path, SubphaseContract]:
-    worktree_path = _init_worktree(tmp_path, name=worktree_name, extra_files=extra_worktree_files)
-
     bin_dir = tmp_path / "bin"
     used_contract_payload = (
         contract_payload
@@ -575,6 +607,37 @@ def _setup_active_contract(
     _freeze_contract(runtime, used_contract_payload)
 
     return runtime, bin_dir, worktree_path, contract
+
+
+def _setup_active_contract(
+    tmp_path: Path,
+    *,
+    provider: str = "claude",
+    phase_id: str = "01",
+    subphase_id: str = "01",
+    contract_payload: dict[str, object] | None = None,
+    planner_actions: list[dict[str, object]] | None = None,
+    planner_returncode: int = 0,
+    planner_stdout: str = "",
+    planner_max_output_bytes: int | None = None,
+    parent_env: Mapping[str, str] | None = None,
+    extra_worktree_files: Mapping[str, str] | None = None,
+    worktree_name: str = "worktree",
+) -> tuple[AgentRuntime, Path, Path, SubphaseContract]:
+    worktree_path = _init_worktree(tmp_path, name=worktree_name, extra_files=extra_worktree_files)
+    return _setup_active_contract_with_worktree(
+        tmp_path,
+        worktree_path,
+        provider=provider,
+        phase_id=phase_id,
+        subphase_id=subphase_id,
+        contract_payload=contract_payload,
+        planner_actions=planner_actions,
+        planner_returncode=planner_returncode,
+        planner_stdout=planner_stdout,
+        planner_max_output_bytes=planner_max_output_bytes,
+        parent_env=parent_env,
+    )
 
 
 def _author(
@@ -973,16 +1036,26 @@ def test_symlink_path_component_rejected_before_inference(tmp_path: Path) -> Non
     contract_payload = _contract_payload(
         tests=[{"path": "tests/test_x.py", "expectation": "red", "acceptance_criteria": ["AC-1"]}]
     )
-    runtime, bin_dir, worktree_path, _contract = _setup_active_contract(
-        tmp_path, contract_payload=contract_payload, planner_actions=[]
-    )
 
-    outside_dir = worktree_path.parent / "outside-directory"
-    outside_dir.mkdir(exist_ok=True)
+    outside_dir = tmp_path / "outside-directory"
+    outside_dir.mkdir()
+
     try:
-        (worktree_path / "tests").symlink_to(outside_dir, target_is_directory=True)
+        worktree_path = _init_worktree_with_committed_symlink(
+            tmp_path, name="worktree", link_path="tests", link_target=outside_dir
+        )
     except OSError:
         pytest.skip("host cannot create symlinks")
+
+    runtime, bin_dir, worktree_path, _contract = _setup_active_contract_with_worktree(
+        tmp_path, worktree_path, contract_payload=contract_payload, planner_actions=[]
+    )
+
+    snapshot = inspect_repository(worktree_path)
+    assert snapshot.staged_paths == ()
+    assert snapshot.unstaged_paths == ()
+    assert snapshot.untracked_paths == ()
+    assert snapshot.dirty_paths == ()
 
     with pytest.raises(TestAuthoringError) as exc_info:
         _author(runtime, worktree_path)
@@ -995,17 +1068,26 @@ def test_existing_symlink_expected_file_rejected_before_inference(tmp_path: Path
     contract_payload = _contract_payload(
         tests=[{"path": "tests/test_x.py", "expectation": "red", "acceptance_criteria": ["AC-1"]}]
     )
-    runtime, bin_dir, worktree_path, _contract = _setup_active_contract(
-        tmp_path, contract_payload=contract_payload, planner_actions=[]
-    )
 
-    (worktree_path / "tests").mkdir(exist_ok=True)
-    outside_file = worktree_path.parent / "outside-file.py"
+    outside_file = tmp_path / "outside-file.py"
     outside_file.write_text("outside\n", encoding="utf-8")
+
     try:
-        (worktree_path / "tests" / "test_x.py").symlink_to(outside_file)
+        worktree_path = _init_worktree_with_committed_symlink(
+            tmp_path, name="worktree", link_path="tests/test_x.py", link_target=outside_file
+        )
     except OSError:
         pytest.skip("host cannot create symlinks")
+
+    runtime, bin_dir, worktree_path, _contract = _setup_active_contract_with_worktree(
+        tmp_path, worktree_path, contract_payload=contract_payload, planner_actions=[]
+    )
+
+    snapshot = inspect_repository(worktree_path)
+    assert snapshot.staged_paths == ()
+    assert snapshot.unstaged_paths == ()
+    assert snapshot.untracked_paths == ()
+    assert snapshot.dirty_paths == ()
 
     with pytest.raises(TestAuthoringError) as exc_info:
         _author(runtime, worktree_path)
