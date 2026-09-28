@@ -47,6 +47,10 @@ from lockstep.agents.resolution import (
     ResolvedAgentAdapters,
     resolve_agent_adapters,
 )
+from lockstep.agents.role_output import (
+    RoleOutputAdapterError,
+    prepare_structured_role_adapter,
+)
 from lockstep.agents.routing import (
     AgentProvider,
     AgentRoleRoute,
@@ -82,11 +86,13 @@ __all__ = [
     "ProviderDiagnosticsError",
     "ProviderRuntimeOverrides",
     "ResolvedAgentAdapters",
+    "RoleOutputAdapterError",
     "StructuredOutputAdapterError",
     "diagnose_agent_providers",
     "invoke_agent",
     "materialize_codex_review_schema",
     "prepare_structured_planner_adapter",
+    "prepare_structured_role_adapter",
     "probe_claude_cli",
     "probe_codex_cli",
     "require_claude_subscription_ready",
