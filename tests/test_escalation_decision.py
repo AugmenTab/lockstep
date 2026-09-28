@@ -843,9 +843,7 @@ def test_resolution_has_exactly_expected_fields() -> None:
 
     field_names = {field.name for field in dataclasses.fields(resolution)}
     assert field_names == {"decision", "disposition", "frozen_artifact_correction"}
-
-    with pytest.raises(AttributeError):
-        resolution.unexpected = True  # type: ignore[attr-defined]
+    assert set(type(resolution).__slots__) == field_names
 
 
 def test_resolution_is_frozen() -> None:
