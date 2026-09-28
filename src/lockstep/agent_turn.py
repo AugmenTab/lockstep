@@ -36,19 +36,19 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Protocol
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from lockstep.agents import (
+    AgentAdapter,
     AgentInvocationRequest,
     AgentInvocationResult,
     invoke_agent,
     prepare_structured_role_adapter,
 )
-from lockstep.domain import AgentRole, AttemptNumber, PhaseId, SubphaseId
+from lockstep.domain import AgentRole, AttemptNumber, BillingMode, PhaseId, SubphaseId
 from lockstep.escalation import EscalationAuthority, EscalationCategory, EscalationRequest
-from lockstep.runtime import AgentRuntime
 
 _MAX_QUESTION_LENGTH = 4096
 _MAX_EVIDENCE_ENTRIES = 32
@@ -205,8 +205,64 @@ def _validate_prompt(prompt: str) -> str:
     return prompt
 
 
+class AgentTurnRoleRoute(Protocol):
+    """The one routing attribute :func:`invoke_agent_turn` reads per role."""
+
+    @property
+    def billing_mode(self) -> BillingMode: ...
+
+
+class AgentTurnRoutingPolicy(Protocol):
+    """The Implementer/Reviewer routes :func:`invoke_agent_turn` reads."""
+
+    @property
+    def implementer(self) -> AgentTurnRoleRoute: ...
+    @property
+    def reviewer(self) -> AgentTurnRoleRoute: ...
+
+
+class AgentTurnProjectConfig(Protocol):
+    """The one configuration attribute :func:`invoke_agent_turn` reads."""
+
+    @property
+    def routing(self) -> AgentTurnRoutingPolicy: ...
+
+
+class AgentTurnAdapters(Protocol):
+    """The Implementer/Reviewer adapters :func:`invoke_agent_turn` reads."""
+
+    @property
+    def implementer(self) -> AgentAdapter: ...
+    @property
+    def reviewer(self) -> AgentAdapter: ...
+
+
+class AgentTurnRuntimeContext(Protocol):
+    """The structural runtime-view :func:`invoke_agent_turn` actually consumes.
+
+    A deliberately narrow, provider-neutral substitute for a concrete
+    ``lockstep.runtime.AgentRuntime``: importing that class here would
+    create a Supervisor/runtime import cycle once the Supervisor
+    transaction composes with this module (Sub-phase 9.6). Any object
+    exposing this exact shape — including a real ``AgentRuntime`` — is
+    accepted; this module never imports or names ``AgentRuntime``. Every
+    attribute is read-only (``@property``) so a frozen concrete runtime
+    (whose fields are themselves read-only) satisfies this Protocol
+    structurally.
+    """
+
+    @property
+    def runtime_dir(self) -> Path: ...
+    @property
+    def transaction_parent_env(self) -> Mapping[str, str]: ...
+    @property
+    def config(self) -> AgentTurnProjectConfig: ...
+    @property
+    def adapters(self) -> AgentTurnAdapters: ...
+
+
 def invoke_agent_turn(
-    runtime: AgentRuntime,
+    runtime: AgentTurnRuntimeContext,
     *,
     role: AgentRole,
     phase_id: PhaseId,
@@ -318,6 +374,7 @@ __all__ = [
     "AgentTurnError",
     "AgentTurnReport",
     "AgentTurnResult",
+    "AgentTurnRuntimeContext",
     "AgentTurnStatus",
     "invoke_agent_turn",
 ]
