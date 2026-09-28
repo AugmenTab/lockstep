@@ -824,6 +824,10 @@ def test_import_cycle_smoke_across_orders() -> None:
 
 
 def test_transaction_module_calls_reviewer_turn_exactly_once() -> None:
+    # The legacy Reviewer call site builds its request via the pre-existing
+    # ``_agent_request(role=..., ...)`` helper rather than passing ``role=``
+    # directly to ``invoke_agent``, so that (not the outer ``invoke_agent``
+    # call) is where the Reviewer role keyword actually appears.
     tree = ast.parse(inspect.getsource(transaction_module))
     reviewer_turn_calls = 0
     legacy_reviewer_calls = 0
@@ -832,7 +836,7 @@ def test_transaction_module_calls_reviewer_turn_exactly_once() -> None:
             continue
         if isinstance(node.func, ast.Name) and node.func.id == "invoke_reviewer_turn":
             reviewer_turn_calls += 1
-        if isinstance(node.func, ast.Name) and node.func.id == "invoke_agent":
+        if isinstance(node.func, ast.Name) and node.func.id == "_agent_request":
             role_keyword = next((kw for kw in node.keywords if kw.arg == "role"), None)
             if (
                 role_keyword is not None

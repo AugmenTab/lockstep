@@ -354,6 +354,55 @@ class _PoisonAdapter:
 
 
 # ---------------------------------------------------------------------------
+# Composite Reviewer response (Sub-phase 9.7 fixture migration, PROCESS
+# INCIDENT #18 correction B): the blocker-aware entrypoint's successful
+# Reviewer stage moved from the legacy raw ``invoke_agent``/``ReviewDecision``
+# contract onto the Sub-phase 9.7 composite ``ReviewerTurnReport`` contract,
+# which is wrapped through the frozen ``prepare_structured_role_adapter`` and
+# accepts only a real ``ClaudeAdapter``/``CodexAdapter`` -- a generic
+# ``_ScriptAdapter`` (above) no longer qualifies as that entrypoint's
+# Reviewer. This mirrors the Claude-shaped sequential fake executable
+# already used above for the Planner/Implementer roles.
+# ---------------------------------------------------------------------------
+
+
+def _reviewer_review_decision_payload(
+    *,
+    phase_id: str = _PHASE_ID,
+    subphase_id: str = _SUBPHASE_ID,
+    attempt: int = 1,
+    verdict: str = "approve",
+    summary: str = "approved",
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "phase_id": phase_id,
+        "subphase_id": subphase_id,
+        "attempt": attempt,
+        "verdict": verdict,
+        "summary": summary,
+        "findings": [],
+    }
+
+
+def _reviewer_turn_completed_response(
+    *, verdict: str = "approve", summary: str = "approved"
+) -> dict[str, object]:
+    return {
+        "stdout": json.dumps(
+            {
+                "status": "completed",
+                "review_decision": _reviewer_review_decision_payload(
+                    verdict=verdict, summary=summary
+                ),
+                "blocker": None,
+            }
+        ),
+        "returncode": 0,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Planning-store fixtures (mirrors tests/test_supervisor_escalation.py)
 # ---------------------------------------------------------------------------
 
@@ -675,7 +724,11 @@ def test_implementer_blocked_result_repr_hides_implementer_turn_content(tmp_path
 
 
 def test_completed_blocker_aware_transaction_matches_legacy_success_shape(tmp_path: Path) -> None:
-    reviewer = _ScriptAdapter("reviewer", _reviewer_script(verdict="approve", summary="approved"))
+    reviewer_bin = tmp_path / "reviewer-bin"
+    _write_fake_claude_executable(
+        reviewer_bin, name="claude-reviewer", responses=[_reviewer_turn_completed_response()]
+    )
+    reviewer = _claude_adapter(AgentRole.REVIEWER, executable=str(reviewer_bin / "claude-reviewer"))
     scenario = _prepare_scenario(
         tmp_path,
         planner_responses=[_planner_authoring_response(_TEST_FILE_RED)],
@@ -695,7 +748,7 @@ def test_completed_blocker_aware_transaction_matches_legacy_success_shape(tmp_pa
 
     assert _invocation_count(scenario.planner_bin, "claude-planner") == 1
     assert _invocation_count(scenario.implementer_bin, "claude-implementer") == 1
-    assert len(reviewer.invocations) == 1
+    assert _invocation_count(reviewer_bin, "claude-reviewer") == 1
 
     worktree_snapshot = inspect_repository(scenario.request.worktree_path)
     assert worktree_snapshot.is_clean
