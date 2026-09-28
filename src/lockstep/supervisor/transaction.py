@@ -38,6 +38,32 @@ in behavior and keeps invoking the Reviewer through the old raw
 ``invoke_agent``/``ReviewDecision`` contract; both entrypoints share the
 same prefix/verification/verdict-handling helpers so the transaction
 algorithm is not duplicated.
+
+Sub-phase 9.10 adds a third, additive entrypoint,
+:func:`run_single_subphase_transaction_with_retry_checkpoint`, that shares
+the exact same blocker-capable execution pipeline
+(:func:`_run_blocker_capable_transaction`) as the Sub-phase 9.7 blocker-aware
+entrypoint, but additionally captures a Reviewer ``COMPLETED`` report whose
+``ReviewDecision.verdict`` is ``REWORK`` -- a retry authority that
+:func:`run_single_subphase_transaction_with_blockers` still raises
+:class:`SupervisorTransactionError` for, unchanged. Whenever the shared
+pipeline produces an Implementer/Reviewer ``RESUME_AGENT`` escalation or a
+Reviewer ``REWORK`` verdict, the new entrypoint derives a durable
+:class:`~lockstep.retry_checkpoint.RetryCheckpoint` from the frozen
+Sub-phase 9.8/9.9 retry protocol (using the caller-supplied
+:class:`~lockstep.retry.RetryBudget`, with no default or config/env/CLI
+source) and freezes it via
+:func:`~lockstep.retry_checkpoint.freeze_retry_checkpoint` before returning
+a :class:`RetryCheckpointedTransactionResult` -- only after that freeze
+succeeds; a freeze failure propagates unchanged, leaving the run ``HALTED``
+with no checkpoint. ``lockstep.retry``/``lockstep.retry_checkpoint`` are
+imported only under ``TYPE_CHECKING`` or lazily inside the exact
+checkpoint-integration call sites, mirroring the existing lazy
+``dispatch_escalation`` import, to avoid the module-load cycle those
+modules' own imports of :mod:`lockstep.supervisor.escalation` would
+otherwise create. This sub-phase still runs only the initial transaction
+attempt; it never executes a second Implementer or Reviewer invocation and
+never consumes, claims, or deletes a checkpoint.
 """
 
 from __future__ import annotations
@@ -90,6 +116,8 @@ from lockstep.reviewer_turn import ReviewerTurnResult, invoke_reviewer_turn
 from lockstep.state import RunStateSnapshot, WorkflowState
 
 if TYPE_CHECKING:
+    from lockstep.retry import AttemptState, RetryBudget
+    from lockstep.retry_checkpoint import RetryCheckpoint
     from lockstep.runtime import AgentRuntime
     from lockstep.supervisor.escalation import SupervisorEscalationResult
 
@@ -230,6 +258,61 @@ class ReviewerBlockedTransactionResult:
     reviewer_turn: ReviewerTurnResult = field(repr=False)
     escalation: SupervisorEscalationResult
     final_state: RunStateSnapshot
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewReworkTransactionResult:
+    """Durable outcome of a Sub-phase 9.10 checkpoint-aware transaction halted by REWORK.
+
+    Produced only by :func:`run_single_subphase_transaction_with_retry_checkpoint`
+    when the composite Reviewer turn reports ``COMPLETED`` with a
+    ``ReviewDecision.verdict`` of ``REWORK`` -- the one retry authority that
+    never reaches a return value on the frozen Sub-phase 9.7 blocker-aware
+    entrypoint, which still raises :class:`SupervisorTransactionError` for
+    it unchanged. ``test_commit`` is the exact frozen Planner-authored test
+    commit; ``implementer_turn`` and ``reviewer_turn`` are the exact
+    already-``COMPLETED`` structured turn results (both excluded from
+    :func:`repr`); ``review_decision`` is the exact nested
+    :class:`~lockstep.domain.ReviewDecision` -- the durable semantic
+    authority for the retry; and ``final_state`` is the transaction's final
+    ``HALTED`` snapshot. Carries no production commit -- REWORK never
+    commits.
+    """
+
+    test_commit: GitCommitResult
+    implementer_turn: AgentTurnResult = field(repr=False)
+    reviewer_turn: ReviewerTurnResult = field(repr=False)
+    review_decision: ReviewDecision
+    final_state: RunStateSnapshot
+
+
+# The one retry-authority-bearing source result a Sub-phase 9.10 durable
+# checkpoint can be derived from. Kept private: 9.11 may need to broaden it,
+# but nothing outside this module needs to name it directly.
+_RetryCheckpointSourceResult = (
+    ImplementerBlockedTransactionResult
+    | ReviewerBlockedTransactionResult
+    | ReviewReworkTransactionResult
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RetryCheckpointedTransactionResult:
+    """Durable outcome of a Sub-phase 9.10 transaction that froze retry authority.
+
+    ``source_result`` is the exact blocked/reworked result the shared
+    blocker-capable pipeline produced (excluded from :func:`repr` so
+    logging never dumps nested turn content); ``checkpoint`` is the exact
+    :class:`~lockstep.retry_checkpoint.RetryCheckpoint` already durably
+    frozen via :func:`~lockstep.retry_checkpoint.freeze_retry_checkpoint`
+    before this result is ever constructed. Carries no duplicate
+    ``final_state``/``attempt``/``target_role``/``budget`` -- those facts
+    already have authoritative homes on ``source_result`` and
+    ``checkpoint``.
+    """
+
+    source_result: _RetryCheckpointSourceResult = field(repr=False)
+    checkpoint: RetryCheckpoint
 
 
 def _persist_run_created(
@@ -674,6 +757,52 @@ def _complete_after_implementer_success(
     return _handle_review_decision(request, ctx, test_commit, review)
 
 
+def _capture_review_rework(
+    request: SingleSubphaseTransactionRequest,
+    ctx: _PreparedTransaction,
+    test_commit: GitCommitResult,
+    implementer_turn: AgentTurnResult,
+    reviewer_turn: ReviewerTurnResult,
+    review: ReviewDecision,
+) -> ReviewReworkTransactionResult:
+    """Sub-phase 9.10 REWORK capture: ``REVIEWING -> HALTED``, no commit.
+
+    Called only by :func:`_complete_after_implementer_success_with_reviewer_turn`
+    when ``capture_rework`` is set and the composite Reviewer report is
+    ``COMPLETED`` with a ``REWORK`` verdict -- the one branch the frozen
+    Sub-phase 9.7 ``_handle_review_decision`` suffix still raises
+    :class:`SupervisorTransactionError` for. Preserves the exact
+    ``ReviewDecision`` as the durable semantic authority for the retry
+    checkpoint 9.10's caller will freeze; never runs verification again,
+    never re-enters the Reviewer, and never commits.
+    """
+    _require_review_matches_transaction(review, request)
+
+    _persist_transition(
+        run_id=request.run_id,
+        source=WorkflowState.REVIEWING,
+        target=WorkflowState.HALTED,
+        sequence=10,
+        journal_path=ctx.journal_path,
+        state_path=ctx.state_path,
+    )
+
+    final_state = load_verified_state(ctx.state_path, ctx.journal_path)
+    if final_state is None or final_state.workflow_state != WorkflowState.HALTED:
+        raise SupervisorTransactionError(
+            stage="reconciliation",
+            reason="final journal replay does not reach HALTED",
+        )
+
+    return ReviewReworkTransactionResult(
+        test_commit=test_commit,
+        implementer_turn=implementer_turn,
+        reviewer_turn=reviewer_turn,
+        review_decision=review,
+        final_state=final_state,
+    )
+
+
 def _complete_after_implementer_success_with_reviewer_turn(
     request: SingleSubphaseTransactionRequest,
     ctx: _PreparedTransaction,
@@ -681,14 +810,24 @@ def _complete_after_implementer_success_with_reviewer_turn(
     implementer_turn: AgentTurnResult,
     *,
     agent_turn_runtime: AgentRuntime,
-) -> SingleSubphaseTransactionResult | ReviewerBlockedTransactionResult:
+    capture_rework: bool = False,
+) -> (
+    SingleSubphaseTransactionResult
+    | ReviewerBlockedTransactionResult
+    | ReviewReworkTransactionResult
+):
     """Blocker-aware Sub-phase 9.7 composite Reviewer stage.
 
     Shares the exact ``_verify_after_implementer`` prefix and
     ``_handle_review_decision`` suffix with the legacy path. A
     ``COMPLETED`` composite report feeds its ``review_decision`` into
-    the unchanged verdict/commit handling. A ``BLOCKED`` report is
-    dispatched through
+    the unchanged verdict/commit handling -- unless *capture_rework* is
+    set and the verdict is ``REWORK``, in which case
+    :func:`_capture_review_rework` handles it instead (Sub-phase 9.10
+    only; the default ``False`` preserves
+    :func:`run_single_subphase_transaction_with_blockers`'s exact frozen
+    Sub-phase 9.7 behavior of raising :class:`SupervisorTransactionError`
+    for REWORK). A ``BLOCKED`` report is dispatched through
     :func:`~lockstep.supervisor.escalation.dispatch_escalation` exactly
     once (imported lazily, mirroring the Sub-phase 9.6 Implementer
     branch, to avoid the runtime/Supervisor import cycle a module-level
@@ -712,11 +851,14 @@ def _complete_after_implementer_success_with_reviewer_turn(
     )
 
     if reviewer_turn.report.status is AgentTurnStatus.COMPLETED:
-        assert reviewer_turn.report.review_decision is not None
+        review = reviewer_turn.report.review_decision
+        assert review is not None
         assert reviewer_turn.escalation_request is None
-        return _handle_review_decision(
-            request, ctx, test_commit, reviewer_turn.report.review_decision
-        )
+        if capture_rework and review.verdict is ReviewVerdict.REWORK:
+            return _capture_review_rework(
+                request, ctx, test_commit, implementer_turn, reviewer_turn, review
+            )
+        return _handle_review_decision(request, ctx, test_commit, review)
 
     assert reviewer_turn.escalation_request is not None
 
@@ -814,36 +956,34 @@ def _require_agent_turn_runtime_matches_request(
         )
 
 
-def run_single_subphase_transaction_with_blockers(
+def _run_blocker_capable_transaction(
     request: SingleSubphaseTransactionRequest,
     *,
     agent_turn_runtime: AgentRuntime,
+    capture_rework: bool,
 ) -> (
     SingleSubphaseTransactionResult
     | ImplementerBlockedTransactionResult
     | ReviewerBlockedTransactionResult
+    | ReviewReworkTransactionResult
 ):
-    """Drive one Sub-phase using the structured, blocker-aware Implementer and Reviewer turns.
+    """Shared blocker-capable execution pipeline (Sub-phase 9.7 + 9.10 policy toggle).
 
-    Shares the exact deterministic prefix (Planner test authoring
-    through the frozen test commit) with :func:`run_single_subphase_transaction`.
-    The Implementer runs through :func:`~lockstep.agent_turn.invoke_agent_turn`;
-    a ``COMPLETED`` report continues into the shared verification prefix
-    and the Sub-phase 9.7 composite Reviewer stage
-    (:func:`~lockstep.reviewer_turn.invoke_reviewer_turn`). A ``COMPLETED``
-    composite Reviewer report enters the exact existing verdict/commit
-    suffix and returns a :class:`SingleSubphaseTransactionResult`; a
-    ``BLOCKED`` composite Reviewer report returns a
-    :class:`ReviewerBlockedTransactionResult`. A ``BLOCKED`` Implementer
-    report is dispatched through
-    :func:`~lockstep.supervisor.escalation.dispatch_escalation` exactly
-    once, the transaction transitions to ``HALTED``, and this function
-    returns an :class:`ImplementerBlockedTransactionResult` -- every
-    Sub-phase 9.5 disposition (including ``RESUME_AGENT``) halts here;
-    neither blocked branch ever re-enters the blocked role, never runs
-    deterministic verification more than once, and never commits partial
-    work. Requires *request* and *agent_turn_runtime* to share the same
-    ``runtime_dir`` before any agent inference occurs.
+    Drives Planner test authoring through the structured, blocker-aware
+    Implementer and (on Implementer success) composite Reviewer turns --
+    the exact single algorithm both
+    :func:`run_single_subphase_transaction_with_blockers` and
+    :func:`run_single_subphase_transaction_with_retry_checkpoint` share,
+    so neither public entrypoint duplicates it. *capture_rework* is the
+    only behavioral difference between the two callers: ``False``
+    preserves the frozen Sub-phase 9.7 semantics of
+    :func:`_handle_review_decision` raising
+    :class:`SupervisorTransactionError` for a ``REWORK`` verdict;
+    ``True`` (Sub-phase 9.10 only) routes a ``COMPLETED`` + ``REWORK``
+    composite Reviewer report through :func:`_capture_review_rework`
+    instead, returning a :class:`ReviewReworkTransactionResult`. Requires
+    *request* and *agent_turn_runtime* to share the same ``runtime_dir``
+    before any agent inference occurs.
     """
     _require_agent_turn_runtime_matches_request(request, agent_turn_runtime)
 
@@ -877,6 +1017,7 @@ def run_single_subphase_transaction_with_blockers(
             test_commit,
             implementer_turn,
             agent_turn_runtime=agent_turn_runtime,
+            capture_rework=capture_rework,
         )
 
     assert implementer_turn.escalation_request is not None
@@ -919,3 +1060,177 @@ def run_single_subphase_transaction_with_blockers(
         escalation=escalation_result,
         final_state=final_state,
     )
+
+
+def run_single_subphase_transaction_with_blockers(
+    request: SingleSubphaseTransactionRequest,
+    *,
+    agent_turn_runtime: AgentRuntime,
+) -> (
+    SingleSubphaseTransactionResult
+    | ImplementerBlockedTransactionResult
+    | ReviewerBlockedTransactionResult
+):
+    """Drive one Sub-phase using the structured, blocker-aware Implementer and Reviewer turns.
+
+    Thin, behavior-preserving wrapper around the shared
+    :func:`_run_blocker_capable_transaction` pipeline with
+    ``capture_rework=False`` -- the exact frozen Sub-phase 9.7 contract:
+    a ``COMPLETED`` composite Reviewer report enters the existing
+    verdict/commit suffix and returns a
+    :class:`SingleSubphaseTransactionResult` on ``APPROVE`` (``REWORK``/
+    ``HALT`` still raise :class:`SupervisorTransactionError`); a
+    ``BLOCKED`` composite Reviewer report returns a
+    :class:`ReviewerBlockedTransactionResult`; a ``BLOCKED`` Implementer
+    report returns an :class:`ImplementerBlockedTransactionResult` --
+    every Sub-phase 9.5 disposition (including ``RESUME_AGENT``) halts
+    here. Neither blocked branch ever re-enters the blocked role, never
+    runs deterministic verification more than once, and never commits
+    partial work.
+    """
+    result = _run_blocker_capable_transaction(
+        request,
+        agent_turn_runtime=agent_turn_runtime,
+        capture_rework=False,
+    )
+    assert not isinstance(result, ReviewReworkTransactionResult)
+    return result
+
+
+def _current_attempt_state(request: SingleSubphaseTransactionRequest) -> AttemptState:
+    # Lazy import: ``lockstep.retry`` imports ``lockstep.supervisor.escalation``
+    # at module level, which imports ``lockstep.runtime`` at module level,
+    # which imports this package at module level -- the same shape of cycle
+    # the ``dispatch_escalation`` import above already avoids by staying
+    # function-local.
+    from lockstep.retry import AttemptState
+
+    return AttemptState(
+        phase_id=request.phase_id,
+        subphase_id=request.subphase_id,
+        current_attempt=_TRANSACTION_ATTEMPT,
+    )
+
+
+def _checkpoint_from_implementer_blocked(
+    request: SingleSubphaseTransactionRequest,
+    retry_budget: RetryBudget,
+    result: ImplementerBlockedTransactionResult,
+) -> ImplementerBlockedTransactionResult | RetryCheckpointedTransactionResult:
+    from lockstep.retry_checkpoint import (
+        create_retry_checkpoint_from_escalation,
+        freeze_retry_checkpoint,
+    )
+
+    checkpoint = create_retry_checkpoint_from_escalation(
+        attempt_state=_current_attempt_state(request),
+        budget=retry_budget,
+        result=result.escalation,
+    )
+    if checkpoint is None:
+        return result
+
+    frozen = freeze_retry_checkpoint(request.runtime_dir, checkpoint)
+    return RetryCheckpointedTransactionResult(source_result=result, checkpoint=frozen)
+
+
+def _checkpoint_from_reviewer_blocked(
+    request: SingleSubphaseTransactionRequest,
+    retry_budget: RetryBudget,
+    result: ReviewerBlockedTransactionResult,
+) -> ReviewerBlockedTransactionResult | RetryCheckpointedTransactionResult:
+    from lockstep.retry_checkpoint import (
+        create_retry_checkpoint_from_escalation,
+        freeze_retry_checkpoint,
+    )
+
+    checkpoint = create_retry_checkpoint_from_escalation(
+        attempt_state=_current_attempt_state(request),
+        budget=retry_budget,
+        result=result.escalation,
+    )
+    if checkpoint is None:
+        return result
+
+    frozen = freeze_retry_checkpoint(request.runtime_dir, checkpoint)
+    return RetryCheckpointedTransactionResult(source_result=result, checkpoint=frozen)
+
+
+def _checkpoint_from_review_rework(
+    request: SingleSubphaseTransactionRequest,
+    retry_budget: RetryBudget,
+    result: ReviewReworkTransactionResult,
+) -> RetryCheckpointedTransactionResult:
+    from lockstep.retry_checkpoint import (
+        create_retry_checkpoint_from_review,
+        freeze_retry_checkpoint,
+    )
+
+    checkpoint = create_retry_checkpoint_from_review(
+        attempt_state=_current_attempt_state(request),
+        budget=retry_budget,
+        decision=result.review_decision,
+    )
+    # A REWORK verdict always carries retry authority (frozen 9.8
+    # ``retry_request_from_review`` contract) -- ``None`` here would mean
+    # this function was called for a non-REWORK decision, a caller defect.
+    assert checkpoint is not None
+
+    frozen = freeze_retry_checkpoint(request.runtime_dir, checkpoint)
+    return RetryCheckpointedTransactionResult(source_result=result, checkpoint=frozen)
+
+
+def run_single_subphase_transaction_with_retry_checkpoint(
+    request: SingleSubphaseTransactionRequest,
+    *,
+    agent_turn_runtime: AgentRuntime,
+    retry_budget: RetryBudget,
+) -> (
+    SingleSubphaseTransactionResult
+    | ImplementerBlockedTransactionResult
+    | ReviewerBlockedTransactionResult
+    | RetryCheckpointedTransactionResult
+):
+    """Drive one Sub-phase, freezing durable retry authority when it occurs.
+
+    Runs the exact shared :func:`_run_blocker_capable_transaction`
+    pipeline with ``capture_rework=True``, so a Reviewer ``COMPLETED`` +
+    ``REWORK`` report is captured as a :class:`ReviewReworkTransactionResult`
+    instead of raising -- the one Sub-phase 9.10 behavioral difference
+    from :func:`run_single_subphase_transaction_with_blockers`. A plain
+    :class:`SingleSubphaseTransactionResult` (``APPROVE``) is returned
+    unchanged, with no checkpoint. Every other outcome is offered to the
+    frozen Sub-phase 9.8/9.9 retry protocol via
+    :func:`~lockstep.retry_checkpoint.create_retry_checkpoint_from_escalation`/
+    :func:`~lockstep.retry_checkpoint.create_retry_checkpoint_from_review`
+    using *retry_budget* (a required argument with no default, config,
+    environment, or CLI source) and the canonical attempt-1
+    :class:`~lockstep.retry.AttemptState` for *request*; a nonretryable
+    outcome (``SUPERVISOR_ACTION_REQUIRED``, ``REPLAN_SUBPHASE``,
+    ``HUMAN_REQUIRED``, ``RUN_HALT``, or Reviewer ``HALT``) returns its
+    original blocked/error result unchanged, with no checkpoint written.
+    A retryable outcome is frozen via
+    :func:`~lockstep.retry_checkpoint.freeze_retry_checkpoint` -- only
+    after that freeze succeeds is a :class:`RetryCheckpointedTransactionResult`
+    returned; a freeze failure (:class:`~lockstep.retry_checkpoint.RetryCheckpointStoreError`)
+    propagates unchanged, leaving the run ``HALTED`` with no checkpoint.
+    Still runs only the initial transaction attempt: no agent is ever
+    invoked a second time, and no checkpoint is ever consumed, claimed,
+    or deleted.
+    """
+    result = _run_blocker_capable_transaction(
+        request,
+        agent_turn_runtime=agent_turn_runtime,
+        capture_rework=True,
+    )
+
+    if isinstance(result, SingleSubphaseTransactionResult):
+        return result
+
+    if isinstance(result, ImplementerBlockedTransactionResult):
+        return _checkpoint_from_implementer_blocked(request, retry_budget, result)
+
+    if isinstance(result, ReviewerBlockedTransactionResult):
+        return _checkpoint_from_reviewer_blocked(request, retry_budget, result)
+
+    return _checkpoint_from_review_rework(request, retry_budget, result)
