@@ -219,3 +219,6 @@ __marimo__/
 
 # Lockstep manual planner/implementer workflow artifacts
 .local/
+
+# Agent content
+.claude/
