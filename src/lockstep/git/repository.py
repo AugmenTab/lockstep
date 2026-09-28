@@ -52,6 +52,9 @@ class GitRepositorySnapshot:
     root: Path
     head_sha: str
     branch: str | None
+    staged_paths: tuple[str, ...]
+    unstaged_paths: tuple[str, ...]
+    untracked_paths: tuple[str, ...]
     dirty_paths: tuple[str, ...]
 
     @property
@@ -157,23 +160,39 @@ def _resolve_branch(root: Path) -> str | None:
     return None
 
 
-def _collect_dirty_paths(root: Path) -> tuple[str, ...]:
-    unstaged = _run_git_bytes(
-        root,
-        ("diff", "--name-only", "--no-renames", "-z"),
-    )
-    staged = _run_git_bytes(
+def _collect_staged_paths(root: Path) -> tuple[str, ...]:
+    result = _run_git_bytes(
         root,
         ("diff", "--cached", "--name-only", "--no-renames", "-z"),
     )
-    untracked = _run_git_bytes(
+    return tuple(sorted(_decode_nul_paths(result.stdout)))
+
+
+def _collect_unstaged_paths(root: Path) -> tuple[str, ...]:
+    result = _run_git_bytes(
+        root,
+        ("diff", "--name-only", "--no-renames", "-z"),
+    )
+    return tuple(sorted(_decode_nul_paths(result.stdout)))
+
+
+def _collect_untracked_paths(root: Path) -> tuple[str, ...]:
+    result = _run_git_bytes(
         root,
         ("ls-files", "--others", "--exclude-standard", "-z"),
     )
+    return tuple(sorted(_decode_nul_paths(result.stdout)))
+
+
+def _collect_dirty_paths(
+    staged_paths: tuple[str, ...],
+    unstaged_paths: tuple[str, ...],
+    untracked_paths: tuple[str, ...],
+) -> tuple[str, ...]:
     seen: set[str] = set()
-    seen.update(_decode_nul_paths(unstaged.stdout))
-    seen.update(_decode_nul_paths(staged.stdout))
-    seen.update(_decode_nul_paths(untracked.stdout))
+    seen.update(staged_paths)
+    seen.update(unstaged_paths)
+    seen.update(untracked_paths)
     return tuple(sorted(seen))
 
 
@@ -182,11 +201,17 @@ def inspect_repository(path: Path) -> GitRepositorySnapshot:
     root = _resolve_repository_root(path)
     head_sha = _resolve_head_sha(root)
     branch = _resolve_branch(root)
-    dirty_paths = _collect_dirty_paths(root)
+    staged_paths = _collect_staged_paths(root)
+    unstaged_paths = _collect_unstaged_paths(root)
+    untracked_paths = _collect_untracked_paths(root)
+    dirty_paths = _collect_dirty_paths(staged_paths, unstaged_paths, untracked_paths)
     return GitRepositorySnapshot(
         root=root,
         head_sha=head_sha,
         branch=branch,
+        staged_paths=staged_paths,
+        unstaged_paths=unstaged_paths,
+        untracked_paths=untracked_paths,
         dirty_paths=dirty_paths,
     )
 
