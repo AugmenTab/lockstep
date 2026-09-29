@@ -68,15 +68,17 @@ never consumes, claims, or deletes a checkpoint.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
-from lockstep.agent_turn import AgentTurnResult, AgentTurnStatus, invoke_agent_turn
+from lockstep.agent_turn import AgentTurnError, AgentTurnResult, AgentTurnStatus, invoke_agent_turn
 from lockstep.agents import (
     AgentAdapter,
     AgentInvocationRequest,
@@ -93,12 +95,15 @@ from lockstep.domain import (
     RunId,
     SubphaseId,
 )
+from lockstep.escalation import EscalationProtocolError, EscalationRequest
+from lockstep.escalation_decision import PlannerDecisionKind
 from lockstep.git import (
     GitCommitResult,
     commit_exact_paths,
     create_run_worktree,
     inspect_repository,
 )
+from lockstep.git.commit import commit_exact_subset_paths
 from lockstep.persistence import (
     RunCreatedEvent,
     StateTransitionedEvent,
@@ -112,10 +117,12 @@ from lockstep.process import (
     build_process_environment,
     run_process,
 )
-from lockstep.reviewer_turn import ReviewerTurnResult, invoke_reviewer_turn
+from lockstep.reviewer_turn import ReviewerTurnError, ReviewerTurnResult, invoke_reviewer_turn
 from lockstep.state import RunStateSnapshot, WorkflowState
 
 if TYPE_CHECKING:
+    from lockstep.resume import ResumeClaim
+    from lockstep.resume_settlement import ResumeSettlement, ResumeSettlementOutcome
     from lockstep.retry import AttemptState, RetryBudget
     from lockstep.retry_checkpoint import RetryCheckpoint
     from lockstep.runtime import AgentRuntime
@@ -1234,3 +1241,896 @@ def run_single_subphase_transaction_with_retry_checkpoint(
         return _checkpoint_from_reviewer_blocked(request, retry_budget, result)
 
     return _checkpoint_from_review_rework(request, retry_budget, result)
+
+
+# ============================================================================
+# Sub-phase 9.13: Controlled Re-entry / At-Most-Once Resume
+#
+# Composes the frozen Sub-phase 9.11 durable resume claim protocol
+# (:mod:`lockstep.resume`) and Sub-phase 9.12 durable resume settlement
+# protocol (:mod:`lockstep.resume_settlement`) into the first production
+# path that may actually execute attempt N+1:
+#
+#     HALTED + retry/checkpoint.json
+#         -> inspect_resume -> claim_retry_checkpoint / existing CLAIMED
+#         -> request/runtime/state preflight -> executability validation
+#         -> mark_resume_started -> durable STARTED boundary
+#         -> HALTED -> IMPLEMENTING / HALTED -> REVIEWING (9.13 FSM edges)
+#         -> invoke the exact target role at the exact attempt N+1
+#         -> known result -> ResumeSettlement -> finalize_resume_settlement
+#
+# Provides at-most-once automatic launch per retry attempt, never
+# exactly-once external inference: a crash after STARTED but before a
+# durable result settlement leaves STARTED with no settlement, which is
+# never automatically replayed. `lockstep.resume`/`lockstep.resume_settlement`
+# are imported only inside resume-only call sites (mirroring the existing
+# lazy `lockstep.retry`/`lockstep.retry_checkpoint` convention) to avoid the
+# runtime/Supervisor import cycle their own imports would otherwise create.
+# ============================================================================
+
+
+class ResumeExecutionDisposition(StrEnum):
+    """Where one public :func:`resume_single_subphase_transaction` call landed."""
+
+    NO_CHECKPOINT = "no_checkpoint"
+    RETRY_EXHAUSTED = "retry_exhausted"
+    STARTED_RECOVERY_REQUIRED = "started_recovery_required"
+    AUTHORITY_NOT_EXECUTABLE = "authority_not_executable"
+    SETTLED = "settled"
+
+
+@dataclass(frozen=True, slots=True)
+class ResumeExecutionResult:
+    """Durable outcome of one public resume call.
+
+    ``claim`` is excluded from :func:`repr` so logging a result never
+    dumps embedded checkpoint authority. ``claim`` is ``None`` only for
+    :attr:`ResumeExecutionDisposition.NO_CHECKPOINT` and
+    :attr:`ResumeExecutionDisposition.RETRY_EXHAUSTED` -- every other
+    disposition carries the exact claim the call acted on. ``settlement``
+    is non-``None`` only for :attr:`ResumeExecutionDisposition.SETTLED`.
+    ``final_state`` is populated only when a fresh durable workflow-state
+    snapshot was produced by this call (a known ``COMPLETED`` outcome);
+    settlement-only recovery calls leave it ``None`` since they mutate no
+    workflow state.
+    """
+
+    disposition: ResumeExecutionDisposition
+    claim: ResumeClaim | None = field(default=None, repr=False)
+    settlement: ResumeSettlement | None = None
+    final_state: RunStateSnapshot | None = None
+
+
+class ResumeExecutionError(Exception):
+    """A Supervisor-owned resume precondition failure.
+
+    Carries a short ``stage`` naming the precondition that failed and a
+    ``reason`` explaining why. Reserved for resume-precondition failures
+    this layer owns (request/claim identity mismatch, workflow state
+    incompatible with the claim, unsupported resume target role) --
+    never used to wrap :class:`~lockstep.resume.ResumeStoreError`,
+    :class:`~lockstep.resume_settlement.ResumeSettlementStoreError`,
+    :class:`~lockstep.retry_checkpoint.RetryCheckpointStoreError`, or
+    :class:`~lockstep.retry.RetryProtocolError`.
+    """
+
+    def __init__(self, *, stage: str, reason: str) -> None:
+        self.stage = stage
+        self.reason = reason
+        super().__init__(f"resume execution error during {stage}: {reason}")
+
+
+def _next_sequence(journal_path: Path) -> int:
+    return len(read_events(journal_path)) + 1
+
+
+def _sorted_implementation_paths(request: SingleSubphaseTransactionRequest) -> tuple[str, ...]:
+    return tuple(sorted(request.implementation_paths))
+
+
+def _resume_verification_env(
+    request: SingleSubphaseTransactionRequest,
+    parent_env: Mapping[str, str],
+) -> Mapping[str, str]:
+    pycache_dir = request.worktree_path.parent / f".lockstep-pycache-{request.run_id.root}"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    return build_process_environment(
+        parent_env, explicit_env={"PYTHONPYCACHEPREFIX": str(pycache_dir)}
+    )
+
+
+def _require_resume_identity_matches_claim(
+    request: SingleSubphaseTransactionRequest,
+    claim: ResumeClaim,
+) -> None:
+    attempt_state = claim.checkpoint.attempt_state
+    next_attempt_state = claim.checkpoint.next_attempt_state
+    assert next_attempt_state is not None
+
+    if (
+        request.phase_id != attempt_state.phase_id
+        or request.phase_id != next_attempt_state.phase_id
+    ):
+        raise ResumeExecutionError(
+            stage="resume_identity",
+            reason="transaction request does not match the claimed phase",
+        )
+    if (
+        request.subphase_id != attempt_state.subphase_id
+        or request.subphase_id != next_attempt_state.subphase_id
+    ):
+        raise ResumeExecutionError(
+            stage="resume_identity",
+            reason="transaction request does not match the claimed subphase",
+        )
+
+
+def _require_workflow_state_halted(request: SingleSubphaseTransactionRequest) -> None:
+    journal_path = request.runtime_dir / "events.jsonl"
+    state_path = request.runtime_dir / "state.json"
+    current = load_verified_state(state_path, journal_path)
+    if current is None or current.workflow_state != WorkflowState.HALTED:
+        raise ResumeExecutionError(
+            stage="workflow_state",
+            reason="workflow state is not halted",
+        )
+
+
+def _frozen_correction_authorized_paths(claim: ResumeClaim) -> tuple[str, ...] | None:
+    from lockstep.retry_checkpoint import RetryAuthorityKind
+
+    authority = claim.checkpoint.authority
+    if authority.kind != RetryAuthorityKind.ESCALATION_RESUME:
+        return None
+    decision = authority.planner_decision
+    assert decision is not None
+    if decision.kind != PlannerDecisionKind.AUTHORIZE_FROZEN_ARTIFACT_CORRECTION:
+        return None
+    return decision.authorized_paths
+
+
+def _bounded_change_authorized_paths(claim: ResumeClaim) -> tuple[str, ...] | None:
+    from lockstep.retry_checkpoint import RetryAuthorityKind
+
+    authority = claim.checkpoint.authority
+    if authority.kind != RetryAuthorityKind.ESCALATION_RESUME:
+        return None
+    decision = authority.planner_decision
+    assert decision is not None
+    if decision.kind != PlannerDecisionKind.AUTHORIZE_BOUNDED_CHANGE:
+        return None
+    return decision.authorized_paths
+
+
+def _resume_authority_is_executable(claim: ResumeClaim, target_role: AgentRole) -> bool:
+    from lockstep.retry_checkpoint import RetryAuthorityKind
+
+    authority = claim.checkpoint.authority
+
+    if authority.kind == RetryAuthorityKind.REVIEW_REWORK:
+        if target_role != AgentRole.IMPLEMENTER:
+            raise ResumeExecutionError(
+                stage="executability",
+                reason="review rework authority must target the implementer",
+            )
+        return True
+
+    assert authority.kind == RetryAuthorityKind.ESCALATION_RESUME
+    decision = authority.planner_decision
+    assert decision is not None
+
+    if decision.kind == PlannerDecisionKind.AUTHORIZE_BOUNDED_CHANGE:
+        if target_role == AgentRole.REVIEWER:
+            return len(decision.authorized_paths) == 0
+        return True
+
+    if decision.kind == PlannerDecisionKind.AUTHORIZE_FROZEN_ARTIFACT_CORRECTION:
+        if target_role == AgentRole.REVIEWER:
+            return False
+        if len(decision.authorized_paths) == 0:
+            raise ResumeExecutionError(
+                stage="executability",
+                reason="frozen artifact correction requires at least one authorized path",
+            )
+        return True
+
+    raise ResumeExecutionError(
+        stage="executability",
+        reason="planner decision kind does not authorize resume",
+    )
+
+
+def _deterministic_json(payload: object) -> str:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _escalation_resume_prompt_suffix(
+    claim: ResumeClaim,
+    executed_attempt_number: AttemptNumber,
+    target_role: AgentRole,
+) -> str:
+    from lockstep.retry_checkpoint import RetryAuthorityKind
+
+    authority = claim.checkpoint.authority
+    assert authority.kind == RetryAuthorityKind.ESCALATION_RESUME
+    escalation_request = authority.escalation_request
+    decision = authority.planner_decision
+    assert escalation_request is not None
+    assert decision is not None
+
+    payload = {
+        "resume_authority": "escalation_resume",
+        "attempt": executed_attempt_number.root,
+        "target_role": target_role.value,
+        "escalation": {
+            "category": escalation_request.category.value,
+            "question": escalation_request.question,
+            "evidence": list(escalation_request.evidence),
+        },
+        "planner_decision": {
+            "kind": decision.kind.value,
+            "rationale": decision.rationale,
+            "instructions": list(decision.instructions),
+            "authorized_paths": list(decision.authorized_paths),
+        },
+    }
+    return (
+        "\n\n---\nResume authority (host-supplied, deterministic):\n"
+        + _deterministic_json(payload)
+        + "\n"
+    )
+
+
+def _review_rework_prompt_suffix(
+    claim: ResumeClaim,
+    executed_attempt_number: AttemptNumber,
+    target_role: AgentRole,
+) -> str:
+    from lockstep.retry_checkpoint import RetryAuthorityKind
+
+    authority = claim.checkpoint.authority
+    assert authority.kind == RetryAuthorityKind.REVIEW_REWORK
+    review_decision = authority.review_decision
+    assert review_decision is not None
+
+    payload = {
+        "resume_authority": "review_rework",
+        "attempt": executed_attempt_number.root,
+        "target_role": target_role.value,
+        "review": {
+            "summary": review_decision.summary,
+            "findings": [
+                {
+                    "summary": finding.summary,
+                    "evidence": finding.evidence,
+                    "file_path": finding.file_path,
+                    "acceptance_criterion_id": finding.acceptance_criterion_id,
+                }
+                for finding in review_decision.findings
+            ],
+        },
+    }
+    return (
+        "\n\n---\nResume authority (host-supplied, deterministic):\n"
+        + _deterministic_json(payload)
+        + "\n"
+    )
+
+
+def _resume_prompt_suffix(
+    claim: ResumeClaim,
+    executed_attempt_number: AttemptNumber,
+    target_role: AgentRole,
+) -> str:
+    from lockstep.retry_checkpoint import RetryAuthorityKind
+
+    authority = claim.checkpoint.authority
+    if authority.kind == RetryAuthorityKind.REVIEW_REWORK:
+        return _review_rework_prompt_suffix(claim, executed_attempt_number, target_role)
+    return _escalation_resume_prompt_suffix(claim, executed_attempt_number, target_role)
+
+
+def _settle_and_transition_to_halted(
+    request: SingleSubphaseTransactionRequest,
+    started_claim: ResumeClaim,
+    outcome: ResumeSettlementOutcome,
+    journal_path: Path,
+    state_path: Path,
+    *,
+    next_checkpoint: RetryCheckpoint | None = None,
+) -> ResumeExecutionResult:
+    from lockstep.resume_settlement import ResumeSettlement, finalize_resume_settlement
+
+    current = load_verified_state(state_path, journal_path)
+    assert current is not None
+
+    _persist_transition(
+        run_id=request.run_id,
+        source=current.workflow_state,
+        target=WorkflowState.HALTED,
+        sequence=_next_sequence(journal_path),
+        journal_path=journal_path,
+        state_path=state_path,
+    )
+
+    settlement = ResumeSettlement(
+        schema_version=1,
+        claim=started_claim,
+        outcome=outcome,
+        next_checkpoint=next_checkpoint,
+    )
+    finalized = finalize_resume_settlement(request.runtime_dir, settlement)
+
+    return ResumeExecutionResult(
+        disposition=ResumeExecutionDisposition.SETTLED,
+        claim=finalized.claim,
+        settlement=finalized,
+    )
+
+
+def _settle_execution_failed(
+    request: SingleSubphaseTransactionRequest,
+    started_claim: ResumeClaim,
+    journal_path: Path,
+    state_path: Path,
+) -> None:
+    from lockstep.resume_settlement import ResumeSettlementOutcome
+
+    _settle_and_transition_to_halted(
+        request,
+        started_claim,
+        ResumeSettlementOutcome.EXECUTION_FAILED,
+        journal_path,
+        state_path,
+    )
+
+
+def _partition_frozen_correction_dirty_paths(
+    request: SingleSubphaseTransactionRequest,
+    authorized_frozen_paths: tuple[str, ...],
+    dirty_paths: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    authorized_set = set(authorized_frozen_paths)
+    ordinary_set = set(request.implementation_paths)
+    dirty_set = set(dirty_paths)
+
+    frozen_touched = dirty_set & authorized_set
+    ordinary_touched = dirty_set & ordinary_set
+    unexpected = dirty_set - authorized_set - ordinary_set
+
+    if unexpected:
+        raise SupervisorTransactionError(
+            stage="frozen_correction_scope",
+            reason=(
+                "resumed implementer produced changes outside the authorized "
+                "frozen-correction and production scope"
+            ),
+        )
+    if not frozen_touched:
+        raise SupervisorTransactionError(
+            stage="frozen_correction_scope",
+            reason="resumed implementer did not change any authorized frozen artifact path",
+        )
+
+    return tuple(sorted(frozen_touched)), tuple(sorted(ordinary_touched))
+
+
+def _handle_resumed_blocked(
+    request: SingleSubphaseTransactionRequest,
+    agent_turn_runtime: AgentRuntime,
+    started_claim: ResumeClaim,
+    executed_attempt: AttemptState,
+    escalation_request: EscalationRequest,
+    journal_path: Path,
+    state_path: Path,
+) -> ResumeExecutionResult:
+    from lockstep.escalation_transport import PlannerDecisionTransportError
+    from lockstep.resume_settlement import ResumeSettlementOutcome
+    from lockstep.retry_checkpoint import create_retry_checkpoint_from_escalation
+    from lockstep.supervisor.escalation import dispatch_escalation
+
+    try:
+        escalation_result = dispatch_escalation(
+            agent_turn_runtime,
+            request=escalation_request,
+            timeout_seconds=request.agent_timeout_seconds,
+            max_output_bytes=request.max_output_bytes,
+            termination_grace_seconds=request.termination_grace_seconds,
+        )
+    except (PlannerDecisionTransportError, EscalationProtocolError):
+        _settle_execution_failed(request, started_claim, journal_path, state_path)
+        raise
+
+    checkpoint = create_retry_checkpoint_from_escalation(
+        attempt_state=executed_attempt,
+        budget=started_claim.checkpoint.budget,
+        result=escalation_result,
+    )
+
+    if checkpoint is None:
+        return _settle_and_transition_to_halted(
+            request, started_claim, ResumeSettlementOutcome.HALTED, journal_path, state_path
+        )
+
+    return _settle_and_transition_to_halted(
+        request,
+        started_claim,
+        ResumeSettlementOutcome.NEXT_RETRY,
+        journal_path,
+        state_path,
+        next_checkpoint=checkpoint,
+    )
+
+
+def _require_review_matches_resume(
+    review: ReviewDecision,
+    request: SingleSubphaseTransactionRequest,
+    expected_attempt: AttemptNumber,
+) -> None:
+    if (
+        review.phase_id != request.phase_id
+        or review.subphase_id != request.subphase_id
+        or review.attempt != expected_attempt
+    ):
+        raise SupervisorTransactionError(
+            stage="review",
+            reason="reviewer decision does not match the current resumed attempt",
+        )
+
+
+def _resume_approve(
+    request: SingleSubphaseTransactionRequest,
+    started_claim: ResumeClaim,
+    expected_impl_paths: tuple[str, ...],
+    journal_path: Path,
+    state_path: Path,
+) -> ResumeExecutionResult:
+    from lockstep.resume_settlement import (
+        ResumeSettlement,
+        ResumeSettlementOutcome,
+        finalize_resume_settlement,
+    )
+
+    pre_commit_snapshot = inspect_repository(request.worktree_path)
+    if pre_commit_snapshot.dirty_paths != expected_impl_paths:
+        raise SupervisorTransactionError(
+            stage="pre_commit_integrity",
+            reason="worktree drifted between verification and the resumed implementation commit",
+        )
+
+    _persist_transition(
+        run_id=request.run_id,
+        source=WorkflowState.REVIEWING,
+        target=WorkflowState.IMPLEMENTATION_COMMIT,
+        sequence=_next_sequence(journal_path),
+        journal_path=journal_path,
+        state_path=state_path,
+    )
+
+    if expected_impl_paths:
+        commit_exact_paths(
+            request.worktree_path,
+            expected_branch=request.branch,
+            expected_head_sha=pre_commit_snapshot.head_sha,
+            paths=expected_impl_paths,
+            message=request.implementation_commit_message,
+        )
+
+    _persist_transition(
+        run_id=request.run_id,
+        source=WorkflowState.IMPLEMENTATION_COMMIT,
+        target=WorkflowState.SUBPHASE_COMPLETE,
+        sequence=_next_sequence(journal_path),
+        journal_path=journal_path,
+        state_path=state_path,
+    )
+
+    final_state = load_verified_state(state_path, journal_path)
+    if final_state is None or final_state.workflow_state != WorkflowState.SUBPHASE_COMPLETE:
+        raise SupervisorTransactionError(
+            stage="reconciliation",
+            reason="final journal replay does not reach SUBPHASE_COMPLETE",
+        )
+
+    settlement = ResumeSettlement(
+        schema_version=1, claim=started_claim, outcome=ResumeSettlementOutcome.COMPLETED
+    )
+    finalized = finalize_resume_settlement(request.runtime_dir, settlement)
+
+    return ResumeExecutionResult(
+        disposition=ResumeExecutionDisposition.SETTLED,
+        claim=finalized.claim,
+        settlement=finalized,
+        final_state=final_state,
+    )
+
+
+def _resume_rework(
+    request: SingleSubphaseTransactionRequest,
+    started_claim: ResumeClaim,
+    executed_attempt: AttemptState,
+    review: ReviewDecision,
+    journal_path: Path,
+    state_path: Path,
+) -> ResumeExecutionResult:
+    from lockstep.resume_settlement import ResumeSettlementOutcome
+    from lockstep.retry_checkpoint import create_retry_checkpoint_from_review
+
+    checkpoint = create_retry_checkpoint_from_review(
+        attempt_state=executed_attempt,
+        budget=started_claim.checkpoint.budget,
+        decision=review,
+    )
+    assert checkpoint is not None
+
+    return _settle_and_transition_to_halted(
+        request,
+        started_claim,
+        ResumeSettlementOutcome.NEXT_RETRY,
+        journal_path,
+        state_path,
+        next_checkpoint=checkpoint,
+    )
+
+
+def _invoke_and_handle_resumed_reviewer(
+    request: SingleSubphaseTransactionRequest,
+    agent_turn_runtime: AgentRuntime,
+    started_claim: ResumeClaim,
+    executed_attempt: AttemptState,
+    prompt: str,
+    expected_impl_paths: tuple[str, ...],
+    journal_path: Path,
+    state_path: Path,
+) -> ResumeExecutionResult:
+    from lockstep.resume_settlement import ResumeSettlementOutcome
+
+    try:
+        reviewer_turn = invoke_reviewer_turn(
+            agent_turn_runtime,
+            phase_id=request.phase_id,
+            subphase_id=request.subphase_id,
+            attempt=executed_attempt.current_attempt,
+            prompt=prompt,
+            cwd=request.worktree_path,
+            timeout_seconds=request.agent_timeout_seconds,
+            max_output_bytes=request.max_output_bytes,
+            termination_grace_seconds=request.termination_grace_seconds,
+        )
+    except ReviewerTurnError:
+        _settle_execution_failed(request, started_claim, journal_path, state_path)
+        raise
+
+    if reviewer_turn.report.status is AgentTurnStatus.BLOCKED:
+        assert reviewer_turn.escalation_request is not None
+        return _handle_resumed_blocked(
+            request,
+            agent_turn_runtime,
+            started_claim,
+            executed_attempt,
+            reviewer_turn.escalation_request,
+            journal_path,
+            state_path,
+        )
+
+    review = reviewer_turn.report.review_decision
+    assert review is not None
+    assert reviewer_turn.escalation_request is None
+
+    _require_review_matches_resume(review, request, executed_attempt.current_attempt)
+
+    if review.verdict is ReviewVerdict.APPROVE:
+        try:
+            return _resume_approve(
+                request, started_claim, expected_impl_paths, journal_path, state_path
+            )
+        except SupervisorTransactionError:
+            _settle_execution_failed(request, started_claim, journal_path, state_path)
+            raise
+
+    if review.verdict is ReviewVerdict.REWORK:
+        return _resume_rework(
+            request, started_claim, executed_attempt, review, journal_path, state_path
+        )
+
+    assert review.verdict is ReviewVerdict.HALT
+    return _settle_and_transition_to_halted(
+        request, started_claim, ResumeSettlementOutcome.HALTED, journal_path, state_path
+    )
+
+
+def _resume_run_verification(
+    request: SingleSubphaseTransactionRequest,
+    parent_env: Mapping[str, str],
+    expected_impl_paths: tuple[str, ...],
+    journal_path: Path,
+    state_path: Path,
+) -> None:
+    post_implementer_snapshot = inspect_repository(request.worktree_path)
+    if post_implementer_snapshot.dirty_paths != expected_impl_paths:
+        raise SupervisorTransactionError(
+            stage="implementation_scope",
+            reason=(
+                "implementer either advanced HEAD or produced dirty paths outside "
+                "the approved resumed implementation scope"
+            ),
+        )
+
+    _persist_transition(
+        run_id=request.run_id,
+        source=WorkflowState.IMPLEMENTING,
+        target=WorkflowState.VERIFYING,
+        sequence=_next_sequence(journal_path),
+        journal_path=journal_path,
+        state_path=state_path,
+    )
+
+    verification_env = _resume_verification_env(request, parent_env)
+    verification_result = run_process(
+        request.verification_argv,
+        cwd=request.worktree_path,
+        env=verification_env,
+        timeout_seconds=request.command_timeout_seconds,
+        max_output_bytes=request.max_output_bytes,
+        termination_grace_seconds=request.termination_grace_seconds,
+    )
+    if verification_result.returncode != 0:
+        raise SupervisorTransactionError(
+            stage="verification",
+            reason=(
+                f"verification command exited with returncode {verification_result.returncode}"
+            ),
+        )
+
+    _persist_transition(
+        run_id=request.run_id,
+        source=WorkflowState.VERIFYING,
+        target=WorkflowState.REVIEWING,
+        sequence=_next_sequence(journal_path),
+        journal_path=journal_path,
+        state_path=state_path,
+    )
+
+
+def _resume_implementer(
+    request: SingleSubphaseTransactionRequest,
+    agent_turn_runtime: AgentRuntime,
+    started_claim: ResumeClaim,
+    executed_attempt: AttemptState,
+    journal_path: Path,
+    state_path: Path,
+) -> ResumeExecutionResult:
+    prompt = request.implementer_prompt + _resume_prompt_suffix(
+        started_claim, executed_attempt.current_attempt, AgentRole.IMPLEMENTER
+    )
+
+    try:
+        implementer_turn = invoke_agent_turn(
+            agent_turn_runtime,
+            role=AgentRole.IMPLEMENTER,
+            phase_id=request.phase_id,
+            subphase_id=request.subphase_id,
+            attempt=executed_attempt.current_attempt,
+            prompt=prompt,
+            cwd=request.worktree_path,
+            timeout_seconds=request.agent_timeout_seconds,
+            max_output_bytes=request.max_output_bytes,
+            termination_grace_seconds=request.termination_grace_seconds,
+        )
+    except AgentTurnError:
+        _settle_execution_failed(request, started_claim, journal_path, state_path)
+        raise
+
+    if implementer_turn.report.status is AgentTurnStatus.BLOCKED:
+        assert implementer_turn.escalation_request is not None
+        return _handle_resumed_blocked(
+            request,
+            agent_turn_runtime,
+            started_claim,
+            executed_attempt,
+            implementer_turn.escalation_request,
+            journal_path,
+            state_path,
+        )
+
+    assert implementer_turn.escalation_request is None
+
+    frozen_paths = _frozen_correction_authorized_paths(started_claim)
+    bounded_extra_paths = _bounded_change_authorized_paths(started_claim)
+
+    try:
+        if frozen_paths is not None:
+            pre_snapshot = inspect_repository(request.worktree_path)
+            frozen_touched, ordinary_touched = _partition_frozen_correction_dirty_paths(
+                request, frozen_paths, pre_snapshot.dirty_paths
+            )
+            commit_exact_subset_paths(
+                request.worktree_path,
+                expected_branch=request.branch,
+                expected_head_sha=pre_snapshot.head_sha,
+                paths=frozen_touched,
+                message="fix: correct frozen retry artifacts",
+            )
+            expected_impl_paths = ordinary_touched
+        else:
+            extra = set(bounded_extra_paths) if bounded_extra_paths else set()
+            expected_impl_paths = tuple(sorted(set(request.implementation_paths) | extra))
+
+        _resume_run_verification(
+            request,
+            agent_turn_runtime.transaction_parent_env,
+            expected_impl_paths,
+            journal_path,
+            state_path,
+        )
+    except SupervisorTransactionError:
+        _settle_execution_failed(request, started_claim, journal_path, state_path)
+        raise
+
+    return _invoke_and_handle_resumed_reviewer(
+        request,
+        agent_turn_runtime,
+        started_claim,
+        executed_attempt,
+        request.reviewer_prompt,
+        expected_impl_paths,
+        journal_path,
+        state_path,
+    )
+
+
+def _resume_reviewer(
+    request: SingleSubphaseTransactionRequest,
+    agent_turn_runtime: AgentRuntime,
+    started_claim: ResumeClaim,
+    executed_attempt: AttemptState,
+    journal_path: Path,
+    state_path: Path,
+) -> ResumeExecutionResult:
+    prompt = request.reviewer_prompt + _resume_prompt_suffix(
+        started_claim, executed_attempt.current_attempt, AgentRole.REVIEWER
+    )
+    return _invoke_and_handle_resumed_reviewer(
+        request,
+        agent_turn_runtime,
+        started_claim,
+        executed_attempt,
+        prompt,
+        _sorted_implementation_paths(request),
+        journal_path,
+        state_path,
+    )
+
+
+def _launch_claimed_resume(
+    request: SingleSubphaseTransactionRequest,
+    agent_turn_runtime: AgentRuntime,
+    claim: ResumeClaim,
+) -> ResumeExecutionResult:
+    from lockstep.resume import mark_resume_started
+
+    _require_resume_identity_matches_claim(request, claim)
+    _require_workflow_state_halted(request)
+
+    target_role = claim.checkpoint.retry_request.target_role
+    if target_role not in (AgentRole.IMPLEMENTER, AgentRole.REVIEWER):
+        raise ResumeExecutionError(
+            stage="target_role",
+            reason="resume target role unsupported",
+        )
+
+    if not _resume_authority_is_executable(claim, target_role):
+        return ResumeExecutionResult(
+            disposition=ResumeExecutionDisposition.AUTHORITY_NOT_EXECUTABLE,
+            claim=claim,
+        )
+
+    executed_attempt = claim.checkpoint.next_attempt_state
+    assert executed_attempt is not None
+
+    started_claim = mark_resume_started(request.runtime_dir, claim)
+
+    journal_path = request.runtime_dir / "events.jsonl"
+    state_path = request.runtime_dir / "state.json"
+    active_state = (
+        WorkflowState.IMPLEMENTING
+        if target_role == AgentRole.IMPLEMENTER
+        else WorkflowState.REVIEWING
+    )
+
+    _persist_transition(
+        run_id=request.run_id,
+        source=WorkflowState.HALTED,
+        target=active_state,
+        sequence=_next_sequence(journal_path),
+        journal_path=journal_path,
+        state_path=state_path,
+    )
+
+    if target_role == AgentRole.IMPLEMENTER:
+        return _resume_implementer(
+            request, agent_turn_runtime, started_claim, executed_attempt, journal_path, state_path
+        )
+    return _resume_reviewer(
+        request, agent_turn_runtime, started_claim, executed_attempt, journal_path, state_path
+    )
+
+
+def resume_single_subphase_transaction(
+    request: SingleSubphaseTransactionRequest,
+    *,
+    agent_turn_runtime: AgentRuntime,
+) -> ResumeExecutionResult:
+    """Claim and, if executable, execute exactly one durable resumed attempt.
+
+    All retry authority comes from durable state: the target role from
+    ``claim.checkpoint.retry_request.target_role`` and the resumed attempt
+    from ``claim.checkpoint.next_attempt_state.current_attempt`` -- never
+    recomputed, never caller-supplied. Dispatches on the frozen Sub-phase
+    9.11 :func:`~lockstep.resume.inspect_resume` disposition:
+    :attr:`~lockstep.resume.ResumeDisposition.NO_CHECKPOINT` and
+    :attr:`~lockstep.resume.ResumeDisposition.RETRY_EXHAUSTED` return
+    immediately with no mutation; an existing
+    :attr:`~lockstep.resume.ResumeDisposition.CLAIMED` claim is reused
+    unchanged; :attr:`~lockstep.resume.ResumeDisposition.RETRY_AVAILABLE`
+    is claimed via :func:`~lockstep.resume.claim_retry_checkpoint`; and
+    :attr:`~lockstep.resume.ResumeDisposition.STARTED_RECOVERY_REQUIRED`
+    either finalizes an already-known settlement (zero agent launches) or
+    is returned unchanged for explicit recovery -- a pre-existing
+    ``STARTED`` claim without a settlement is never automatically
+    replayed. Requires the current durable workflow state to be
+    ``HALTED`` and the claimed authority to be executable under its exact
+    target role before ever crossing the durable
+    :func:`~lockstep.resume.mark_resume_started` boundary; ``STARTED`` is
+    always persisted, and the ``HALTED -> IMPLEMENTING``/
+    ``HALTED -> REVIEWING`` workflow transition always occurs, strictly
+    before the target role is ever invoked. Executes at most one resumed
+    role invocation per call -- a newly produced
+    :attr:`~lockstep.resume_settlement.ResumeSettlementOutcome.NEXT_RETRY`
+    checkpoint is never consumed within the same call; a subsequent
+    explicit call handles the next attempt.
+    """
+    from lockstep.resume import ResumeDisposition, claim_retry_checkpoint, inspect_resume
+    from lockstep.resume_settlement import finalize_resume_settlement, load_resume_settlement
+
+    _require_agent_turn_runtime_matches_request(request, agent_turn_runtime)
+
+    inspection = inspect_resume(request.runtime_dir)
+
+    if inspection.disposition == ResumeDisposition.NO_CHECKPOINT:
+        return ResumeExecutionResult(disposition=ResumeExecutionDisposition.NO_CHECKPOINT)
+
+    if inspection.disposition == ResumeDisposition.RETRY_EXHAUSTED:
+        return ResumeExecutionResult(disposition=ResumeExecutionDisposition.RETRY_EXHAUSTED)
+
+    if inspection.disposition == ResumeDisposition.STARTED_RECOVERY_REQUIRED:
+        assert inspection.claim is not None
+        started_claim = inspection.claim
+        settlement = load_resume_settlement(request.runtime_dir, started_claim)
+        if settlement is None:
+            return ResumeExecutionResult(
+                disposition=ResumeExecutionDisposition.STARTED_RECOVERY_REQUIRED,
+                claim=started_claim,
+            )
+        finalized = finalize_resume_settlement(request.runtime_dir, settlement)
+        return ResumeExecutionResult(
+            disposition=ResumeExecutionDisposition.SETTLED,
+            claim=finalized.claim,
+            settlement=finalized,
+        )
+
+    if inspection.disposition == ResumeDisposition.CLAIMED:
+        claim = inspection.claim
+        assert claim is not None
+    else:
+        assert inspection.disposition == ResumeDisposition.RETRY_AVAILABLE
+        claimed_inspection = claim_retry_checkpoint(request.runtime_dir)
+        if claimed_inspection.disposition != ResumeDisposition.CLAIMED:
+            raise ResumeExecutionError(
+                stage="claim",
+                reason="checkpoint did not reach claimed status",
+            )
+        claim = claimed_inspection.claim
+        assert claim is not None
+
+    return _launch_claimed_resume(request, agent_turn_runtime, claim)
