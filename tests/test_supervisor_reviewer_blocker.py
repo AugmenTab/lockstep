@@ -823,19 +823,73 @@ def test_import_cycle_smoke_across_orders() -> None:
 # ===========================================================================
 
 
-def test_transaction_module_calls_reviewer_turn_exactly_once() -> None:
-    # The legacy Reviewer call site builds its request via the pre-existing
+def _call_owner_functions(module: object, target_name: str) -> tuple[dict[str, int], int]:
+    """Map each enclosing function name to its call count for *target_name*.
+
+    Walks the AST with an explicit stack of enclosing ``def``/``async def``
+    scopes (never source substrings, regex, or line numbers), so a call
+    inside a nested function is attributed only to that nested function,
+    never to any ancestor. Returns ``(owners, total)`` where ``total`` is
+    the whole-module call count, including any (unexpected) call that sits
+    outside every function and therefore has no owner -- so a caller can
+    distinguish "no owner map entry because it never occurred" from
+    "no owner map entry because it occurred outside any function."
+    """
+    tree = ast.parse(inspect.getsource(module))
+    stack: list[str] = []
+    owners: dict[str, int] = {}
+    total = 0
+
+    class _Visitor(ast.NodeVisitor):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            stack.append(node.name)
+            self.generic_visit(node)
+            stack.pop()
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            stack.append(node.name)
+            self.generic_visit(node)
+            stack.pop()
+
+        def visit_Call(self, node: ast.Call) -> None:
+            nonlocal total
+            if isinstance(node.func, ast.Name) and node.func.id == target_name:
+                total += 1
+                if stack:
+                    owners[stack[-1]] = owners.get(stack[-1], 0) + 1
+            self.generic_visit(node)
+
+    _Visitor().visit(tree)
+    return owners, total
+
+
+def test_transaction_module_has_exact_reviewer_turn_call_sites() -> None:
+    # Superseding the pre-9.13 "exactly one call site for the whole module"
+    # invariant: Sub-phase 9.13 intentionally adds a second, independent
+    # composite-Reviewer invocation family (resumed-attempt execution)
+    # alongside the frozen attempt-1 family, because the two have materially
+    # different attempt identity, authority prompts, scope rules, and
+    # settlement handling. The corrected invariant pins the exact two
+    # legal owner functions instead of a bare count, so "no hidden
+    # additional role inference" still holds.
+    owners, total = _call_owner_functions(transaction_module, "invoke_reviewer_turn")
+
+    assert owners == {
+        "_complete_after_implementer_success_with_reviewer_turn": 1,
+        "_invoke_and_handle_resumed_reviewer": 1,
+    }
+    assert total == 2
+
+    # The legacy raw ``invoke_agent`` Reviewer call site is untouched by
+    # 9.13: it builds its request via the pre-existing
     # ``_agent_request(role=..., ...)`` helper rather than passing ``role=``
     # directly to ``invoke_agent``, so that (not the outer ``invoke_agent``
     # call) is where the Reviewer role keyword actually appears.
     tree = ast.parse(inspect.getsource(transaction_module))
-    reviewer_turn_calls = 0
     legacy_reviewer_calls = 0
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        if isinstance(node.func, ast.Name) and node.func.id == "invoke_reviewer_turn":
-            reviewer_turn_calls += 1
         if isinstance(node.func, ast.Name) and node.func.id == "_agent_request":
             role_keyword = next((kw for kw in node.keywords if kw.arg == "role"), None)
             if (
@@ -845,7 +899,6 @@ def test_transaction_module_calls_reviewer_turn_exactly_once() -> None:
             ):
                 legacy_reviewer_calls += 1
 
-    assert reviewer_turn_calls == 1
     assert legacy_reviewer_calls == 1
 
 

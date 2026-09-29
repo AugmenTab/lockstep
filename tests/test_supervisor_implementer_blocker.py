@@ -1175,21 +1175,57 @@ def test_blocked_path_event_sequence_terminates_at_halted(tmp_path: Path) -> Non
 # ===========================================================================
 
 
-def test_transaction_module_only_invokes_agent_turn_for_implementer() -> None:
-    tree = ast.parse(inspect.getsource(transaction_module))
-    call_count = 0
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "invoke_agent_turn"
-        ):
-            call_count += 1
-            role_keyword = next(kw for kw in node.keywords if kw.arg == "role")
-            assert isinstance(role_keyword.value, ast.Attribute)
-            assert role_keyword.value.attr == "IMPLEMENTER"
+def _call_owner_functions(module: object, target_name: str) -> dict[str, list[ast.Call]]:
+    """Map each enclosing function name to the matching calls found in it.
 
-    assert call_count == 1
+    Walks the AST with an explicit stack of enclosing ``def``/``async def``
+    scopes (never source substrings, regex, or line numbers), so a call
+    inside a nested function is attributed only to that nested function,
+    never to any ancestor. A call found outside every function scope is
+    recorded under the key ``""``, so it is never silently dropped.
+    """
+    tree = ast.parse(inspect.getsource(module))
+    stack: list[str] = []
+    owners: dict[str, list[ast.Call]] = {}
+
+    class _Visitor(ast.NodeVisitor):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            stack.append(node.name)
+            self.generic_visit(node)
+            stack.pop()
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            stack.append(node.name)
+            self.generic_visit(node)
+            stack.pop()
+
+        def visit_Call(self, node: ast.Call) -> None:
+            if isinstance(node.func, ast.Name) and node.func.id == target_name:
+                owner = stack[-1] if stack else ""
+                owners.setdefault(owner, []).append(node)
+            self.generic_visit(node)
+
+    _Visitor().visit(tree)
+    return owners
+
+
+def test_transaction_module_has_exact_implementer_turn_call_sites() -> None:
+    # Superseding the pre-9.13 "exactly one call site for the whole module"
+    # invariant: Sub-phase 9.13 intentionally adds a second, independent
+    # structured-Implementer-turn invocation family (resumed-attempt
+    # execution) alongside the frozen attempt-1 family, because the two
+    # have materially different attempt identity, authority prompts, scope
+    # rules, and settlement handling. The corrected invariant pins the
+    # exact two legal owner functions instead of a bare count, so "no
+    # hidden additional role inference" still holds.
+    owners = _call_owner_functions(transaction_module, "invoke_agent_turn")
+
+    assert set(owners) == {"_run_blocker_capable_transaction", "_resume_implementer"}
+    for owner_name, calls in owners.items():
+        assert len(calls) == 1, owner_name
+        role_keyword = next(kw for kw in calls[0].keywords if kw.arg == "role")
+        assert isinstance(role_keyword.value, ast.Attribute)
+        assert role_keyword.value.attr == "IMPLEMENTER"
 
 
 def test_agent_turn_result_type_is_reexported_for_typing() -> None:
