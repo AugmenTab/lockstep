@@ -369,3 +369,141 @@ def commit_exact_paths(
         commit_sha=post_snapshot.head_sha,
         committed_paths=approved,
     )
+
+
+def commit_exact_subset_paths(
+    worktree_path: Path,
+    *,
+    expected_branch: str,
+    expected_head_sha: str,
+    paths: Sequence[str],
+    message: str,
+) -> GitCommitResult:
+    """Create one canonical Supervisor commit from an exact, nonempty subset of the dirty set.
+
+    Unlike :func:`commit_exact_paths`, which requires the complete dirty
+    set to equal the approved set, this primitive requires only that the
+    approved set be a non-empty exact subset of the current dirty set. It
+    commits exactly the approved paths and proves every other dirty path
+    -- the residual -- is left dirty and untouched, without stashing,
+    checking out, restoring, or cleaning it.
+    """
+    approved = _validate_paths(worktree_path, paths)
+    _validate_message(worktree_path, message)
+
+    snapshot = inspect_repository(worktree_path)
+    root = snapshot.root
+
+    if snapshot.branch != expected_branch:
+        raise GitCommitPolicyError(
+            root=root,
+            reason=(f"expected branch {expected_branch!r}, but worktree is on {snapshot.branch!r}"),
+        )
+
+    if snapshot.head_sha != expected_head_sha:
+        raise GitCommitPolicyError(
+            root=root,
+            reason=(
+                f"expected HEAD {expected_head_sha!r}, but worktree HEAD is {snapshot.head_sha!r}"
+            ),
+        )
+
+    preexisting_staged = _staged_paths(root)
+    if preexisting_staged:
+        raise GitCommitPolicyError(
+            root=root,
+            reason="index already contains staged changes",
+            expected_paths=(),
+            actual_paths=preexisting_staged,
+        )
+
+    actual_dirty = set(snapshot.dirty_paths)
+    approved_set = set(approved)
+    if not approved_set.issubset(actual_dirty):
+        raise GitCommitPolicyError(
+            root=root,
+            reason="approved paths are not an exact subset of the current dirty set",
+            expected_paths=approved,
+            actual_paths=snapshot.dirty_paths,
+        )
+
+    residual = tuple(sorted(actual_dirty - approved_set))
+
+    _git_add_exact_paths(root, approved)
+
+    staged_after = _staged_paths(root)
+    if staged_after != approved:
+        raise GitCommitPolicyError(
+            root=root,
+            reason="staged paths do not match approved paths after add",
+            expected_paths=approved,
+            actual_paths=staged_after,
+        )
+
+    residual_after_add = tuple(sorted({*_unstaged_paths(root), *_untracked_paths(root)}))
+    if residual_after_add != residual:
+        raise GitCommitPolicyError(
+            root=root,
+            reason="residual dirty paths after staging do not match the pre-operation residual set",
+            expected_paths=residual,
+            actual_paths=residual_after_add,
+        )
+
+    _git_commit(root, message)
+
+    post_snapshot = inspect_repository(root)
+    if post_snapshot.branch != expected_branch:
+        raise GitCommitPolicyError(
+            root=root,
+            reason=f"branch drifted to {post_snapshot.branch!r} after commit",
+        )
+    if post_snapshot.head_sha == expected_head_sha:
+        raise GitCommitPolicyError(
+            root=root,
+            reason="HEAD did not advance after commit",
+        )
+    if post_snapshot.dirty_paths != residual:
+        raise GitCommitPolicyError(
+            root=root,
+            reason="residual dirty paths after commit do not match the pre-operation residual set",
+            expected_paths=residual,
+            actual_paths=post_snapshot.dirty_paths,
+        )
+
+    parent_result = _run_git_text(
+        root,
+        ("rev-parse", "--verify", "HEAD^"),
+        check=True,
+    )
+    parent_sha = parent_result.stdout.strip()
+    if parent_sha != expected_head_sha:
+        raise GitCommitPolicyError(
+            root=root,
+            reason=(
+                f"new commit parent {parent_sha!r} does not match "
+                f"expected HEAD {expected_head_sha!r}"
+            ),
+        )
+
+    committed = _committed_paths(root)
+    if committed != approved:
+        raise GitCommitPolicyError(
+            root=root,
+            reason="commit contents do not equal approved paths",
+            expected_paths=approved,
+            actual_paths=committed,
+        )
+
+    if _staged_paths(root) != ():
+        raise GitCommitPolicyError(
+            root=root,
+            reason="index is not empty after commit",
+        )
+
+    return GitCommitResult(
+        root=root,
+        branch=expected_branch,
+        parent_sha=expected_head_sha,
+        commit_sha=post_snapshot.head_sha,
+        committed_paths=approved,
+    )
