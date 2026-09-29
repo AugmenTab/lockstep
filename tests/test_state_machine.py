@@ -102,7 +102,12 @@ EXPECTED_TRANSITIONS = {
             WorkflowState.HALTED,
         }
     ),
-    WorkflowState.HALTED: frozenset(),
+    WorkflowState.HALTED: frozenset(
+        {
+            WorkflowState.IMPLEMENTING,
+            WorkflowState.REVIEWING,
+        }
+    ),
     WorkflowState.COMPLETE: frozenset(),
 }
 
@@ -168,8 +173,17 @@ def test_invalid_transition_error_exposes_source_and_target() -> None:
     assert "implementing" in str(exc_info.value)
 
 
-def test_terminal_states_have_no_outgoing_transitions() -> None:
-    assert allowed_transitions(WorkflowState.HALTED) == frozenset()
+def test_halted_resume_reentry_edges_and_complete_terminality() -> None:
+    # Phase 9.13 supersedes the Phase-1.3 "HALTED is permanently terminal"
+    # invariant: HALTED may re-enter execution through exactly the two
+    # durable-resume edges Phase 9's claim/settlement protocol authorizes.
+    # COMPLETE remains the only fully terminal state.
+    assert allowed_transitions(WorkflowState.HALTED) == frozenset(
+        {
+            WorkflowState.IMPLEMENTING,
+            WorkflowState.REVIEWING,
+        }
+    )
     assert allowed_transitions(WorkflowState.COMPLETE) == frozenset()
 
 
