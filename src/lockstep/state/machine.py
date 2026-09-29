@@ -137,7 +137,12 @@ _TRANSITIONS: Mapping[WorkflowState, frozenset[WorkflowState]] = {
             WorkflowState.HALTED,
         }
     ),
-    WorkflowState.HALTED: frozenset(),
+    WorkflowState.HALTED: frozenset(
+        {
+            WorkflowState.IMPLEMENTING,
+            WorkflowState.REVIEWING,
+        }
+    ),
     WorkflowState.COMPLETE: frozenset(),
 }
 
