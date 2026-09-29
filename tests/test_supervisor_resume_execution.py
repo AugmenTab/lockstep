@@ -68,6 +68,7 @@ from lockstep.domain import (
     PhaseId,
     PhasePlan,
     ProjectId,
+    ReviewDecision,
     RunId,
     SubphaseContract,
     SubphaseId,
@@ -83,7 +84,6 @@ from lockstep.resume import resume_claim_path
 from lockstep.resume_settlement import (
     ResumeSettlement,
     ResumeSettlementOutcome,
-    finalize_resume_settlement,
     freeze_resume_settlement,
 )
 from lockstep.retry import RetryBudget
@@ -92,7 +92,6 @@ from lockstep.reviewer_turn import ReviewerTurnError
 from lockstep.runtime import AgentRuntime
 from lockstep.state import WorkflowState, allowed_transitions
 from lockstep.supervisor.transaction import (
-    ImplementerBlockedTransactionResult,
     ResumeExecutionDisposition,
     ResumeExecutionError,
     ResumeExecutionResult,
@@ -219,7 +218,7 @@ def _write_fake_claude_executable(
 
     observation_snippet = ""
     if observe_runtime_dir is not None:
-        observation_snippet = textwrap.dedent(
+        raw_snippet = textwrap.dedent(
             f"""
             runtime_dir = Path({str(observe_runtime_dir)!r})
             claim_path = runtime_dir / "retry" / "claim.json"
@@ -238,7 +237,13 @@ def _write_fake_claude_executable(
             }}
             (base / f"{name}-observed-{{index}}.json").write_text(json.dumps(observed))
             """
-        )
+        ).strip("\n")
+        # Re-indent to match the surrounding 8-space template context;
+        # otherwise this snippet's own column-0 lines would poison the
+        # single outer textwrap.dedent() call below (its common-prefix
+        # computation sees a 0-space line and strips nothing at all,
+        # corrupting the shebang line into a non-executable file).
+        observation_snippet = textwrap.indent(raw_snippet, "        ").lstrip(" ")
 
     script = textwrap.dedent(
         f"""\
@@ -865,6 +870,7 @@ def test_existing_claimed_restart_does_not_reclaim(tmp_path: Path) -> None:
             ),
             _implementer_completed_response({"feature.py": _IMPL_CORRECT}),
         ],
+        reviewer_responses=[_reviewer_turn_completed_response(attempt=2, verdict="approve")],
     )
     _halt_with_checkpoint(scenario, retry_budget=_budget(3))
 
@@ -902,6 +908,7 @@ def test_started_without_settlement_is_recovery_required_zero_inference(tmp_path
         ],
     )
     _halt_with_checkpoint(scenario, retry_budget=_budget(3))
+    baseline_invocations = _invocation_count(scenario.implementer_bin, "claude-implementer")
 
     from lockstep.resume import claim_retry_checkpoint, mark_resume_started
 
@@ -917,7 +924,7 @@ def test_started_without_settlement_is_recovery_required_zero_inference(tmp_path
     assert result.claim is not None
     assert result.claim.status.value == "started"
     assert result.settlement is None
-    assert _invocation_count(scenario.implementer_bin, "claude-implementer") == 0
+    assert _invocation_count(scenario.implementer_bin, "claude-implementer") == baseline_invocations
 
     persisted = read_state(scenario.request.runtime_dir / "state.json")
     assert persisted is not None
@@ -940,6 +947,7 @@ def test_started_with_completed_settlement_finalizes_only(tmp_path: Path) -> Non
         ],
     )
     _halt_with_checkpoint(scenario, retry_budget=_budget(3))
+    baseline_invocations = _invocation_count(scenario.implementer_bin, "claude-implementer")
 
     from lockstep.resume import claim_retry_checkpoint, mark_resume_started
 
@@ -958,7 +966,7 @@ def test_started_with_completed_settlement_finalizes_only(tmp_path: Path) -> Non
     assert result.disposition == ResumeExecutionDisposition.SETTLED
     assert result.settlement is not None
     assert result.settlement.outcome == ResumeSettlementOutcome.COMPLETED
-    assert _invocation_count(scenario.implementer_bin, "claude-implementer") == 0
+    assert _invocation_count(scenario.implementer_bin, "claude-implementer") == baseline_invocations
     assert not resume_claim_path(scenario.request.runtime_dir).exists()
 
 
@@ -980,10 +988,10 @@ def test_started_with_next_retry_settlement_finalizes_only(tmp_path: Path) -> No
             ),
         ],
     )
-    checkpointed = _halt_with_checkpoint(scenario, retry_budget=_budget(3))
+    _halt_with_checkpoint(scenario, retry_budget=_budget(3))
 
     from lockstep.resume import claim_retry_checkpoint, mark_resume_started
-    from lockstep.retry_checkpoint import create_retry_checkpoint_from_escalation
+    from lockstep.retry_checkpoint import create_retry_checkpoint_from_review
 
     inspection = claim_retry_checkpoint(scenario.request.runtime_dir)
     assert inspection.claim is not None
@@ -993,10 +1001,21 @@ def test_started_with_next_retry_settlement_finalizes_only(tmp_path: Path) -> No
     assert executed_attempt is not None
     next_budget = started_claim.checkpoint.budget
 
-    source_result = checkpointed.source_result
-    assert isinstance(source_result, ImplementerBlockedTransactionResult)
-    next_checkpoint = create_retry_checkpoint_from_escalation(
-        attempt_state=executed_attempt, budget=next_budget, result=source_result.escalation
+    # A synthetic, but structurally real, retry authority for the executed
+    # attempt (2) -- a REWORK verdict is the simplest way to construct a
+    # valid RetryCheckpoint chaining from `next_attempt_state`; the actual
+    # role invocation that would have produced it never happens here, since
+    # this test only exercises the settlement-recovery finalize-only path.
+    synthetic_rework = ReviewDecision(
+        schema_version=1,
+        phase_id=executed_attempt.phase_id,
+        subphase_id=executed_attempt.subphase_id,
+        attempt=executed_attempt.current_attempt,
+        verdict="rework",
+        summary="synthetic rework for settlement-recovery fixture",
+    )
+    next_checkpoint = create_retry_checkpoint_from_review(
+        attempt_state=executed_attempt, budget=next_budget, decision=synthetic_rework
     )
     assert next_checkpoint is not None
 
@@ -1006,7 +1025,11 @@ def test_started_with_next_retry_settlement_finalizes_only(tmp_path: Path) -> No
         outcome=ResumeSettlementOutcome.NEXT_RETRY,
         next_checkpoint=next_checkpoint,
     )
-    finalize_resume_settlement(scenario.request.runtime_dir, settlement)
+    # Freeze only -- simulating an interrupted finalization that recorded the
+    # settlement but never removed the STARTED claim. resume_single_subphase_
+    # transaction must complete exactly that finalization, idempotently, with
+    # zero role inference.
+    freeze_resume_settlement(scenario.request.runtime_dir, settlement)
 
     result = resume_single_subphase_transaction(
         scenario.request, agent_turn_runtime=scenario.runtime
@@ -1016,6 +1039,8 @@ def test_started_with_next_retry_settlement_finalizes_only(tmp_path: Path) -> No
     assert result.settlement is not None
     assert result.settlement.outcome == ResumeSettlementOutcome.NEXT_RETRY
     assert _invocation_count(scenario.implementer_bin, "claude-implementer") == 1
+    assert not resume_claim_path(scenario.request.runtime_dir).exists()
+    assert load_retry_checkpoint(scenario.request.runtime_dir) == next_checkpoint
 
 
 # ===========================================================================
@@ -1163,6 +1188,7 @@ def test_implementer_bounded_change_is_executable(tmp_path: Path) -> None:
             ),
             _implementer_completed_response({"feature.py": _IMPL_CORRECT}),
         ],
+        reviewer_responses=[_reviewer_turn_completed_response(attempt=2, verdict="approve")],
     )
     _halt_with_checkpoint(scenario, retry_budget=_budget(3))
 
@@ -1290,6 +1316,7 @@ def test_implementer_frozen_correction_is_executable(tmp_path: Path) -> None:
                 }
             ),
         ],
+        reviewer_responses=[_reviewer_turn_completed_response(attempt=2, verdict="approve")],
     )
     _halt_with_checkpoint(scenario, retry_budget=_budget(3))
 
@@ -1324,6 +1351,7 @@ def test_mark_started_and_transition_persisted_before_agent_launch(tmp_path: Pat
             ),
             _implementer_completed_response({"feature.py": _IMPL_CORRECT}),
         ],
+        reviewer_responses=[_reviewer_turn_completed_response(attempt=2, verdict="approve")],
         observe_implementer_runtime_dir=runtime_dir,
     )
     assert scenario.request.runtime_dir == runtime_dir
@@ -1392,6 +1420,7 @@ def test_at_most_one_invocation_per_resume_call(tmp_path: Path) -> None:
             ),
             _implementer_completed_response({"feature.py": _IMPL_CORRECT}),
         ],
+        reviewer_responses=[_reviewer_turn_completed_response(attempt=2, verdict="approve")],
     )
     _halt_with_checkpoint(scenario, retry_budget=_budget(3))
 
@@ -1422,6 +1451,7 @@ def test_concurrent_second_caller_gets_recovery_required(
             ),
             _implementer_completed_response({"feature.py": _IMPL_CORRECT}),
         ],
+        reviewer_responses=[_reviewer_turn_completed_response(attempt=2, verdict="approve")],
     )
     _halt_with_checkpoint(scenario, retry_budget=_budget(3))
 
@@ -1819,8 +1849,8 @@ def test_two_call_attempt_chain_2_then_3(tmp_path: Path) -> None:
             _reviewer_turn_completed_response(attempt=3, verdict="approve"),
         ],
         implementer_responses=[
-            _implementer_completed_response({"feature.py": "def answer():\n    return 1\n"}),
-            _implementer_completed_response({"feature.py": "def answer():\n    return 2\n"}),
+            _implementer_completed_response({"feature.py": _IMPL_CORRECT}),
+            _implementer_completed_response({"feature.py": _IMPL_CORRECT}),
             _implementer_completed_response({"feature.py": _IMPL_CORRECT}),
         ],
     )
@@ -1874,8 +1904,8 @@ def test_exhausted_chain_no_further_launch(tmp_path: Path) -> None:
             _reviewer_turn_completed_response(attempt=2, verdict="rework", summary="round 2"),
         ],
         implementer_responses=[
-            _implementer_completed_response({"feature.py": "def answer():\n    return 1\n"}),
-            _implementer_completed_response({"feature.py": "def answer():\n    return 2\n"}),
+            _implementer_completed_response({"feature.py": _IMPL_CORRECT}),
+            _implementer_completed_response({"feature.py": _IMPL_CORRECT}),
         ],
     )
     _halt_with_checkpoint(scenario, retry_budget=_budget(2))
