@@ -250,20 +250,20 @@ def _require_stored_claim(path: Path) -> ResumeClaim:
 
 
 def _write_new_claim_exclusive(path: Path, payload: bytes) -> None:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    # Written fully (and fsynced) to a private temp file first, then published
+    # via an atomic hard link, so a concurrent racing reader can never observe
+    # a claim file that exists but is still empty or partially written.
+    temp_path = path.parent / f".{path.name}.{os.urandom(8).hex()}.newclaim.tmp"
+    fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-    except OSError:
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
-        except OSError:
-            pass
-        raise
+        os.link(temp_path, path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temp_path.unlink()
 
 
 def _create_claim_exclusively(path: Path, payload: bytes) -> bool:
