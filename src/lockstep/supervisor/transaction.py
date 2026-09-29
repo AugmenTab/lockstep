@@ -400,6 +400,36 @@ def _agent_request(
     )
 
 
+def _verification_cache_root(request: SingleSubphaseTransactionRequest) -> Path:
+    return request.worktree_path.parent / f".lockstep-pycache-{request.run_id.root}"
+
+
+def _verification_env_for(
+    base_env: Mapping[str, str],
+    *,
+    cache_root: Path,
+    purpose: str,
+    attempt: AttemptNumber | None = None,
+) -> Mapping[str, str]:
+    """Build a verification environment with its own private bytecode-cache namespace.
+
+    Python validates cached bytecode by source path, encoded size, and
+    integer-second mtime, so a cache populated for one worktree state can be
+    read back as valid for a different state that happens to share all
+    three. Each logically distinct verification (baseline, and each attempt's
+    post-Implementer verification) therefore gets its own
+    ``PYTHONPYCACHEPREFIX`` beneath *cache_root*, derived only from the
+    authoritative execution identity *purpose* and *attempt* -- never a
+    clock, counter, PID, or random value.
+    """
+    namespace = purpose if attempt is None else f"{purpose}-attempt-{attempt.root}"
+    pycache_dir = cache_root / namespace
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    return build_process_environment(
+        base_env, explicit_env={"PYTHONPYCACHEPREFIX": str(pycache_dir)}
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _PreparedTransaction:
     """Internal seam: the shared, provider-neutral transaction prefix state."""
@@ -408,6 +438,7 @@ class _PreparedTransaction:
     state_path: Path
     worktree_root: Path
     source_head_sha: str
+    parent_env: Mapping[str, str]
     verification_env: Mapping[str, str]
 
 
@@ -445,13 +476,14 @@ def _prepare_transaction(
     # A supervisor-owned bytecode cache prefix keeps Python's automatic
     # ``__pycache__`` writes (from py_compile and pytest imports) outside
     # the run worktree so ``commit_exact_paths`` can compare dirty paths
-    # against the approved set without spurious ``.pyc`` matches.
-    pycache_dir = request.worktree_path.parent / f".lockstep-pycache-{request.run_id.root}"
-    pycache_dir.mkdir(parents=True, exist_ok=True)
-    verification_explicit_env = {"PYTHONPYCACHEPREFIX": str(pycache_dir)}
-    verification_env = build_process_environment(
+    # against the approved set without spurious ``.pyc`` matches. The
+    # planner-quality and baseline commands observe the same immutable
+    # worktree snapshot and share one namespace; post-Implementer
+    # verification gets its own (see ``_verify_after_implementer``).
+    verification_env = _verification_env_for(
         parent_env,
-        explicit_env=verification_explicit_env,
+        cache_root=_verification_cache_root(request),
+        purpose="baseline",
     )
 
     return _PreparedTransaction(
@@ -459,6 +491,7 @@ def _prepare_transaction(
         state_path=state_path,
         worktree_root=worktree_root,
         source_head_sha=source_head_sha,
+        parent_env=parent_env,
         verification_env=verification_env,
     )
 
@@ -618,7 +651,12 @@ def _verify_after_implementer(
     verification_result = run_process(
         request.verification_argv,
         cwd=ctx.worktree_root,
-        env=ctx.verification_env,
+        env=_verification_env_for(
+            ctx.parent_env,
+            cache_root=_verification_cache_root(request),
+            purpose="verify",
+            attempt=_TRANSACTION_ATTEMPT,
+        ),
         timeout_seconds=request.command_timeout_seconds,
         max_output_bytes=request.max_output_bytes,
         termination_grace_seconds=request.termination_grace_seconds,
@@ -1331,11 +1369,13 @@ def _sorted_implementation_paths(request: SingleSubphaseTransactionRequest) -> t
 def _resume_verification_env(
     request: SingleSubphaseTransactionRequest,
     parent_env: Mapping[str, str],
+    attempt: AttemptNumber,
 ) -> Mapping[str, str]:
-    pycache_dir = request.worktree_path.parent / f".lockstep-pycache-{request.run_id.root}"
-    pycache_dir.mkdir(parents=True, exist_ok=True)
-    return build_process_environment(
-        parent_env, explicit_env={"PYTHONPYCACHEPREFIX": str(pycache_dir)}
+    return _verification_env_for(
+        parent_env,
+        cache_root=_verification_cache_root(request),
+        purpose="verify",
+        attempt=attempt,
     )
 
 
@@ -1842,6 +1882,7 @@ def _invoke_and_handle_resumed_reviewer(
 def _resume_run_verification(
     request: SingleSubphaseTransactionRequest,
     parent_env: Mapping[str, str],
+    attempt: AttemptNumber,
     expected_impl_paths: tuple[str, ...],
     journal_path: Path,
     state_path: Path,
@@ -1865,7 +1906,7 @@ def _resume_run_verification(
         state_path=state_path,
     )
 
-    verification_env = _resume_verification_env(request, parent_env)
+    verification_env = _resume_verification_env(request, parent_env, attempt)
     verification_result = run_process(
         request.verification_argv,
         cwd=request.worktree_path,
@@ -1959,6 +2000,7 @@ def _resume_implementer(
         _resume_run_verification(
             request,
             agent_turn_runtime.transaction_parent_env,
+            executed_attempt.current_attempt,
             expected_impl_paths,
             journal_path,
             state_path,
