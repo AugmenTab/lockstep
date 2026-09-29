@@ -400,6 +400,34 @@ def _agent_request(
     )
 
 
+_REVIEWER_IDENTITY_HEADER = (
+    "\n\n---\nReviewer identity (host-supplied, deterministic; "
+    "the ReviewDecision must copy these values exactly):\n"
+)
+
+
+def _reviewer_prompt_with_host_identity(
+    prompt: str,
+    *,
+    phase_id: PhaseId,
+    subphase_id: SubphaseId,
+    attempt: AttemptNumber,
+) -> str:
+    """Append the host-owned Reviewer identity section after all caller/resume prose.
+
+    The single composition point for every Reviewer invocation path, so the
+    identity later validated against the returned ``ReviewDecision`` is
+    always supplied by the Supervisor rather than inferred from prose.
+    """
+    payload = {
+        "phase_id": phase_id.root,
+        "subphase_id": subphase_id.root,
+        "attempt": attempt.root,
+        "role": AgentRole.REVIEWER.value,
+    }
+    return prompt + _REVIEWER_IDENTITY_HEADER + _deterministic_json(payload) + "\n"
+
+
 def _verification_cache_root(request: SingleSubphaseTransactionRequest) -> Path:
     return request.worktree_path.parent / f".lockstep-pycache-{request.run_id.root}"
 
@@ -777,7 +805,12 @@ def _complete_after_implementer_success(
         reviewer_adapter,
         _agent_request(
             role=AgentRole.REVIEWER,
-            prompt=request.reviewer_prompt,
+            prompt=_reviewer_prompt_with_host_identity(
+                request.reviewer_prompt,
+                phase_id=request.phase_id,
+                subphase_id=request.subphase_id,
+                attempt=_TRANSACTION_ATTEMPT,
+            ),
             request=request,
             cwd=ctx.worktree_root,
         ),
@@ -888,7 +921,12 @@ def _complete_after_implementer_success_with_reviewer_turn(
         phase_id=request.phase_id,
         subphase_id=request.subphase_id,
         attempt=_TRANSACTION_ATTEMPT,
-        prompt=request.reviewer_prompt,
+        prompt=_reviewer_prompt_with_host_identity(
+            request.reviewer_prompt,
+            phase_id=request.phase_id,
+            subphase_id=request.subphase_id,
+            attempt=_TRANSACTION_ATTEMPT,
+        ),
         cwd=ctx.worktree_root,
         timeout_seconds=request.agent_timeout_seconds,
         max_output_bytes=request.max_output_bytes,
@@ -1831,7 +1869,12 @@ def _invoke_and_handle_resumed_reviewer(
             phase_id=request.phase_id,
             subphase_id=request.subphase_id,
             attempt=executed_attempt.current_attempt,
-            prompt=prompt,
+            prompt=_reviewer_prompt_with_host_identity(
+                prompt,
+                phase_id=executed_attempt.phase_id,
+                subphase_id=executed_attempt.subphase_id,
+                attempt=executed_attempt.current_attempt,
+            ),
             cwd=request.worktree_path,
             timeout_seconds=request.agent_timeout_seconds,
             max_output_bytes=request.max_output_bytes,
