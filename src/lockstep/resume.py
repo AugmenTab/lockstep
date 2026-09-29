@@ -48,7 +48,12 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from lockstep.retry import RetryBudgetDisposition
-from lockstep.retry_checkpoint import RetryCheckpoint, load_retry_checkpoint, retry_checkpoint_path
+from lockstep.retry_checkpoint import (
+    RetryCheckpoint,
+    RetryCheckpointStoreError,
+    load_retry_checkpoint,
+    retry_checkpoint_path,
+)
 
 _RETRY_SUBDIR_NAME = "retry"
 _CLAIM_JSON_NAME = "claim.json"
@@ -395,24 +400,78 @@ def _finish_claim_transfer(runtime_dir: Path, claim: ResumeClaim) -> ResumeInspe
     _reject_symlink(checkpoint_path, "retry checkpoint")
 
     if checkpoint_path.exists():
-        existing_checkpoint = load_retry_checkpoint(runtime_dir)
-        if existing_checkpoint != claim.checkpoint:
-            raise ResumeStoreError("resume claim and retry checkpoint disagree")
-
         try:
-            _remove_transferred_checkpoint(checkpoint_path)
-        except OSError as exc:
-            raise ResumeStoreError(
-                "cannot remove transferred retry checkpoint", path=checkpoint_path
-            ) from exc
+            existing_checkpoint = load_retry_checkpoint(runtime_dir)
+        except RetryCheckpointStoreError:
+            # The checkpoint existed a moment ago but is now unreadable --
+            # most plausibly because another legitimate finisher's removal
+            # raced with this read. checkpoint.json stops being the
+            # authority the instant a matching claim is durable; the
+            # revalidation below re-derives truth from claim.json itself
+            # rather than from this file's now-ambiguous state.
+            existing_checkpoint = None
 
-        try:
-            _fsync_directory(retry_dir)
-        except OSError as exc:
-            raise ResumeStoreError("cannot fsync retry directory", path=retry_dir) from exc
+        if existing_checkpoint is not None:
+            if existing_checkpoint != claim.checkpoint:
+                raise ResumeStoreError("resume claim and retry checkpoint disagree")
+
+            try:
+                _remove_transferred_checkpoint(checkpoint_path)
+            except OSError as exc:
+                raise ResumeStoreError(
+                    "cannot remove transferred retry checkpoint", path=checkpoint_path
+                ) from exc
+
+            try:
+                _fsync_directory(retry_dir)
+            except OSError as exc:
+                raise ResumeStoreError("cannot fsync retry directory", path=retry_dir) from exc
+
+            return ResumeInspection(
+                disposition=ResumeDisposition.CLAIMED, checkpoint=claim.checkpoint, claim=claim
+            )
+
+        # The checkpoint was observed present a moment ago but is now gone
+        # (or unreadable): another legitimate finisher completed this exact
+        # transfer in the window between our existence check and our read.
+        # Fall through to the same durable-claim revalidation used when the
+        # checkpoint was never observed at all, rather than concluding
+        # disagreement from a filesystem race.
+
+    return _converge_completed_transfer(runtime_dir, claim)
+
+
+def _converge_completed_transfer(runtime_dir: Path, claim: ResumeClaim) -> ResumeInspection:
+    """Revalidate a transfer another legitimate finisher may have already completed.
+
+    Reached only once the matching ``retry/checkpoint.json`` is absent --
+    either it was never observed, or it disappeared between this caller's
+    existence check and its load. Absence alone is never blanket success:
+    the currently stored ``claim.json`` is re-read and its checkpoint
+    digest compared against *claim*'s. A genuine mismatch (different
+    authority, attempt, target role, or a corrupt/missing claim) still
+    fails closed. A matching digest proves the exact same transfer already
+    completed, and the stored claim's current status -- not *claim*'s,
+    which may be stale -- is reported, so a claim that has since legally
+    advanced to :attr:`ResumeClaimStatus.STARTED` is never reported, or
+    rewritten, back down to :attr:`ResumeClaimStatus.CLAIMED`.
+    """
+
+    stored_claim = _require_stored_claim(resume_claim_path(runtime_dir))
+    if stored_claim.checkpoint_digest != claim.checkpoint_digest:
+        raise ResumeStoreError("resume claim and retry checkpoint disagree")
+
+    if stored_claim.status == ResumeClaimStatus.STARTED:
+        return ResumeInspection(
+            disposition=ResumeDisposition.STARTED_RECOVERY_REQUIRED,
+            checkpoint=stored_claim.checkpoint,
+            claim=stored_claim,
+        )
 
     return ResumeInspection(
-        disposition=ResumeDisposition.CLAIMED, checkpoint=claim.checkpoint, claim=claim
+        disposition=ResumeDisposition.CLAIMED,
+        checkpoint=stored_claim.checkpoint,
+        claim=stored_claim,
     )
 
 
