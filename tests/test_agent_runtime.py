@@ -262,7 +262,7 @@ def _write_fake_codex(
             sys.stdout.write(config["doctor_stdout"])
             raise SystemExit(int(config["doctor_returncode"]))
         if args and args[0] == "exec":
-            payload = json.loads(sys.stdin.read())
+            payload, _ = json.JSONDecoder().raw_decode(sys.stdin.read().lstrip())
             action = payload["action"]
             if action == "write_files":
                 for rel_path, content in payload["files"].items():
