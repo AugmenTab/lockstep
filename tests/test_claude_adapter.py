@@ -214,7 +214,7 @@ def _expected_argv(
         "--effort",
         effort,
         "--output-format",
-        "text",
+        "json",
         "--tools",
         tools,
         "--allowedTools",
@@ -879,7 +879,7 @@ def test_every_role_carries_mandatory_base_flags(tmp_path: Path, role: AgentRole
     assert _flag_value(argv, "--permission-prompts") == "none"
     assert _flag_value(argv, "--model") == "configured-model"
     assert _flag_value(argv, "--effort") == "configured-effort"
-    assert _flag_value(argv, "--output-format") == "text"
+    assert _flag_value(argv, "--output-format") == "json"
     assert _flag_value(argv, "--disallowedTools") == "mcp__*"
     assert command.inherit_names == ()
     assert command.required_names == ("HOME", "PATH")
@@ -1023,14 +1023,14 @@ def test_reviewer_stdout_parses_directly_as_review_decision(tmp_path: Path) -> N
     assert result.process.returncode == 0
     restored = ReviewDecision.model_validate_json(result.process.stdout)
     assert restored == decision
-    assert _flag_value(result.process.argv, "--output-format") == "text"
+    assert _flag_value(result.process.argv, "--output-format") == "json"
 
     records = _read_recorded(executable)
     assert len(records) == 1
     recorded_argv = records[0]["argv"]
     assert isinstance(recorded_argv, list)
     assert "--output-format" in recorded_argv
-    assert recorded_argv[recorded_argv.index("--output-format") + 1] == "text"
+    assert recorded_argv[recorded_argv.index("--output-format") + 1] == "json"
 
 
 # ---------------------------------------------------------------------------

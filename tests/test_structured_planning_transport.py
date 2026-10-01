@@ -537,7 +537,7 @@ def test_claude_structured_command_shape_and_capabilities(tmp_path: Path) -> Non
     perm_index = argv.index("--permission-prompts")
     assert argv[perm_index + 1] == "none"
     fmt_index = argv.index("--output-format")
-    assert argv[fmt_index + 1] == "text"
+    assert argv[fmt_index + 1] == "json"
     model_index = argv.index("--model")
     assert argv[model_index + 1] == "planner-model-x"
     effort_index = argv.index("--effort")
@@ -640,7 +640,7 @@ def test_codex_structured_command_shape_and_capabilities(tmp_path: Path) -> None
     sandbox_index = argv.index("--sandbox")
     assert argv[sandbox_index + 1] == "read-only"
     assert argv[-1] == "-"
-    assert "--json" not in argv
+    assert "--json" in argv
     assert "workspace-write" not in argv
 
     schema_index = argv.index("--output-schema")

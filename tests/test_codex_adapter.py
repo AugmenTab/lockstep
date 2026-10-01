@@ -33,7 +33,6 @@ _FORBIDDEN_FLAGS: tuple[str, ...] = (
     "--dangerously-bypass-approvals-and-sandbox",
     "--worktree",
     "--skip-git-repo-check",
-    "--json",
     "--ask-for-approval",
     "-a",
     "-C",
@@ -310,6 +309,7 @@ def test_planner_command_argv_matches_deterministic_sequence(tmp_path: Path) -> 
         "--ephemeral",
         "--ignore-user-config",
         "--ignore-rules",
+        "--json",
         "--color",
         "never",
         "--sandbox",
@@ -356,6 +356,7 @@ def test_implementer_command_matches_planner_shape_with_workspace_write(
         "--ephemeral",
         "--ignore-user-config",
         "--ignore-rules",
+        "--json",
         "--color",
         "never",
         "--sandbox",
@@ -819,7 +820,7 @@ def test_reviewer_stdout_parses_directly_as_review_decision(tmp_path: Path) -> N
     assert result.process.returncode == 0
     restored = ReviewDecision.model_validate_json(result.process.stdout)
     assert restored == decision
-    assert "--json" not in result.process.argv
+    assert "--json" in result.process.argv
 
 
 # ---------------------------------------------------------------------------
