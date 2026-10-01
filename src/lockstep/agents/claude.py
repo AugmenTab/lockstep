@@ -23,10 +23,17 @@ from pathlib import Path
 from types import MappingProxyType
 
 from lockstep.agents.invocation import (
+    AdapterOutput,
     AgentCommand,
     AgentInvocationRequest,
 )
-from lockstep.domain import AgentRole, BillingMode, ReviewDecision
+from lockstep.domain import (
+    AgentRole,
+    BillingMode,
+    ProviderTelemetry,
+    ReviewDecision,
+    reported_count,
+)
 from lockstep.process import (
     ProcessResult,
     build_process_environment,
@@ -450,6 +457,66 @@ def _canonical_review_schema_json() -> str:
     )
 
 
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _parse_result_envelope(stdout: str) -> AdapterOutput:
+    """Read a ``claude -p --output-format json`` result envelope.
+
+    The envelope's ``result`` string is the content orchestrators consume (for
+    ``--json-schema`` runs it is the canonical artifact JSON). Telemetry is read
+    only from fields Claude reports: ``usage`` token counts, the single model
+    key of ``modelUsage`` and ``session_id``. ``input_tokens`` is derived only
+    as the exact sum of Claude's three disjoint input categories, and only when
+    all three are reported. The envelope's monetary fields are list-price
+    figures, not what a subscription is billed, and are deliberately never
+    read. Anything that is not a result envelope passes through unchanged with
+    all telemetry unavailable; this function never raises.
+    """
+    passthrough = AdapterOutput(content=stdout)
+    try:
+        envelope = json.loads(stdout)
+    except (ValueError, RecursionError):
+        return passthrough
+    if not isinstance(envelope, dict) or envelope.get("type") != "result":
+        return passthrough
+
+    result = envelope.get("result")
+    content = result if isinstance(result, str) else stdout
+
+    usage = envelope.get("usage")
+    counts = usage if isinstance(usage, dict) else {}
+    uncached = reported_count(counts.get("input_tokens"))
+    cache_read = reported_count(counts.get("cache_read_input_tokens"))
+    cache_write = reported_count(counts.get("cache_creation_input_tokens"))
+    total_input = (
+        uncached + cache_read + cache_write
+        if uncached is not None and cache_read is not None and cache_write is not None
+        else None
+    )
+
+    model_usage = envelope.get("modelUsage")
+    reported_model = (
+        _optional_str(next(iter(model_usage)))
+        if isinstance(model_usage, dict) and len(model_usage) == 1
+        else None
+    )
+
+    return AdapterOutput(
+        content=content,
+        telemetry=ProviderTelemetry(
+            reported_model=reported_model,
+            provider_session_id=_optional_str(envelope.get("session_id")),
+            input_tokens=total_input,
+            uncached_input_tokens=uncached,
+            cache_read_tokens=cache_read,
+            cache_write_tokens=cache_write,
+            output_tokens=reported_count(counts.get("output_tokens")),
+        ),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ClaudeAdapter:
     """Subscription-backed Claude Code print-mode command builder.
@@ -462,13 +529,15 @@ class ClaudeAdapter:
     plus the adapter's CLI capability surface (``--safe-mode`` and
     ``--allowedTools`` included; ``--bare`` never). Every command pins
     the configured model and effort, runs in safe, restricted,
-    non-persistent print mode with permission prompts disabled and text
-    output, exposes an explicit role-specific tool list, and denies MCP
-    tools. The Reviewer additionally receives the canonical
-    :class:`ReviewDecision` JSON Schema inline so its stdout is the raw
-    canonical artifact. The prompt is transported only through
-    :attr:`AgentCommand.stdin_text`. Construction and ``build_command``
-    perform no process, filesystem, or network work.
+    non-persistent print mode with permission prompts disabled and JSON
+    result-envelope output, exposes an explicit role-specific tool list, and
+    denies MCP tools. :meth:`normalize_output` unwraps that envelope so
+    orchestrators see only the content (and usage is attributed from it). The
+    Reviewer additionally receives the canonical :class:`ReviewDecision` JSON
+    Schema inline so its envelope ``result`` is the raw canonical artifact.
+    The prompt is transported only through :attr:`AgentCommand.stdin_text`.
+    Construction and ``build_command`` perform no process, filesystem, or
+    network work.
     """
 
     role: AgentRole
@@ -480,6 +549,18 @@ class ClaudeAdapter:
     @property
     def name(self) -> str:
         return "claude"
+
+    @property
+    def configured_model(self) -> str:
+        return self.model
+
+    @property
+    def configured_effort(self) -> str:
+        return self.effort
+
+    def normalize_output(self, process: ProcessResult) -> AdapterOutput:
+        """Unwrap the print-mode JSON result envelope into content plus telemetry."""
+        return _parse_result_envelope(process.stdout)
 
     def __post_init__(self) -> None:
         if self.role not in _SUPPORTED_ADAPTER_ROLES:
@@ -529,7 +610,7 @@ class ClaudeAdapter:
             "--effort",
             self.effort,
             "--output-format",
-            "text",
+            "json",
             "--tools",
             tools,
             "--allowedTools",

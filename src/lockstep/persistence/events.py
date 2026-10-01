@@ -29,6 +29,7 @@ from lockstep.domain import (
     ExecutionOutcome,
     InvocationId,
     InvocationStage,
+    InvocationUsage,
     PhaseId,
     ProjectId,
     ReviewVerdict,
@@ -146,9 +147,12 @@ class ExecutionEvent(_EventBase):
     verdict: ReviewVerdict | None = None
     stop_reason: StopReason | None = None
     detail: _NonBlankStr | None = None
+    usage: InvocationUsage | None = None
 
     @model_validator(mode="after")
     def _require_identity_for_invocation_kinds(self) -> Self:
+        if self.usage is not None and self.kind is not ExecutionEventKind.INVOCATION_RETURNED:
+            raise ValueError("usage is only valid on invocation_returned")
         if self.kind in _INVOCATION_KINDS:
             missing = [
                 name

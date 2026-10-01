@@ -31,10 +31,12 @@ from lockstep.agents.diagnostics import (
     diagnose_agent_providers,
 )
 from lockstep.agents.invocation import (
+    AdapterOutput,
     AgentAdapter,
     AgentCommand,
     AgentInvocationRequest,
     AgentInvocationResult,
+    UsageReportingAdapter,
     invoke_agent,
     record_invocation_returned,
 )
@@ -64,6 +66,7 @@ from lockstep.agents.structured_output import (
 )
 
 __all__ = [
+    "AdapterOutput",
     "AgentAdapter",
     "AgentAdapterResolutionError",
     "AgentCommand",
@@ -89,6 +92,7 @@ __all__ = [
     "ResolvedAgentAdapters",
     "RoleOutputAdapterError",
     "StructuredOutputAdapterError",
+    "UsageReportingAdapter",
     "diagnose_agent_providers",
     "invoke_agent",
     "materialize_codex_review_schema",

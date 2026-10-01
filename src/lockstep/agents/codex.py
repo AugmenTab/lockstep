@@ -21,10 +21,11 @@ from pathlib import Path
 from types import MappingProxyType
 
 from lockstep.agents.invocation import (
+    AdapterOutput,
     AgentCommand,
     AgentInvocationRequest,
 )
-from lockstep.domain import AgentRole, BillingMode
+from lockstep.domain import AgentRole, BillingMode, ProviderTelemetry, reported_count
 from lockstep.process import (
     ProcessResult,
     build_process_environment,
@@ -426,6 +427,73 @@ def _require_nonblank_config(*, field: str, value: str) -> str:
     return value
 
 
+def _parse_jsonl_events(stdout: str) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    for line in stdout.splitlines():
+        try:
+            parsed = json.loads(line)
+        except (ValueError, RecursionError):
+            continue  # tail-bounded capture may cut the stream head mid-line
+        if isinstance(parsed, dict):
+            events.append(parsed)
+    return events
+
+
+def _parse_exec_jsonl(stdout: str) -> AdapterOutput:
+    """Read ``codex exec --json`` JSONL events.
+
+    The final message is the text of the last ``agent_message`` item. Telemetry
+    is read from the last ``turn.completed`` ``usage`` and the ``thread.started``
+    thread id; the CLI does not report the model, so it stays unavailable.
+    Codex's ``input_tokens`` already includes its cached subset, so it is the
+    total input and ``uncached_input_tokens`` is derived as the exact
+    difference -- only when both are reported and the cached count does not
+    exceed the total. Output that is not Codex JSONL passes through unchanged
+    with all telemetry unavailable; this function never raises.
+    """
+    events = _parse_jsonl_events(stdout)
+    if not events or not any(isinstance(e.get("type"), str) for e in events):
+        return AdapterOutput(content=stdout)
+
+    content = ""
+    session_id: str | None = None
+    usage: dict[str, object] = {}
+    for event in events:
+        kind = event.get("type")
+        if kind == "thread.started":
+            thread_id = event.get("thread_id")
+            session_id = thread_id if isinstance(thread_id, str) and thread_id else session_id
+        elif kind == "item.completed":
+            item = event.get("item")
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                text = item.get("text")
+                if isinstance(text, str):
+                    content = text
+        elif kind == "turn.completed":
+            reported = event.get("usage")
+            if isinstance(reported, dict):
+                usage = reported
+
+    total_input = reported_count(usage.get("input_tokens"))
+    cached = reported_count(usage.get("cached_input_tokens"))
+    uncached = (
+        total_input - cached
+        if total_input is not None and cached is not None and cached <= total_input
+        else None
+    )
+    return AdapterOutput(
+        content=content,
+        telemetry=ProviderTelemetry(
+            provider_session_id=session_id,
+            input_tokens=total_input,
+            uncached_input_tokens=uncached,
+            cache_read_tokens=cached,
+            cache_write_tokens=reported_count(usage.get("cache_write_input_tokens")),
+            output_tokens=reported_count(usage.get("output_tokens")),
+        ),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CodexAdapter:
     """Subscription-backed Codex ``exec`` command builder.
@@ -453,6 +521,18 @@ class CodexAdapter:
     @property
     def name(self) -> str:
         return "codex"
+
+    @property
+    def configured_model(self) -> str:
+        return self.model
+
+    @property
+    def configured_effort(self) -> str:
+        return self.reasoning_effort
+
+    def normalize_output(self, process: ProcessResult) -> AdapterOutput:
+        """Reduce ``exec --json`` JSONL events to the final message plus telemetry."""
+        return _parse_exec_jsonl(process.stdout)
 
     def __post_init__(self) -> None:
         if self.role not in _SUPPORTED_ADAPTER_ROLES:
@@ -526,6 +606,7 @@ class CodexAdapter:
             "--ephemeral",
             "--ignore-user-config",
             "--ignore-rules",
+            "--json",
             "--color",
             "never",
             "--sandbox",

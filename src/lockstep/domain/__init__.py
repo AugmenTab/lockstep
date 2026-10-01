@@ -28,6 +28,7 @@ from lockstep.domain.enums import (
     ExecutionEventKind,
     ExecutionOutcome,
     InvocationStage,
+    ProcessTermination,
     QuotaStatus,
     ReviewVerdict,
     RunStatus,
@@ -44,6 +45,7 @@ from lockstep.domain.identifiers import (
     SubphaseId,
 )
 from lockstep.domain.invocation import InvocationIdentity
+from lockstep.domain.usage import InvocationUsage, ProviderTelemetry, reported_count
 
 __all__ = [
     "AcceptanceCriterion",
@@ -57,10 +59,13 @@ __all__ = [
     "InvocationId",
     "InvocationIdentity",
     "InvocationStage",
+    "InvocationUsage",
     "MasterPlan",
     "PhaseId",
     "PhasePlan",
+    "ProcessTermination",
     "ProjectId",
+    "ProviderTelemetry",
     "QuotaStatus",
     "ReviewDecision",
     "ReviewFinding",
@@ -76,4 +81,5 @@ __all__ = [
     "TestSpecification",
     "VerificationFinding",
     "VerificationReport",
+    "reported_count",
 ]

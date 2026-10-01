@@ -12,7 +12,7 @@ adapter output.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol, runtime_checkable
@@ -23,10 +23,14 @@ from lockstep.domain import (
     ExecutionEventKind,
     ExecutionOutcome,
     InvocationIdentity,
+    InvocationUsage,
+    ProcessTermination,
+    ProviderTelemetry,
 )
 from lockstep.persistence import record_execution_event
 from lockstep.process import (
     ProcessResult,
+    ProcessTimeoutError,
     build_process_environment,
     run_process,
 )
@@ -105,6 +109,38 @@ class AgentAdapter(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class AdapterOutput:
+    """A provider adapter's reading of one process's raw output.
+
+    ``content`` is what orchestrators consume in place of the raw stdout (the
+    provider's structured wrapper removed); ``telemetry`` is whatever the
+    provider reported, with everything it did not report left unavailable.
+    """
+
+    content: str
+    telemetry: ProviderTelemetry = field(default_factory=ProviderTelemetry)
+
+
+@runtime_checkable
+class UsageReportingAdapter(Protocol):
+    """Optional adapter capability: host routing identity plus output normalization.
+
+    Provider-specific response shapes are parsed only behind
+    :meth:`normalize_output`; the orchestration layer sees just
+    :class:`AdapterOutput`. An adapter without this capability still gets
+    host-known attribution, with all provider telemetry unavailable.
+    """
+
+    @property
+    def configured_model(self) -> str: ...
+
+    @property
+    def configured_effort(self) -> str: ...
+
+    def normalize_output(self, process: ProcessResult) -> AdapterOutput: ...
+
+
+@dataclass(frozen=True, slots=True)
 class AgentInvocationResult:
     """Immutable record of a completed agent invocation."""
 
@@ -113,6 +149,7 @@ class AgentInvocationResult:
     billing_mode: BillingMode
     process: ProcessResult
     identity: InvocationIdentity | None = None
+    usage: InvocationUsage | None = None
 
 
 def record_invocation_returned(
@@ -121,6 +158,7 @@ def record_invocation_returned(
     *,
     outcome: ExecutionOutcome,
     returncode: int | None = None,
+    usage: InvocationUsage | None = None,
 ) -> None:
     """Record the classified return of one identified invocation (no-op without both)."""
     if runtime_dir is None or identity is None:
@@ -131,6 +169,33 @@ def record_invocation_returned(
         outcome=outcome,
         identity=identity,
         returncode=returncode,
+        usage=usage,
+    )
+
+
+def _build_usage(
+    adapter: AgentAdapter,
+    *,
+    process: ProcessResult | ProcessTimeoutError,
+    termination: ProcessTermination,
+    exit_code: int | None,
+    telemetry: ProviderTelemetry,
+) -> InvocationUsage:
+    configured_model: str | None = None
+    configured_effort: str | None = None
+    if isinstance(adapter, UsageReportingAdapter):
+        configured_model = adapter.configured_model
+        configured_effort = adapter.configured_effort
+    return InvocationUsage(
+        provider=adapter.name,
+        configured_model=configured_model,
+        configured_effort=configured_effort,
+        started_at=process.started_at,
+        completed_at=process.completed_at,
+        elapsed_seconds=process.elapsed_seconds,
+        termination=termination,
+        exit_code=exit_code,
+        reported=telemetry,
     )
 
 
@@ -164,6 +229,14 @@ def invoke_agent(
     receives a result. The records are
     observational and confer no authority; a failure to append the start
     record propagates before any process is launched.
+
+    The returned result carries an :class:`InvocationUsage` -- host-observed
+    timing and exit status, the adapter's configured model/effort, and
+    whatever telemetry a :class:`UsageReportingAdapter` could read -- and, when
+    the adapter can normalize output, ``process.stdout`` is the adapter's
+    ``content`` rather than the provider's raw structured output. The same
+    usage rides the recorded ``INVOCATION_RETURNED`` event; a timeout records
+    its host timing with no exit status and no provider telemetry.
     """
     command = adapter.build_command(request)
 
@@ -191,9 +264,36 @@ def invoke_agent(
             termination_grace_seconds=request.termination_grace_seconds,
             stdin_text=command.stdin_text,
         )
+    except ProcessTimeoutError as exc:
+        record_invocation_returned(
+            runtime_dir,
+            identity,
+            outcome=ExecutionOutcome.FAILURE,
+            usage=_build_usage(
+                adapter,
+                process=exc,
+                termination=ProcessTermination.TIMED_OUT,
+                exit_code=None,
+                telemetry=ProviderTelemetry(),
+            ),
+        )
+        raise
     except BaseException:
         record_invocation_returned(runtime_dir, identity, outcome=ExecutionOutcome.FAILURE)
         raise
+
+    telemetry = ProviderTelemetry()
+    if isinstance(adapter, UsageReportingAdapter):
+        normalized = adapter.normalize_output(process)
+        process = replace(process, stdout=normalized.content)
+        telemetry = normalized.telemetry
+    usage = _build_usage(
+        adapter,
+        process=process,
+        termination=ProcessTermination.EXITED,
+        exit_code=process.returncode,
+        telemetry=telemetry,
+    )
 
     if identity is not None and record_return:
         record_invocation_returned(
@@ -203,6 +303,7 @@ def invoke_agent(
                 ExecutionOutcome.SUCCESS if process.returncode == 0 else ExecutionOutcome.FAILURE
             ),
             returncode=process.returncode,
+            usage=usage,
         )
 
     return AgentInvocationResult(
@@ -211,4 +312,5 @@ def invoke_agent(
         billing_mode=request.billing_mode,
         process=process,
         identity=request.identity,
+        usage=usage,
     )

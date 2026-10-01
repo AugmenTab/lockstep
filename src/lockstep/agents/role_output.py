@@ -38,9 +38,15 @@ from pathlib import Path
 
 from lockstep.agents.claude import ClaudeAdapter
 from lockstep.agents.codex import CodexAdapter
-from lockstep.agents.invocation import AgentAdapter, AgentCommand, AgentInvocationRequest
+from lockstep.agents.invocation import (
+    AdapterOutput,
+    AgentAdapter,
+    AgentCommand,
+    AgentInvocationRequest,
+)
 from lockstep.agents.openai_schema import to_openai_strict_json_schema
 from lockstep.domain import AgentRole
+from lockstep.process import ProcessResult
 
 _SCHEMA_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 _MAX_SCHEMA_NAME_LENGTH = 64
@@ -198,12 +204,23 @@ def _materialize_codex_agent_turn_schema(
 class _StructuredRoleAdapter:
     """Authority-preserving, schema-constrained wrapper around a base role adapter."""
 
-    base_adapter: AgentAdapter
+    base_adapter: ClaudeAdapter | CodexAdapter
     transform: Callable[[AgentCommand], AgentCommand]
 
     @property
     def name(self) -> str:
         return self.base_adapter.name
+
+    @property
+    def configured_model(self) -> str:
+        return self.base_adapter.configured_model
+
+    @property
+    def configured_effort(self) -> str:
+        return self.base_adapter.configured_effort
+
+    def normalize_output(self, process: ProcessResult) -> AdapterOutput:
+        return self.base_adapter.normalize_output(process)
 
     def build_command(self, request: AgentInvocationRequest) -> AgentCommand:
         base_command = self.base_adapter.build_command(request)

@@ -57,6 +57,13 @@ class ExecutionOutcome(StrEnum):
     BLOCKED = "blocked"
 
 
+class ProcessTermination(StrEnum):
+    """How a child process ended, as classified by the deterministic process runner."""
+
+    EXITED = "exited"
+    TIMED_OUT = "timed_out"
+
+
 class ReviewVerdict(StrEnum):
     APPROVE = "approve"
     REWORK = "rework"

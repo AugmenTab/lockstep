@@ -376,7 +376,11 @@ def invoke_agent_turn(
 
     def _record(outcome: ExecutionOutcome) -> None:
         record_invocation_returned(
-            runtime.runtime_dir, identity, outcome=outcome, returncode=process.returncode
+            runtime.runtime_dir,
+            identity,
+            outcome=outcome,
+            returncode=process.returncode,
+            usage=invocation.usage,
         )
 
     if process.returncode != 0:

@@ -24,6 +24,7 @@ from lockstep.domain import (
     ExecutionOutcome,
     InvocationIdentity,
     InvocationStage,
+    InvocationUsage,
     PhaseId,
     ReviewVerdict,
     StopReason,
@@ -50,6 +51,7 @@ def record_execution_event(
     verdict: ReviewVerdict | None = None,
     stop_reason: StopReason | None = None,
     detail: str | None = None,
+    usage: InvocationUsage | None = None,
 ) -> ExecutionEvent | None:
     """Append one execution event; return it, or ``None`` when no journal exists."""
     journal_path = runtime_dir / "events.jsonl"
@@ -84,6 +86,7 @@ def record_execution_event(
         verdict=verdict,
         stop_reason=stop_reason,
         detail=detail,
+        usage=usage,
     )
     append_event(journal_path, event)
 

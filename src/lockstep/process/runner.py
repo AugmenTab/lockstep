@@ -14,8 +14,10 @@ import os
 import signal
 import subprocess
 import tempfile
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
 
@@ -23,9 +25,19 @@ _DEFAULT_MAX_OUTPUT_BYTES = 1_048_576
 _POST_KILL_REAP_TIMEOUT_SECONDS = 5.0
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 @dataclass(frozen=True, slots=True)
 class ProcessResult:
-    """Immutable record of a completed child process invocation."""
+    """Immutable record of a completed child process invocation.
+
+    ``started_at``/``completed_at`` are wall-clock instants; ``elapsed_seconds``
+    is measured with a monotonic clock and is deliberately not derived from
+    them. All three are ``None`` only for results not produced by
+    :func:`run_process`.
+    """
 
     argv: tuple[str, ...]
     cwd: Path
@@ -34,6 +46,9 @@ class ProcessResult:
     stderr: str
     stdout_truncated: bool
     stderr_truncated: bool
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    elapsed_seconds: float | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -79,6 +94,9 @@ class ProcessTimeoutError(Exception):
         stderr: str,
         stdout_truncated: bool,
         stderr_truncated: bool,
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+        elapsed_seconds: float | None = None,
     ) -> None:
         self.argv = argv
         self.cwd = cwd
@@ -87,6 +105,9 @@ class ProcessTimeoutError(Exception):
         self.stderr = stderr
         self.stdout_truncated = stdout_truncated
         self.stderr_truncated = stderr_truncated
+        self.started_at = started_at
+        self.completed_at = completed_at
+        self.elapsed_seconds = elapsed_seconds
         super().__init__(f"process {argv!r} in {cwd} exceeded timeout of {timeout_seconds}s")
 
 
@@ -186,6 +207,8 @@ def run_process(
     max_output_bytes: int = _DEFAULT_MAX_OUTPUT_BYTES,
     termination_grace_seconds: float = 0.25,
     stdin_text: str | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+    wall_clock: Callable[[], datetime] = _utc_now,
 ) -> ProcessResult:
     """Execute *argv* deterministically and return its result.
 
@@ -195,7 +218,9 @@ def run_process(
     supplied its UTF-8 encoding is written to a private temporary file
     that the child reads to EOF. Non-zero exits return a
     ``ProcessResult``; launch failure, invalid configuration, and
-    timeout raise.
+    timeout raise. Both the result and the timeout error carry host timing:
+    each of *monotonic* and *wall_clock* is read exactly twice, immediately
+    before launch and immediately after the child is reaped.
     """
     validated_argv = _validate_argv(argv)
     if timeout_seconds <= 0:
@@ -222,6 +247,8 @@ def run_process(
             stdin_handle.seek(0)
             child_stdin = stdin_handle
 
+        started_at = wall_clock()
+        started_mono = monotonic()
         try:
             proc: subprocess.Popen[bytes] = subprocess.Popen(
                 validated_argv,
@@ -244,6 +271,8 @@ def run_process(
             proc.wait(timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
             _terminate_process_tree(proc, termination_grace_seconds)
+            completed_at = wall_clock()
+            elapsed_seconds = max(0.0, monotonic() - started_mono)
             stdout, stdout_truncated = _read_bounded_tail(stdout_handle, max_output_bytes)
             stderr, stderr_truncated = _read_bounded_tail(stderr_handle, max_output_bytes)
             raise ProcessTimeoutError(
@@ -254,8 +283,13 @@ def run_process(
                 stderr=stderr,
                 stdout_truncated=stdout_truncated,
                 stderr_truncated=stderr_truncated,
+                started_at=started_at,
+                completed_at=completed_at,
+                elapsed_seconds=elapsed_seconds,
             ) from None
 
+        completed_at = wall_clock()
+        elapsed_seconds = max(0.0, monotonic() - started_mono)
         stdout, stdout_truncated = _read_bounded_tail(stdout_handle, max_output_bytes)
         stderr, stderr_truncated = _read_bounded_tail(stderr_handle, max_output_bytes)
         return ProcessResult(
@@ -266,4 +300,7 @@ def run_process(
             stderr=stderr,
             stdout_truncated=stdout_truncated,
             stderr_truncated=stderr_truncated,
+            started_at=started_at,
+            completed_at=completed_at,
+            elapsed_seconds=elapsed_seconds,
         )
