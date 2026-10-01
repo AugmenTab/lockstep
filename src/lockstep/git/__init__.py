@@ -11,6 +11,7 @@ from lockstep.git.commit import (
     GitCommitResult,
     commit_exact_paths,
 )
+from lockstep.git.diffstat import RepositoryChange, measure_repository_change
 from lockstep.git.repository import (
     DirtyRepositoryError,
     GitCommandError,
@@ -29,9 +30,11 @@ __all__ = [
     "GitCommitPolicyError",
     "GitCommitResult",
     "GitRepositorySnapshot",
+    "RepositoryChange",
     "WorktreeCreationError",
     "commit_exact_paths",
     "create_run_worktree",
     "inspect_repository",
+    "measure_repository_change",
     "require_clean_repository",
 ]
