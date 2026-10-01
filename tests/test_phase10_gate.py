@@ -53,10 +53,14 @@ from lockstep.domain import (
 from lockstep.escalation import EscalationAuthority, EscalationCategory
 from lockstep.failure import cause_for_invocation_failure
 from lockstep.metrics import project_runtime_metrics
-from lockstep.persistence import ExecutionEvent, read_events
+from lockstep.persistence import ExecutionEvent, StateTransitionedEvent, read_events, replay_events
 from lockstep.reporting import project_runtime_stats, render_stats
 from lockstep.state import WorkflowState
-from lockstep.supervisor.transaction import run_single_subphase_transaction_with_retry_checkpoint
+from lockstep.supervisor.transaction import (
+    ResumeExecutionDisposition,
+    resume_single_subphase_transaction,
+    run_single_subphase_transaction_with_retry_checkpoint,
+)
 
 _SRC = Path(__file__).resolve().parent.parent / "src" / "lockstep"
 _BASELINE = Path(__file__).parent / "baselines" / "transaction_baseline.json"
@@ -289,6 +293,58 @@ def test_gate_e_RED_failed_provider_transaction_has_a_non_active_durable_disposi
 
     assert run.final_state not in _ACTIVE, f"durable state still active: {run.final_state}"
     assert terminal >= 1, "no terminal/recovery disposition event in the journal"
+
+
+def test_gate_e_attempt_2_provider_failure_chain_is_halted_with_singular_cause(
+    runs: dict[str, _Run], tmp_path: Path
+) -> None:
+    """Gate Attempt 2 (R1 regression target): failure -> HALTED -> typed halt, one root cause."""
+    run = runs["failed-provider-process"]
+    events = list(read_events(run.journal))
+
+    failed = [
+        i
+        for i, e in enumerate(events)
+        if isinstance(e, ExecutionEvent)
+        and e.kind is ExecutionEventKind.INVOCATION_RETURNED
+        and e.cause is FailureCause.PROVIDER_PROCESS_FAILURE
+    ]
+    to_halted = [
+        i
+        for i, e in enumerate(events)
+        if isinstance(e, StateTransitionedEvent) and e.target is WorkflowState.HALTED
+    ]
+    halted = [
+        i
+        for i, e in enumerate(events)
+        if isinstance(e, ExecutionEvent) and e.kind is ExecutionEventKind.TRANSACTION_HALTED
+    ]
+    assert len(failed) == len(to_halted) == len(halted) == 1
+    assert failed[0] < to_halted[0] < halted[0]
+    halt = events[halted[0]]
+    assert isinstance(halt, ExecutionEvent)
+    assert halt.cause is None and halt.stop_reason is None
+
+    # Durable state after journal-only reload is HALTED, never an active state.
+    fresh = _reload_dir(run, tmp_path)
+    assert replay_events(read_events(fresh / "events.jsonl")).workflow_state is WorkflowState.HALTED
+    assert run.final_state is WorkflowState.HALTED
+
+    # The halt does not duplicate attribution; failed work stays measurable.
+    totals = project_runtime_metrics(fresh, repository_change=None).totals
+    assert totals.subphases_completed == 0
+    assert totals.failure_cause_events == {FailureCause.PROVIDER_PROCESS_FAILURE: 1}
+    assert totals.usage.input_tokens.known_total == 187
+    assert totals.usage.elapsed.reporting_invocations == 2
+
+    # No retry authority is fabricated and no second provider launch occurs.
+    assert _kinds(run)[ExecutionEventKind.RETRY_AUTHORIZED] == 0
+    launches = (run.launches("implementer"), run.launches("reviewer"))
+    result = resume_single_subphase_transaction(
+        run.scenario.request, agent_turn_runtime=run.scenario.runtime
+    )
+    assert result.disposition is ResumeExecutionDisposition.NO_CHECKPOINT
+    assert (run.launches("implementer"), run.launches("reviewer")) == launches
 
 
 # ===========================================================================
