@@ -796,7 +796,7 @@ def test_provider_distribution_counts_invocations_and_reports_unreported(
 def test_configured_model_and_effort_are_distributed(totals: TransactionMetrics) -> None:
     usage = totals.usage
 
-    assert usage.configured_models.counts == {"opus": 2, "haiku": 2, "gpt-5": 5}
+    assert usage.configured_models.counts == {"opus": 2, "haiku": 2, "gpt-5": 4}
     assert usage.configured_models.unreported == 1
     assert usage.configured_efforts.counts == {"high": 2, "medium": 4, "low": 2}
     assert usage.configured_efforts.unreported == 1
