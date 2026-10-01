@@ -35,7 +35,7 @@ from lockstep.config import (
 )
 from lockstep.domain import AgentRole, BillingMode, PhaseId, ProjectId, RunId, SubphaseId
 from lockstep.git import inspect_repository
-from lockstep.persistence import read_events, read_state, replay_events
+from lockstep.persistence import ExecutionEvent, read_events, read_state, replay_events
 from lockstep.process import EnvironmentPolicyError
 from lockstep.runtime import (
     AgentRuntime,
@@ -1210,7 +1210,8 @@ def test_end_to_end_fake_transaction_through_full_production_path(tmp_path: Path
 
     # Section 58 — canonical outcome
     assert result.final_state.workflow_state == WorkflowState.SUBPHASE_COMPLETE
-    assert result.final_state.last_sequence == 11
+    # Observational execution events (10.2) share the journal sequence.
+    assert result.final_state.last_sequence == len(read_events(runtime_dir / "events.jsonl"))
     assert result.review.verdict.value == "approve"
 
     subjects = _log_subjects(request.worktree_path)
@@ -1236,7 +1237,7 @@ def test_end_to_end_fake_transaction_through_full_production_path(tmp_path: Path
 
     # Section 60 — persistence reconciliation
     events = read_events(runtime_dir / "events.jsonl")
-    assert len(events) == 11
+    assert len([e for e in events if not isinstance(e, ExecutionEvent)]) == 11
     persisted_state = read_state(runtime_dir / "state.json")
     assert persisted_state == result.final_state
     assert replay_events(events) == result.final_state

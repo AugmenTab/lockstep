@@ -77,7 +77,7 @@ from lockstep.domain import (
 from lockstep.escalation import EscalationAuthority, EscalationCategory
 from lockstep.escalation_decision import PlannerDecisionKind
 from lockstep.git import inspect_repository
-from lockstep.persistence import read_events, read_state
+from lockstep.persistence import ExecutionEvent, read_events, read_state
 from lockstep.planning_store import freeze_master_plan, freeze_subphase_contract, publish_phase_plan
 from lockstep.retry import AttemptState, RetryBudget, RetryBudgetDisposition, RetryReason
 from lockstep.retry_checkpoint import (
@@ -810,7 +810,11 @@ def test_checkpoint_aware_approve_matches_blocker_aware_success_shape(tmp_path: 
     assert _invocation_count(scenario.implementer_bin, "claude-implementer") == 1
     assert _invocation_count(scenario.reviewer_bin, "claude-reviewer") == 1
 
-    events = read_events(scenario.request.runtime_dir / "events.jsonl")
+    events = [
+        e
+        for e in read_events(scenario.request.runtime_dir / "events.jsonl")
+        if not isinstance(e, ExecutionEvent)
+    ]
     assert len(events) == 11
 
     assert not retry_checkpoint_path(scenario.request.runtime_dir).exists()
@@ -1029,7 +1033,11 @@ def test_review_rework_available_creates_checkpoint(tmp_path: Path) -> None:
     impl_file = scenario.request.worktree_path / "feature.py"
     assert impl_file.read_text(encoding="utf-8") == _IMPL_CORRECT
 
-    events = read_events(scenario.request.runtime_dir / "events.jsonl")
+    events = [
+        e
+        for e in read_events(scenario.request.runtime_dir / "events.jsonl")
+        if not isinstance(e, ExecutionEvent)
+    ]
     assert len(events) == 10
     last_event = events[-1]
     assert last_event.source == WorkflowState.REVIEWING

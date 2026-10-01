@@ -72,7 +72,7 @@ from lockstep.escalation import EscalationAuthority, EscalationCategory
 from lockstep.escalation_decision import PlannerDecisionKind
 from lockstep.escalation_transport import PlannerDecisionTransportError
 from lockstep.git import inspect_repository
-from lockstep.persistence import StateTransitionedEvent, read_events, read_state
+from lockstep.persistence import ExecutionEvent, StateTransitionedEvent, read_events, read_state
 from lockstep.planning_store import freeze_master_plan, freeze_subphase_contract, publish_phase_plan
 from lockstep.runtime import AgentRuntime
 from lockstep.state import WorkflowState
@@ -754,7 +754,11 @@ def test_completed_blocker_aware_transaction_matches_legacy_success_shape(tmp_pa
     assert worktree_snapshot.is_clean
     assert worktree_snapshot.head_sha == result.implementation_commit.commit_sha
 
-    events = read_events(scenario.request.runtime_dir / "events.jsonl")
+    events = [
+        e
+        for e in read_events(scenario.request.runtime_dir / "events.jsonl")
+        if not isinstance(e, ExecutionEvent)
+    ]
     assert len(events) == 11
     expected_edges = (
         (WorkflowState.READY, WorkflowState.PHASE_PLANNING),
@@ -771,7 +775,6 @@ def test_completed_blocker_aware_transaction_matches_legacy_success_shape(tmp_pa
     for offset, (src, dst) in enumerate(expected_edges, start=2):
         event = events[offset - 1]
         assert isinstance(event, StateTransitionedEvent)
-        assert event.sequence == offset
         assert event.source == src
         assert event.target == dst
 
@@ -1149,7 +1152,11 @@ def test_blocked_path_event_sequence_terminates_at_halted(tmp_path: Path) -> Non
     )
     assert isinstance(result, ImplementerBlockedTransactionResult)
 
-    events = read_events(scenario.request.runtime_dir / "events.jsonl")
+    events = [
+        e
+        for e in read_events(scenario.request.runtime_dir / "events.jsonl")
+        if not isinstance(e, ExecutionEvent)
+    ]
     assert len(events) == 8
     last_event = events[-1]
     assert isinstance(last_event, StateTransitionedEvent)

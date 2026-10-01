@@ -19,6 +19,7 @@ from lockstep.domain import (
 )
 from lockstep.git import inspect_repository
 from lockstep.persistence import (
+    ExecutionEvent,
     RunCreatedEvent,
     StateTransitionedEvent,
     read_events,
@@ -215,7 +216,10 @@ def test_happy_path_completes_transaction(tmp_path: Path) -> None:
     assert result.worktree_root == request.worktree_path.resolve()
 
     assert result.final_state.workflow_state == WorkflowState.SUBPHASE_COMPLETE
-    assert result.final_state.last_sequence == 11
+    # Observational execution events (10.2) share the journal sequence.
+    assert result.final_state.last_sequence == len(
+        read_events(request.runtime_dir / "events.jsonl")
+    )
     assert result.review.verdict.value == "approve"
     assert result.review.summary == "approved"
 
@@ -237,7 +241,11 @@ def test_happy_path_completes_transaction(tmp_path: Path) -> None:
     assert subjects[1] == request.test_commit_message
     assert subjects[2] == "initial"
 
-    events = read_events(request.runtime_dir / "events.jsonl")
+    events = tuple(
+        e
+        for e in read_events(request.runtime_dir / "events.jsonl")
+        if not isinstance(e, ExecutionEvent)
+    )
     assert len(events) == 11
     assert isinstance(events[0], RunCreatedEvent)
     assert events[0].sequence == 1
@@ -259,7 +267,6 @@ def test_happy_path_completes_transaction(tmp_path: Path) -> None:
     for offset, (src, dst) in enumerate(expected_edges, start=2):
         event = events[offset - 1]
         assert isinstance(event, StateTransitionedEvent)
-        assert event.sequence == offset
         assert event.source == src
         assert event.target == dst
 
