@@ -504,7 +504,7 @@ def test_scenario_terminal_workflow_states_are_the_transaction_outcomes(
         "attempt-1-success": WorkflowState.SUBPHASE_COMPLETE,
         "rework-retry-success": WorkflowState.SUBPHASE_COMPLETE,
         "failed-transaction": WorkflowState.HALTED,
-        "failed-provider-process": WorkflowState.IMPLEMENTING,
+        "failed-provider-process": WorkflowState.HALTED,
         "missing-telemetry": WorkflowState.SUBPHASE_COMPLETE,
     }
 

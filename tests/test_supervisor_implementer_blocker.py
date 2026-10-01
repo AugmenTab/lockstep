@@ -1034,7 +1034,7 @@ def test_planner_transport_failure_propagates(tmp_path: Path) -> None:
 
     persisted = read_state(scenario.request.runtime_dir / "state.json")
     assert persisted is not None
-    assert persisted.workflow_state == WorkflowState.IMPLEMENTING
+    assert persisted.workflow_state == WorkflowState.HALTED
 
     subjects = _log_subjects(scenario.request.worktree_path)
     assert subjects == [scenario.request.test_commit_message, "initial"]
@@ -1064,7 +1064,7 @@ def test_malformed_implementer_report_raises_agent_turn_error(tmp_path: Path) ->
 
     persisted = read_state(scenario.request.runtime_dir / "state.json")
     assert persisted is not None
-    assert persisted.workflow_state == WorkflowState.IMPLEMENTING
+    assert persisted.workflow_state == WorkflowState.HALTED
 
 
 def test_implementer_process_nonzero_raises_agent_turn_error_not_blocker(tmp_path: Path) -> None:
@@ -1086,7 +1086,7 @@ def test_implementer_process_nonzero_raises_agent_turn_error_not_blocker(tmp_pat
 
     persisted = read_state(scenario.request.runtime_dir / "state.json")
     assert persisted is not None
-    assert persisted.workflow_state == WorkflowState.IMPLEMENTING
+    assert persisted.workflow_state == WorkflowState.HALTED
 
 
 # ===========================================================================
