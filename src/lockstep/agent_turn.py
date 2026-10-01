@@ -47,7 +47,16 @@ from lockstep.agents import (
     invoke_agent,
     prepare_structured_role_adapter,
 )
-from lockstep.domain import AgentRole, AttemptNumber, BillingMode, PhaseId, SubphaseId
+from lockstep.domain import (
+    AgentRole,
+    AttemptNumber,
+    BillingMode,
+    InvocationIdentity,
+    InvocationStage,
+    PhaseId,
+    RunId,
+    SubphaseId,
+)
 from lockstep.escalation import EscalationAuthority, EscalationCategory, EscalationRequest
 
 _MAX_QUESTION_LENGTH = 4096
@@ -55,6 +64,10 @@ _MAX_EVIDENCE_ENTRIES = 32
 _MAX_EVIDENCE_ENTRY_LENGTH = 2048
 
 _SUPPORTED_ROLES: frozenset[AgentRole] = frozenset({AgentRole.IMPLEMENTER, AgentRole.REVIEWER})
+_STAGE_BY_ROLE: dict[AgentRole, InvocationStage] = {
+    AgentRole.IMPLEMENTER: InvocationStage.IMPLEMENTATION,
+    AgentRole.REVIEWER: InvocationStage.REVIEW,
+}
 
 _SCHEMA_NAME_BY_ROLE: Mapping[AgentRole, str] = {
     AgentRole.IMPLEMENTER: "agent-turn-implementer",
@@ -273,6 +286,7 @@ def invoke_agent_turn(
     timeout_seconds: float,
     max_output_bytes: int = 1_048_576,
     termination_grace_seconds: float = 0.25,
+    run_id: RunId | None = None,
 ) -> AgentTurnResult:
     """Invoke one structured Implementer/Reviewer turn and resolve its report.
 
@@ -294,7 +308,9 @@ def invoke_agent_turn(
     for a ``BLOCKED`` report — constructs a real
     :class:`~lockstep.escalation.EscalationRequest` from *phase_id*,
     *subphase_id*, *attempt*, *role*, and the report's blocker fields
-    exactly as reported. Performs no routing, no Planner invocation, no
+    exactly as reported. When *run_id* is given, the host issues the
+    turn's :class:`~lockstep.domain.InvocationIdentity` (Implementer
+    stage); without it no identity is issued. Performs no routing, no Planner invocation, no
     human prompting, and no repository/workflow-state mutation.
     """
     if role not in _SUPPORTED_ROLES:
@@ -322,6 +338,19 @@ def invoke_agent_turn(
 
     final_prompt = prompt + _BLOCKER_PROTOCOL_SUFFIX
 
+    identity = (
+        None
+        if run_id is None
+        else InvocationIdentity.issue(
+            run_id=run_id,
+            phase_id=phase_id,
+            subphase_id=subphase_id,
+            attempt=attempt,
+            role=role,
+            stage=_STAGE_BY_ROLE[role],
+        )
+    )
+
     invocation_request = AgentInvocationRequest(
         role=role,
         billing_mode=billing_mode,
@@ -330,6 +359,7 @@ def invoke_agent_turn(
         timeout_seconds=timeout_seconds,
         max_output_bytes=max_output_bytes,
         termination_grace_seconds=termination_grace_seconds,
+        identity=identity,
     )
 
     invocation = invoke_agent(

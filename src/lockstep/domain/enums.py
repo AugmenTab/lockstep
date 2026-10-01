@@ -22,6 +22,15 @@ class AgentRole(StrEnum):
     SCRIBE = "scribe"
 
 
+class InvocationStage(StrEnum):
+    """Execution stage responsible for one invocation (attribution only)."""
+
+    TEST_AUTHORING = "test_authoring"
+    IMPLEMENTATION = "implementation"
+    REVIEW = "review"
+    ESCALATION_DECISION = "escalation_decision"
+
+
 class ReviewVerdict(StrEnum):
     APPROVE = "approve"
     REWORK = "rework"

@@ -88,6 +88,8 @@ from lockstep.domain import (
     AgentRole,
     AttemptNumber,
     BillingMode,
+    InvocationIdentity,
+    InvocationStage,
     PhaseId,
     ProjectId,
     ReviewDecision,
@@ -388,6 +390,7 @@ def _agent_request(
     prompt: str,
     request: SingleSubphaseTransactionRequest,
     cwd: Path,
+    stage: InvocationStage,
 ) -> AgentInvocationRequest:
     return AgentInvocationRequest(
         role=role,
@@ -397,6 +400,14 @@ def _agent_request(
         timeout_seconds=request.agent_timeout_seconds,
         max_output_bytes=request.max_output_bytes,
         termination_grace_seconds=request.termination_grace_seconds,
+        identity=InvocationIdentity.issue(
+            run_id=request.run_id,
+            phase_id=request.phase_id,
+            subphase_id=request.subphase_id,
+            attempt=_TRANSACTION_ATTEMPT,
+            role=role,
+            stage=stage,
+        ),
     )
 
 
@@ -555,6 +566,7 @@ def _author_tests(
             prompt=request.planner_prompt,
             request=request,
             cwd=ctx.worktree_root,
+            stage=InvocationStage.TEST_AUTHORING,
         ),
         parent_env=parent_env,
     )
@@ -813,6 +825,7 @@ def _complete_after_implementer_success(
             ),
             request=request,
             cwd=ctx.worktree_root,
+            stage=InvocationStage.REVIEW,
         ),
         parent_env=parent_env,
     )
@@ -931,6 +944,7 @@ def _complete_after_implementer_success_with_reviewer_turn(
         timeout_seconds=request.agent_timeout_seconds,
         max_output_bytes=request.max_output_bytes,
         termination_grace_seconds=request.termination_grace_seconds,
+        run_id=request.run_id,
     )
 
     if reviewer_turn.report.status is AgentTurnStatus.COMPLETED:
@@ -955,6 +969,7 @@ def _complete_after_implementer_success_with_reviewer_turn(
         timeout_seconds=request.agent_timeout_seconds,
         max_output_bytes=request.max_output_bytes,
         termination_grace_seconds=request.termination_grace_seconds,
+        run_id=request.run_id,
     )
 
     _persist_transition(
@@ -1007,6 +1022,7 @@ def run_single_subphase_transaction(
             prompt=request.implementer_prompt,
             request=request,
             cwd=ctx.worktree_root,
+            stage=InvocationStage.IMPLEMENTATION,
         ),
         parent_env=parent_env,
     )
@@ -1090,6 +1106,7 @@ def _run_blocker_capable_transaction(
         timeout_seconds=request.agent_timeout_seconds,
         max_output_bytes=request.max_output_bytes,
         termination_grace_seconds=request.termination_grace_seconds,
+        run_id=request.run_id,
     )
 
     if implementer_turn.report.status is AgentTurnStatus.COMPLETED:
@@ -1119,6 +1136,7 @@ def _run_blocker_capable_transaction(
         timeout_seconds=request.agent_timeout_seconds,
         max_output_bytes=request.max_output_bytes,
         termination_grace_seconds=request.termination_grace_seconds,
+        run_id=request.run_id,
     )
 
     _persist_transition(
@@ -1714,6 +1732,7 @@ def _handle_resumed_blocked(
             timeout_seconds=request.agent_timeout_seconds,
             max_output_bytes=request.max_output_bytes,
             termination_grace_seconds=request.termination_grace_seconds,
+            run_id=request.run_id,
         )
     except (PlannerDecisionTransportError, EscalationProtocolError):
         _settle_execution_failed(request, started_claim, journal_path, state_path)
@@ -1879,6 +1898,7 @@ def _invoke_and_handle_resumed_reviewer(
             timeout_seconds=request.agent_timeout_seconds,
             max_output_bytes=request.max_output_bytes,
             termination_grace_seconds=request.termination_grace_seconds,
+            run_id=request.run_id,
         )
     except ReviewerTurnError:
         _settle_execution_failed(request, started_claim, journal_path, state_path)
@@ -2000,6 +2020,7 @@ def _resume_implementer(
             timeout_seconds=request.agent_timeout_seconds,
             max_output_bytes=request.max_output_bytes,
             termination_grace_seconds=request.termination_grace_seconds,
+            run_id=request.run_id,
         )
     except AgentTurnError:
         _settle_execution_failed(request, started_claim, journal_path, state_path)

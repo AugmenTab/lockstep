@@ -27,6 +27,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from lockstep.domain import RunId
 from lockstep.escalation import (
     EscalationAuthority,
     EscalationRequest,
@@ -85,6 +86,7 @@ def dispatch_escalation(
     timeout_seconds: float,
     max_output_bytes: int = 1_048_576,
     termination_grace_seconds: float = 0.25,
+    run_id: RunId | None = None,
 ) -> SupervisorEscalationResult:
     """Route *request* and resolve its authority-level disposition.
 
@@ -104,7 +106,9 @@ def dispatch_escalation(
     ``planner_turn.resolution.disposition`` — the sole Planner outcome
     authority — onto the matching :class:`SupervisorEscalationDisposition`;
     Planner transport/protocol failures propagate unwrapped, with no
-    retry. ``request.requested_authority`` never overrides the
+    retry. A supplied *run_id* is forwarded unchanged so the Planner
+    invocation is attributable; it confers no authority.
+    ``request.requested_authority`` never overrides the
     deterministic route in any branch.
     """
     route = route_escalation(request)
@@ -129,6 +133,7 @@ def dispatch_escalation(
         timeout_seconds=timeout_seconds,
         max_output_bytes=max_output_bytes,
         termination_grace_seconds=termination_grace_seconds,
+        run_id=run_id,
     )
 
     return SupervisorEscalationResult(

@@ -45,7 +45,15 @@ from lockstep.agents import (
     invoke_agent,
     prepare_structured_planner_adapter,
 )
-from lockstep.domain import AgentRole, PhasePlan, SubphaseContract, SubphaseOutline
+from lockstep.domain import (
+    AgentRole,
+    InvocationIdentity,
+    InvocationStage,
+    PhasePlan,
+    RunId,
+    SubphaseContract,
+    SubphaseOutline,
+)
 from lockstep.escalation import (
     EscalationAuthority,
     EscalationCategory,
@@ -298,6 +306,7 @@ def invoke_planner_decision(
     timeout_seconds: float,
     max_output_bytes: int = 1_048_576,
     termination_grace_seconds: float = 0.25,
+    run_id: RunId | None = None,
 ) -> PlannerDecisionTurnResult:
     """Invoke the configured Planner once and resolve its structured decision.
 
@@ -316,7 +325,10 @@ def invoke_planner_decision(
     request digest, constructs a public
     :class:`~lockstep.escalation_decision.PlannerDecision`, and calls
     :func:`~lockstep.escalation_decision.resolve_planner_decision`
-    unchanged. Performs no retry, no repair turn, no Git/planning
+    unchanged. When *run_id* is given, the host issues the Planner's
+    :class:`~lockstep.domain.InvocationIdentity` (escalation-decision
+    stage) from *request*'s own Phase/Sub-phase/attempt; without it no
+    identity is issued. Performs no retry, no repair turn, no Git/planning
     mutation, and no execution of the resolved disposition.
     """
     route = route_escalation(request)
@@ -369,6 +381,19 @@ def invoke_planner_decision(
         schema_name=_SCHEMA_NAME,
     )
 
+    identity = (
+        None
+        if run_id is None
+        else InvocationIdentity.issue(
+            run_id=run_id,
+            phase_id=request.phase_id,
+            subphase_id=request.subphase_id,
+            attempt=request.attempt,
+            role=AgentRole.PLANNER,
+            stage=InvocationStage.ESCALATION_DECISION,
+        )
+    )
+
     invocation_request = AgentInvocationRequest(
         role=AgentRole.PLANNER,
         billing_mode=runtime.config.routing.planner.billing_mode,
@@ -377,6 +402,7 @@ def invoke_planner_decision(
         timeout_seconds=timeout_seconds,
         max_output_bytes=max_output_bytes,
         termination_grace_seconds=termination_grace_seconds,
+        identity=identity,
     )
 
     invocation = invoke_agent(

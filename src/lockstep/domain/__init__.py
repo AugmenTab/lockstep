@@ -25,6 +25,7 @@ from lockstep.domain.artifacts import (
 from lockstep.domain.enums import (
     AgentRole,
     BillingMode,
+    InvocationStage,
     QuotaStatus,
     ReviewVerdict,
     RunStatus,
@@ -33,12 +34,14 @@ from lockstep.domain.enums import (
 )
 from lockstep.domain.identifiers import (
     AttemptNumber,
+    InvocationId,
     PhaseId,
     ProjectId,
     RunId,
     SchemaVersion,
     SubphaseId,
 )
+from lockstep.domain.invocation import InvocationIdentity
 
 __all__ = [
     "AcceptanceCriterion",
@@ -47,6 +50,9 @@ __all__ = [
     "BillingMode",
     "ContextImprovementCandidate",
     "ImplementationReport",
+    "InvocationId",
+    "InvocationIdentity",
+    "InvocationStage",
     "MasterPlan",
     "PhaseId",
     "PhasePlan",

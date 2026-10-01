@@ -25,6 +25,10 @@ class RunId(RootModel[_IdentifierStr]):
     model_config = ConfigDict(frozen=True)
 
 
+class InvocationId(RootModel[_IdentifierStr]):
+    model_config = ConfigDict(frozen=True)
+
+
 class PhaseId(RootModel[_PhaseIdStr]):
     model_config = ConfigDict(frozen=True)
 

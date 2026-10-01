@@ -17,7 +17,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
-from lockstep.domain import AgentRole, BillingMode
+from lockstep.domain import AgentRole, BillingMode, InvocationIdentity
 from lockstep.process import (
     ProcessResult,
     build_process_environment,
@@ -31,8 +31,9 @@ _EMPTY_EXPLICIT_ENV: Mapping[str, str] = MappingProxyType({})
 class AgentInvocationRequest:
     """Orchestrator-owned agent invocation request.
 
-    Carries the role, billing mode, prompt, working directory, and
-    execution budget that the orchestrator hands to a trusted adapter.
+    Carries the role, billing mode, prompt, working directory, execution
+    budget, and optional host-issued :class:`InvocationIdentity` that the
+    orchestrator hands to a trusted adapter.
     The ``cwd`` is normalized with non-strict :meth:`Path.resolve` at
     construction so downstream components see a stable absolute path.
     ``prompt`` is excluded from :func:`repr` to keep planner prompts out
@@ -46,9 +47,12 @@ class AgentInvocationRequest:
     timeout_seconds: float
     max_output_bytes: int = 1_048_576
     termination_grace_seconds: float = 0.25
+    identity: InvocationIdentity | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "cwd", Path(self.cwd).resolve())
+        if self.identity is not None and self.identity.role is not self.role:
+            raise ValueError("invocation identity role does not match request role")
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +105,7 @@ class AgentInvocationResult:
     role: AgentRole
     billing_mode: BillingMode
     process: ProcessResult
+    identity: InvocationIdentity | None = None
 
 
 def invoke_agent(
@@ -143,4 +148,5 @@ def invoke_agent(
         role=request.role,
         billing_mode=request.billing_mode,
         process=process,
+        identity=request.identity,
     )

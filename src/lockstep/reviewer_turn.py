@@ -46,7 +46,16 @@ from lockstep.agents import (
     invoke_agent,
     prepare_structured_role_adapter,
 )
-from lockstep.domain import AgentRole, AttemptNumber, PhaseId, ReviewDecision, SubphaseId
+from lockstep.domain import (
+    AgentRole,
+    AttemptNumber,
+    InvocationIdentity,
+    InvocationStage,
+    PhaseId,
+    ReviewDecision,
+    RunId,
+    SubphaseId,
+)
 from lockstep.escalation import EscalationRequest
 
 _SCHEMA_NAME = "reviewer-turn-report"
@@ -142,6 +151,7 @@ def invoke_reviewer_turn(
     timeout_seconds: float,
     max_output_bytes: int = 1_048_576,
     termination_grace_seconds: float = 0.25,
+    run_id: RunId | None = None,
 ) -> ReviewerTurnResult:
     """Invoke exactly one composite structured Reviewer turn and resolve its report.
 
@@ -158,7 +168,10 @@ def invoke_reviewer_turn(
     and -- only for a ``BLOCKED`` report -- constructs a real
     :class:`~lockstep.escalation.EscalationRequest` from *phase_id*,
     *subphase_id*, *attempt*, :attr:`~lockstep.domain.AgentRole.REVIEWER`,
-    and the report's blocker fields exactly as reported. Performs no
+    and the report's blocker fields exactly as reported. When *run_id* is
+    given, the host issues the turn's
+    :class:`~lockstep.domain.InvocationIdentity` (Reviewer stage); without
+    it no identity is issued. Performs no
     routing, no Planner invocation, no human prompting, and no
     repository/workflow-state mutation.
     """
@@ -184,6 +197,19 @@ def invoke_reviewer_turn(
 
     final_prompt = prompt + _REVIEWER_TURN_PROTOCOL_SUFFIX
 
+    identity = (
+        None
+        if run_id is None
+        else InvocationIdentity.issue(
+            run_id=run_id,
+            phase_id=phase_id,
+            subphase_id=subphase_id,
+            attempt=attempt,
+            role=AgentRole.REVIEWER,
+            stage=InvocationStage.REVIEW,
+        )
+    )
+
     invocation_request = AgentInvocationRequest(
         role=AgentRole.REVIEWER,
         billing_mode=billing_mode,
@@ -192,6 +218,7 @@ def invoke_reviewer_turn(
         timeout_seconds=timeout_seconds,
         max_output_bytes=max_output_bytes,
         termination_grace_seconds=termination_grace_seconds,
+        identity=identity,
     )
 
     invocation = invoke_agent(
