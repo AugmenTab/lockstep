@@ -47,6 +47,7 @@ class ExecutionEventKind(StrEnum):
     RESUME_STARTED = "resume_started"
     RESUME_SETTLED = "resume_settled"
     TRANSACTION_HALTED = "transaction_halted"
+    TRANSACTION_ABORTED = "transaction_aborted"
 
 
 class ExecutionOutcome(StrEnum):
@@ -55,6 +56,29 @@ class ExecutionOutcome(StrEnum):
     SUCCESS = "success"
     FAILURE = "failure"
     BLOCKED = "blocked"
+
+
+class FailureCause(StrEnum):
+    """Why an attempt failed or work repeated (attribution only; never authority).
+
+    Distinct from :class:`StopReason`, which says why automation finally stopped:
+    a retry-exhaustion event carries the original ``FailureCause`` *and* the
+    terminal ``StopReason``. Where an existing canonical vocabulary already says
+    the same thing the serialized value is identical.
+    """
+
+    IMPLEMENTATION_DEFECT = "implementation_defect"
+    TEST_DEFECT = "test_defect"
+    SCOPE_VIOLATION = "scope_violation"
+    AUTHORITY_VIOLATION = "authority_violation"
+    ARCHITECTURE_CONFLICT = "architecture_conflict"
+    REQUIREMENT_AMBIGUITY = "requirement_ambiguity"
+    ENVIRONMENT_FAILURE = "environment_failure"
+    PROVIDER_PROCESS_FAILURE = "provider_process_failure"
+    USAGE_EXHAUSTION = "usage_exhaustion"
+    VERIFICATION_FAILURE = "verification_failure"
+    MALFORMED_OUTPUT = "malformed_output"
+    HUMAN_REQUIRED_DECISION = "human_required_decision"
 
 
 class ProcessTermination(StrEnum):

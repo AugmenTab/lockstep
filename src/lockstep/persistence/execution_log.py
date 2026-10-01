@@ -22,6 +22,7 @@ from lockstep.domain import (
     AttemptNumber,
     ExecutionEventKind,
     ExecutionOutcome,
+    FailureCause,
     InvocationIdentity,
     InvocationStage,
     InvocationUsage,
@@ -50,6 +51,7 @@ def record_execution_event(
     returncode: int | None = None,
     verdict: ReviewVerdict | None = None,
     stop_reason: StopReason | None = None,
+    cause: FailureCause | None = None,
     detail: str | None = None,
     usage: InvocationUsage | None = None,
 ) -> ExecutionEvent | None:
@@ -85,6 +87,7 @@ def record_execution_event(
         returncode=returncode,
         verdict=verdict,
         stop_reason=stop_reason,
+        cause=cause,
         detail=detail,
         usage=usage,
     )

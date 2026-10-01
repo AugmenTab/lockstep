@@ -69,7 +69,7 @@ never consumes, claims, or deletes a checkpoint.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -90,6 +90,7 @@ from lockstep.domain import (
     BillingMode,
     ExecutionEventKind,
     ExecutionOutcome,
+    FailureCause,
     InvocationIdentity,
     InvocationStage,
     PhaseId,
@@ -97,12 +98,19 @@ from lockstep.domain import (
     ReviewDecision,
     ReviewVerdict,
     RunId,
+    StopReason,
     SubphaseId,
 )
 from lockstep.escalation import EscalationProtocolError, EscalationRequest
 from lockstep.escalation_decision import PlannerDecisionKind
+from lockstep.failure import (
+    cause_for_escalation,
+    cause_for_review_verdict,
+    stop_reason_for_escalation,
+)
 from lockstep.git import (
     GitCommitResult,
+    GitRepositorySnapshot,
     commit_exact_paths,
     create_run_worktree,
     inspect_repository,
@@ -380,13 +388,16 @@ def _emit(
     outcome: ExecutionOutcome | None = None,
     role: AgentRole | None = None,
     verdict: ReviewVerdict | None = None,
+    stop_reason: StopReason | None = None,
+    cause: FailureCause | None = None,
     detail: str | None = None,
 ) -> None:
     """Record one observational execution event for *request*'s Sub-phase.
 
     Called only from the deterministic code path that owns the action,
     after the action occurred. Confers no authority; see
-    :class:`~lockstep.persistence.ExecutionEvent`.
+    :class:`~lockstep.persistence.ExecutionEvent`. ``cause`` / ``stop_reason``
+    attribute history only (see :mod:`lockstep.failure`).
     """
     record_execution_event(
         request.runtime_dir,
@@ -397,8 +408,55 @@ def _emit(
         attempt=attempt,
         role=role,
         verdict=verdict,
+        stop_reason=stop_reason,
+        cause=cause,
         detail=detail,
     )
+
+
+def _emit_abort(
+    request: SingleSubphaseTransactionRequest,
+    *,
+    stage: str,
+    cause: FailureCause | None,
+    stop_reason: StopReason | None,
+    attempt: AttemptNumber = _TRANSACTION_ATTEMPT,
+) -> None:
+    """Record that the deterministic transaction is about to raise at *stage*.
+
+    The boundary no halt/complete event covers: the caller still raises
+    :class:`SupervisorTransactionError`; this only attributes why.
+    """
+    _emit(
+        request,
+        ExecutionEventKind.TRANSACTION_ABORTED,
+        attempt=attempt,
+        outcome=ExecutionOutcome.FAILURE,
+        stop_reason=stop_reason,
+        cause=cause,
+        detail=stage,
+    )
+
+
+def _attribute_scope_breach(
+    request: SingleSubphaseTransactionRequest,
+    snapshot: GitRepositorySnapshot,
+    expected_head_sha: str,
+    approved_paths: Sequence[str],
+) -> tuple[FailureCause | None, StopReason | None]:
+    """Distinguish an authority violation from a scope violation, from git facts only.
+
+    Touching a protected (frozen test) path or moving HEAD exercises authority
+    the Implementer does not hold; any other unapproved dirty path is a scope
+    violation. A shortfall (nothing unexpected changed) asserts neither.
+    """
+    if snapshot.head_sha != expected_head_sha or set(snapshot.dirty_paths) & set(
+        request.test_paths
+    ):
+        return FailureCause.AUTHORITY_VIOLATION, StopReason.PROTECTED_ARTIFACT_CHANGED
+    if set(snapshot.dirty_paths) - set(approved_paths):
+        return FailureCause.SCOPE_VIOLATION, StopReason.OUT_OF_SCOPE_CHANGE
+    return None, None
 
 
 def _require_review_matches_transaction(
@@ -453,6 +511,7 @@ def _record_escalation_dispatched(
         ExecutionEventKind.ESCALATION_DISPATCHED,
         attempt=result.request.attempt,
         role=result.request.source_role,
+        cause=cause_for_escalation(result.request.category),
         detail=result.disposition.value,
     )
 
@@ -623,6 +682,12 @@ def _author_tests(
     expected_test_paths = tuple(sorted(request.test_paths))
     post_planner_snapshot = inspect_repository(ctx.worktree_root)
     if post_planner_snapshot.dirty_paths != expected_test_paths:
+        _emit_abort(
+            request,
+            stage="test_scope",
+            cause=FailureCause.SCOPE_VIOLATION,
+            stop_reason=StopReason.OUT_OF_SCOPE_CHANGE,
+        )
         raise SupervisorTransactionError(
             stage="test_scope",
             reason="planner dirty paths do not exactly match requested test paths",
@@ -666,6 +731,7 @@ def _author_tests(
             request,
             ExecutionEventKind.BASELINE_VERIFIED,
             outcome=ExecutionOutcome.FAILURE,
+            cause=FailureCause.TEST_DEFECT,
             detail="red_baseline_unexpectedly_passed",
         )
         raise SupervisorTransactionError(
@@ -733,6 +799,13 @@ def _verify_after_implementer(
         post_implementer_snapshot.head_sha != test_commit.commit_sha
         or post_implementer_snapshot.dirty_paths != expected_impl_paths
     ):
+        cause, stop_reason = _attribute_scope_breach(
+            request,
+            post_implementer_snapshot,
+            test_commit.commit_sha,
+            request.implementation_paths,
+        )
+        _emit_abort(request, stage="implementation_scope", cause=cause, stop_reason=stop_reason)
         raise SupervisorTransactionError(
             stage="implementation_scope",
             reason=(
@@ -768,6 +841,7 @@ def _verify_after_implementer(
             request,
             ExecutionEventKind.VERIFICATION_COMPLETED,
             outcome=ExecutionOutcome.FAILURE,
+            cause=FailureCause.VERIFICATION_FAILURE,
         )
         raise SupervisorTransactionError(
             stage="verification",
@@ -810,6 +884,7 @@ def _handle_review_decision(
         ExecutionEventKind.REVIEW_DECIDED,
         role=AgentRole.REVIEWER,
         verdict=review.verdict,
+        cause=cause_for_review_verdict(review.verdict),
     )
 
     if review.verdict is not ReviewVerdict.APPROVE:
@@ -915,6 +990,12 @@ def _complete_after_implementer_success(
     try:
         review = ReviewDecision.model_validate_json(reviewer_result.process.stdout)
     except ValidationError as exc:
+        _emit_abort(
+            request,
+            stage="review",
+            cause=FailureCause.MALFORMED_OUTPUT,
+            stop_reason=StopReason.MALFORMED_AGENT_OUTPUT,
+        )
         raise SupervisorTransactionError(
             stage="review",
             reason="reviewer output is not a valid ReviewDecision",
@@ -948,6 +1029,7 @@ def _capture_review_rework(
         ExecutionEventKind.REVIEW_DECIDED,
         role=AgentRole.REVIEWER,
         verdict=review.verdict,
+        cause=cause_for_review_verdict(review.verdict),
     )
 
     _persist_transition(
@@ -958,7 +1040,12 @@ def _capture_review_rework(
         journal_path=ctx.journal_path,
         state_path=ctx.state_path,
     )
-    _emit(request, ExecutionEventKind.TRANSACTION_HALTED, detail="review_rework")
+    _emit(
+        request,
+        ExecutionEventKind.TRANSACTION_HALTED,
+        cause=cause_for_review_verdict(review.verdict),
+        detail="review_rework",
+    )
 
     final_state = load_verified_state(ctx.state_path, ctx.journal_path)
     if final_state is None or final_state.workflow_state != WorkflowState.HALTED:
@@ -1066,6 +1153,8 @@ def _complete_after_implementer_success_with_reviewer_turn(
     _emit(
         request,
         ExecutionEventKind.TRANSACTION_HALTED,
+        stop_reason=stop_reason_for_escalation(reviewer_turn.escalation_request.category),
+        cause=cause_for_escalation(reviewer_turn.escalation_request.category),
         detail=reviewer_turn.escalation_request.category.value,
     )
 
@@ -1240,6 +1329,8 @@ def _run_blocker_capable_transaction(
     _emit(
         request,
         ExecutionEventKind.TRANSACTION_HALTED,
+        stop_reason=stop_reason_for_escalation(implementer_turn.escalation_request.category),
+        cause=cause_for_escalation(implementer_turn.escalation_request.category),
         detail=implementer_turn.escalation_request.category.value,
     )
 
@@ -1320,12 +1411,17 @@ def _record_retry_decision(
     """
     target_role = checkpoint.retry_request.target_role
     next_state = checkpoint.next_attempt_state
+    # Why the work repeats (or would have): the authority's own evidence, never
+    # the budget. Exhaustion keeps that cause and adds why automation stopped.
+    cause = _cause_for_retry_authority(checkpoint)
     if next_state is None:
         _emit(
             request,
             ExecutionEventKind.RETRY_EXHAUSTED,
             attempt=checkpoint.attempt_state.current_attempt,
             role=target_role,
+            stop_reason=StopReason.MAX_REWORK_EXCEEDED,
+            cause=cause,
         )
         return
     _emit(
@@ -1333,7 +1429,19 @@ def _record_retry_decision(
         ExecutionEventKind.RETRY_AUTHORIZED,
         attempt=next_state.current_attempt,
         role=target_role,
+        cause=cause,
     )
+
+
+def _cause_for_retry_authority(checkpoint: RetryCheckpoint) -> FailureCause | None:
+    from lockstep.retry_checkpoint import RetryAuthorityKind
+
+    authority = checkpoint.authority
+    if authority.kind == RetryAuthorityKind.REVIEW_REWORK:
+        assert authority.review_decision is not None
+        return cause_for_review_verdict(authority.review_decision.verdict)
+    assert authority.escalation_request is not None
+    return cause_for_escalation(authority.escalation_request.category)
 
 
 def _freeze_and_record_retry(
@@ -1775,6 +1883,8 @@ def _settle_and_transition_to_halted(
     state_path: Path,
     *,
     halt_detail: str,
+    cause: FailureCause | None = None,
+    stop_reason: StopReason | None = None,
     next_checkpoint: RetryCheckpoint | None = None,
 ) -> ResumeExecutionResult:
     from lockstep.resume_settlement import ResumeSettlement, finalize_resume_settlement
@@ -1796,6 +1906,8 @@ def _settle_and_transition_to_halted(
         request,
         ExecutionEventKind.TRANSACTION_HALTED,
         attempt=executed.current_attempt,
+        stop_reason=stop_reason,
+        cause=cause,
         detail=halt_detail,
     )
 
@@ -1839,6 +1951,7 @@ def _partition_frozen_correction_dirty_paths(
     request: SingleSubphaseTransactionRequest,
     authorized_frozen_paths: tuple[str, ...],
     dirty_paths: tuple[str, ...],
+    attempt: AttemptNumber,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     authorized_set = set(authorized_frozen_paths)
     ordinary_set = set(request.implementation_paths)
@@ -1849,6 +1962,13 @@ def _partition_frozen_correction_dirty_paths(
     unexpected = dirty_set - authorized_set - ordinary_set
 
     if unexpected:
+        _emit_abort(
+            request,
+            stage="frozen_correction_scope",
+            cause=FailureCause.SCOPE_VIOLATION,
+            stop_reason=StopReason.OUT_OF_SCOPE_CHANGE,
+            attempt=attempt,
+        )
         raise SupervisorTransactionError(
             stage="frozen_correction_scope",
             reason=(
@@ -1857,6 +1977,9 @@ def _partition_frozen_correction_dirty_paths(
             ),
         )
     if not frozen_touched:
+        _emit_abort(
+            request, stage="frozen_correction_scope", cause=None, stop_reason=None, attempt=attempt
+        )
         raise SupervisorTransactionError(
             stage="frozen_correction_scope",
             reason="resumed implementer did not change any authorized frozen artifact path",
@@ -1900,6 +2023,8 @@ def _handle_resumed_blocked(
     )
 
     category = escalation_request.category.value
+    cause = cause_for_escalation(escalation_request.category)
+    stop_reason = stop_reason_for_escalation(escalation_request.category)
     if checkpoint is None:
         return _settle_and_transition_to_halted(
             request,
@@ -1908,6 +2033,8 @@ def _handle_resumed_blocked(
             journal_path,
             state_path,
             halt_detail=category,
+            cause=cause,
+            stop_reason=stop_reason,
         )
 
     return _settle_and_transition_to_halted(
@@ -1917,6 +2044,8 @@ def _handle_resumed_blocked(
         journal_path,
         state_path,
         halt_detail=category,
+        cause=cause,
+        stop_reason=stop_reason,
         next_checkpoint=checkpoint,
     )
 
@@ -2030,6 +2159,7 @@ def _resume_rework(
         journal_path,
         state_path,
         halt_detail="review_rework",
+        cause=cause_for_review_verdict(review.verdict),
         next_checkpoint=checkpoint,
     )
 
@@ -2091,6 +2221,7 @@ def _invoke_and_handle_resumed_reviewer(
         attempt=executed_attempt.current_attempt,
         role=AgentRole.REVIEWER,
         verdict=review.verdict,
+        cause=cause_for_review_verdict(review.verdict),
     )
 
     if review.verdict is ReviewVerdict.APPROVE:
@@ -2128,6 +2259,21 @@ def _resume_run_verification(
 ) -> None:
     post_implementer_snapshot = inspect_repository(request.worktree_path)
     if post_implementer_snapshot.dirty_paths != expected_impl_paths:
+        # The resumed attempt's start HEAD is not carried here, so only the
+        # dirty-path evidence (protected vs unapproved path) is attributable.
+        cause, stop_reason = _attribute_scope_breach(
+            request,
+            post_implementer_snapshot,
+            post_implementer_snapshot.head_sha,
+            expected_impl_paths,
+        )
+        _emit_abort(
+            request,
+            stage="implementation_scope",
+            cause=cause,
+            stop_reason=stop_reason,
+            attempt=attempt,
+        )
         raise SupervisorTransactionError(
             stage="implementation_scope",
             reason=(
@@ -2160,6 +2306,7 @@ def _resume_run_verification(
             ExecutionEventKind.VERIFICATION_COMPLETED,
             attempt=attempt,
             outcome=ExecutionOutcome.FAILURE,
+            cause=FailureCause.VERIFICATION_FAILURE,
         )
         raise SupervisorTransactionError(
             stage="verification",
@@ -2235,7 +2382,10 @@ def _resume_implementer(
         if frozen_paths is not None:
             pre_snapshot = inspect_repository(request.worktree_path)
             frozen_touched, ordinary_touched = _partition_frozen_correction_dirty_paths(
-                request, frozen_paths, pre_snapshot.dirty_paths
+                request,
+                frozen_paths,
+                pre_snapshot.dirty_paths,
+                executed_attempt.current_attempt,
             )
             commit_exact_subset_paths(
                 request.worktree_path,

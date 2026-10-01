@@ -22,13 +22,16 @@ from lockstep.domain import (
     BillingMode,
     ExecutionEventKind,
     ExecutionOutcome,
+    FailureCause,
     InvocationIdentity,
     InvocationUsage,
     ProcessTermination,
     ProviderTelemetry,
 )
+from lockstep.failure import cause_for_invocation_failure
 from lockstep.persistence import record_execution_event
 from lockstep.process import (
+    ProcessLaunchError,
     ProcessResult,
     ProcessTimeoutError,
     build_process_environment,
@@ -159,10 +162,18 @@ def record_invocation_returned(
     outcome: ExecutionOutcome,
     returncode: int | None = None,
     usage: InvocationUsage | None = None,
+    cause: FailureCause | None = None,
 ) -> None:
-    """Record the classified return of one identified invocation (no-op without both)."""
+    """Record the classified return of one identified invocation (no-op without both).
+
+    A failed invocation is attributed from its host-observed process evidence
+    unless the caller already knows a more specific *cause* (for example
+    malformed output on a process that exited cleanly).
+    """
     if runtime_dir is None or identity is None:
         return
+    if cause is None and outcome is ExecutionOutcome.FAILURE and usage is not None:
+        cause = cause_for_invocation_failure(usage)
     record_execution_event(
         runtime_dir,
         kind=ExecutionEventKind.INVOCATION_RETURNED,
@@ -170,6 +181,7 @@ def record_invocation_returned(
         identity=identity,
         returncode=returncode,
         usage=usage,
+        cause=cause,
     )
 
 
@@ -276,6 +288,14 @@ def invoke_agent(
                 exit_code=None,
                 telemetry=ProviderTelemetry(),
             ),
+        )
+        raise
+    except ProcessLaunchError:
+        record_invocation_returned(
+            runtime_dir,
+            identity,
+            outcome=ExecutionOutcome.FAILURE,
+            cause=cause_for_invocation_failure(None, launch_failed=True),
         )
         raise
     except BaseException:

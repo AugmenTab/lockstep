@@ -27,6 +27,7 @@ from lockstep.domain import (
     AttemptNumber,
     ExecutionEventKind,
     ExecutionOutcome,
+    FailureCause,
     InvocationId,
     InvocationStage,
     InvocationUsage,
@@ -124,6 +125,15 @@ _INVOCATION_KINDS = frozenset(
 )
 
 
+_STOP_BOUNDARY_KINDS = frozenset(
+    {
+        ExecutionEventKind.TRANSACTION_HALTED,
+        ExecutionEventKind.TRANSACTION_ABORTED,
+        ExecutionEventKind.RETRY_EXHAUSTED,
+    }
+)
+
+
 class ExecutionEvent(_EventBase):
     """Observational record that a significant transaction stage occurred.
 
@@ -146,11 +156,16 @@ class ExecutionEvent(_EventBase):
     returncode: int | None = None
     verdict: ReviewVerdict | None = None
     stop_reason: StopReason | None = None
+    cause: FailureCause | None = None
     detail: _NonBlankStr | None = None
     usage: InvocationUsage | None = None
 
     @model_validator(mode="after")
     def _require_identity_for_invocation_kinds(self) -> Self:
+        if self.cause is not None and self.outcome is ExecutionOutcome.SUCCESS:
+            raise ValueError("cause is only valid on a stage that did not succeed")
+        if self.stop_reason is not None and self.kind not in _STOP_BOUNDARY_KINDS:
+            raise ValueError(f"stop_reason is not valid on {self.kind.value}")
         if self.usage is not None and self.kind is not ExecutionEventKind.INVOCATION_RETURNED:
             raise ValueError("usage is only valid on invocation_returned")
         if self.kind in _INVOCATION_KINDS:

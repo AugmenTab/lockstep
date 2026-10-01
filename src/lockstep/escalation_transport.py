@@ -49,6 +49,7 @@ from lockstep.agents import (
 from lockstep.domain import (
     AgentRole,
     ExecutionOutcome,
+    FailureCause,
     InvocationIdentity,
     InvocationStage,
     PhasePlan,
@@ -417,20 +418,21 @@ def invoke_planner_decision(
 
     process = invocation.process
 
-    def _record(outcome: ExecutionOutcome) -> None:
+    def _record(outcome: ExecutionOutcome, cause: FailureCause | None = None) -> None:
         record_invocation_returned(
             runtime.runtime_dir,
             identity,
             outcome=outcome,
             returncode=process.returncode,
             usage=invocation.usage,
+            cause=cause,
         )
 
     if process.returncode != 0:
         _record(ExecutionOutcome.FAILURE)
         raise PlannerDecisionTransportError("planner process exited non-zero")
     if process.stdout_truncated:
-        _record(ExecutionOutcome.FAILURE)
+        _record(ExecutionOutcome.FAILURE, FailureCause.MALFORMED_OUTPUT)
         raise PlannerDecisionTransportError(
             "planner structured output exceeded the configured output budget"
         )
@@ -438,7 +440,7 @@ def invoke_planner_decision(
     try:
         draft = _PlannerDecisionDraft.model_validate_json(process.stdout)
     except ValidationError:
-        _record(ExecutionOutcome.FAILURE)
+        _record(ExecutionOutcome.FAILURE, FailureCause.MALFORMED_OUTPUT)
         raise PlannerDecisionTransportError("planner returned invalid structured output") from None
 
     try:
@@ -450,7 +452,7 @@ def invoke_planner_decision(
             authorized_paths=draft.authorized_paths,
         )
     except ValidationError:
-        _record(ExecutionOutcome.FAILURE)
+        _record(ExecutionOutcome.FAILURE, FailureCause.MALFORMED_OUTPUT)
         raise PlannerDecisionTransportError(
             "planner returned unexpected structured object"
         ) from None

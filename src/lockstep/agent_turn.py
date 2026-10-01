@@ -53,6 +53,7 @@ from lockstep.domain import (
     AttemptNumber,
     BillingMode,
     ExecutionOutcome,
+    FailureCause,
     InvocationIdentity,
     InvocationStage,
     PhaseId,
@@ -374,26 +375,27 @@ def invoke_agent_turn(
 
     process = invocation.process
 
-    def _record(outcome: ExecutionOutcome) -> None:
+    def _record(outcome: ExecutionOutcome, cause: FailureCause | None = None) -> None:
         record_invocation_returned(
             runtime.runtime_dir,
             identity,
             outcome=outcome,
             returncode=process.returncode,
             usage=invocation.usage,
+            cause=cause,
         )
 
     if process.returncode != 0:
         _record(ExecutionOutcome.FAILURE)
         raise AgentTurnError("agent process exited non-zero")
     if process.stdout_truncated:
-        _record(ExecutionOutcome.FAILURE)
+        _record(ExecutionOutcome.FAILURE, FailureCause.MALFORMED_OUTPUT)
         raise AgentTurnError("agent structured output exceeded the configured output budget")
 
     try:
         report = AgentTurnReport.model_validate_json(process.stdout)
     except ValidationError:
-        _record(ExecutionOutcome.FAILURE)
+        _record(ExecutionOutcome.FAILURE, FailureCause.MALFORMED_OUTPUT)
         raise AgentTurnError("agent returned invalid structured outcome") from None
 
     _record(
