@@ -24,7 +24,6 @@ from test_supervisor_implementer_blocker import _implementer_blocked_response
 from test_supervisor_resume_execution import (
     _TEST_FILE_RED,
     _budget,
-    _implementer_completed_response,
     _planner_authoring_response,
     _prepare_scenario,
 )
@@ -34,7 +33,6 @@ from test_transaction_baseline import (
     _PLANNER_USAGE,
     _SCENARIO_NAMES,
     _envelope,
-    _failing,
     _reload_dir,
     _reloaded,
     _Run,
@@ -42,7 +40,6 @@ from test_transaction_baseline import (
 )
 
 import lockstep.agents.invocation as invocation_module
-from lockstep.agent_turn import AgentTurnError
 from lockstep.agents.invocation import AdapterOutput
 from lockstep.domain import (
     AgentRole,
@@ -312,53 +309,36 @@ def test_gate_f_taxonomy_maps_authoritative_exhaustion_but_never_infers_it() -> 
     assert cause_for_invocation_failure(unknown) is FailureCause.PROVIDER_PROCESS_FAILURE
 
 
-def test_gate_f_RED_an_adapter_can_supply_an_authoritative_quota_signal() -> None:
-    """MISSING_REQUIRED_SEAM: no production path can carry ``EXHAUSTED`` into a usage record.
+def test_gate_f_quota_stays_unknown_unless_an_authoritative_seam_supplies_it() -> None:
+    """Phase-10 invariant (planner-corrected, 10.8-R1): never infer ``EXHAUSTED``.
 
-    ``AdapterOutput``/``ProviderTelemetry`` have no quota field and
-    ``_build_usage`` never sets ``quota_status``, so it is always UNKNOWN.
+    The current adapters carry no quota field, so quota is UNKNOWN by default
+    and nothing fabricates it. A provider-supplied quota seam is not a Phase-10
+    obligation (see the dependency-ownership test below).
     """
     fields = set(ProviderTelemetry.model_fields) | set(AdapterOutput.__dataclass_fields__)
-    assert any("quota" in name for name in fields), sorted(fields)
+    assert not any("quota" in name for name in fields), sorted(fields)
+    assert InvocationUsage(
+        provider="claude",
+        termination=invocation_module.ProcessTermination.EXITED,
+        exit_code=1,
+    ).quota_status is (QuotaStatus.UNKNOWN)
 
 
-def test_gate_f_RED_authoritative_exhaustion_yields_a_safe_non_active_disposition(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Narrowest fixture: wrap the real ``_build_usage`` so its record is EXHAUSTED.
+def test_gate_f_real_quota_exhaustion_handling_is_deferred_to_phase_15_1() -> None:
+    """DEFERRED_BY_DEPENDENCY -> Phase 15.1 (Real Usage / Quota Exhaustion Handling).
 
-    The classification half passes (USAGE_EXHAUSTION is journaled); the
-    disposition half is RED for the same reason as provider failure.
+    Provider exhaustion -> normalized signal -> durable structured halt is owned
+    by Phase 15.1. Phase 10 retains only truthful UNKNOWN telemetry and the
+    deterministic taxonomy mapping, both pinned above. The original gate
+    classified this as MISSING_REQUIRED_SEAM before the owning phase was found
+    (historical record preserved in the 10.8 retro).
     """
-    real = invocation_module._build_usage
-
-    def exhausted(*args: object, **kwargs: object) -> InvocationUsage:
-        usage = real(*args, **kwargs)  # type: ignore[arg-type]
-        return usage.model_copy(update={"quota_status": QuotaStatus.EXHAUSTED})
-
-    monkeypatch.setattr(invocation_module, "_build_usage", exhausted)
-    scenario = _prepare_scenario(
-        tmp_path / "s",
-        planner_responses=[_envelope(_planner_authoring_response(_TEST_FILE_RED), _PLANNER_USAGE)],
-        implementer_responses=[
-            _envelope(
-                _failing(_implementer_completed_response({"feature.py": "x = 1\n"})),
-                _IMPLEMENTER_USAGE,
-            )
-        ],
+    # No production module may pull the Phase-15 control path forward.
+    assert not any(
+        "quota_exhausted_halt" in path.read_text() or "normalize_quota" in path.read_text()
+        for path in _SRC.rglob("*.py")
     )
-    with pytest.raises(AgentTurnError):
-        run_single_subphase_transaction_with_retry_checkpoint(
-            scenario.request, agent_turn_runtime=scenario.runtime, retry_budget=_budget(3)
-        )
-    runtime_dir = scenario.request.runtime_dir
-    returned = [
-        e
-        for e in _execution_events(runtime_dir / "events.jsonl")
-        if e.kind is ExecutionEventKind.INVOCATION_RETURNED and e.role is AgentRole.IMPLEMENTER
-    ]
-    assert [e.cause for e in returned] == [FailureCause.USAGE_EXHAUSTION]  # classification works
-    assert _state(runtime_dir) not in _ACTIVE, "exhaustion left the transaction durably active"
 
 
 # ===========================================================================
