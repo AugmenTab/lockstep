@@ -438,6 +438,33 @@ def _emit_abort(
     )
 
 
+def _halt_after_agent_failure(
+    request: SingleSubphaseTransactionRequest,
+    journal_path: Path,
+    state_path: Path,
+    *,
+    stage: str,
+) -> None:
+    """Make a known attempt-1 agent/provider failure durably non-active before it escapes.
+
+    The failed invocation's own ``INVOCATION_RETURNED`` event is the single
+    root-cause record (``cause`` / usage / timing); this boundary carries no
+    ``cause`` or ``stop_reason`` so a failure is never counted twice. It
+    creates no retry checkpoint: ``HALTED`` alone confers no retry authority.
+    """
+    current = load_verified_state(state_path, journal_path)
+    assert current is not None
+    _persist_transition(
+        run_id=request.run_id,
+        source=current.workflow_state,
+        target=WorkflowState.HALTED,
+        sequence=_next_sequence(journal_path),
+        journal_path=journal_path,
+        state_path=state_path,
+    )
+    _emit(request, ExecutionEventKind.TRANSACTION_HALTED, detail=stage)
+
+
 def _attribute_scope_breach(
     request: SingleSubphaseTransactionRequest,
     snapshot: GitRepositorySnapshot,
@@ -674,6 +701,7 @@ def _author_tests(
         runtime_dir=request.runtime_dir,
     )
     if planner_result.process.returncode != 0:
+        _halt_after_agent_failure(request, ctx.journal_path, ctx.state_path, stage="planner")
         raise SupervisorTransactionError(
             stage="planner",
             reason=(f"planner process exited with returncode {planner_result.process.returncode}"),
@@ -980,6 +1008,7 @@ def _complete_after_implementer_success(
         runtime_dir=request.runtime_dir,
     )
     if reviewer_result.process.returncode != 0:
+        _halt_after_agent_failure(request, ctx.journal_path, ctx.state_path, stage="reviewer")
         raise SupervisorTransactionError(
             stage="reviewer",
             reason=(
@@ -1098,23 +1127,27 @@ def _complete_after_implementer_success_with_reviewer_turn(
     """
     _verify_after_implementer(request, ctx, test_commit)
 
-    reviewer_turn = invoke_reviewer_turn(
-        agent_turn_runtime,
-        phase_id=request.phase_id,
-        subphase_id=request.subphase_id,
-        attempt=_TRANSACTION_ATTEMPT,
-        prompt=_reviewer_prompt_with_host_identity(
-            request.reviewer_prompt,
+    try:
+        reviewer_turn = invoke_reviewer_turn(
+            agent_turn_runtime,
             phase_id=request.phase_id,
             subphase_id=request.subphase_id,
             attempt=_TRANSACTION_ATTEMPT,
-        ),
-        cwd=ctx.worktree_root,
-        timeout_seconds=request.agent_timeout_seconds,
-        max_output_bytes=request.max_output_bytes,
-        termination_grace_seconds=request.termination_grace_seconds,
-        run_id=request.run_id,
-    )
+            prompt=_reviewer_prompt_with_host_identity(
+                request.reviewer_prompt,
+                phase_id=request.phase_id,
+                subphase_id=request.subphase_id,
+                attempt=_TRANSACTION_ATTEMPT,
+            ),
+            cwd=ctx.worktree_root,
+            timeout_seconds=request.agent_timeout_seconds,
+            max_output_bytes=request.max_output_bytes,
+            termination_grace_seconds=request.termination_grace_seconds,
+            run_id=request.run_id,
+        )
+    except ReviewerTurnError:
+        _halt_after_agent_failure(request, ctx.journal_path, ctx.state_path, stage="reviewer")
+        raise
 
     if reviewer_turn.report.status is AgentTurnStatus.COMPLETED:
         review = reviewer_turn.report.review_decision
@@ -1130,16 +1163,21 @@ def _complete_after_implementer_success_with_reviewer_turn(
 
     # Deferred import: see the identical rationale on the Implementer-blocked
     # branch of ``run_single_subphase_transaction_with_blockers`` below.
+    from lockstep.escalation_transport import PlannerDecisionTransportError
     from lockstep.supervisor.escalation import dispatch_escalation
 
-    escalation_result = dispatch_escalation(
-        agent_turn_runtime,
-        request=reviewer_turn.escalation_request,
-        timeout_seconds=request.agent_timeout_seconds,
-        max_output_bytes=request.max_output_bytes,
-        termination_grace_seconds=request.termination_grace_seconds,
-        run_id=request.run_id,
-    )
+    try:
+        escalation_result = dispatch_escalation(
+            agent_turn_runtime,
+            request=reviewer_turn.escalation_request,
+            timeout_seconds=request.agent_timeout_seconds,
+            max_output_bytes=request.max_output_bytes,
+            termination_grace_seconds=request.termination_grace_seconds,
+            run_id=request.run_id,
+        )
+    except (PlannerDecisionTransportError, EscalationProtocolError):
+        _halt_after_agent_failure(request, ctx.journal_path, ctx.state_path, stage="escalation")
+        raise
     _record_escalation_dispatched(request, escalation_result)
 
     _persist_transition(
@@ -1205,6 +1243,7 @@ def run_single_subphase_transaction(
         runtime_dir=request.runtime_dir,
     )
     if implementer_result.process.returncode != 0:
+        _halt_after_agent_failure(request, ctx.journal_path, ctx.state_path, stage="implementer")
         raise SupervisorTransactionError(
             stage="implementer",
             reason=(
@@ -1273,19 +1312,23 @@ def _run_blocker_capable_transaction(
         planner_adapter=agent_turn_runtime.adapters.planner,
     )
 
-    implementer_turn = invoke_agent_turn(
-        agent_turn_runtime,
-        role=AgentRole.IMPLEMENTER,
-        phase_id=request.phase_id,
-        subphase_id=request.subphase_id,
-        attempt=_TRANSACTION_ATTEMPT,
-        prompt=request.implementer_prompt,
-        cwd=ctx.worktree_root,
-        timeout_seconds=request.agent_timeout_seconds,
-        max_output_bytes=request.max_output_bytes,
-        termination_grace_seconds=request.termination_grace_seconds,
-        run_id=request.run_id,
-    )
+    try:
+        implementer_turn = invoke_agent_turn(
+            agent_turn_runtime,
+            role=AgentRole.IMPLEMENTER,
+            phase_id=request.phase_id,
+            subphase_id=request.subphase_id,
+            attempt=_TRANSACTION_ATTEMPT,
+            prompt=request.implementer_prompt,
+            cwd=ctx.worktree_root,
+            timeout_seconds=request.agent_timeout_seconds,
+            max_output_bytes=request.max_output_bytes,
+            termination_grace_seconds=request.termination_grace_seconds,
+            run_id=request.run_id,
+        )
+    except AgentTurnError:
+        _halt_after_agent_failure(request, ctx.journal_path, ctx.state_path, stage="implementer")
+        raise
 
     if implementer_turn.report.status is AgentTurnStatus.COMPLETED:
         assert implementer_turn.escalation_request is None
@@ -1306,16 +1349,21 @@ def _run_blocker_capable_transaction(
     # ``dispatch_escalation`` here -- at call time, after both modules have
     # already finished loading -- avoids that cycle without modifying either
     # frozen module.
+    from lockstep.escalation_transport import PlannerDecisionTransportError
     from lockstep.supervisor.escalation import dispatch_escalation
 
-    escalation_result = dispatch_escalation(
-        agent_turn_runtime,
-        request=implementer_turn.escalation_request,
-        timeout_seconds=request.agent_timeout_seconds,
-        max_output_bytes=request.max_output_bytes,
-        termination_grace_seconds=request.termination_grace_seconds,
-        run_id=request.run_id,
-    )
+    try:
+        escalation_result = dispatch_escalation(
+            agent_turn_runtime,
+            request=implementer_turn.escalation_request,
+            timeout_seconds=request.agent_timeout_seconds,
+            max_output_bytes=request.max_output_bytes,
+            termination_grace_seconds=request.termination_grace_seconds,
+            run_id=request.run_id,
+        )
+    except (PlannerDecisionTransportError, EscalationProtocolError):
+        _halt_after_agent_failure(request, ctx.journal_path, ctx.state_path, stage="escalation")
+        raise
     _record_escalation_dispatched(request, escalation_result)
 
     _persist_transition(
