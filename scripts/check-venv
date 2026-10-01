@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Run the canonical ./scripts/check inside the repository virtualenv.
+#
+# Output is also written to the file named by $CHECK_LOG when it is set.
+# Does not modify tracked content or install anything.
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+PATH="$repo_root/.venv/bin:$PATH"
+
+if [[ -n "${CHECK_LOG:-}" ]]; then
+    ./scripts/check 2>&1 | tee "$CHECK_LOG"
+else
+    ./scripts/check
+fi

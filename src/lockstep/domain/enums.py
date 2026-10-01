@@ -31,6 +31,32 @@ class InvocationStage(StrEnum):
     ESCALATION_DECISION = "escalation_decision"
 
 
+class ExecutionEventKind(StrEnum):
+    """Significant transaction stage recorded as an observational execution event."""
+
+    INVOCATION_STARTED = "invocation_started"
+    INVOCATION_RETURNED = "invocation_returned"
+    BASELINE_VERIFIED = "baseline_verified"
+    TESTS_FROZEN = "tests_frozen"
+    VERIFICATION_COMPLETED = "verification_completed"
+    REVIEW_DECIDED = "review_decided"
+    ESCALATION_DISPATCHED = "escalation_dispatched"
+    RETRY_AUTHORIZED = "retry_authorized"
+    RETRY_EXHAUSTED = "retry_exhausted"
+    RESUME_CLAIMED = "resume_claimed"
+    RESUME_STARTED = "resume_started"
+    RESUME_SETTLED = "resume_settled"
+    TRANSACTION_HALTED = "transaction_halted"
+
+
+class ExecutionOutcome(StrEnum):
+    """Coarse result class of a recorded stage; richer taxonomy belongs to later work."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+    BLOCKED = "blocked"
+
+
 class ReviewVerdict(StrEnum):
     APPROVE = "approve"
     REWORK = "rework"

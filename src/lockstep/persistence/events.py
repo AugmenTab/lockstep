@@ -22,7 +22,21 @@ from pydantic import (
     model_validator,
 )
 
-from lockstep.domain import ProjectId, RunId, SchemaVersion, StopReason
+from lockstep.domain import (
+    AgentRole,
+    AttemptNumber,
+    ExecutionEventKind,
+    ExecutionOutcome,
+    InvocationId,
+    InvocationStage,
+    PhaseId,
+    ProjectId,
+    ReviewVerdict,
+    RunId,
+    SchemaVersion,
+    StopReason,
+    SubphaseId,
+)
 from lockstep.state import InvalidTransitionError, WorkflowState, transition
 
 _CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion.model_validate(1)
@@ -104,7 +118,51 @@ class RunHaltedEvent(_EventBase):
     detail: _NonBlankStr | None = None
 
 
+_INVOCATION_KINDS = frozenset(
+    {ExecutionEventKind.INVOCATION_STARTED, ExecutionEventKind.INVOCATION_RETURNED}
+)
+
+
+class ExecutionEvent(_EventBase):
+    """Observational record that a significant transaction stage occurred.
+
+    Never drives workflow state: replay advances only the sequence for it, and
+    nothing in it confers retry, resume, commit, scope, Contract, or Planner
+    authority. Invocation-bearing kinds carry the complete host-issued 10.1
+    identity; other kinds carry only the coordinates the owning action knows.
+    Every vocabulary-valued field reuses an existing canonical type.
+    """
+
+    event_type: Literal["execution"] = "execution"
+    kind: ExecutionEventKind
+    outcome: ExecutionOutcome | None = None
+    phase_id: PhaseId | None = None
+    subphase_id: SubphaseId | None = None
+    attempt: AttemptNumber | None = None
+    role: AgentRole | None = None
+    stage: InvocationStage | None = None
+    invocation_id: InvocationId | None = None
+    returncode: int | None = None
+    verdict: ReviewVerdict | None = None
+    stop_reason: StopReason | None = None
+    detail: _NonBlankStr | None = None
+
+    @model_validator(mode="after")
+    def _require_identity_for_invocation_kinds(self) -> Self:
+        if self.kind in _INVOCATION_KINDS:
+            missing = [
+                name
+                for name in ("phase_id", "subphase_id", "attempt", "role", "stage", "invocation_id")
+                if getattr(self, name) is None
+            ]
+            if missing:
+                raise ValueError(f"{self.kind.value} requires host identity; missing {missing}")
+        if self.kind is ExecutionEventKind.INVOCATION_RETURNED and self.outcome is None:
+            raise ValueError("invocation_returned requires an outcome")
+        return self
+
+
 LockstepEvent = Annotated[
-    RunCreatedEvent | StateTransitionedEvent | RunHaltedEvent,
+    RunCreatedEvent | StateTransitionedEvent | RunHaltedEvent | ExecutionEvent,
     Field(discriminator="event_type"),
 ]

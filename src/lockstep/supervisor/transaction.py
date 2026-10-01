@@ -88,6 +88,8 @@ from lockstep.domain import (
     AgentRole,
     AttemptNumber,
     BillingMode,
+    ExecutionEventKind,
+    ExecutionOutcome,
     InvocationIdentity,
     InvocationStage,
     PhaseId,
@@ -112,6 +114,7 @@ from lockstep.persistence import (
     append_event,
     load_verified_state,
     read_events,
+    record_execution_event,
     replay_events,
     write_state,
 )
@@ -369,6 +372,35 @@ def _persist_transition(
 _TRANSACTION_ATTEMPT = AttemptNumber.model_validate(1)
 
 
+def _emit(
+    request: SingleSubphaseTransactionRequest,
+    kind: ExecutionEventKind,
+    *,
+    attempt: AttemptNumber = _TRANSACTION_ATTEMPT,
+    outcome: ExecutionOutcome | None = None,
+    role: AgentRole | None = None,
+    verdict: ReviewVerdict | None = None,
+    detail: str | None = None,
+) -> None:
+    """Record one observational execution event for *request*'s Sub-phase.
+
+    Called only from the deterministic code path that owns the action,
+    after the action occurred. Confers no authority; see
+    :class:`~lockstep.persistence.ExecutionEvent`.
+    """
+    record_execution_event(
+        request.runtime_dir,
+        kind=kind,
+        outcome=outcome,
+        phase_id=request.phase_id,
+        subphase_id=request.subphase_id,
+        attempt=attempt,
+        role=role,
+        verdict=verdict,
+        detail=detail,
+    )
+
+
 def _require_review_matches_transaction(
     review: ReviewDecision,
     request: SingleSubphaseTransactionRequest,
@@ -408,6 +440,20 @@ def _agent_request(
             role=role,
             stage=stage,
         ),
+    )
+
+
+def _record_escalation_dispatched(
+    request: SingleSubphaseTransactionRequest,
+    result: SupervisorEscalationResult,
+) -> None:
+    """Record the disposition the dispatcher decided (observational; confers no authority)."""
+    _emit(
+        request,
+        ExecutionEventKind.ESCALATION_DISPATCHED,
+        attempt=result.request.attempt,
+        role=result.request.source_role,
+        detail=result.disposition.value,
     )
 
 
@@ -542,19 +588,16 @@ def _author_tests(
     parent_env: Mapping[str, str],
     planner_adapter: AgentAdapter,
 ) -> GitCommitResult:
-    for sequence, (source_state, target_state) in enumerate(
-        (
-            (WorkflowState.READY, WorkflowState.PHASE_PLANNING),
-            (WorkflowState.PHASE_PLANNING, WorkflowState.SUBPHASE_PLANNING),
-            (WorkflowState.SUBPHASE_PLANNING, WorkflowState.TEST_AUTHORING),
-        ),
-        start=2,
+    for source_state, target_state in (
+        (WorkflowState.READY, WorkflowState.PHASE_PLANNING),
+        (WorkflowState.PHASE_PLANNING, WorkflowState.SUBPHASE_PLANNING),
+        (WorkflowState.SUBPHASE_PLANNING, WorkflowState.TEST_AUTHORING),
     ):
         _persist_transition(
             run_id=request.run_id,
             source=source_state,
             target=target_state,
-            sequence=sequence,
+            sequence=_next_sequence(ctx.journal_path),
             journal_path=ctx.journal_path,
             state_path=ctx.state_path,
         )
@@ -569,6 +612,7 @@ def _author_tests(
             stage=InvocationStage.TEST_AUTHORING,
         ),
         parent_env=parent_env,
+        runtime_dir=request.runtime_dir,
     )
     if planner_result.process.returncode != 0:
         raise SupervisorTransactionError(
@@ -604,7 +648,7 @@ def _author_tests(
         run_id=request.run_id,
         source=WorkflowState.TEST_AUTHORING,
         target=WorkflowState.TEST_BASELINE_VERIFY,
-        sequence=5,
+        sequence=_next_sequence(ctx.journal_path),
         journal_path=ctx.journal_path,
         state_path=ctx.state_path,
     )
@@ -618,16 +662,28 @@ def _author_tests(
         termination_grace_seconds=request.termination_grace_seconds,
     )
     if baseline_result.returncode == 0:
+        _emit(
+            request,
+            ExecutionEventKind.BASELINE_VERIFIED,
+            outcome=ExecutionOutcome.FAILURE,
+            detail="red_baseline_unexpectedly_passed",
+        )
         raise SupervisorTransactionError(
             stage="baseline",
             reason="RED baseline unexpectedly passed",
         )
+    _emit(
+        request,
+        ExecutionEventKind.BASELINE_VERIFIED,
+        outcome=ExecutionOutcome.SUCCESS,
+        detail="red_confirmed",
+    )
 
     _persist_transition(
         run_id=request.run_id,
         source=WorkflowState.TEST_BASELINE_VERIFY,
         target=WorkflowState.TEST_COMMIT,
-        sequence=6,
+        sequence=_next_sequence(ctx.journal_path),
         journal_path=ctx.journal_path,
         state_path=ctx.state_path,
     )
@@ -639,12 +695,18 @@ def _author_tests(
         paths=request.test_paths,
         message=request.test_commit_message,
     )
+    _emit(
+        request,
+        ExecutionEventKind.TESTS_FROZEN,
+        outcome=ExecutionOutcome.SUCCESS,
+        detail=test_commit.commit_sha,
+    )
 
     _persist_transition(
         run_id=request.run_id,
         source=WorkflowState.TEST_COMMIT,
         target=WorkflowState.IMPLEMENTING,
-        sequence=7,
+        sequence=_next_sequence(ctx.journal_path),
         journal_path=ctx.journal_path,
         state_path=ctx.state_path,
     )
@@ -683,7 +745,7 @@ def _verify_after_implementer(
         run_id=request.run_id,
         source=WorkflowState.IMPLEMENTING,
         target=WorkflowState.VERIFYING,
-        sequence=8,
+        sequence=_next_sequence(ctx.journal_path),
         journal_path=ctx.journal_path,
         state_path=ctx.state_path,
     )
@@ -702,18 +764,24 @@ def _verify_after_implementer(
         termination_grace_seconds=request.termination_grace_seconds,
     )
     if verification_result.returncode != 0:
+        _emit(
+            request,
+            ExecutionEventKind.VERIFICATION_COMPLETED,
+            outcome=ExecutionOutcome.FAILURE,
+        )
         raise SupervisorTransactionError(
             stage="verification",
             reason=(
                 f"verification command exited with returncode {verification_result.returncode}"
             ),
         )
+    _emit(request, ExecutionEventKind.VERIFICATION_COMPLETED, outcome=ExecutionOutcome.SUCCESS)
 
     _persist_transition(
         run_id=request.run_id,
         source=WorkflowState.VERIFYING,
         target=WorkflowState.REVIEWING,
-        sequence=9,
+        sequence=_next_sequence(ctx.journal_path),
         journal_path=ctx.journal_path,
         state_path=ctx.state_path,
     )
@@ -737,6 +805,12 @@ def _handle_review_decision(
     """
     expected_impl_paths = tuple(sorted(request.implementation_paths))
     _require_review_matches_transaction(review, request)
+    _emit(
+        request,
+        ExecutionEventKind.REVIEW_DECIDED,
+        role=AgentRole.REVIEWER,
+        verdict=review.verdict,
+    )
 
     if review.verdict is not ReviewVerdict.APPROVE:
         raise SupervisorTransactionError(
@@ -760,7 +834,7 @@ def _handle_review_decision(
         run_id=request.run_id,
         source=WorkflowState.REVIEWING,
         target=WorkflowState.IMPLEMENTATION_COMMIT,
-        sequence=10,
+        sequence=_next_sequence(ctx.journal_path),
         journal_path=ctx.journal_path,
         state_path=ctx.state_path,
     )
@@ -777,7 +851,7 @@ def _handle_review_decision(
         run_id=request.run_id,
         source=WorkflowState.IMPLEMENTATION_COMMIT,
         target=WorkflowState.SUBPHASE_COMPLETE,
-        sequence=11,
+        sequence=_next_sequence(ctx.journal_path),
         journal_path=ctx.journal_path,
         state_path=ctx.state_path,
     )
@@ -828,6 +902,7 @@ def _complete_after_implementer_success(
             stage=InvocationStage.REVIEW,
         ),
         parent_env=parent_env,
+        runtime_dir=request.runtime_dir,
     )
     if reviewer_result.process.returncode != 0:
         raise SupervisorTransactionError(
@@ -868,15 +943,22 @@ def _capture_review_rework(
     never re-enters the Reviewer, and never commits.
     """
     _require_review_matches_transaction(review, request)
+    _emit(
+        request,
+        ExecutionEventKind.REVIEW_DECIDED,
+        role=AgentRole.REVIEWER,
+        verdict=review.verdict,
+    )
 
     _persist_transition(
         run_id=request.run_id,
         source=WorkflowState.REVIEWING,
         target=WorkflowState.HALTED,
-        sequence=10,
+        sequence=_next_sequence(ctx.journal_path),
         journal_path=ctx.journal_path,
         state_path=ctx.state_path,
     )
+    _emit(request, ExecutionEventKind.TRANSACTION_HALTED, detail="review_rework")
 
     final_state = load_verified_state(ctx.state_path, ctx.journal_path)
     if final_state is None or final_state.workflow_state != WorkflowState.HALTED:
@@ -971,14 +1053,20 @@ def _complete_after_implementer_success_with_reviewer_turn(
         termination_grace_seconds=request.termination_grace_seconds,
         run_id=request.run_id,
     )
+    _record_escalation_dispatched(request, escalation_result)
 
     _persist_transition(
         run_id=request.run_id,
         source=WorkflowState.REVIEWING,
         target=WorkflowState.HALTED,
-        sequence=10,
+        sequence=_next_sequence(ctx.journal_path),
         journal_path=ctx.journal_path,
         state_path=ctx.state_path,
+    )
+    _emit(
+        request,
+        ExecutionEventKind.TRANSACTION_HALTED,
+        detail=reviewer_turn.escalation_request.category.value,
     )
 
     final_state = load_verified_state(ctx.state_path, ctx.journal_path)
@@ -1025,6 +1113,7 @@ def run_single_subphase_transaction(
             stage=InvocationStage.IMPLEMENTATION,
         ),
         parent_env=parent_env,
+        runtime_dir=request.runtime_dir,
     )
     if implementer_result.process.returncode != 0:
         raise SupervisorTransactionError(
@@ -1138,14 +1227,20 @@ def _run_blocker_capable_transaction(
         termination_grace_seconds=request.termination_grace_seconds,
         run_id=request.run_id,
     )
+    _record_escalation_dispatched(request, escalation_result)
 
     _persist_transition(
         run_id=request.run_id,
         source=WorkflowState.IMPLEMENTING,
         target=WorkflowState.HALTED,
-        sequence=8,
+        sequence=_next_sequence(ctx.journal_path),
         journal_path=ctx.journal_path,
         state_path=ctx.state_path,
+    )
+    _emit(
+        request,
+        ExecutionEventKind.TRANSACTION_HALTED,
+        detail=implementer_turn.escalation_request.category.value,
     )
 
     final_state = load_verified_state(ctx.state_path, ctx.journal_path)
@@ -1213,15 +1308,50 @@ def _current_attempt_state(request: SingleSubphaseTransactionRequest) -> Attempt
     )
 
 
+def _record_retry_decision(
+    request: SingleSubphaseTransactionRequest, checkpoint: RetryCheckpoint
+) -> None:
+    """Record the durable retry decision a checkpoint carries, after it is persisted.
+
+    ``RETRY_AUTHORIZED`` carries the next (authorized) attempt and the
+    target role; an exhausted checkpoint carries the attempt that used up
+    the budget. Observational only: the checkpoint file, not this event,
+    is the retry authority.
+    """
+    target_role = checkpoint.retry_request.target_role
+    next_state = checkpoint.next_attempt_state
+    if next_state is None:
+        _emit(
+            request,
+            ExecutionEventKind.RETRY_EXHAUSTED,
+            attempt=checkpoint.attempt_state.current_attempt,
+            role=target_role,
+        )
+        return
+    _emit(
+        request,
+        ExecutionEventKind.RETRY_AUTHORIZED,
+        attempt=next_state.current_attempt,
+        role=target_role,
+    )
+
+
+def _freeze_and_record_retry(
+    request: SingleSubphaseTransactionRequest, checkpoint: RetryCheckpoint
+) -> RetryCheckpoint:
+    from lockstep.retry_checkpoint import freeze_retry_checkpoint
+
+    frozen = freeze_retry_checkpoint(request.runtime_dir, checkpoint)
+    _record_retry_decision(request, frozen)
+    return frozen
+
+
 def _checkpoint_from_implementer_blocked(
     request: SingleSubphaseTransactionRequest,
     retry_budget: RetryBudget,
     result: ImplementerBlockedTransactionResult,
 ) -> ImplementerBlockedTransactionResult | RetryCheckpointedTransactionResult:
-    from lockstep.retry_checkpoint import (
-        create_retry_checkpoint_from_escalation,
-        freeze_retry_checkpoint,
-    )
+    from lockstep.retry_checkpoint import create_retry_checkpoint_from_escalation
 
     checkpoint = create_retry_checkpoint_from_escalation(
         attempt_state=_current_attempt_state(request),
@@ -1231,7 +1361,7 @@ def _checkpoint_from_implementer_blocked(
     if checkpoint is None:
         return result
 
-    frozen = freeze_retry_checkpoint(request.runtime_dir, checkpoint)
+    frozen = _freeze_and_record_retry(request, checkpoint)
     return RetryCheckpointedTransactionResult(source_result=result, checkpoint=frozen)
 
 
@@ -1240,10 +1370,7 @@ def _checkpoint_from_reviewer_blocked(
     retry_budget: RetryBudget,
     result: ReviewerBlockedTransactionResult,
 ) -> ReviewerBlockedTransactionResult | RetryCheckpointedTransactionResult:
-    from lockstep.retry_checkpoint import (
-        create_retry_checkpoint_from_escalation,
-        freeze_retry_checkpoint,
-    )
+    from lockstep.retry_checkpoint import create_retry_checkpoint_from_escalation
 
     checkpoint = create_retry_checkpoint_from_escalation(
         attempt_state=_current_attempt_state(request),
@@ -1253,7 +1380,7 @@ def _checkpoint_from_reviewer_blocked(
     if checkpoint is None:
         return result
 
-    frozen = freeze_retry_checkpoint(request.runtime_dir, checkpoint)
+    frozen = _freeze_and_record_retry(request, checkpoint)
     return RetryCheckpointedTransactionResult(source_result=result, checkpoint=frozen)
 
 
@@ -1262,10 +1389,7 @@ def _checkpoint_from_review_rework(
     retry_budget: RetryBudget,
     result: ReviewReworkTransactionResult,
 ) -> RetryCheckpointedTransactionResult:
-    from lockstep.retry_checkpoint import (
-        create_retry_checkpoint_from_review,
-        freeze_retry_checkpoint,
-    )
+    from lockstep.retry_checkpoint import create_retry_checkpoint_from_review
 
     checkpoint = create_retry_checkpoint_from_review(
         attempt_state=_current_attempt_state(request),
@@ -1277,7 +1401,7 @@ def _checkpoint_from_review_rework(
     # this function was called for a non-REWORK decision, a caller defect.
     assert checkpoint is not None
 
-    frozen = freeze_retry_checkpoint(request.runtime_dir, checkpoint)
+    frozen = _freeze_and_record_retry(request, checkpoint)
     return RetryCheckpointedTransactionResult(source_result=result, checkpoint=frozen)
 
 
@@ -1626,6 +1750,23 @@ def _resume_prompt_suffix(
     return _escalation_resume_prompt_suffix(claim, executed_attempt_number, target_role)
 
 
+def _record_resume_settled(
+    request: SingleSubphaseTransactionRequest,
+    started_claim: ResumeClaim,
+    outcome: ResumeSettlementOutcome,
+) -> None:
+    """Record a durable settlement (``detail`` is the existing outcome vocabulary)."""
+    executed = started_claim.checkpoint.next_attempt_state
+    assert executed is not None
+    _emit(
+        request,
+        ExecutionEventKind.RESUME_SETTLED,
+        attempt=executed.current_attempt,
+        role=started_claim.checkpoint.retry_request.target_role,
+        detail=outcome.value,
+    )
+
+
 def _settle_and_transition_to_halted(
     request: SingleSubphaseTransactionRequest,
     started_claim: ResumeClaim,
@@ -1633,6 +1774,7 @@ def _settle_and_transition_to_halted(
     journal_path: Path,
     state_path: Path,
     *,
+    halt_detail: str,
     next_checkpoint: RetryCheckpoint | None = None,
 ) -> ResumeExecutionResult:
     from lockstep.resume_settlement import ResumeSettlement, finalize_resume_settlement
@@ -1648,6 +1790,14 @@ def _settle_and_transition_to_halted(
         journal_path=journal_path,
         state_path=state_path,
     )
+    executed = started_claim.checkpoint.next_attempt_state
+    assert executed is not None
+    _emit(
+        request,
+        ExecutionEventKind.TRANSACTION_HALTED,
+        attempt=executed.current_attempt,
+        detail=halt_detail,
+    )
 
     settlement = ResumeSettlement(
         schema_version=1,
@@ -1656,6 +1806,9 @@ def _settle_and_transition_to_halted(
         next_checkpoint=next_checkpoint,
     )
     finalized = finalize_resume_settlement(request.runtime_dir, settlement)
+    if next_checkpoint is not None:
+        _record_retry_decision(request, next_checkpoint)
+    _record_resume_settled(request, started_claim, outcome)
 
     return ResumeExecutionResult(
         disposition=ResumeExecutionDisposition.SETTLED,
@@ -1678,6 +1831,7 @@ def _settle_execution_failed(
         ResumeSettlementOutcome.EXECUTION_FAILED,
         journal_path,
         state_path,
+        halt_detail="execution_failed",
     )
 
 
@@ -1737,6 +1891,7 @@ def _handle_resumed_blocked(
     except (PlannerDecisionTransportError, EscalationProtocolError):
         _settle_execution_failed(request, started_claim, journal_path, state_path)
         raise
+    _record_escalation_dispatched(request, escalation_result)
 
     checkpoint = create_retry_checkpoint_from_escalation(
         attempt_state=executed_attempt,
@@ -1744,9 +1899,15 @@ def _handle_resumed_blocked(
         result=escalation_result,
     )
 
+    category = escalation_request.category.value
     if checkpoint is None:
         return _settle_and_transition_to_halted(
-            request, started_claim, ResumeSettlementOutcome.HALTED, journal_path, state_path
+            request,
+            started_claim,
+            ResumeSettlementOutcome.HALTED,
+            journal_path,
+            state_path,
+            halt_detail=category,
         )
 
     return _settle_and_transition_to_halted(
@@ -1755,6 +1916,7 @@ def _handle_resumed_blocked(
         ResumeSettlementOutcome.NEXT_RETRY,
         journal_path,
         state_path,
+        halt_detail=category,
         next_checkpoint=checkpoint,
     )
 
@@ -1833,6 +1995,7 @@ def _resume_approve(
         schema_version=1, claim=started_claim, outcome=ResumeSettlementOutcome.COMPLETED
     )
     finalized = finalize_resume_settlement(request.runtime_dir, settlement)
+    _record_resume_settled(request, started_claim, ResumeSettlementOutcome.COMPLETED)
 
     return ResumeExecutionResult(
         disposition=ResumeExecutionDisposition.SETTLED,
@@ -1866,6 +2029,7 @@ def _resume_rework(
         ResumeSettlementOutcome.NEXT_RETRY,
         journal_path,
         state_path,
+        halt_detail="review_rework",
         next_checkpoint=checkpoint,
     )
 
@@ -1921,6 +2085,13 @@ def _invoke_and_handle_resumed_reviewer(
     assert reviewer_turn.escalation_request is None
 
     _require_review_matches_resume(review, request, executed_attempt.current_attempt)
+    _emit(
+        request,
+        ExecutionEventKind.REVIEW_DECIDED,
+        attempt=executed_attempt.current_attempt,
+        role=AgentRole.REVIEWER,
+        verdict=review.verdict,
+    )
 
     if review.verdict is ReviewVerdict.APPROVE:
         try:
@@ -1938,7 +2109,12 @@ def _invoke_and_handle_resumed_reviewer(
 
     assert review.verdict is ReviewVerdict.HALT
     return _settle_and_transition_to_halted(
-        request, started_claim, ResumeSettlementOutcome.HALTED, journal_path, state_path
+        request,
+        started_claim,
+        ResumeSettlementOutcome.HALTED,
+        journal_path,
+        state_path,
+        halt_detail="review_halt",
     )
 
 
@@ -1979,12 +2155,24 @@ def _resume_run_verification(
         termination_grace_seconds=request.termination_grace_seconds,
     )
     if verification_result.returncode != 0:
+        _emit(
+            request,
+            ExecutionEventKind.VERIFICATION_COMPLETED,
+            attempt=attempt,
+            outcome=ExecutionOutcome.FAILURE,
+        )
         raise SupervisorTransactionError(
             stage="verification",
             reason=(
                 f"verification command exited with returncode {verification_result.returncode}"
             ),
         )
+    _emit(
+        request,
+        ExecutionEventKind.VERIFICATION_COMPLETED,
+        attempt=attempt,
+        outcome=ExecutionOutcome.SUCCESS,
+    )
 
     _persist_transition(
         run_id=request.run_id,
@@ -2135,6 +2323,12 @@ def _launch_claimed_resume(
     assert executed_attempt is not None
 
     started_claim = mark_resume_started(request.runtime_dir, claim)
+    _emit(
+        request,
+        ExecutionEventKind.RESUME_STARTED,
+        attempt=executed_attempt.current_attempt,
+        role=target_role,
+    )
 
     journal_path = request.runtime_dir / "events.jsonl"
     state_path = request.runtime_dir / "state.json"
@@ -2238,5 +2432,13 @@ def resume_single_subphase_transaction(
             )
         claim = claimed_inspection.claim
         assert claim is not None
+        claimed_attempt = claim.checkpoint.next_attempt_state
+        assert claimed_attempt is not None
+        _emit(
+            request,
+            ExecutionEventKind.RESUME_CLAIMED,
+            attempt=claimed_attempt.current_attempt,
+            role=claim.checkpoint.retry_request.target_role,
+        )
 
     return _launch_claimed_resume(request, agent_turn_runtime, claim)

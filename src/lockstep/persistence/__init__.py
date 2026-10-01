@@ -8,11 +8,13 @@ JSONL layout, and crash-tail semantics all live inside this package.
 """
 
 from lockstep.persistence.events import (
+    ExecutionEvent,
     LockstepEvent,
     RunCreatedEvent,
     RunHaltedEvent,
     StateTransitionedEvent,
 )
+from lockstep.persistence.execution_log import record_execution_event
 from lockstep.persistence.journal import (
     JournalIntegrityError,
     append_event,
@@ -28,6 +30,7 @@ from lockstep.persistence.state_store import (
 )
 
 __all__ = [
+    "ExecutionEvent",
     "JournalIntegrityError",
     "LockstepEvent",
     "ReplayError",
@@ -40,6 +43,7 @@ __all__ = [
     "load_verified_state",
     "read_events",
     "read_state",
+    "record_execution_event",
     "replay_events",
     "write_state",
 ]

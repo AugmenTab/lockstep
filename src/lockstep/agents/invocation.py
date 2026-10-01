@@ -17,7 +17,14 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
-from lockstep.domain import AgentRole, BillingMode, InvocationIdentity
+from lockstep.domain import (
+    AgentRole,
+    BillingMode,
+    ExecutionEventKind,
+    ExecutionOutcome,
+    InvocationIdentity,
+)
+from lockstep.persistence import record_execution_event
 from lockstep.process import (
     ProcessResult,
     build_process_environment,
@@ -108,11 +115,32 @@ class AgentInvocationResult:
     identity: InvocationIdentity | None = None
 
 
+def record_invocation_returned(
+    runtime_dir: Path | None,
+    identity: InvocationIdentity | None,
+    *,
+    outcome: ExecutionOutcome,
+    returncode: int | None = None,
+) -> None:
+    """Record the classified return of one identified invocation (no-op without both)."""
+    if runtime_dir is None or identity is None:
+        return
+    record_execution_event(
+        runtime_dir,
+        kind=ExecutionEventKind.INVOCATION_RETURNED,
+        outcome=outcome,
+        identity=identity,
+        returncode=returncode,
+    )
+
+
 def invoke_agent(
     adapter: AgentAdapter,
     request: AgentInvocationRequest,
     *,
     parent_env: Mapping[str, str],
+    runtime_dir: Path | None = None,
+    record_return: bool = True,
 ) -> AgentInvocationResult:
     """Compose adapter, environment policy, and process runner.
 
@@ -123,6 +151,19 @@ def invoke_agent(
     orchestrator-owned execution constraints, and returns the outcome
     as an :class:`AgentInvocationResult`. No ambient process state is
     consulted; *parent_env* is the sole environment input.
+
+    When *request* carries a host-issued identity and *runtime_dir* holds
+    an event journal, records ``INVOCATION_STARTED`` immediately before
+    the process launches (after the command and environment were built,
+    so a start is never claimed for a launch that could not happen) and
+    ``INVOCATION_RETURNED`` once it returns -- unless *record_return* is
+    ``False``, in which case the caller classifies the outcome (for
+    example a structured ``BLOCKED`` report) and records the return
+    itself through :func:`record_invocation_returned`; an abnormal
+    process failure is always recorded here, since the caller never
+    receives a result. The records are
+    observational and confer no authority; a failure to append the start
+    record propagates before any process is launched.
     """
     command = adapter.build_command(request)
 
@@ -133,15 +174,36 @@ def invoke_agent(
         required_names=command.required_names,
     )
 
-    process = run_process(
-        command.argv,
-        cwd=request.cwd,
-        env=child_env,
-        timeout_seconds=request.timeout_seconds,
-        max_output_bytes=request.max_output_bytes,
-        termination_grace_seconds=request.termination_grace_seconds,
-        stdin_text=command.stdin_text,
-    )
+    identity = request.identity if runtime_dir is not None else None
+    if identity is not None:
+        assert runtime_dir is not None
+        record_execution_event(
+            runtime_dir, kind=ExecutionEventKind.INVOCATION_STARTED, identity=identity
+        )
+
+    try:
+        process = run_process(
+            command.argv,
+            cwd=request.cwd,
+            env=child_env,
+            timeout_seconds=request.timeout_seconds,
+            max_output_bytes=request.max_output_bytes,
+            termination_grace_seconds=request.termination_grace_seconds,
+            stdin_text=command.stdin_text,
+        )
+    except BaseException:
+        record_invocation_returned(runtime_dir, identity, outcome=ExecutionOutcome.FAILURE)
+        raise
+
+    if identity is not None and record_return:
+        record_invocation_returned(
+            runtime_dir,
+            identity,
+            outcome=(
+                ExecutionOutcome.SUCCESS if process.returncode == 0 else ExecutionOutcome.FAILURE
+            ),
+            returncode=process.returncode,
+        )
 
     return AgentInvocationResult(
         adapter_name=adapter.name,

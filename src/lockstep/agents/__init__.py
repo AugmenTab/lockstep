@@ -36,6 +36,7 @@ from lockstep.agents.invocation import (
     AgentInvocationRequest,
     AgentInvocationResult,
     invoke_agent,
+    record_invocation_returned,
 )
 from lockstep.agents.openai_schema import (
     OpenAIStrictSchemaError,
@@ -95,6 +96,7 @@ __all__ = [
     "prepare_structured_role_adapter",
     "probe_claude_cli",
     "probe_codex_cli",
+    "record_invocation_returned",
     "require_claude_subscription_ready",
     "require_codex_subscription_ready",
     "resolve_agent_adapters",

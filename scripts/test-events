@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Focused regression set for the event journal, transaction, retry/resume,
+# Reviewer identity, invocation identity, and execution-event suites.
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+exec "$repo_root/scripts/test" -q \
+    tests/test_execution_events.py \
+    tests/test_event_journal.py \
+    tests/test_state_replay.py \
+    tests/test_state_store.py \
+    tests/test_invocation_identity.py \
+    tests/test_supervisor_invocation_identity.py \
+    tests/test_supervisor_reviewer_identity.py \
+    tests/test_supervisor_transaction.py \
+    tests/test_supervisor_implementer_blocker.py \
+    tests/test_supervisor_reviewer_blocker.py \
+    tests/test_supervisor_retry_checkpoint.py \
+    tests/test_supervisor_resume_execution.py \
+    tests/test_agent_runtime.py \
+    "$@"

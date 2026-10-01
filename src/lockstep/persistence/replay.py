@@ -102,6 +102,9 @@ def replay_events(events: Sequence[LockstepEvent]) -> RunStateSnapshot:
             except InvalidTransitionError as exc:
                 raise ReplayError(str(exc), sequence=event.sequence) from exc
 
+        # ``ExecutionEvent`` is observational: it advances the sequence only and
+        # never changes ``workflow_state``.
+
         last_sequence = event.sequence
 
     return RunStateSnapshot(

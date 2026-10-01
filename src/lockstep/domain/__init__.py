@@ -25,6 +25,8 @@ from lockstep.domain.artifacts import (
 from lockstep.domain.enums import (
     AgentRole,
     BillingMode,
+    ExecutionEventKind,
+    ExecutionOutcome,
     InvocationStage,
     QuotaStatus,
     ReviewVerdict,
@@ -49,6 +51,8 @@ __all__ = [
     "AttemptNumber",
     "BillingMode",
     "ContextImprovementCandidate",
+    "ExecutionEventKind",
+    "ExecutionOutcome",
     "ImplementationReport",
     "InvocationId",
     "InvocationIdentity",

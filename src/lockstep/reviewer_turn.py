@@ -45,10 +45,12 @@ from lockstep.agents import (
     AgentInvocationResult,
     invoke_agent,
     prepare_structured_role_adapter,
+    record_invocation_returned,
 )
 from lockstep.domain import (
     AgentRole,
     AttemptNumber,
+    ExecutionOutcome,
     InvocationIdentity,
     InvocationStage,
     PhaseId,
@@ -225,18 +227,35 @@ def invoke_reviewer_turn(
         structured_adapter,
         invocation_request,
         parent_env=runtime.transaction_parent_env,
+        runtime_dir=runtime.runtime_dir,
+        record_return=False,
     )
 
     process = invocation.process
+
+    def _record(outcome: ExecutionOutcome) -> None:
+        record_invocation_returned(
+            runtime.runtime_dir, identity, outcome=outcome, returncode=process.returncode
+        )
+
     if process.returncode != 0:
+        _record(ExecutionOutcome.FAILURE)
         raise ReviewerTurnError("reviewer process exited non-zero")
     if process.stdout_truncated:
+        _record(ExecutionOutcome.FAILURE)
         raise ReviewerTurnError("reviewer structured output exceeded the configured output budget")
 
     try:
         report = ReviewerTurnReport.model_validate_json(process.stdout)
     except ValidationError:
+        _record(ExecutionOutcome.FAILURE)
         raise ReviewerTurnError("reviewer returned invalid structured outcome") from None
+
+    _record(
+        ExecutionOutcome.SUCCESS
+        if report.status is AgentTurnStatus.COMPLETED
+        else ExecutionOutcome.BLOCKED
+    )
 
     if report.status is AgentTurnStatus.COMPLETED:
         return ReviewerTurnResult(report=report, escalation_request=None, invocation=invocation)

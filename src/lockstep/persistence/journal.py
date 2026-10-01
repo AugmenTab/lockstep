@@ -21,13 +21,14 @@ from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
 
 from lockstep.persistence.events import (
+    ExecutionEvent,
     LockstepEvent,
     RunCreatedEvent,
     RunHaltedEvent,
     StateTransitionedEvent,
 )
 
-_ConcreteEvent = RunCreatedEvent | StateTransitionedEvent | RunHaltedEvent
+_ConcreteEvent = RunCreatedEvent | StateTransitionedEvent | RunHaltedEvent | ExecutionEvent
 _EVENT_ADAPTER: TypeAdapter[_ConcreteEvent] = TypeAdapter(LockstepEvent)
 
 
