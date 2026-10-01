@@ -695,7 +695,7 @@ def test_usage_rides_the_returned_event_keyed_by_the_canonical_invocation_id(
     assert len(returned) == 1  # attributable exactly once
     event = returned[0]
     assert event.invocation_id == identity.invocation_id
-    assert event.attempt == attempt
+    assert event.attempt == AttemptNumber.model_validate(attempt)
     assert event.outcome is ExecutionOutcome.SUCCESS
     assert event.usage == result.usage
     assert event.usage is not None
@@ -921,9 +921,9 @@ _PROVIDER_PARSER_FILES = {
 }
 _PROVIDER_SHAPE_TOKENS = (
     "modelUsage",
-    "cache_read_input_tokens",
-    "cache_creation_input_tokens",
-    "cached_input_tokens",
+    '"cache_read_input_tokens"',
+    '"cache_creation_input_tokens"',
+    '"cached_input_tokens"',  # quoted: the normalized "uncached_input_tokens" is not a provider key
     "turn.completed",
     "thread.started",
     "agent_message",
