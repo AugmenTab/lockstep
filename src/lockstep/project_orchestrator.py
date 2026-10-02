@@ -67,6 +67,7 @@ from lockstep.contract_history import retire_active_subphase_contract
 from lockstep.domain import ExecutionEventKind, PhaseId, RunId, SubphaseContract, SubphaseId
 from lockstep.escalation import EscalationProtocolError
 from lockstep.escalation_transport import PlannerDecisionTransportError
+from lockstep.handoff import HandoffError
 from lockstep.jit_replan import JitReplanError, JitReplanState, jit_replan_state, run_jit_replan
 from lockstep.persistence import ExecutionEvent, load_verified_state, read_events
 from lockstep.planning import PlanningValidationError
@@ -121,6 +122,7 @@ _KNOWN_TRANSACTION_FAILURES = (
     ReviewerTurnError,
     PlannerDecisionTransportError,
     EscalationProtocolError,
+    HandoffError,
 )
 
 # Failures of a required JIT replan that are known outcomes of asking the Planner and
@@ -176,6 +178,22 @@ class TransactionPlacement:
 TransactionRequestFactory = Callable[
     [SubphaseContract, TransactionPlacement], SingleSubphaseTransactionRequest
 ]
+
+
+def _resolve_request_factory(
+    runtime: AgentRuntime, request_factory: TransactionRequestFactory | None
+) -> TransactionRequestFactory:
+    """An explicit factory is a controlled injection seam; ``None`` selects the host's own.
+
+    The canonical factory lives in a module that imports this one, so it is imported
+    here, at call time. It refuses an unconfigured project immediately, before any
+    provider is launched.
+    """
+    if request_factory is not None:
+        return request_factory
+    from lockstep.transaction_factory import canonical_transaction_request_factory
+
+    return canonical_transaction_request_factory(runtime)
 
 
 @dataclass(frozen=True, slots=True)
@@ -575,6 +593,13 @@ def _drive_bound_transaction(
     contract = load_active_subphase_contract(runtime.project_root, runtime.runtime_dir)
     if contract is None:
         raise ProjectOrchestrationError("bound contract is not frozen")
+    # Nothing launches against a Contract that is not exactly the one the cursor bound.
+    if (
+        contract.phase_id != binding.phase_id
+        or contract.subphase_id != binding.subphase_id
+        or contract_digest(contract) != binding.contract_digest
+    ):
+        raise ProjectOrchestrationError("active contract does not match the cursor binding")
     request = _validated_request(request_factory, contract, placement)
     txn_runtime = dataclasses.replace(runtime, runtime_dir=request.runtime_dir)
 
@@ -624,7 +649,7 @@ def _drive_bound_transaction(
 def step_project_run(
     runtime: AgentRuntime,
     *,
-    request_factory: TransactionRequestFactory,
+    request_factory: TransactionRequestFactory | None = None,
     retry_budget: RetryBudget,
     planning_timeout_seconds: float,
     max_output_bytes: int = 1_048_576,
@@ -651,12 +676,18 @@ def step_project_run(
     *runtime* is the project-level runtime: its ``runtime_dir`` is the
     project run root, and its adapters plan Contracts. Each transaction runs
     against a copy of it rebound to that transaction's own runtime directory.
+
+    *request_factory* is a controlled injection seam. Omitted (``None``), the host's
+    canonical factory builds every transaction request from the project's
+    configuration, the frozen Contract and the placement; see
+    :mod:`lockstep.transaction_factory`.
     """
+    factory = _resolve_request_factory(runtime, request_factory)
     cursor = _load_or_initialize(runtime.project_root, runtime.runtime_dir)
 
     if cursor.active_contract is not None:
         return _drive_bound_transaction(
-            runtime, cursor, request_factory=request_factory, retry_budget=retry_budget
+            runtime, cursor, request_factory=factory, retry_budget=retry_budget
         )
 
     leftover = _reconcile_unbound_contract(runtime.project_root, runtime.runtime_dir, cursor)
@@ -690,7 +721,7 @@ def step_project_run(
 def run_project_phase(
     runtime: AgentRuntime,
     *,
-    request_factory: TransactionRequestFactory,
+    request_factory: TransactionRequestFactory | None = None,
     retry_budget: RetryBudget,
     planning_timeout_seconds: float,
     max_output_bytes: int = 1_048_576,
@@ -708,8 +739,11 @@ def run_project_phase(
     project-level retry policy. By default the unfinished outline is replanned
     between Sub-phases (see :func:`step_project_run`), so the number of
     Sub-phases is not fixed in advance; pass ``jit_replan=False`` for the
-    fixed-outline behavior.
+    fixed-outline behavior. *request_factory* is a controlled injection seam; omitted,
+    the host's canonical factory is used (and an unconfigured project is refused before
+    anything launches).
     """
+    factory = _resolve_request_factory(runtime, request_factory)
     start = _load_or_initialize(runtime.project_root, runtime.runtime_dir)
     already_recorded = len(start.completed_subphases)
     # Every non-terminal step changes the cursor or the replan state, so a run of
@@ -719,7 +753,7 @@ def run_project_phase(
     while stalled < _MAX_STALLED_STEPS:
         result = step_project_run(
             runtime,
-            request_factory=request_factory,
+            request_factory=factory,
             retry_budget=retry_budget,
             planning_timeout_seconds=planning_timeout_seconds,
             max_output_bytes=max_output_bytes,

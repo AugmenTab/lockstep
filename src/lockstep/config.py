@@ -13,7 +13,7 @@ repository's configuration remains fully portable between machines.
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from lockstep.agents.routing import (
@@ -23,11 +23,18 @@ from lockstep.agents.routing import (
     AgentRoutingPolicyError,
 )
 from lockstep.domain import BillingMode
+from lockstep.execution_config import (
+    ExecutionConfig,
+    ExecutionConfigError,
+    parse_execution_table,
+    render_execution_lines,
+)
 
 LOCKSTEP_CONFIG_FILENAME = "lockstep.toml"
 
 _SCHEMA_VERSION = 1
-_TOP_LEVEL_KEYS: frozenset[str] = frozenset({"schema_version", "routing"})
+_TOP_LEVEL_KEYS: frozenset[str] = frozenset({"schema_version", "routing", "execution"})
+_REQUIRED_TOP_LEVEL_KEYS: frozenset[str] = frozenset({"schema_version", "routing"})
 _ROLE_NAMES: tuple[str, ...] = ("planner", "implementer", "reviewer")
 _ROUTE_KEYS: frozenset[str] = frozenset({"provider", "model", "effort", "billing_mode"})
 
@@ -62,6 +69,7 @@ class ProjectConfig:
 
     schema_version: int
     routing: AgentRoutingPolicy
+    execution: ExecutionConfig = field(default_factory=ExecutionConfig)
 
 
 def _require_mapping(value: object, *, location: str) -> dict[str, object]:
@@ -144,7 +152,7 @@ def parse_project_config(text: str) -> ProjectConfig:
     if extra_top:
         raise ProjectConfigError(f"unknown top-level key: {min(extra_top)}")
 
-    missing_top = _TOP_LEVEL_KEYS - set(raw)
+    missing_top = _REQUIRED_TOP_LEVEL_KEYS - set(raw)
     if missing_top:
         raise ProjectConfigError(f"missing top-level key: {min(missing_top)}")
 
@@ -166,7 +174,15 @@ def parse_project_config(text: str) -> ProjectConfig:
         reviewer=_parse_route(routing_table["reviewer"], role="reviewer"),
     )
 
-    return ProjectConfig(schema_version=schema_version, routing=routing)
+    execution = ExecutionConfig()
+    if "execution" in raw:
+        execution_table = _require_mapping(raw["execution"], location="execution")
+        try:
+            execution = parse_execution_table(execution_table)
+        except ExecutionConfigError as exc:
+            raise ProjectConfigError(exc.reason) from exc
+
+    return ProjectConfig(schema_version=schema_version, routing=routing, execution=execution)
 
 
 def load_project_config(project_root: Path) -> ProjectConfig:
@@ -239,5 +255,7 @@ def render_project_config(config: ProjectConfig) -> str:
         lines.append(f"model = {_quote_toml_string(route.model)}")
         lines.append(f"effort = {_quote_toml_string(route.effort)}")
         lines.append(f"billing_mode = {_quote_toml_string(route.billing_mode.value)}")
+
+    lines.extend(render_execution_lines(config.execution, _quote_toml_string))
 
     return "\n".join(lines) + "\n"

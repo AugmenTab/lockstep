@@ -64,6 +64,18 @@ modules' own imports of :mod:`lockstep.supervisor.escalation` would
 otherwise create. This sub-phase still runs only the initial transaction
 attempt; it never executes a second Implementer or Reviewer invocation and
 never consumes, claims, or deletes a checkpoint.
+
+Phase 11.4 makes the blocker-capable and resume paths compose authority-preserving
+handoffs. The Implementer now runs through the specialized
+:func:`~lockstep.implementer_turn.invoke_implementer_turn` seam, whose completed
+report the host persists per attempt as evidence
+(:mod:`lockstep.evidence_store`). The whole Contract verification stack runs as one
+verification stage with one ``VerificationReport``, one bounded evidence record and
+one ``VERIFICATION_COMPLETED`` event. The Reviewer prompt is composed at the
+Reviewer stage from durable state (:mod:`lockstep.handoff`). A request that carries
+its frozen ``contract`` also gets canonical Implementer and rework handoffs. None of
+this changes retry authority, the claim/settlement protocol or the workflow state
+machine.
 """
 
 from __future__ import annotations
@@ -78,7 +90,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
-from lockstep.agent_turn import AgentTurnError, AgentTurnResult, AgentTurnStatus, invoke_agent_turn
+from lockstep.agent_turn import AgentTurnError, AgentTurnStatus
 from lockstep.agents import (
     AgentAdapter,
     AgentInvocationRequest,
@@ -91,6 +103,7 @@ from lockstep.domain import (
     ExecutionEventKind,
     ExecutionOutcome,
     FailureCause,
+    ImplementationReport,
     InvocationIdentity,
     InvocationStage,
     PhaseId,
@@ -99,10 +112,17 @@ from lockstep.domain import (
     ReviewVerdict,
     RunId,
     StopReason,
+    SubphaseContract,
     SubphaseId,
 )
 from lockstep.escalation import EscalationProtocolError, EscalationRequest
 from lockstep.escalation_decision import PlannerDecisionKind
+from lockstep.evidence_store import (
+    EvidenceStoreError,
+    write_implementation_report,
+    write_verification_evidence,
+    write_verification_report,
+)
 from lockstep.failure import (
     cause_for_escalation,
     cause_for_review_verdict,
@@ -116,6 +136,18 @@ from lockstep.git import (
     inspect_repository,
 )
 from lockstep.git.commit import commit_exact_subset_paths
+from lockstep.handoff import (
+    REVIEWER_IDENTITY_HEADER,
+    HandoffError,
+    RetryControl,
+    build_implementer_handoff,
+    build_reviewer_handoff,
+    build_rework_handoff,
+    render_implementer_handoff,
+    render_reviewer_handoff,
+    render_rework_handoff,
+)
+from lockstep.implementer_turn import ImplementerTurnResult, invoke_implementer_turn
 from lockstep.persistence import (
     RunCreatedEvent,
     StateTransitionedEvent,
@@ -132,6 +164,7 @@ from lockstep.process import (
 )
 from lockstep.reviewer_turn import ReviewerTurnError, ReviewerTurnResult, invoke_reviewer_turn
 from lockstep.state import RunStateSnapshot, WorkflowState
+from lockstep.verification_stack import run_verification_stack
 
 if TYPE_CHECKING:
     from lockstep.resume import ResumeClaim
@@ -202,6 +235,19 @@ class SingleSubphaseTransactionRequest:
     # source HEAD (sequential Sub-phases build on the previous accepted run).
     base_branch: str | None = None
 
+    # The Contract's complete, ordered verification stack as direct argv. Empty
+    # means the single legacy ``verification_argv`` (injected requests only);
+    # when set it is the canonical verification authority for the transaction.
+    verification_commands: tuple[tuple[str, ...], ...] = ()
+
+    # The frozen Contract this transaction executes. When supplied the host
+    # composes the canonical role handoffs (frozen authority, protected tests,
+    # repository basis, evidence) at each role's invocation; the *_prompt fields
+    # then only carry base role instructions. When ``None`` (legacy injected
+    # requests) the prompt fields are used as given and no Contract section is
+    # composed.
+    contract: SubphaseContract | None = field(default=None, repr=False)
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_path", Path(self.source_path).resolve())
         object.__setattr__(self, "worktree_path", Path(self.worktree_path).resolve())
@@ -234,9 +280,9 @@ class ImplementerBlockedTransactionResult:
     :func:`run_single_subphase_transaction_with_blockers` reports
     ``BLOCKED``. ``test_commit`` is the exact frozen Planner-authored
     test commit the transaction already produced; ``implementer_turn``
-    is the exact :class:`~lockstep.agent_turn.AgentTurnResult` returned
-    by :func:`~lockstep.agent_turn.invoke_agent_turn` (excluded from
-    :func:`repr` so logging never dumps raw provider output);
+    is the exact :class:`~lockstep.implementer_turn.ImplementerTurnResult`
+    returned by :func:`~lockstep.implementer_turn.invoke_implementer_turn`
+    (excluded from :func:`repr` so logging never dumps raw provider output);
     ``escalation`` is the exact
     :class:`~lockstep.supervisor.escalation.SupervisorEscalationResult`
     returned by
@@ -248,7 +294,7 @@ class ImplementerBlockedTransactionResult:
     """
 
     test_commit: GitCommitResult
-    implementer_turn: AgentTurnResult = field(repr=False)
+    implementer_turn: ImplementerTurnResult = field(repr=False)
     escalation: SupervisorEscalationResult
     final_state: RunStateSnapshot
 
@@ -261,9 +307,9 @@ class ReviewerBlockedTransactionResult:
     :func:`run_single_subphase_transaction_with_blockers` reports
     ``BLOCKED``. ``test_commit`` is the exact frozen Planner-authored
     test commit the transaction already produced; ``implementer_turn``
-    is the exact :class:`~lockstep.agent_turn.AgentTurnResult` for the
-    already-``COMPLETED`` Implementer turn that preceded verification
-    (excluded from :func:`repr`); ``reviewer_turn`` is the exact
+    is the exact :class:`~lockstep.implementer_turn.ImplementerTurnResult`
+    for the already-``COMPLETED`` Implementer turn that preceded
+    verification (excluded from :func:`repr`); ``reviewer_turn`` is the exact
     :class:`~lockstep.reviewer_turn.ReviewerTurnResult` returned by
     :func:`~lockstep.reviewer_turn.invoke_reviewer_turn` (excluded from
     :func:`repr` so logging never dumps raw provider output);
@@ -278,7 +324,7 @@ class ReviewerBlockedTransactionResult:
     """
 
     test_commit: GitCommitResult
-    implementer_turn: AgentTurnResult = field(repr=False)
+    implementer_turn: ImplementerTurnResult = field(repr=False)
     reviewer_turn: ReviewerTurnResult = field(repr=False)
     escalation: SupervisorEscalationResult
     final_state: RunStateSnapshot
@@ -304,7 +350,7 @@ class ReviewReworkTransactionResult:
     """
 
     test_commit: GitCommitResult
-    implementer_turn: AgentTurnResult = field(repr=False)
+    implementer_turn: ImplementerTurnResult = field(repr=False)
     reviewer_turn: ReviewerTurnResult = field(repr=False)
     review_decision: ReviewDecision
     final_state: RunStateSnapshot
@@ -547,10 +593,7 @@ def _record_escalation_dispatched(
     )
 
 
-_REVIEWER_IDENTITY_HEADER = (
-    "\n\n---\nReviewer identity (host-supplied, deterministic; "
-    "the ReviewDecision must copy these values exactly):\n"
-)
+_REVIEWER_IDENTITY_HEADER = REVIEWER_IDENTITY_HEADER
 
 
 def _reviewer_prompt_with_host_identity(
@@ -603,6 +646,157 @@ def _verification_env_for(
     return build_process_environment(
         base_env, explicit_env={"PYTHONPYCACHEPREFIX": str(pycache_dir)}
     )
+
+
+def _verification_commands(
+    request: SingleSubphaseTransactionRequest,
+) -> tuple[tuple[str, ...], ...]:
+    """The ordered verification stack: the Contract's commands, or the one legacy argv."""
+    return request.verification_commands or (request.verification_argv,)
+
+
+def _run_verification_stage(
+    request: SingleSubphaseTransactionRequest,
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    attempt: AttemptNumber,
+) -> None:
+    """Run the whole verification stack as one stage and durably record its evidence.
+
+    However many commands the stack holds, the stage yields exactly one
+    ``VerificationReport``, one bounded evidence record and one
+    ``VERIFICATION_COMPLETED`` event, so the frozen Phase-10 stage metrics are
+    unchanged. The artifacts are persisted before the outcome is acted on, so a
+    failed stage leaves the same reconstructable evidence a passing one does.
+    """
+    stack = run_verification_stack(
+        _verification_commands(request),
+        run_id=request.run_id,
+        phase_id=request.phase_id,
+        subphase_id=request.subphase_id,
+        attempt=attempt,
+        cwd=cwd,
+        env=env,
+        timeout_seconds=request.command_timeout_seconds,
+        max_output_bytes=request.max_output_bytes,
+        termination_grace_seconds=request.termination_grace_seconds,
+        runner=run_process,
+    )
+    write_verification_report(request.runtime_dir, stack.report)
+    write_verification_evidence(request.runtime_dir, stack.evidence)
+    if not stack.passed:
+        _emit(
+            request,
+            ExecutionEventKind.VERIFICATION_COMPLETED,
+            attempt=attempt,
+            outcome=ExecutionOutcome.FAILURE,
+            cause=FailureCause.VERIFICATION_FAILURE,
+        )
+        raise SupervisorTransactionError(
+            stage="verification",
+            reason=(
+                "verification command exited with returncode "
+                f"{stack.evidence.commands[-1].exit_code}"
+            ),
+        )
+    _emit(
+        request,
+        ExecutionEventKind.VERIFICATION_COMPLETED,
+        attempt=attempt,
+        outcome=ExecutionOutcome.SUCCESS,
+    )
+
+
+def _record_implementation_report(
+    request: SingleSubphaseTransactionRequest,
+    implementer_turn: ImplementerTurnResult,
+    attempt: AttemptNumber,
+) -> None:
+    """Persist the canonical report: the Implementer's draft plus host-owned identity.
+
+    The report is evidence. It is recorded verbatim and never read back to derive
+    scope, paths, tests or retry authority.
+    """
+    draft = implementer_turn.report.implementation_report
+    assert draft is not None
+    write_implementation_report(
+        request.runtime_dir,
+        ImplementationReport(
+            phase_id=request.phase_id,
+            subphase_id=request.subphase_id,
+            attempt=attempt,
+            summary=draft.summary,
+            changed_files=draft.changed_files,
+            decisions=draft.decisions,
+            deviations=draft.deviations,
+            concerns=draft.concerns,
+        ),
+    )
+
+
+def _initial_implementer_prompt(
+    request: SingleSubphaseTransactionRequest, worktree_root: Path
+) -> str:
+    """The first-attempt Implementer prompt: base instructions plus the host's handoff.
+
+    A legacy request without a Contract keeps its prompt exactly as given.
+    """
+    if request.contract is None:
+        return request.implementer_prompt
+    handoff = build_implementer_handoff(
+        runtime_dir=request.runtime_dir,
+        worktree_path=worktree_root,
+        run_id=request.run_id,
+        phase_id=request.phase_id,
+        subphase_id=request.subphase_id,
+        attempt=_TRANSACTION_ATTEMPT,
+        contract=request.contract,
+        test_paths=request.test_paths,
+    )
+    return request.implementer_prompt + render_implementer_handoff(handoff)
+
+
+def _late_reviewer_prompt(
+    request: SingleSubphaseTransactionRequest,
+    *,
+    worktree_path: Path,
+    attempt: AttemptNumber,
+    base_prompt: str,
+    prior_decisions: tuple[ReviewDecision, ...] = (),
+) -> str:
+    """Compose the Reviewer prompt at the Reviewer stage, from durable state only.
+
+    The caller's text is base reviewer instructions. Everything the Reviewer needs
+    to judge -- Contract and tests as authority; the Implementer report,
+    verification evidence and diff as evidence; prior findings as history; and the
+    host identity the decision must copy -- is rebuilt here from the Contract, the
+    journal, the attempt's durable artifacts and Git, after all of it exists.
+
+    A legacy injected request carries no Contract and keeps exactly its established
+    prompt: the caller's text followed by the host identity block (frozen by the
+    Sub-phase 9.14 identity tests, which require that prompt to be byte-identical for
+    identical inputs and so cannot include per-run evidence).
+    """
+    if request.contract is None:
+        return _reviewer_prompt_with_host_identity(
+            base_prompt,
+            phase_id=request.phase_id,
+            subphase_id=request.subphase_id,
+            attempt=attempt,
+        )
+    handoff = build_reviewer_handoff(
+        runtime_dir=request.runtime_dir,
+        worktree_path=worktree_path,
+        run_id=request.run_id,
+        phase_id=request.phase_id,
+        subphase_id=request.subphase_id,
+        attempt=attempt,
+        contract=request.contract,
+        test_paths=request.test_paths,
+        prior_decisions=prior_decisions,
+    )
+    return base_prompt + render_reviewer_handoff(handoff)
 
 
 @dataclass(frozen=True, slots=True)
@@ -856,8 +1050,8 @@ def _verify_after_implementer(
         state_path=ctx.state_path,
     )
 
-    verification_result = run_process(
-        request.verification_argv,
+    _run_verification_stage(
+        request,
         cwd=ctx.worktree_root,
         env=_verification_env_for(
             ctx.parent_env,
@@ -865,24 +1059,8 @@ def _verify_after_implementer(
             purpose="verify",
             attempt=_TRANSACTION_ATTEMPT,
         ),
-        timeout_seconds=request.command_timeout_seconds,
-        max_output_bytes=request.max_output_bytes,
-        termination_grace_seconds=request.termination_grace_seconds,
+        attempt=_TRANSACTION_ATTEMPT,
     )
-    if verification_result.returncode != 0:
-        _emit(
-            request,
-            ExecutionEventKind.VERIFICATION_COMPLETED,
-            outcome=ExecutionOutcome.FAILURE,
-            cause=FailureCause.VERIFICATION_FAILURE,
-        )
-        raise SupervisorTransactionError(
-            stage="verification",
-            reason=(
-                f"verification command exited with returncode {verification_result.returncode}"
-            ),
-        )
-    _emit(request, ExecutionEventKind.VERIFICATION_COMPLETED, outcome=ExecutionOutcome.SUCCESS)
 
     _persist_transition(
         run_id=request.run_id,
@@ -1042,7 +1220,7 @@ def _capture_review_rework(
     request: SingleSubphaseTransactionRequest,
     ctx: _PreparedTransaction,
     test_commit: GitCommitResult,
-    implementer_turn: AgentTurnResult,
+    implementer_turn: ImplementerTurnResult,
     reviewer_turn: ReviewerTurnResult,
     review: ReviewDecision,
 ) -> ReviewReworkTransactionResult:
@@ -1101,7 +1279,7 @@ def _complete_after_implementer_success_with_reviewer_turn(
     request: SingleSubphaseTransactionRequest,
     ctx: _PreparedTransaction,
     test_commit: GitCommitResult,
-    implementer_turn: AgentTurnResult,
+    implementer_turn: ImplementerTurnResult,
     *,
     agent_turn_runtime: AgentRuntime,
     capture_rework: bool = False,
@@ -1132,18 +1310,28 @@ def _complete_after_implementer_success_with_reviewer_turn(
     """
     _verify_after_implementer(request, ctx, test_commit)
 
+    # Built only now, after the report, verification evidence and diff exist, and
+    # rebuilt from durable state; a stale or drifted handoff is never launched.
+    try:
+        reviewer_prompt = _late_reviewer_prompt(
+            request,
+            worktree_path=ctx.worktree_root,
+            attempt=_TRANSACTION_ATTEMPT,
+            base_prompt=request.reviewer_prompt,
+        )
+    except (HandoffError, EvidenceStoreError):
+        _halt_after_agent_failure(
+            request, ctx.journal_path, ctx.state_path, stage="reviewer_handoff"
+        )
+        raise
+
     try:
         reviewer_turn = invoke_reviewer_turn(
             agent_turn_runtime,
             phase_id=request.phase_id,
             subphase_id=request.subphase_id,
             attempt=_TRANSACTION_ATTEMPT,
-            prompt=_reviewer_prompt_with_host_identity(
-                request.reviewer_prompt,
-                phase_id=request.phase_id,
-                subphase_id=request.subphase_id,
-                attempt=_TRANSACTION_ATTEMPT,
-            ),
+            prompt=reviewer_prompt,
             cwd=ctx.worktree_root,
             timeout_seconds=request.agent_timeout_seconds,
             max_output_bytes=request.max_output_bytes,
@@ -1318,13 +1506,20 @@ def _run_blocker_capable_transaction(
     )
 
     try:
-        implementer_turn = invoke_agent_turn(
+        implementer_prompt = _initial_implementer_prompt(request, ctx.worktree_root)
+    except (HandoffError, EvidenceStoreError):
+        _halt_after_agent_failure(
+            request, ctx.journal_path, ctx.state_path, stage="implementer_handoff"
+        )
+        raise
+
+    try:
+        implementer_turn = invoke_implementer_turn(
             agent_turn_runtime,
-            role=AgentRole.IMPLEMENTER,
             phase_id=request.phase_id,
             subphase_id=request.subphase_id,
             attempt=_TRANSACTION_ATTEMPT,
-            prompt=request.implementer_prompt,
+            prompt=implementer_prompt,
             cwd=ctx.worktree_root,
             timeout_seconds=request.agent_timeout_seconds,
             max_output_bytes=request.max_output_bytes,
@@ -1337,6 +1532,7 @@ def _run_blocker_capable_transaction(
 
     if implementer_turn.report.status is AgentTurnStatus.COMPLETED:
         assert implementer_turn.escalation_request is None
+        _record_implementation_report(request, implementer_turn, _TRANSACTION_ATTEMPT)
         return _complete_after_implementer_success_with_reviewer_turn(
             request,
             ctx,
@@ -1874,8 +2070,10 @@ def _review_rework_prompt_suffix(
     review_decision = authority.review_decision
     assert review_decision is not None
 
+    # Review Findings are evidence and repair guidance, never requirement or
+    # retry authority: the durable retry authority is the host-owned checkpoint.
     payload = {
-        "resume_authority": "review_rework",
+        "retry_trigger": "review_rework",
         "attempt": executed_attempt_number.root,
         "target_role": target_role.value,
         "review": {
@@ -1892,7 +2090,8 @@ def _review_rework_prompt_suffix(
         },
     }
     return (
-        "\n\n---\nResume authority (host-supplied, deterministic):\n"
+        "\n\n---\nReview evidence / repair guidance "
+        "(host-supplied, deterministic; not requirement authority):\n"
         + _deterministic_json(payload)
         + "\n"
     )
@@ -1909,6 +2108,70 @@ def _resume_prompt_suffix(
     if authority.kind == RetryAuthorityKind.REVIEW_REWORK:
         return _review_rework_prompt_suffix(claim, executed_attempt_number, target_role)
     return _escalation_resume_prompt_suffix(claim, executed_attempt_number, target_role)
+
+
+def _prior_review_decisions(claim: ResumeClaim) -> tuple[ReviewDecision, ...]:
+    """The Review Decision that caused this retry, as history for the next Reviewer."""
+    from lockstep.retry_checkpoint import RetryAuthorityKind
+
+    authority = claim.checkpoint.authority
+    if authority.kind == RetryAuthorityKind.REVIEW_REWORK:
+        assert authority.review_decision is not None
+        return (authority.review_decision,)
+    return ()
+
+
+def _resume_implementer_prompt(
+    request: SingleSubphaseTransactionRequest,
+    claim: ResumeClaim,
+    executed_attempt: AttemptState,
+) -> str:
+    """The fresh Implementer's prompt for a resumed attempt.
+
+    A legacy request keeps its base prompt plus the deterministic suffix. A request
+    that carries its Contract gets the canonical rework handoff: the original frozen
+    authority and protected tests, the host's retry control, and Review Findings and
+    prior verification as repair evidence. A Planner-authorized escalation resume also
+    keeps its existing deterministic suffix, since that decision is genuine control
+    authority; a Review ``REWORK`` has no suffix because its findings are only evidence.
+    """
+    from lockstep.retry_checkpoint import RetryAuthorityKind
+
+    attempt = executed_attempt.current_attempt
+    suffix = _resume_prompt_suffix(claim, attempt, AgentRole.IMPLEMENTER)
+    if request.contract is None:
+        return request.implementer_prompt + suffix
+
+    authority = claim.checkpoint.authority
+    if authority.kind == RetryAuthorityKind.REVIEW_REWORK:
+        retry = RetryControl(kind="review_rework", attempt=attempt)
+        review_decision = authority.review_decision
+        tail = ""
+    else:
+        decision = authority.planner_decision
+        assert decision is not None
+        retry = RetryControl(
+            kind="escalation_resume",
+            attempt=attempt,
+            authorized_paths=tuple(decision.authorized_paths),
+            instructions=tuple(decision.instructions),
+        )
+        review_decision = None
+        tail = suffix
+
+    handoff = build_rework_handoff(
+        runtime_dir=request.runtime_dir,
+        worktree_path=request.worktree_path,
+        run_id=request.run_id,
+        phase_id=request.phase_id,
+        subphase_id=request.subphase_id,
+        attempt=attempt,
+        contract=request.contract,
+        test_paths=request.test_paths,
+        retry=retry,
+        review_decision=review_decision,
+    )
+    return request.implementer_prompt + render_rework_handoff(handoff) + tail
 
 
 def _record_resume_settled(
@@ -2226,8 +2489,23 @@ def _invoke_and_handle_resumed_reviewer(
     expected_impl_paths: tuple[str, ...],
     journal_path: Path,
     state_path: Path,
+    prior_decisions: tuple[ReviewDecision, ...] = (),
 ) -> ResumeExecutionResult:
     from lockstep.resume_settlement import ResumeSettlementOutcome
+
+    # *prompt* is the base reviewer instruction text; the evidence is composed here,
+    # at the Reviewer stage, from durable state. A drifted handoff is never launched.
+    try:
+        reviewer_prompt = _late_reviewer_prompt(
+            request,
+            worktree_path=request.worktree_path,
+            attempt=executed_attempt.current_attempt,
+            base_prompt=prompt,
+            prior_decisions=prior_decisions,
+        )
+    except (HandoffError, EvidenceStoreError):
+        _settle_execution_failed(request, started_claim, journal_path, state_path)
+        raise
 
     try:
         reviewer_turn = invoke_reviewer_turn(
@@ -2235,12 +2513,7 @@ def _invoke_and_handle_resumed_reviewer(
             phase_id=request.phase_id,
             subphase_id=request.subphase_id,
             attempt=executed_attempt.current_attempt,
-            prompt=_reviewer_prompt_with_host_identity(
-                prompt,
-                phase_id=executed_attempt.phase_id,
-                subphase_id=executed_attempt.subphase_id,
-                attempt=executed_attempt.current_attempt,
-            ),
+            prompt=reviewer_prompt,
             cwd=request.worktree_path,
             timeout_seconds=request.agent_timeout_seconds,
             max_output_bytes=request.max_output_bytes,
@@ -2344,34 +2617,11 @@ def _resume_run_verification(
         state_path=state_path,
     )
 
-    verification_env = _resume_verification_env(request, parent_env, attempt)
-    verification_result = run_process(
-        request.verification_argv,
-        cwd=request.worktree_path,
-        env=verification_env,
-        timeout_seconds=request.command_timeout_seconds,
-        max_output_bytes=request.max_output_bytes,
-        termination_grace_seconds=request.termination_grace_seconds,
-    )
-    if verification_result.returncode != 0:
-        _emit(
-            request,
-            ExecutionEventKind.VERIFICATION_COMPLETED,
-            attempt=attempt,
-            outcome=ExecutionOutcome.FAILURE,
-            cause=FailureCause.VERIFICATION_FAILURE,
-        )
-        raise SupervisorTransactionError(
-            stage="verification",
-            reason=(
-                f"verification command exited with returncode {verification_result.returncode}"
-            ),
-        )
-    _emit(
+    _run_verification_stage(
         request,
-        ExecutionEventKind.VERIFICATION_COMPLETED,
+        cwd=request.worktree_path,
+        env=_resume_verification_env(request, parent_env, attempt),
         attempt=attempt,
-        outcome=ExecutionOutcome.SUCCESS,
     )
 
     _persist_transition(
@@ -2392,14 +2642,15 @@ def _resume_implementer(
     journal_path: Path,
     state_path: Path,
 ) -> ResumeExecutionResult:
-    prompt = request.implementer_prompt + _resume_prompt_suffix(
-        started_claim, executed_attempt.current_attempt, AgentRole.IMPLEMENTER
-    )
+    try:
+        prompt = _resume_implementer_prompt(request, started_claim, executed_attempt)
+    except (HandoffError, EvidenceStoreError):
+        _settle_execution_failed(request, started_claim, journal_path, state_path)
+        raise
 
     try:
-        implementer_turn = invoke_agent_turn(
+        implementer_turn = invoke_implementer_turn(
             agent_turn_runtime,
-            role=AgentRole.IMPLEMENTER,
             phase_id=request.phase_id,
             subphase_id=request.subphase_id,
             attempt=executed_attempt.current_attempt,
@@ -2427,6 +2678,7 @@ def _resume_implementer(
         )
 
     assert implementer_turn.escalation_request is None
+    _record_implementation_report(request, implementer_turn, executed_attempt.current_attempt)
 
     frozen_paths = _frozen_correction_authorized_paths(started_claim)
     bounded_extra_paths = _bounded_change_authorized_paths(started_claim)
@@ -2473,6 +2725,7 @@ def _resume_implementer(
         expected_impl_paths,
         journal_path,
         state_path,
+        prior_decisions=_prior_review_decisions(started_claim),
     )
 
 
