@@ -207,6 +207,26 @@ def finding(
     }
 
 
+def remediation_chain_response(
+    phase: str, base: Sequence[str], remediations: Sequence[str]
+) -> dict[str, object]:
+    """A plan that keeps *base* and earlier remediations verbatim and adds the last one."""
+    plan = phase_plan(phase, base)
+    chain = list(base)
+    outlines = list(plan.subphases)
+    for sid in remediations:
+        outlines.append(
+            SubphaseOutline(
+                subphase_id=SubphaseId.model_validate(sid),
+                title=f"Gate remediation {sid}",
+                objective="Repair the integration defect the Phase gate found.",
+                depends_on=(SubphaseId.model_validate(chain[-1]),),
+            )
+        )
+        chain.append(sid)
+    return replan_response(plan.model_copy(update={"subphases": tuple(outlines)}))
+
+
 def remediation_plan_response(
     phase: str,
     completed: Sequence[str],

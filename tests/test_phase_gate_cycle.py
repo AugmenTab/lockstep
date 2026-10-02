@@ -37,6 +37,7 @@ from phase_gate_support import (
     passing_command,
     phase_plan,
     record_calls,
+    remediation_chain_response,
     remediation_plan_response,
     replan_response,
     review_response,
@@ -859,7 +860,7 @@ def test_a_larger_budget_keeps_trying_until_it_is_spent(tmp_path: Path) -> None:
         planner_tail=[
             remediation_plan_response("01", ("01",), "02"),
             *unit_script("01", "02"),
-            remediation_plan_response("01", ("01", "02"), "03"),
+            remediation_chain_response("01", ("01",), ("02", "03")),
             *unit_script("01", "03"),
         ],
         extra_units=[("01", "02"), ("01", "03")],
