@@ -80,13 +80,16 @@ def test_artifacts_live_under_a_per_attempt_directory() -> None:
     assert verification_evidence_path(runtime, _attempt(2)).parent == (
         runtime / "artifacts" / "attempt-2"
     )
-    assert len(
-        {
-            implementation_report_path(runtime, _attempt(1)),
-            verification_report_path(runtime, _attempt(1)),
-            verification_evidence_path(runtime, _attempt(1)),
-        }
-    ) == 3
+    assert (
+        len(
+            {
+                implementation_report_path(runtime, _attempt(1)),
+                verification_report_path(runtime, _attempt(1)),
+                verification_evidence_path(runtime, _attempt(1)),
+            }
+        )
+        == 3
+    )
 
 
 def test_a_persisted_implementation_report_reloads_exactly_without_the_agent_result(
@@ -108,7 +111,9 @@ def test_a_persisted_implementation_report_reloads_exactly_without_the_agent_res
 def test_writes_are_atomic_and_leave_no_temporary_files(tmp_path: Path) -> None:
     write_implementation_report(tmp_path, _report())
 
-    names = sorted(p.name for p in implementation_report_path(tmp_path, _attempt(1)).parent.iterdir())
+    names = sorted(
+        p.name for p in implementation_report_path(tmp_path, _attempt(1)).parent.iterdir()
+    )
     assert names == ["implementation-report.json"]
 
 

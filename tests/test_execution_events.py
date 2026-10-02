@@ -117,6 +117,7 @@ def seen(monkeypatch: pytest.MonkeyPatch) -> list[AgentInvocationResult]:
     """Record every invocation result across all transports; delegate to the real one."""
     import lockstep.agent_turn as agent_turn_module
     import lockstep.escalation_transport as escalation_transport_module
+    import lockstep.implementer_turn as implementer_turn_module
     import lockstep.reviewer_turn as reviewer_turn_module
 
     recorded: list[AgentInvocationResult] = []
@@ -130,6 +131,7 @@ def seen(monkeypatch: pytest.MonkeyPatch) -> list[AgentInvocationResult]:
     for module in (
         transaction_module,
         agent_turn_module,
+        implementer_turn_module,
         reviewer_turn_module,
         escalation_transport_module,
     ):
@@ -705,7 +707,7 @@ def test_crash_after_started_leaves_no_invocation_evidence_and_never_double_laun
     def crash(*args: object, **kwargs: object) -> object:
         raise RuntimeError("simulated crash after STARTED, before launch")
 
-    monkeypatch.setattr(transaction_module, "invoke_agent_turn", crash)
+    monkeypatch.setattr(transaction_module, "invoke_implementer_turn", crash)
     with pytest.raises(RuntimeError):
         resume_single_subphase_transaction(scenario.request, agent_turn_runtime=scenario.runtime)
 

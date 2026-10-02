@@ -122,7 +122,9 @@ def _protected() -> ProtectedAcceptance:
 
 
 def _basis() -> RepositoryBasis:
-    return RepositoryBasis(branch="lockstep/run/run-01-01", basis_commit_sha=_BASIS_SHA, test_commit_sha=_SHA)
+    return RepositoryBasis(
+        branch="lockstep/run/run-01-01", basis_commit_sha=_BASIS_SHA, test_commit_sha=_SHA
+    )
 
 
 def _implementer_evidence(attempt: int = 1) -> ImplementerEvidence:
@@ -282,7 +284,9 @@ def test_the_planner_test_handoff_labels_the_contract_as_the_requirement_authori
         "FROZEN REQUIREMENT AUTHORITY": "frozen_requirement",
         "REQUIRED TEST PATHS": "frozen_requirement",
     }
-    body = json.JSONDecoder().raw_decode(_sections(text)["FROZEN REQUIREMENT AUTHORITY"].lstrip())[0]
+    body = json.JSONDecoder().raw_decode(_sections(text)["FROZEN REQUIREMENT AUTHORITY"].lstrip())[
+        0
+    ]
     assert body["contract_digest"] == contract_digest(_contract())
     assert render_planner_test_handoff(handoff) == text
 
@@ -399,7 +403,9 @@ def _rework_handoff() -> ReworkHandoff:
         contract=_contract_authority(),
         protected_tests=_protected(),
         basis=_basis(),
-        retry=RetryControl(kind="review_rework", attempt=_attempt(2), authorized_paths=(), instructions=()),
+        retry=RetryControl(
+            kind="review_rework", attempt=_attempt(2), authorized_paths=(), instructions=()
+        ),
         review=ReviewEvidence(decision=_rework_decision()),
         verification=_verification(attempt=1),
     )
@@ -449,6 +455,7 @@ def test_the_contract_digest_is_identical_in_every_attempt_handoff() -> None:
     digest = contract_digest(_contract())
     assert digest in _sections(first)["FROZEN REQUIREMENT AUTHORITY"]
     assert digest in _sections(second)["FROZEN REQUIREMENT AUTHORITY"]
-    assert _sections(first)["FROZEN REQUIREMENT AUTHORITY"] == _sections(second)[
-        "FROZEN REQUIREMENT AUTHORITY"
-    ]
+    assert (
+        _sections(first)["FROZEN REQUIREMENT AUTHORITY"]
+        == _sections(second)["FROZEN REQUIREMENT AUTHORITY"]
+    )

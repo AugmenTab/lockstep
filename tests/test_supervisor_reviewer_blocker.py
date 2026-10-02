@@ -41,7 +41,7 @@ from pydantic import ValidationError
 
 import lockstep.reviewer_turn as reviewer_turn_module
 import lockstep.supervisor.transaction as transaction_module
-from lockstep.agent_turn import AgentBlockerDraft, AgentTurnResult, AgentTurnStatus
+from lockstep.agent_turn import AgentBlockerDraft, AgentTurnStatus
 from lockstep.agents import (
     AgentAdapter,
     AgentProviderDiagnostics,
@@ -75,6 +75,7 @@ from lockstep.escalation import EscalationAuthority, EscalationCategory
 from lockstep.escalation_decision import PlannerDecisionKind
 from lockstep.escalation_transport import PlannerDecisionTransportError
 from lockstep.git import inspect_repository
+from lockstep.implementer_turn import ImplementerTurnResult
 from lockstep.persistence import ExecutionEvent, StateTransitionedEvent, read_events, read_state
 from lockstep.planning_store import freeze_master_plan, freeze_subphase_contract, publish_phase_plan
 from lockstep.reviewer_turn import (
@@ -1014,7 +1015,13 @@ def _planner_decision_response(
 
 def _implementer_completed_response(files: dict[str, str]) -> dict[str, object]:
     return {
-        "stdout": json.dumps({"status": "completed", "blocker": None}),
+        "stdout": json.dumps(
+            {
+                "status": "completed",
+                "implementation_report": {"summary": "Implemented the requested change."},
+                "blocker": None,
+            }
+        ),
         "returncode": 0,
         "files": files,
     }
@@ -1731,7 +1738,7 @@ def test_reviewer_blocked_result_is_frozen_slotted_with_exact_fields(tmp_path: P
     with pytest.raises(FrozenInstanceError):
         result.test_commit = result.test_commit  # type: ignore[misc]
 
-    assert isinstance(result.implementer_turn, AgentTurnResult)
+    assert isinstance(result.implementer_turn, ImplementerTurnResult)
     assert result.implementer_turn.report.status is AgentTurnStatus.COMPLETED
     assert isinstance(result.reviewer_turn, ReviewerTurnResult)
     assert result.reviewer_turn.report.status is AgentTurnStatus.BLOCKED

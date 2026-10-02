@@ -141,7 +141,9 @@ raise SystemExit(int(response.get("returncode", 0)))
 """
 
 
-def _write_recording_claude(bin_dir: Path, *, name: str, responses: list[dict[str, object]]) -> Path:
+def _write_recording_claude(
+    bin_dir: Path, *, name: str, responses: list[dict[str, object]]
+) -> Path:
     bin_dir.mkdir(parents=True, exist_ok=True)
     (bin_dir / f"{name}-responses.json").write_text(json.dumps(responses), encoding="utf-8")
     executable = bin_dir / name
@@ -210,9 +212,7 @@ def _review(
         findings=findings,
     )
     return {
-        "stdout": json.dumps(
-            {"status": "completed", "review_decision": decision, "blocker": None}
-        ),
+        "stdout": json.dumps({"status": "completed", "review_decision": decision, "blocker": None}),
         "returncode": 0,
     }
 
@@ -311,11 +311,7 @@ def _make_canonical(
         "implementer": (
             implementer if implementer is not None else [_impl_response(sid) for sid in sids]
         ),
-        "reviewer": (
-            reviewer
-            if reviewer is not None
-            else [_review_response(sid) for sid in sids]
-        ),
+        "reviewer": (reviewer if reviewer is not None else [_review_response(sid) for sid in sids]),
     }
     roles = {
         "planner": AgentRole.PLANNER,
@@ -616,9 +612,7 @@ def test_a_failing_verification_command_stops_the_stack_and_never_reaches_the_re
         tmp_path,
         sids=("01",),
         planner=[
-            _contract_response(
-                "01", verification_commands=[_verify_command("01"), failing, never]
-            ),
+            _contract_response("01", verification_commands=[_verify_command("01"), failing, never]),
             _tests_response("01"),
         ],
     )
@@ -773,9 +767,10 @@ def test_a_substituted_active_contract_is_rejected_before_any_implementer_launch
     tmp_path: Path,
 ) -> None:
     project = _make_canonical(tmp_path, sids=("01",))
-    assert step_project_run(
-        project.runtime, retry_budget=_budget(3), planning_timeout_seconds=60.0
-    ) is None  # plan, freeze and bind
+    assert (
+        step_project_run(project.runtime, retry_budget=_budget(3), planning_timeout_seconds=60.0)
+        is None
+    )  # plan, freeze and bind
     active = project.runtime_dir / "contracts" / "active.json"
     document = json.loads(active.read_text(encoding="utf-8"))
     document["title"] = "A substituted Contract"
@@ -861,9 +856,7 @@ def test_exact_paths_build_a_canonical_request_from_config_contract_and_placemen
     assert request.source_path == project.project_root.resolve()
     assert request.implementation_paths == ("feature_01.py",)
     assert request.test_paths == ("tests/test_feature_01.py",)
-    assert request.verification_commands == (
-        (*_PYTEST, "tests/test_feature_01.py"),
-    )
+    assert request.verification_commands == ((*_PYTEST, "tests/test_feature_01.py"),)
     assert request.baseline_argv == (*_PYTEST, "tests/test_feature_01.py")
     assert request.planner_quality_argv == (
         sys.executable,
@@ -884,7 +877,15 @@ def test_exact_paths_build_a_canonical_request_from_config_contract_and_placemen
 
 @pytest.mark.parametrize(
     "allowed",
-    ["src/**/*.py", "src/*.py", "src/a?.py", "src/[ab].py", "src/{a,b}.py", "/etc/passwd", "../x.py"],
+    [
+        "src/**/*.py",
+        "src/*.py",
+        "src/a?.py",
+        "src/[ab].py",
+        "src/{a,b}.py",
+        "/etc/passwd",
+        "../x.py",
+    ],
 )
 def test_unsupported_path_syntax_in_allowed_paths_fails_closed_without_expansion(
     tmp_path: Path, allowed: str

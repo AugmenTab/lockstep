@@ -234,7 +234,13 @@ def _planner_decision_response(
 
 def _implementer_completed_response(files: dict[str, str]) -> dict[str, object]:
     return {
-        "stdout": json.dumps({"status": "completed", "blocker": None}),
+        "stdout": json.dumps(
+            {
+                "status": "completed",
+                "implementation_report": {"summary": "Implemented the requested change."},
+                "blocker": None,
+            }
+        ),
         "returncode": 0,
         "files": files,
     }

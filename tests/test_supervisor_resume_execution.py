@@ -48,7 +48,7 @@ from pathlib import Path
 import pytest
 
 import lockstep.supervisor.transaction as transaction_module
-from lockstep.agent_turn import AgentTurnError, AgentTurnResult
+from lockstep.agent_turn import AgentTurnError
 from lockstep.agents import (
     AgentAdapter,
     AgentProviderDiagnostics,
@@ -79,6 +79,7 @@ from lockstep.domain import (
 from lockstep.escalation import EscalationAuthority, EscalationCategory
 from lockstep.escalation_decision import PlannerDecisionKind
 from lockstep.git import inspect_repository
+from lockstep.implementer_turn import ImplementerTurnResult
 from lockstep.persistence import read_events, read_state
 from lockstep.resume import resume_claim_path
 from lockstep.resume_settlement import (
@@ -1461,16 +1462,18 @@ def test_concurrent_second_caller_gets_recovery_required(
     )
     _halt_with_checkpoint(scenario, retry_budget=_budget(3))
 
-    original_invoke_agent_turn = transaction_module.invoke_agent_turn
+    original_invoke_implementer_turn = transaction_module.invoke_implementer_turn
     entered = threading.Event()
     release = threading.Event()
 
-    def blocking_invoke_agent_turn(*args: object, **kwargs: object) -> AgentTurnResult:
+    def blocking_invoke_implementer_turn(*args: object, **kwargs: object) -> ImplementerTurnResult:
         entered.set()
         release.wait(timeout=5)
-        return original_invoke_agent_turn(*args, **kwargs)  # type: ignore[arg-type]
+        return original_invoke_implementer_turn(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(transaction_module, "invoke_agent_turn", blocking_invoke_agent_turn)
+    monkeypatch.setattr(
+        transaction_module, "invoke_implementer_turn", blocking_invoke_implementer_turn
+    )
 
     results: list[ResumeExecutionResult] = []
     errors: list[BaseException] = []
@@ -1819,7 +1822,7 @@ def test_unexpected_exception_leaves_started_ambiguous(
     def _boom(*args: object, **kwargs: object) -> object:
         raise RuntimeError("injected unexpected bug")
 
-    monkeypatch.setattr(transaction_module, "invoke_agent_turn", _boom)
+    monkeypatch.setattr(transaction_module, "invoke_implementer_turn", _boom)
 
     with pytest.raises(RuntimeError, match="injected unexpected bug"):
         resume_single_subphase_transaction(scenario.request, agent_turn_runtime=scenario.runtime)

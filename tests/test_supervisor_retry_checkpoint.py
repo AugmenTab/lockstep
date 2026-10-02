@@ -46,7 +46,6 @@ import pytest
 
 import lockstep.retry_checkpoint as retry_checkpoint_module
 import lockstep.supervisor.transaction as transaction_module
-from lockstep.agent_turn import AgentTurnResult
 from lockstep.agents import (
     AgentAdapter,
     AgentProviderDiagnostics,
@@ -77,6 +76,7 @@ from lockstep.domain import (
 from lockstep.escalation import EscalationAuthority, EscalationCategory
 from lockstep.escalation_decision import PlannerDecisionKind
 from lockstep.git import inspect_repository
+from lockstep.implementer_turn import ImplementerTurnResult
 from lockstep.persistence import ExecutionEvent, read_events, read_state
 from lockstep.planning_store import freeze_master_plan, freeze_subphase_contract, publish_phase_plan
 from lockstep.retry import AttemptState, RetryBudget, RetryBudgetDisposition, RetryReason
@@ -309,7 +309,13 @@ def _planner_decision_response(
 
 def _implementer_completed_response(files: dict[str, str]) -> dict[str, object]:
     return {
-        "stdout": json.dumps({"status": "completed", "blocker": None}),
+        "stdout": json.dumps(
+            {
+                "status": "completed",
+                "implementation_report": {"summary": "Implemented the requested change."},
+                "blocker": None,
+            }
+        ),
         "returncode": 0,
         "files": files,
     }
@@ -735,7 +741,7 @@ def test_review_rework_result_is_frozen_slotted_with_exact_fields(tmp_path: Path
     with pytest.raises(FrozenInstanceError):
         rework.test_commit = rework.test_commit  # type: ignore[misc]
 
-    assert isinstance(rework.implementer_turn, AgentTurnResult)
+    assert isinstance(rework.implementer_turn, ImplementerTurnResult)
     assert isinstance(rework.reviewer_turn, ReviewerTurnResult)
     assert isinstance(rework.review_decision, ReviewDecision)
     assert rework.final_state.workflow_state == WorkflowState.HALTED

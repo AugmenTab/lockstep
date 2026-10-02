@@ -81,7 +81,9 @@ def _turn(scenario_root: Path, responses: list[dict[str, object]]) -> Implemente
 def test_a_completed_report_requires_a_draft_and_forbids_a_blocker() -> None:
     draft = ImplementationReportDraft(summary="done")
 
-    ImplementerTurnReport(status=AgentTurnStatus.COMPLETED, implementation_report=draft, blocker=None)
+    ImplementerTurnReport(
+        status=AgentTurnStatus.COMPLETED, implementation_report=draft, blocker=None
+    )
     with pytest.raises(ValidationError):
         ImplementerTurnReport(
             status=AgentTurnStatus.COMPLETED, implementation_report=None, blocker=None
@@ -95,7 +97,9 @@ def test_a_completed_report_requires_a_draft_and_forbids_a_blocker() -> None:
 def test_a_blocked_report_requires_a_blocker_and_forbids_a_draft() -> None:
     draft = ImplementationReportDraft(summary="done")
 
-    ImplementerTurnReport(status=AgentTurnStatus.BLOCKED, implementation_report=None, blocker=_BLOCKER)
+    ImplementerTurnReport(
+        status=AgentTurnStatus.BLOCKED, implementation_report=None, blocker=_BLOCKER
+    )
     with pytest.raises(ValidationError):
         ImplementerTurnReport(
             status=AgentTurnStatus.BLOCKED, implementation_report=None, blocker=None

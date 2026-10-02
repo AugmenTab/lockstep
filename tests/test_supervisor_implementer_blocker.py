@@ -271,7 +271,13 @@ def _planner_decision_response(
 
 def _implementer_completed_response(files: dict[str, str]) -> dict[str, object]:
     return {
-        "stdout": json.dumps({"status": "completed", "blocker": None}),
+        "stdout": json.dumps(
+            {
+                "status": "completed",
+                "implementation_report": {"summary": "Implemented the requested change."},
+                "blocker": None,
+            }
+        ),
         "returncode": 0,
         "files": files,
     }
@@ -1225,14 +1231,15 @@ def test_transaction_module_has_exact_implementer_turn_call_sites() -> None:
     # rules, and settlement handling. The corrected invariant pins the
     # exact two legal owner functions instead of a bare count, so "no
     # hidden additional role inference" still holds.
-    owners = _call_owner_functions(transaction_module, "invoke_agent_turn")
+    # 11.4: the Implementer now runs through the specialized seam, which has no
+    # ``role`` parameter (it is Implementer-only by construction).
+    owners = _call_owner_functions(transaction_module, "invoke_implementer_turn")
 
     assert set(owners) == {"_run_blocker_capable_transaction", "_resume_implementer"}
     for owner_name, calls in owners.items():
         assert len(calls) == 1, owner_name
-        role_keyword = next(kw for kw in calls[0].keywords if kw.arg == "role")
-        assert isinstance(role_keyword.value, ast.Attribute)
-        assert role_keyword.value.attr == "IMPLEMENTER"
+        assert all(kw.arg != "role" for kw in calls[0].keywords)
+    assert not _call_owner_functions(transaction_module, "invoke_agent_turn")
 
 
 def test_agent_turn_result_type_is_reexported_for_typing() -> None:

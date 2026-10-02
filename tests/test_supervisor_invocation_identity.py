@@ -24,6 +24,7 @@ the GREEN_REGRESSION guard for AC-10.1-06 and AC-10.1-11.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +58,7 @@ from test_supervisor_reviewer_identity import (
 
 import lockstep.agent_turn as agent_turn_module
 import lockstep.escalation_transport as escalation_transport_module
+import lockstep.implementer_turn as implementer_turn_module
 import lockstep.reviewer_turn as reviewer_turn_module
 import lockstep.supervisor.transaction as transaction_module
 from lockstep.agents import AgentInvocationRequest, AgentInvocationResult
@@ -98,6 +100,7 @@ def seen(monkeypatch: pytest.MonkeyPatch) -> list[_Seen]:
     for module in (
         transaction_module,
         agent_turn_module,
+        implementer_turn_module,
         reviewer_turn_module,
         escalation_transport_module,
     ):
@@ -421,7 +424,14 @@ def test_transports_accept_optional_host_run_id(
 
 
 def test_transports_without_run_id_issue_no_identity(tmp_path: Path, seen: list[_Seen]) -> None:
-    scenario = _prepare_scenario(tmp_path / "scenario")
+    # This exercises the *generic* agent-turn seam, whose completed report stays
+    # ``{status, blocker}`` (11.4 does not change it); the canonical Implementer shape
+    # carries an implementation_report and is exercised by the transaction tests above.
+    generic_completed = {
+        **_implementer_completed_response(),
+        "stdout": json.dumps({"status": "completed", "blocker": None}),
+    }
+    scenario = _prepare_scenario(tmp_path / "scenario", implementer_responses=[generic_completed])
     turn = agent_turn_module.invoke_agent_turn(
         scenario.runtime,
         role=AgentRole.IMPLEMENTER,
