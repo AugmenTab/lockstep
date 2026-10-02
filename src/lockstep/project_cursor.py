@@ -406,6 +406,49 @@ def revise_remaining_outline(
     return _advance(cursor, remaining_outline=tuple(remaining))
 
 
+def revise_unfinished_outline(
+    cursor: ProjectCursor, unfinished: tuple[SubphaseOutline, ...]
+) -> ProjectCursor:
+    """Replace the whole unfinished suffix: the current unfrozen unit and every later entry.
+
+    Unlike :func:`revise_remaining_outline`, the head of *unfinished* becomes
+    the new current Sub-phase, so a selected-but-unfrozen unit may be
+    replaced, split, or dropped; an empty suffix makes the Phase gate
+    ``READY`` (it never completes the Phase). Completed history is untouched.
+    Refused while a Contract is active: that Sub-phase is no longer provisional.
+    The head's dependencies must be completed Sub-phases of the current Phase;
+    every later entry is checked by the cursor invariants.
+
+    Deliberately not part of the frozen 11.1 ``__all__`` surface.
+    """
+    if cursor.current_subphase is None:
+        raise ProjectCursorError("the phase gate is ready; no unfinished outline to revise")
+    if cursor.active_contract is not None:
+        raise ProjectCursorError("a subphase contract is active; it cannot be revised away")
+
+    suffix = tuple(unfinished)
+    if suffix:
+        completed = {
+            entry.subphase_id.root
+            for entry in cursor.completed_subphases
+            if entry.phase_id == cursor.current_phase
+        }
+        head = suffix[0]
+        for dependency in head.depends_on:
+            if dependency.root not in completed:
+                raise ProjectCursorError(
+                    f"outline subphase {head.subphase_id.root} depends on "
+                    f"{dependency.root}, which is not completed"
+                )
+
+    return _advance(
+        cursor,
+        current_subphase=suffix[0].subphase_id if suffix else None,
+        remaining_outline=suffix[1:],
+        phase_gate_status=PhaseGateStatus.SUBPHASES_PENDING if suffix else PhaseGateStatus.READY,
+    )
+
+
 # --- Successor legality and Master Plan binding ---------------------------------
 
 

@@ -42,14 +42,16 @@ transaction's journal reaches canonical completion (a Reviewer ``APPROVE``,
 an implementation report, or a passing verification never advances it); a
 halted transaction without durable retry authority is never relaunched;
 and any state that cannot be proven safe fails closed. The remaining
-outline is treated as the current provisional schedule: this module never
-asks the Planner to revise it (that is later work), and it neither runs
-the Phase integration step nor completes the Phase -- it stops when the
-cursor reports the Phase gate ready.
+outline is the current provisional schedule. By default it runs as it
+stands; with ``jit_replan=True`` a fresh Planner reconsiders it (delegated
+to :mod:`lockstep.jit_replan`) after each recorded Sub-phase that leaves
+unfinished work, before the next Contract is planned. Either way this module
+neither runs the Phase integration step nor completes the Phase -- it stops
+when the cursor reports the Phase gate ready.
 
 :func:`step_project_run` performs exactly one durable step and is the seam
-between "record completion" and "plan the next Contract"; a later
-replanning step can sit between two calls to it.
+between "record completion" and "plan the next Contract"; the replanning
+step sits between two calls to it.
 """
 
 from __future__ import annotations
@@ -65,7 +67,9 @@ from lockstep.contract_history import retire_active_subphase_contract
 from lockstep.domain import ExecutionEventKind, PhaseId, RunId, SubphaseContract, SubphaseId
 from lockstep.escalation import EscalationProtocolError
 from lockstep.escalation_transport import PlannerDecisionTransportError
+from lockstep.jit_replan import JitReplanError, JitReplanState, jit_replan_state, run_jit_replan
 from lockstep.persistence import ExecutionEvent, load_verified_state, read_events
+from lockstep.planning import PlanningValidationError
 from lockstep.planning_store import (
     freeze_subphase_contract,
     load_active_subphase_contract,
@@ -73,6 +77,7 @@ from lockstep.planning_store import (
     load_phase_plan,
     publish_phase_plan,
 )
+from lockstep.planning_transport import PlanningTransportError
 from lockstep.planning_workflow import create_subphase_contract_candidate
 from lockstep.project_cursor import (
     CompletedSubphase,
@@ -117,6 +122,10 @@ _KNOWN_TRANSACTION_FAILURES = (
     PlannerDecisionTransportError,
     EscalationProtocolError,
 )
+
+# Failures of a required JIT replan that are known outcomes of asking the Planner and
+# validating its answer; they stop the Phase instead of falling back to stale work.
+_KNOWN_REPLAN_FAILURES = (JitReplanError, PlanningTransportError, PlanningValidationError)
 
 
 class ProjectOrchestrationError(Exception):
@@ -422,6 +431,44 @@ def _plan_and_bind(
     )
 
 
+# --- JIT replanning ----------------------------------------------------------------------
+
+
+def _replan(
+    runtime: AgentRuntime,
+    cursor: ProjectCursor,
+    leftover: SubphaseContract | None,
+    *,
+    planning_timeout_seconds: float,
+    max_output_bytes: int,
+    termination_grace_seconds: float,
+) -> ProjectRunResult | None:
+    """Replan the unfinished outline from the latest accepted Sub-phase's repository state.
+
+    ``None`` means the replan is accepted and applied and the next step may plan the
+    next Contract. A known planning failure stops the Phase with the cursor and outline
+    untouched; it is never treated as a no-op.
+    """
+    if leftover is not None:
+        raise ProjectOrchestrationError("a frozen contract exists while a replan is outstanding")
+    previous = cursor.completed_subphases[-1]
+    try:
+        run_jit_replan(
+            runtime,
+            worktree_path=transaction_worktree_path(runtime.runtime_dir, previous.run_id),
+            branch=_branch_for(previous.run_id),
+            timeout_seconds=planning_timeout_seconds,
+            max_output_bytes=max_output_bytes,
+            termination_grace_seconds=termination_grace_seconds,
+        )
+    except _KNOWN_REPLAN_FAILURES as exc:
+        reason = getattr(exc, "reason", None) or type(exc).__name__
+        return _stop(
+            runtime, ProjectRunDisposition.EXECUTION_FAILED, None, detail=f"jit replan: {reason}"
+        )
+    return None
+
+
 # --- Driving the bound transaction -----------------------------------------------------
 
 
@@ -582,6 +629,7 @@ def step_project_run(
     planning_timeout_seconds: float,
     max_output_bytes: int = 1_048_576,
     termination_grace_seconds: float = 0.25,
+    jit_replan: bool = False,
 ) -> ProjectRunResult | None:
     """Perform exactly one durable orchestration step.
 
@@ -589,9 +637,15 @@ def step_project_run(
     call again, or a :class:`ProjectRunResult` when orchestration must stop.
     One step is one of: freeze and bind the current Sub-phase's Contract;
     drive (launch, resume, or settle) the bound transaction, recording and
-    retiring its Contract when it is canonically complete; or report that the
-    Phase gate is ready. Recording completion and planning the next Contract
-    are separate steps, so a later replanning step can sit between them.
+    retiring its Contract when it is canonically complete; replan the
+    unfinished outline (only with *jit_replan*); or report that the Phase
+    gate is ready. Recording completion, replanning, and planning the next
+    Contract are separate steps. A required replan that fails stops the Phase
+    (``EXECUTION_FAILED``) with the cursor and outline untouched.
+
+    *jit_replan* makes a fresh Planner reconsider the unfinished outline after
+    each recorded Sub-phase that leaves unfinished work; it is off by default so
+    the outline runs as published.
 
     *runtime* is the project-level runtime: its ``runtime_dir`` is the
     project run root, and its adapters plan Contracts. Each transaction runs
@@ -607,6 +661,19 @@ def step_project_run(
     leftover = _reconcile_unbound_contract(runtime.project_root, runtime.runtime_dir, cursor)
     if cursor.phase_gate_status is PhaseGateStatus.READY:
         return _stop(runtime, ProjectRunDisposition.PHASE_GATE_READY, None)
+
+    if jit_replan and jit_replan_state(runtime.project_root, runtime.runtime_dir) in (
+        JitReplanState.REPLAN_REQUIRED,
+        JitReplanState.REPLAN_ACCEPTED,
+    ):
+        return _replan(
+            runtime,
+            cursor,
+            leftover,
+            planning_timeout_seconds=planning_timeout_seconds,
+            max_output_bytes=max_output_bytes,
+            termination_grace_seconds=termination_grace_seconds,
+        )
 
     _plan_and_bind(
         runtime,
@@ -627,6 +694,7 @@ def run_project_phase(
     planning_timeout_seconds: float,
     max_output_bytes: int = 1_048_576,
     termination_grace_seconds: float = 0.25,
+    jit_replan: bool = False,
 ) -> ProjectRunResult:
     """Run the current Phase's Sub-phases sequentially until it must stop.
 
@@ -636,12 +704,17 @@ def run_project_phase(
     a stop or a crash: all progress is re-derived from durable state, a
     finished Phase stops immediately, and nothing already started is run twice.
     *retry_budget* is passed through to the transaction layer; there is no
-    project-level retry policy.
+    project-level retry policy. With *jit_replan* the unfinished outline is
+    replanned between Sub-phases (see :func:`step_project_run`), so the number
+    of Sub-phases is not fixed in advance.
     """
     start = _load_or_initialize(runtime.project_root, runtime.runtime_dir)
     already_recorded = len(start.completed_subphases)
-    # Each Sub-phase takes at most one planning step and one driving step.
-    for _ in range(2 * (len(start.remaining_outline) + 1) + 2):
+    # Every non-terminal step changes the cursor or the replan state, so a run of
+    # steps that changes neither means orchestration is not converging.
+    progress = _progress(runtime, jit_replan)
+    stalled = 0
+    while stalled < _MAX_STALLED_STEPS:
         result = step_project_run(
             runtime,
             request_factory=request_factory,
@@ -649,12 +722,26 @@ def run_project_phase(
             planning_timeout_seconds=planning_timeout_seconds,
             max_output_bytes=max_output_bytes,
             termination_grace_seconds=termination_grace_seconds,
+            jit_replan=jit_replan,
         )
         if result is not None:
             return dataclasses.replace(
                 result, completed=result.cursor.completed_subphases[already_recorded:]
             )
+        latest = _progress(runtime, jit_replan)
+        stalled = stalled + 1 if latest == progress else 0
+        progress = latest
     raise ProjectOrchestrationError("orchestration did not converge")
+
+
+_MAX_STALLED_STEPS = 3
+
+
+def _progress(runtime: AgentRuntime, jit_replan: bool) -> tuple[int, JitReplanState | None]:
+    cursor = load_project_cursor(runtime.project_root, runtime.runtime_dir)
+    assert cursor is not None
+    state = jit_replan_state(runtime.project_root, runtime.runtime_dir) if jit_replan else None
+    return cursor.revision, state
 
 
 __all__ = [

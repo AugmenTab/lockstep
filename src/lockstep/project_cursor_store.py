@@ -60,6 +60,7 @@ from lockstep.project_cursor import (
     record_subphase_completion,
     require_legal_successor,
     revise_remaining_outline,
+    revise_unfinished_outline,
     validate_cursor_against_master_plan,
 )
 
@@ -350,6 +351,22 @@ def revise_cursor_outline(
     cursor = _require_cursor(project_root, resolved_runtime)
 
     revised = revise_remaining_outline(cursor, remaining)
+    _write_cursor(_cursor_path(resolved_runtime), cursor, revised)
+    return revised
+
+
+def revise_cursor_unfinished_outline(
+    project_root: Path, runtime_dir: Path, unfinished: tuple[SubphaseOutline, ...]
+) -> ProjectCursor:
+    """Durably replace the whole unfinished suffix, including the current unfrozen unit.
+
+    One atomic publication; refused while a Contract is active. Not part of
+    the frozen 11.1 ``__all__`` surface.
+    """
+    resolved_runtime = _checked_runtime_dir(project_root, runtime_dir)
+    cursor = _require_cursor(project_root, resolved_runtime)
+
+    revised = revise_unfinished_outline(cursor, unfinished)
     _write_cursor(_cursor_path(resolved_runtime), cursor, revised)
     return revised
 
