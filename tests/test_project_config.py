@@ -750,4 +750,6 @@ def test_load_project_config_does_not_invoke_subprocess(
 def test_project_config_has_exactly_schema_version_and_routing_fields() -> None:
     field_names = {field.name for field in dataclasses.fields(ProjectConfig)}
 
-    assert field_names == {"schema_version", "routing"}
+    # 11.4: ``execution`` is the new typed ``[execution]`` boundary (Planner ruling
+    # update1 section 4); parsing stays strict and no other field may appear.
+    assert field_names == {"schema_version", "routing", "execution"}
