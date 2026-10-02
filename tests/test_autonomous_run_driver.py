@@ -434,6 +434,9 @@ def limited(tmp_path_factory: pytest.TempPathFactory) -> SimpleNamespace:
     state = SimpleNamespace(
         counts=project.counts(),
         cursor=_cursor_bytes(project),
+        # An immutable snapshot of the durable cursor right after the first bounded run, before
+        # any later continuation moves the live cursor on.
+        cursor_after_first=project.cursor(),
         jit=jit_replan_state(project.project_root, project.runtime_dir),
     )
     again = run_autonomous(project, policy, clock=clock, project_run_id=first.project_run_id)
@@ -472,7 +475,7 @@ def test_the_stop_is_durable_and_leaves_the_cursor_ready_for_a_later_run(
     limited: SimpleNamespace,
 ) -> None:
     project, first = limited.project, limited.first
-    cursor = project.cursor()
+    cursor = limited.state.cursor_after_first
 
     assert _state(project, first).stop.disposition is _D.MAX_SUBPHASES_REACHED
     assert cursor.current_subphase is not None and cursor.current_subphase.root == "02"
