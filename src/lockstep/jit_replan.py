@@ -349,6 +349,7 @@ def build_jit_replan_prompt(
     Separates the host-owned immutable completed prefix of *phase_plan* from the
     unfinished provisional suffix, and names the accepted repository basis.
     """
+    assert cursor.current_phase is not None
     completed = len(_phase_completed(cursor))
     return (
         f"{_MASTER_PLAN_LABEL}\n"

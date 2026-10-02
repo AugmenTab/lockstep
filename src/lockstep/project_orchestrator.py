@@ -47,7 +47,10 @@ reconsiders it (delegated to :mod:`lockstep.jit_replan`) after each recorded
 Sub-phase that leaves unfinished work, before the next Contract is planned;
 ``jit_replan=False`` runs it as published. Either way this module
 neither runs the Phase integration step nor completes the Phase -- it stops
-when the cursor reports the Phase gate ready.
+when the cursor reports the Phase gate ready. Crossing that boundary belongs to
+the dedicated higher-level module :mod:`lockstep.phase_gate_cycle`, which
+composes this runner (for a gate-remediation Sub-phase) rather than the other
+way around.
 
 :func:`step_project_run` performs exactly one durable step and is the seam
 between "record completion" and "plan the next Contract"; the replanning
@@ -233,7 +236,11 @@ def transaction_worktree_path(runtime_dir: Path, run_id: RunId) -> Path:
     return Path(runtime_dir) / _WORKTREES_DIR_NAME / run_id.root
 
 
-def _branch_for(run_id: RunId) -> str:
+def transaction_branch(run_id: RunId) -> str:
+    """The accepted Git branch of one Sub-phase transaction, deterministic from its run id.
+
+    Deliberately not part of the frozen ``__all__`` surface.
+    """
     return f"lockstep/run/{run_id.root}"
 
 
@@ -243,8 +250,8 @@ def _placement(runtime_dir: Path, cursor: ProjectCursor, run_id: RunId) -> Trans
         run_id=run_id,
         runtime_dir=transaction_runtime_dir(runtime_dir, run_id),
         worktree_path=transaction_worktree_path(runtime_dir, run_id),
-        branch=_branch_for(run_id),
-        base_branch=_branch_for(previous.run_id) if previous is not None else None,
+        branch=transaction_branch(run_id),
+        base_branch=transaction_branch(previous.run_id) if previous is not None else None,
     )
 
 
@@ -426,6 +433,7 @@ def _plan_and_bind(
     eligibility = planning_eligibility(cursor)
     if not eligibility.eligible:
         raise ProjectOrchestrationError(f"planning is not eligible: {eligibility.reason.value}")
+    assert cursor.current_phase is not None
     assert cursor.current_subphase is not None
 
     contract = leftover
@@ -474,7 +482,7 @@ def _replan(
         run_jit_replan(
             runtime,
             worktree_path=transaction_worktree_path(runtime.runtime_dir, previous.run_id),
-            branch=_branch_for(previous.run_id),
+            branch=transaction_branch(previous.run_id),
             timeout_seconds=planning_timeout_seconds,
             max_output_bytes=max_output_bytes,
             termination_grace_seconds=termination_grace_seconds,
@@ -684,6 +692,9 @@ def step_project_run(
     """
     factory = _resolve_request_factory(runtime, request_factory)
     cursor = _load_or_initialize(runtime.project_root, runtime.runtime_dir)
+
+    if cursor.phase_gate_status is PhaseGateStatus.PROJECT_COMPLETE:
+        raise ProjectOrchestrationError("the project is complete; there is nothing left to run")
 
     if cursor.active_contract is not None:
         return _drive_bound_transaction(

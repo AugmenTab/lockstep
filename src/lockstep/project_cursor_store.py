@@ -42,7 +42,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from lockstep.domain import RunId, SubphaseOutline
+from lockstep.domain import PhaseId, RunId, SubphaseOutline
 from lockstep.persistence.events import ExecutionEvent
 from lockstep.persistence.journal import read_events
 from lockstep.persistence.state_store import load_verified_state
@@ -57,7 +57,9 @@ from lockstep.project_cursor import (
     bind_active_contract,
     contract_digest,
     new_project_cursor,
+    record_phase_gate_pass,
     record_subphase_completion,
+    reopen_phase_for_remediation,
     require_legal_successor,
     revise_remaining_outline,
     revise_unfinished_outline,
@@ -369,6 +371,48 @@ def revise_cursor_unfinished_outline(
     revised = revise_unfinished_outline(cursor, unfinished)
     _write_cursor(_cursor_path(resolved_runtime), cursor, revised)
     return revised
+
+
+def record_phase_completion(
+    project_root: Path, runtime_dir: Path, *, phase_id: PhaseId
+) -> ProjectCursor:
+    """Durably record that *phase_id* passed its integration gate.
+
+    One atomic publication that appends the Phase to the completed-Phase history
+    and hands over to the successor (or to project completion), derived from the
+    frozen Master Plan. Recording a pass already recorded is an idempotent no-op.
+    The caller owns the proof that the gate passed; this module only keeps the
+    cursor honest about order and shape. Not part of the frozen 11.1 ``__all__``
+    surface.
+    """
+    resolved_runtime = _checked_runtime_dir(project_root, runtime_dir)
+    cursor = _require_cursor(project_root, resolved_runtime)
+    plan = load_frozen_master_plan(project_root)
+    if plan is None:
+        raise ProjectCursorStoreError("cursor exists without a frozen master plan")
+
+    updated = record_phase_gate_pass(cursor, plan, phase_id=phase_id)
+    if updated != cursor:
+        _write_cursor(_cursor_path(resolved_runtime), cursor, updated)
+    return updated
+
+
+def reopen_cursor_for_remediation(
+    project_root: Path, runtime_dir: Path, remediation: SubphaseOutline
+) -> ProjectCursor:
+    """Durably reopen the ready Phase for one remediation Sub-phase.
+
+    One atomic publication; history and the Phase are untouched, and reopening the
+    identical remediation again is an idempotent no-op. Not part of the frozen 11.1
+    ``__all__`` surface.
+    """
+    resolved_runtime = _checked_runtime_dir(project_root, runtime_dir)
+    cursor = _require_cursor(project_root, resolved_runtime)
+
+    reopened = reopen_phase_for_remediation(cursor, remediation)
+    if reopened != cursor:
+        _write_cursor(_cursor_path(resolved_runtime), cursor, reopened)
+    return reopened
 
 
 __all__ = [

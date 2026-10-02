@@ -152,33 +152,28 @@ def _bound(text: str, limit: int, already_truncated: bool) -> tuple[str, bool]:
     return data[-limit:].decode("utf-8", errors="ignore"), True
 
 
-def run_verification_stack(
+def run_command_evidence(
     commands: Sequence[Sequence[str]],
     *,
-    run_id: RunId,
-    phase_id: PhaseId,
-    subphase_id: SubphaseId,
-    attempt: AttemptNumber,
     cwd: Path,
     env: Mapping[str, str],
     timeout_seconds: float,
     max_output_bytes: int,
     termination_grace_seconds: float = 0.25,
     runner: Callable[..., ProcessResult] = run_process,
-) -> VerificationStackResult:
-    """Run every command of *commands* in order, stopping at the first failure.
+) -> tuple[CommandEvidence, ...]:
+    """Run *commands* directly, in order, stopping after the first non-zero exit.
 
-    A non-zero exit is a normal failed stage, reported rather than raised; launch
-    failure, invalid configuration and timeout propagate from the process runner
-    unchanged. *runner* is the process-execution seam (by default
-    :func:`~lockstep.process.run_process`); a caller that already owns such a seam
-    passes it so every process it launches goes through one place.
+    Returns the bounded evidence of every command that was attempted. A non-zero
+    exit is ordinary evidence, not an error; launch failure, invalid configuration
+    and timeout propagate from the process runner unchanged. This is the one
+    command-running primitive shared by the Contract verification stage and the
+    Phase gate, so every process either launches goes through the same place.
     """
     if not commands:
         raise VerificationCommandError("no verification commands were supplied")
 
     attempted: list[CommandEvidence] = []
-    failure: VerificationFinding | None = None
     for argv in commands:
         result = runner(
             tuple(argv),
@@ -202,12 +197,49 @@ def run_verification_stack(
             )
         )
         if result.returncode != 0:
-            failure = VerificationFinding(
-                observation=f"command exited with returncode {result.returncode}",
-                expected="command exits with returncode 0",
-                reproduction=shlex.join(result.argv),
-            )
             break
+    return tuple(attempted)
+
+
+def run_verification_stack(
+    commands: Sequence[Sequence[str]],
+    *,
+    run_id: RunId,
+    phase_id: PhaseId,
+    subphase_id: SubphaseId,
+    attempt: AttemptNumber,
+    cwd: Path,
+    env: Mapping[str, str],
+    timeout_seconds: float,
+    max_output_bytes: int,
+    termination_grace_seconds: float = 0.25,
+    runner: Callable[..., ProcessResult] = run_process,
+) -> VerificationStackResult:
+    """Run every command of *commands* in order, stopping at the first failure.
+
+    A non-zero exit is a normal failed stage, reported rather than raised; launch
+    failure, invalid configuration and timeout propagate from the process runner
+    unchanged. *runner* is the process-execution seam (by default
+    :func:`~lockstep.process.run_process`); a caller that already owns such a seam
+    passes it so every process it launches goes through one place.
+    """
+    attempted = run_command_evidence(
+        commands,
+        cwd=cwd,
+        env=env,
+        timeout_seconds=timeout_seconds,
+        max_output_bytes=max_output_bytes,
+        termination_grace_seconds=termination_grace_seconds,
+        runner=runner,
+    )
+    failure: VerificationFinding | None = None
+    last = attempted[-1]
+    if last.exit_code != 0:
+        failure = VerificationFinding(
+            observation=f"command exited with returncode {last.exit_code}",
+            expected="command exits with returncode 0",
+            reproduction=shlex.join(last.argv),
+        )
 
     report = VerificationReport(
         phase_id=phase_id,
@@ -223,6 +255,6 @@ def run_verification_stack(
         subphase_id=subphase_id,
         attempt=attempt,
         max_output_bytes=max_output_bytes,
-        commands=tuple(attempted),
+        commands=attempted,
     )
     return VerificationStackResult(report=report, evidence=evidence)

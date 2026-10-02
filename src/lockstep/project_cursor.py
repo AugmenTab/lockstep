@@ -24,10 +24,15 @@ Authority is preserved, not inflated, by persistence:
 
 Every function here is pure: no filesystem, Git, process, clock, network,
 or model access. Persistence lives in :mod:`lockstep.project_cursor_store`.
-Phase completion is deliberately not implemented (it belongs to the Phase
-gate protocol): :func:`require_legal_successor` rejects any change to the
-completed-Phase history, and the Phase gate seam only ever advances from
-``SUBPHASES_PENDING`` to ``READY``.
+
+Phase boundaries follow the Phase gate protocol. A Phase is added to the
+completed-Phase history by exactly one transition, :func:`record_phase_gate_pass`,
+from a ``READY`` gate; the successor is derived from the frozen Master Plan
+order, never chosen by a caller. The final Phase's pass leaves a legal
+terminal cursor (``current_phase is None``, ``PROJECT_COMPLETE``). A gate
+failure may reopen the same Phase for one remediation Sub-phase through
+:func:`reopen_phase_for_remediation`. :func:`require_legal_successor` accepts
+only those two Phase-boundary shapes besides ordinary Sub-phase progress.
 """
 
 from __future__ import annotations
@@ -82,17 +87,20 @@ class ProjectCursorError(Exception):
 
 
 class PhaseGateStatus(StrEnum):
-    """Smallest Phase-gate seam: whether the current Phase's planned work is done.
+    """Where the current Phase stands relative to its integration gate.
 
     ``READY`` means every Sub-phase of the current Phase is canonically
     complete and no current Sub-phase remains; it does not mean a gate has
-    run or passed. Running, passing, and failing a gate belong to the
-    later Phase-gate protocol, which will extend this vocabulary under a
-    schema-version bump.
+    run or passed. The gate's own attempts, decisions, and evidence live in
+    their own durable artifacts (:mod:`lockstep.phase_gate`); this cursor only
+    records the Phase boundary a PASS crosses. ``PROJECT_COMPLETE`` is the
+    terminal status of a cursor with no current Phase: every Phase of the
+    frozen Master Plan has passed its gate.
     """
 
     SUBPHASES_PENDING = "subphases_pending"
     READY = "ready"
+    PROJECT_COMPLETE = "project_complete"
 
 
 class PlanningEligibilityReason(StrEnum):
@@ -146,7 +154,7 @@ class ProjectCursor(_CursorModel):
     master_plan_digest: _Sha256Hex
     revision: _PositiveStrictInt
 
-    current_phase: PhaseId
+    current_phase: PhaseId | None
     completed_phases: tuple[PhaseId, ...] = ()
 
     current_subphase: SubphaseId | None
@@ -172,10 +180,28 @@ class ProjectCursor(_CursorModel):
         completed_phase_ids = [phase.root for phase in self.completed_phases]
         if len(set(completed_phase_ids)) != len(completed_phase_ids):
             raise ValueError("duplicate completed phase")
-        if self.current_phase.root in completed_phase_ids:
-            raise ValueError(f"current phase {self.current_phase.root} is already completed")
 
-        known_phases = {*completed_phase_ids, self.current_phase.root}
+        current = self.current_phase
+        if current is None:
+            if self.phase_gate_status is not PhaseGateStatus.PROJECT_COMPLETE:
+                raise ValueError("a cursor without a current phase must be project complete")
+            if not completed_phase_ids:
+                raise ValueError("a project cannot be complete before any phase completes")
+            if self.current_subphase is not None:
+                raise ValueError("a project-complete cursor has no current subphase")
+            if self.remaining_outline:
+                raise ValueError("a project-complete cursor has no remaining outline")
+            if self.active_contract is not None:
+                raise ValueError("a project-complete cursor has no active contract")
+        else:
+            if self.phase_gate_status is PhaseGateStatus.PROJECT_COMPLETE:
+                raise ValueError("project complete requires that no phase is current")
+            if current.root in completed_phase_ids:
+                raise ValueError(f"current phase {current.root} is already completed")
+
+        known_phases = set(completed_phase_ids)
+        if current is not None:
+            known_phases.add(current.root)
         seen_pairs: set[tuple[str, str]] = set()
         seen_runs: set[str] = set()
         for entry in self.completed_subphases:
@@ -188,6 +214,9 @@ class ProjectCursor(_CursorModel):
             if entry.run_id.root in seen_runs:
                 raise ValueError(f"duplicate completed run {entry.run_id.root}")
             seen_runs.add(entry.run_id.root)
+
+        if current is None:
+            return self
 
         visible = {
             entry.subphase_id.root
@@ -330,7 +359,7 @@ def bind_active_contract(
         return cursor
     if cursor.active_contract is not None:
         raise ProjectCursorError("a subphase contract is already active")
-    if cursor.current_subphase is None:
+    if cursor.current_phase is None or cursor.current_subphase is None:
         raise ProjectCursorError("the current phase has no subphase left to execute")
     if contract.phase_id != cursor.current_phase:
         raise ProjectCursorError(
@@ -449,17 +478,158 @@ def revise_unfinished_outline(
     )
 
 
+# --- Phase boundaries: gate PASS and gate-FAIL remediation ----------------------
+
+
+def record_phase_gate_pass(
+    cursor: ProjectCursor, plan: MasterPlan, *, phase_id: PhaseId
+) -> ProjectCursor:
+    """Record that *phase_id* passed its integration gate: the only Phase completion.
+
+    *cursor* must be bound to the frozen *plan* and *phase_id* must be its
+    current Phase with a ``READY`` gate. The Phase moves into the immutable
+    completed-Phase history and the successor is derived from *plan*'s own
+    Phase order: it starts at the head of its frozen outline with the rest as
+    the provisional remainder and nothing bound or complete. The final Phase's
+    pass yields the terminal ``PROJECT_COMPLETE`` cursor. Recording a pass that
+    is already recorded is an idempotent no-op; a Phase that is neither current
+    nor already complete is refused, so a pass can never skip, reorder, or
+    reopen a Phase.
+    """
+    validate_cursor_against_master_plan(cursor, plan)
+    if phase_id in cursor.completed_phases:
+        return cursor
+    if cursor.current_phase != phase_id:
+        raise ProjectCursorError(f"phase {phase_id.root} is not the current phase")
+    if (
+        cursor.phase_gate_status is not PhaseGateStatus.READY
+        or cursor.current_subphase is not None
+        or cursor.active_contract is not None
+    ):
+        raise ProjectCursorError("the phase gate is not ready")
+
+    completed = (*cursor.completed_phases, phase_id)
+    successor_index = len(cursor.completed_phases) + 1
+    if successor_index >= len(plan.phases):
+        return _advance(
+            cursor,
+            current_phase=None,
+            completed_phases=completed,
+            current_subphase=None,
+            remaining_outline=(),
+            active_contract=None,
+            phase_gate_status=PhaseGateStatus.PROJECT_COMPLETE,
+        )
+
+    successor = plan.phases[successor_index]
+    outline = successor.subphases
+    return _advance(
+        cursor,
+        current_phase=successor.phase_id,
+        completed_phases=completed,
+        current_subphase=outline[0].subphase_id,
+        remaining_outline=outline[1:],
+        active_contract=None,
+        phase_gate_status=PhaseGateStatus.SUBPHASES_PENDING,
+    )
+
+
+def reopen_phase_for_remediation(
+    cursor: ProjectCursor, remediation: SubphaseOutline
+) -> ProjectCursor:
+    """Reopen the current ``READY`` Phase for exactly one remediation Sub-phase.
+
+    The remediation becomes the current Sub-phase with no remaining outline; the
+    Phase, the completed-Phase history, and every completed Sub-phase are
+    untouched. Its id must be new to the Phase's completed history and it may
+    depend only on completed Sub-phases of this Phase. Reopening the identical
+    remediation again is an idempotent no-op; a different remediation while one is
+    current is refused.
+    """
+    if cursor.current_phase is None:
+        raise ProjectCursorError("the project is complete; there is no phase to reopen")
+    if (
+        cursor.phase_gate_status is PhaseGateStatus.SUBPHASES_PENDING
+        and cursor.current_subphase == remediation.subphase_id
+    ):
+        return cursor
+    if cursor.phase_gate_status is not PhaseGateStatus.READY:
+        raise ProjectCursorError("only a ready phase gate can be reopened for remediation")
+
+    completed = {
+        entry.subphase_id.root
+        for entry in cursor.completed_subphases
+        if entry.phase_id == cursor.current_phase
+    }
+    if remediation.subphase_id.root in completed:
+        raise ProjectCursorError(
+            f"remediation subphase {remediation.subphase_id.root} reuses a completed subphase"
+        )
+    for dependency in remediation.depends_on:
+        if dependency.root not in completed:
+            raise ProjectCursorError(
+                f"remediation subphase {remediation.subphase_id.root} depends on "
+                f"{dependency.root}, which is not completed"
+            )
+    return _advance(
+        cursor,
+        current_subphase=remediation.subphase_id,
+        remaining_outline=(),
+        phase_gate_status=PhaseGateStatus.SUBPHASES_PENDING,
+    )
+
+
 # --- Successor legality and Master Plan binding ---------------------------------
+
+
+def _require_legal_phase_advance(previous: ProjectCursor, candidate: ProjectCursor) -> None:
+    """The only legal change of Phase: a gate PASS from a ready, unbound, current Phase."""
+    if (
+        previous.current_phase is None
+        or previous.phase_gate_status is not PhaseGateStatus.READY
+        or previous.active_contract is not None
+    ):
+        raise ProjectCursorError("a phase can only be completed from a ready phase gate")
+    if candidate.completed_phases != (*previous.completed_phases, previous.current_phase):
+        raise ProjectCursorError("completed phase history is immutable")
+    if candidate.phase_gate_status not in (
+        PhaseGateStatus.SUBPHASES_PENDING,
+        PhaseGateStatus.PROJECT_COMPLETE,
+    ):
+        raise ProjectCursorError("a completed phase must hand over to pending work or completion")
+    if candidate.active_contract is not None:
+        raise ProjectCursorError("a phase boundary cannot bind a contract")
+
+
+def _is_remediation_reopening(previous: ProjectCursor, candidate: ProjectCursor) -> bool:
+    """A ready gate becoming pending again is legal only as one remediation Sub-phase."""
+    current = previous.current_phase
+    if current is None or candidate.current_subphase is None:
+        return False
+    completed = {
+        entry.subphase_id.root
+        for entry in previous.completed_subphases
+        if entry.phase_id == current
+    }
+    return (
+        candidate.phase_gate_status is PhaseGateStatus.SUBPHASES_PENDING
+        and candidate.current_subphase.root not in completed
+        and candidate.remaining_outline == ()
+        and candidate.active_contract is None
+        and candidate.completed_subphases == previous.completed_subphases
+    )
 
 
 def require_legal_successor(previous: ProjectCursor, candidate: ProjectCursor) -> None:
     """Require *candidate* to be a legal direct successor of *previous*.
 
     Identity (project, Master Plan digest) is fixed, ``revision`` advances by
-    exactly one, completed-Sub-phase history is an unmodified prefix, the
-    Phase position and completed-Phase history are unchanged (Phase
-    completion is not a cursor operation in this protocol version), and
-    the Phase gate never regresses.
+    exactly one, and completed-Sub-phase history is an unmodified prefix. The
+    Phase position and completed-Phase history change only by a gate PASS (the
+    current Phase joins the history and the cursor hands over to pending work or
+    to project completion). The Phase gate never regresses, except that a gate
+    failure may reopen the same Phase for exactly one remediation Sub-phase. A
+    project-complete cursor has no successor.
     """
     if candidate.project_id != previous.project_id:
         raise ProjectCursorError("successor changes the project")
@@ -469,16 +639,23 @@ def require_legal_successor(previous: ProjectCursor, candidate: ProjectCursor) -
         raise ProjectCursorError(
             f"successor revision must be {previous.revision + 1}, got {candidate.revision}"
         )
-    if candidate.completed_phases != previous.completed_phases:
-        raise ProjectCursorError("completed phase history is immutable")
-    if candidate.current_phase != previous.current_phase:
-        raise ProjectCursorError("the current phase cannot change")
+    if previous.phase_gate_status is PhaseGateStatus.PROJECT_COMPLETE:
+        raise ProjectCursorError("a complete project has no successor")
+
+    advanced = (
+        candidate.completed_phases != previous.completed_phases
+        or candidate.current_phase != previous.current_phase
+    )
+    if advanced:
+        _require_legal_phase_advance(previous, candidate)
     kept = len(previous.completed_subphases)
     if candidate.completed_subphases[:kept] != previous.completed_subphases:
         raise ProjectCursorError("completed subphase history is immutable")
     if (
-        previous.phase_gate_status is PhaseGateStatus.READY
+        not advanced
+        and previous.phase_gate_status is PhaseGateStatus.READY
         and candidate.phase_gate_status is not PhaseGateStatus.READY
+        and not _is_remediation_reopening(previous, candidate)
     ):
         raise ProjectCursorError("the phase gate status cannot regress")
 
@@ -495,7 +672,10 @@ def validate_cursor_against_master_plan(cursor: ProjectCursor, plan: MasterPlan)
     done = len(cursor.completed_phases)
     if order[:done] != cursor.completed_phases:
         raise ProjectCursorError("completed phases do not match the master plan order")
-    if done >= len(order) or order[done] != cursor.current_phase:
+    if cursor.current_phase is None:
+        if done != len(order):
+            raise ProjectCursorError("the project is complete before every phase completed")
+    elif done >= len(order) or order[done] != cursor.current_phase:
         raise ProjectCursorError("current phase skips an incomplete prior phase")
 
 

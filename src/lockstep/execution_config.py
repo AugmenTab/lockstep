@@ -19,6 +19,12 @@ that omits them still *parses* (so an older ``lockstep.toml`` stays valid), but
 autonomous execution. The limits default to the values the accepted transaction
 request already used.
 
+``phase_gate_commands`` is a separate, project-wide stack: the ordered argv
+arrays that audit a completed Phase as a whole. It is neither a Contract's
+``verification_commands`` nor ``baseline_argv`` / ``planner_quality_argv`` and
+never stands in for them; it has no default, and
+:func:`require_phase_gate_execution` refuses a project that has not configured it.
+
 Pure: no filesystem, environment, process or clock access.
 """
 
@@ -34,13 +40,14 @@ _DEFAULT_MAX_OUTPUT_BYTES = 1_048_576
 _DEFAULT_TERMINATION_GRACE_SECONDS = 0.25
 
 _COMMAND_KEYS: tuple[str, ...] = ("baseline_argv", "planner_quality_argv")
+_STACK_KEY = "phase_gate_commands"
 _LIMIT_KEYS: tuple[str, ...] = (
     "agent_timeout_seconds",
     "command_timeout_seconds",
     "max_output_bytes",
     "termination_grace_seconds",
 )
-_EXECUTION_KEYS: frozenset[str] = frozenset(_COMMAND_KEYS + _LIMIT_KEYS)
+_EXECUTION_KEYS: frozenset[str] = frozenset((*_COMMAND_KEYS, _STACK_KEY, *_LIMIT_KEYS))
 
 # A command whose executable is a shell would reintroduce shell semantics
 # (``sh -c "a && b"``) that structured argv exists to rule out.
@@ -71,6 +78,7 @@ class ExecutionConfig:
     command_timeout_seconds: float = _DEFAULT_COMMAND_TIMEOUT_SECONDS
     max_output_bytes: int = _DEFAULT_MAX_OUTPUT_BYTES
     termination_grace_seconds: float = _DEFAULT_TERMINATION_GRACE_SECONDS
+    phase_gate_commands: tuple[tuple[str, ...], ...] = ()
 
 
 def require_autonomous_execution(config: ExecutionConfig) -> None:
@@ -79,6 +87,12 @@ def require_autonomous_execution(config: ExecutionConfig) -> None:
         raise ExecutionConfigError("execution.baseline_argv is not configured")
     if not config.planner_quality_argv:
         raise ExecutionConfigError("execution.planner_quality_argv is not configured")
+
+
+def require_phase_gate_execution(config: ExecutionConfig) -> None:
+    """Refuse a configuration that has no project-wide Phase-gate verification stack."""
+    if not config.phase_gate_commands:
+        raise ExecutionConfigError("execution.phase_gate_commands is not configured")
 
 
 def _parse_argv(raw: object, *, key: str) -> tuple[str, ...]:
@@ -94,6 +108,19 @@ def _parse_argv(raw: object, *, key: str) -> tuple[str, ...]:
     if os.path.basename(entries[0]) in _SHELL_LAUNCHERS:
         raise ExecutionConfigError(f"execution.{key} must not launch a shell")
     return tuple(entries)
+
+
+def _parse_stack(raw: object) -> tuple[tuple[str, ...], ...]:
+    if not isinstance(raw, list) or not raw:
+        raise ExecutionConfigError(
+            f"execution.{_STACK_KEY} must be a non-empty array of argv arrays"
+        )
+    stack: list[tuple[str, ...]] = []
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, list):
+            raise ExecutionConfigError(f"execution.{_STACK_KEY}[{index}] must be an argv array")
+        stack.append(_parse_argv(entry, key=f"{_STACK_KEY}[{index}]"))
+    return tuple(stack)
 
 
 def _parse_number(raw: object, *, key: str, minimum_exclusive: bool) -> float:
@@ -168,6 +195,9 @@ def parse_execution_table(raw: object) -> ExecutionConfig:
             if "termination_grace_seconds" in raw
             else defaults.termination_grace_seconds
         ),
+        phase_gate_commands=(
+            _parse_stack(raw[_STACK_KEY]) if _STACK_KEY in raw else defaults.phase_gate_commands
+        ),
     )
 
 
@@ -183,6 +213,11 @@ def render_execution_lines(config: ExecutionConfig, quote: Callable[[str], str])
         argv: tuple[str, ...] = getattr(config, key)
         if argv:
             body.append(f"{key} = [{', '.join(quote(entry) for entry in argv)}]")
+    if config.phase_gate_commands:
+        rendered = ", ".join(
+            f"[{', '.join(quote(entry) for entry in argv)}]" for argv in config.phase_gate_commands
+        )
+        body.append(f"{_STACK_KEY} = [{rendered}]")
     for key in _LIMIT_KEYS:
         value = getattr(config, key)
         if value != getattr(defaults, key):
