@@ -198,6 +198,10 @@ class SingleSubphaseTransactionRequest:
     max_output_bytes: int = 1_048_576
     termination_grace_seconds: float = 0.25
 
+    # Root the run branch at this existing local branch's tip instead of the
+    # source HEAD (sequential Sub-phases build on the previous accepted run).
+    base_branch: str | None = None
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_path", Path(self.source_path).resolve())
         object.__setattr__(self, "worktree_path", Path(self.worktree_path).resolve())
@@ -640,6 +644,7 @@ def _prepare_transaction(
         request.source_path,
         request.worktree_path,
         request.branch,
+        base_branch=request.base_branch,
     )
     worktree_root = worktree_snapshot.root
     source_head_sha = worktree_snapshot.head_sha

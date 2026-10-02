@@ -119,6 +119,50 @@ def _git_worktree_add(
     )
 
 
+def _resolve_base_branch(
+    source_root: Path,
+    *,
+    worktree_path: Path,
+    branch: str,
+    base_branch: str,
+    source_head_sha: str,
+) -> str:
+    """Resolve *base_branch* to a commit that descends from the source HEAD."""
+
+    def refuse(reason: str) -> WorktreeCreationError:
+        return WorktreeCreationError(
+            source_root=source_root,
+            worktree_path=worktree_path,
+            branch=branch,
+            reason=reason,
+        )
+
+    _validate_branch_name(source_root, base_branch)
+    if base_branch == branch:
+        raise refuse("base branch must differ from the new branch")
+    if not _branch_exists(source_root, base_branch):
+        raise refuse(f"base branch {base_branch!r} does not exist")
+
+    base_sha = _run_git(
+        source_root,
+        ("rev-parse", "--verify", f"refs/heads/{base_branch}^{{commit}}"),
+        check=True,
+    ).stdout.strip()
+
+    args = ("merge-base", "--is-ancestor", source_head_sha, base_sha)
+    ancestry = _run_git(source_root, args, check=False)
+    if ancestry.returncode == 1:
+        raise refuse(f"base branch {base_branch!r} does not descend from the source HEAD")
+    if ancestry.returncode != 0:
+        raise GitCommandError(
+            path=source_root.resolve(),
+            git_args=args,
+            reason=ancestry.stderr.strip() or f"git exited with {ancestry.returncode}",
+            returncode=ancestry.returncode,
+        )
+    return base_sha
+
+
 def _is_inside(candidate: Path, root: Path) -> bool:
     try:
         candidate.relative_to(root)
@@ -131,8 +175,17 @@ def create_run_worktree(
     source_path: Path,
     worktree_path: Path,
     branch: str,
+    *,
+    base_branch: str | None = None,
 ) -> GitRepositorySnapshot:
-    """Create a linked worktree at *worktree_path* on new branch *branch*."""
+    """Create a linked worktree at *worktree_path* on new branch *branch*.
+
+    The new branch is rooted at the source HEAD, or, when *base_branch* names
+    an existing local branch that descends from the source HEAD, at that
+    branch's current tip. Rooting at a prior accepted run branch lets
+    sequential Sub-phases build a linear history without ever moving or
+    dirtying the source checkout.
+    """
     source_snapshot = require_clean_repository(source_path)
     source_root = source_snapshot.root
     resolved_target = worktree_path.resolve()
@@ -171,6 +224,16 @@ def create_run_worktree(
             reason=f"branch {branch!r} already exists",
         )
 
+    base_sha = source_snapshot.head_sha
+    if base_branch is not None:
+        base_sha = _resolve_base_branch(
+            source_root,
+            worktree_path=resolved_target,
+            branch=branch,
+            base_branch=base_branch,
+            source_head_sha=source_snapshot.head_sha,
+        )
+
     parent = resolved_target.parent
     try:
         parent.mkdir(parents=True, exist_ok=True)
@@ -186,7 +249,7 @@ def create_run_worktree(
         source_root,
         resolved_target,
         branch,
-        source_snapshot.head_sha,
+        base_sha,
     )
 
     return inspect_repository(resolved_target)
