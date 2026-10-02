@@ -250,6 +250,7 @@ class _Project:
             request_factory=self.factory,
             retry_budget=_budget(budget),
             planning_timeout_seconds=60.0,
+            jit_replan=False,
         )
 
     def step(self, *, budget: int = 3) -> ProjectRunResult | None:
@@ -258,6 +259,7 @@ class _Project:
             request_factory=self.factory,
             retry_budget=_budget(budget),
             planning_timeout_seconds=60.0,
+            jit_replan=False,
         )
 
     def counts(self) -> tuple[int, int, int]:
@@ -1224,6 +1226,7 @@ def test_the_second_subphase_is_rooted_at_the_first_runs_branch(tmp_path: Path) 
         request_factory=spy,
         retry_budget=_budget(3),
         planning_timeout_seconds=60.0,
+        jit_replan=False,
     )
 
     assert [p.run_id.root for p in seen] == ["run-01-01", "run-01-02"]

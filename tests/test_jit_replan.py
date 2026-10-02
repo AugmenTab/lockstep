@@ -999,6 +999,7 @@ def test_a_crash_between_plan_and_cursor_publication_is_completed_on_restart(
             request_factory=project.factory,
             retry_budget=_budget(3),
             planning_timeout_seconds=60.0,
+            jit_replan=False,
         )  # the 11.2 path alone refuses to run on a disagreeing outline
 
     result = _run(project)
