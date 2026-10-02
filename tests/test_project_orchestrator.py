@@ -485,7 +485,11 @@ def test_run_signature_requires_explicit_policy_and_has_no_defaults_for_authorit
     for function in (run_project_phase, step_project_run):
         parameters = inspect.signature(function).parameters
         assert next(iter(parameters)) == "runtime"
-        for name in ("request_factory", "retry_budget", "planning_timeout_seconds"):
+        # 11.4: the host owns a canonical transaction-request factory, so an omitted
+        # request_factory selects it. Policy-bearing arguments remain explicit.
+        assert parameters["request_factory"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert parameters["request_factory"].default is None
+        for name in ("retry_budget", "planning_timeout_seconds"):
             assert parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
             assert parameters[name].default is inspect.Parameter.empty
 
