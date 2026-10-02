@@ -42,10 +42,10 @@ transaction's journal reaches canonical completion (a Reviewer ``APPROVE``,
 an implementation report, or a passing verification never advances it); a
 halted transaction without durable retry authority is never relaunched;
 and any state that cannot be proven safe fails closed. The remaining
-outline is the current provisional schedule. By default it runs as it
-stands; with ``jit_replan=True`` a fresh Planner reconsiders it (delegated
-to :mod:`lockstep.jit_replan`) after each recorded Sub-phase that leaves
-unfinished work, before the next Contract is planned. Either way this module
+outline is the current provisional schedule. By default a fresh Planner
+reconsiders it (delegated to :mod:`lockstep.jit_replan`) after each recorded
+Sub-phase that leaves unfinished work, before the next Contract is planned;
+``jit_replan=False`` runs it as published. Either way this module
 neither runs the Phase integration step nor completes the Phase -- it stops
 when the cursor reports the Phase gate ready.
 
@@ -629,7 +629,7 @@ def step_project_run(
     planning_timeout_seconds: float,
     max_output_bytes: int = 1_048_576,
     termination_grace_seconds: float = 0.25,
-    jit_replan: bool = False,
+    jit_replan: bool = True,
 ) -> ProjectRunResult | None:
     """Perform exactly one durable orchestration step.
 
@@ -644,7 +644,8 @@ def step_project_run(
     (``EXECUTION_FAILED``) with the cursor and outline untouched.
 
     *jit_replan* makes a fresh Planner reconsider the unfinished outline after
-    each recorded Sub-phase that leaves unfinished work; it is off by default so
+    each recorded Sub-phase that leaves unfinished work. It is on by default;
+    ``jit_replan=False`` explicitly selects the fixed-outline behavior, where
     the outline runs as published.
 
     *runtime* is the project-level runtime: its ``runtime_dir`` is the
@@ -694,7 +695,7 @@ def run_project_phase(
     planning_timeout_seconds: float,
     max_output_bytes: int = 1_048_576,
     termination_grace_seconds: float = 0.25,
-    jit_replan: bool = False,
+    jit_replan: bool = True,
 ) -> ProjectRunResult:
     """Run the current Phase's Sub-phases sequentially until it must stop.
 
@@ -704,9 +705,10 @@ def run_project_phase(
     a stop or a crash: all progress is re-derived from durable state, a
     finished Phase stops immediately, and nothing already started is run twice.
     *retry_budget* is passed through to the transaction layer; there is no
-    project-level retry policy. With *jit_replan* the unfinished outline is
-    replanned between Sub-phases (see :func:`step_project_run`), so the number
-    of Sub-phases is not fixed in advance.
+    project-level retry policy. By default the unfinished outline is replanned
+    between Sub-phases (see :func:`step_project_run`), so the number of
+    Sub-phases is not fixed in advance; pass ``jit_replan=False`` for the
+    fixed-outline behavior.
     """
     start = _load_or_initialize(runtime.project_root, runtime.runtime_dir)
     already_recorded = len(start.completed_subphases)

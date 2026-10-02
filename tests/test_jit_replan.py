@@ -12,8 +12,8 @@ Everything here runs the real production code against fake provider
 executables, a real Git source repository, and the real planning/cursor
 stores. No real Claude/Codex account, network, or model inference is used.
 
-Replanning is opt-in on the orchestrator (``jit_replan=True``) so the frozen
-11.2 behavior -- and its frozen tests -- are unchanged when it is not requested.
+Replanning is the orchestrator's default (``jit_replan=True``); the 11.2
+fixed-outline behavior remains available as an explicit ``jit_replan=False``.
 
 Baseline classification: every test in this module is RED at entry
 (``lockstep.jit_replan`` does not exist and the orchestrator has no
@@ -259,11 +259,11 @@ def test_the_state_and_outcome_vocabularies_are_typed() -> None:
     assert {o.value for o in ReplanOutcome} == {"unchanged", "revised"}
 
 
-def test_the_orchestrator_exposes_replanning_as_an_explicit_opt_in() -> None:
+def test_the_orchestrator_replans_by_default_with_an_explicit_opt_out() -> None:
     for function in (run_project_phase, step_project_run):
         parameter = inspect.signature(function).parameters["jit_replan"]
         assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
-        assert parameter.default is False
+        assert parameter.default is True
 
 
 def test_the_receipt_path_is_per_completed_run_under_the_planning_directory(
@@ -1362,7 +1362,7 @@ def test_the_orchestrator_delegates_replanning_instead_of_duplicating_it() -> No
     assert "revise_cursor_unfinished_outline" not in imported
 
 
-def test_without_the_opt_in_the_orchestrator_never_replans(tmp_path: Path) -> None:
+def test_with_the_explicit_opt_out_the_orchestrator_never_replans(tmp_path: Path) -> None:
     project = _make_project(tmp_path, sids=("01", "02", "03"))
 
     result = project.run()
@@ -1371,6 +1371,55 @@ def test_without_the_opt_in_the_orchestrator_never_replans(tmp_path: Path) -> No
     assert _receipt_names(project) == []
     assert not (project.runtime_dir / "planning" / "replans").exists()
     assert project.counts() == (6, 3, 3)  # the 11.2 behavior: no outline Planner at all
+
+
+def _run_by_default(project: _Project) -> ProjectRunResult:
+    """The ordinary Phase-run call: no ``jit_replan`` argument at all."""
+    return run_project_phase(
+        project.runtime,
+        request_factory=project.factory,
+        retry_budget=_budget(3),
+        planning_timeout_seconds=60.0,
+    )
+
+
+def test_the_default_phase_run_replans_after_a_nonfinal_subphase(tmp_path: Path) -> None:
+    project = _replace_project(tmp_path)
+
+    result = _run_by_default(project)
+
+    assert result.disposition is ProjectRunDisposition.PHASE_GATE_READY
+    assert _receipt_names(project) == ["run-01-01.json", "run-01-05.json"]
+    assert _plan_ids(project) == ["01", "05", "06"]  # the revised outline was applied
+    assert [e.subphase_id.root for e in project.cursor().completed_subphases] == ["01", "05", "06"]
+    assert project.counts() == (8, 3, 3)  # a replan Planner call after each nonfinal Sub-phase
+
+
+def test_explicit_opt_out_keeps_the_fixed_outline(tmp_path: Path) -> None:
+    project = _project(tmp_path, _script("01", "02", "03"), ("01", "02", "03"))
+
+    result = run_project_phase(
+        project.runtime,
+        request_factory=project.factory,
+        retry_budget=_budget(3),
+        planning_timeout_seconds=60.0,
+        jit_replan=False,
+    )
+
+    assert result.disposition is ProjectRunDisposition.PHASE_GATE_READY
+    assert _receipt_names(project) == []
+    assert _plan_ids(project) == ["01", "02", "03"]
+    assert project.counts() == (6, 3, 3)  # no JIT Planner invocation
+
+
+def test_the_default_phase_run_does_not_replan_after_the_final_subphase(tmp_path: Path) -> None:
+    project = _project(tmp_path, _script("01"), ("01",), master=("01",))
+
+    result = _run_by_default(project)
+
+    assert result.disposition is ProjectRunDisposition.PHASE_GATE_READY
+    assert _receipt_names(project) == []
+    assert project.counts() == (2, 1, 1)  # contract plan + tests only; no final replan
 
 
 def test_cursor_errors_stay_distinct_from_replan_errors() -> None:
