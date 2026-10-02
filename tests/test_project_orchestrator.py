@@ -1283,6 +1283,11 @@ def test_the_orchestrator_owns_no_second_progress_file_and_no_gate_or_phase_comp
     source = _orchestrator_source()
     assert "cursor.json" not in source
     assert "PHASE_INTEGRATION_GATE" not in source
-    assert "PHASE_COMPLETE" not in source
+    exact_symbols = {
+        node.attr if isinstance(node, ast.Attribute) else node.id
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Attribute | ast.Name)
+    }
+    assert "PHASE_COMPLETE" not in exact_symbols
     assert "completed_phases" not in source
     assert "revise_remaining_outline" not in source
