@@ -42,7 +42,7 @@ from lockstep.agents import (
     OpenAIStrictSchemaError,
     StructuredOutputAdapterError,
 )
-from lockstep.domain import MasterPlan, PhasePlan, SubphaseId, SubphaseOutline
+from lockstep.domain import MasterPlan, PhaseId, PhasePlan, SubphaseId, SubphaseOutline
 from lockstep.phase_gate import (
     PhaseGateAttemptDisposition,
     PhaseGateAttemptResult,
@@ -57,8 +57,10 @@ from lockstep.phase_gate import (
     append_phase_gate_event,
     list_phase_gate_attempts,
     load_phase_gate_basis,
+    load_phase_gate_decision,
     load_phase_gate_evidence,
     load_remediation_receipt,
+    read_phase_gate_events,
     run_phase_gate_attempt,
     tracked_state_mutation,
     write_remediation_receipt,
@@ -471,6 +473,106 @@ def _remediation_in_flight(runtime: AgentRuntime, cursor: ProjectCursor) -> bool
     return False
 
 
+# --- Narrow steps shared with a higher-level driver ------------------------------------------
+#
+# The cycle below is one monolithic call. A driver that must enforce a project-wide budget
+# *between* its steps composes these instead, so there is exactly one implementation of every
+# step and no second remediation protocol. They are deliberately not part of ``__all__``.
+
+
+def remediation_in_flight(runtime: AgentRuntime, cursor: ProjectCursor) -> bool:
+    """Is the current Sub-phase an accepted gate remediation that has not completed yet?"""
+    return _remediation_in_flight(runtime, cursor)
+
+
+def remediations_spent(runtime: AgentRuntime, phase_id: PhaseId) -> int:
+    """How many remediations the Phase has durably accepted: the count the bound is checked on."""
+    return sum(
+        load_remediation_receipt(runtime.runtime_dir, phase_id, number) is not None
+        for number in list_phase_gate_attempts(runtime.runtime_dir, phase_id)
+    )
+
+
+def plan_gate_remediation(
+    runtime: AgentRuntime,
+    cursor: ProjectCursor,
+    attempt: PhaseGateAttemptResult,
+    *,
+    planning_timeout_seconds: float,
+    max_output_bytes: int = 1_048_576,
+    termination_grace_seconds: float = 0.25,
+) -> tuple[RemediationReceipt | None, str | None]:
+    """Ask one fresh Planner for the remediation of a failed attempt and durably accept it.
+
+    Returns ``(receipt, None)`` once the plan is accepted, or ``(None, detail)`` for a known
+    failure of asking for or validating the plan -- never a verdict and never a remediation.
+    """
+    try:
+        receipt = _plan_remediation(
+            runtime,
+            cursor,
+            attempt,
+            planning_timeout_seconds=planning_timeout_seconds,
+            max_output_bytes=max_output_bytes,
+            termination_grace_seconds=termination_grace_seconds,
+        )
+    except _REMEDIATION_PLAN_FAILURES as exc:
+        return None, f"remediation planning: {getattr(exc, 'reason', type(exc).__name__)}"
+    except PhaseGateError as exc:
+        if exc.refusal is not PhaseGateRefusal.REMEDIATION_INVALID:
+            raise
+        return None, f"remediation planning: {exc.reason}"
+    return receipt, None
+
+
+def apply_gate_remediation(runtime: AgentRuntime, receipt: RemediationReceipt) -> None:
+    """Publish an accepted remediation to the outline and reopen the cursor; idempotent."""
+    _apply_remediation(runtime, receipt)
+
+
+def repair_phase_complete_evidence(runtime: AgentRuntime) -> tuple[PhaseId, ...]:
+    """Append any ``PHASE_COMPLETE`` event a crash left missing for an already-completed Phase.
+
+    Closes the narrow window between the cursor's Phase completion and its derived gate event.
+    It is evidence repair only: it requires an accepted PASS decision for a Phase the cursor
+    already records complete, never reruns a gate or a Planner, never writes the cursor, and
+    never appends a duplicate. Returns the Phases whose event it appended.
+    """
+    runtime_dir = runtime.runtime_dir
+    cursor = load_project_cursor(runtime.project_root, runtime_dir)
+    if cursor is None:
+        return ()
+    repaired: list[PhaseId] = []
+    for phase_id in cursor.completed_phases:
+        for number in reversed(list_phase_gate_attempts(runtime_dir, phase_id)):
+            decision = load_phase_gate_decision(runtime_dir, phase_id, number)
+            if decision is None or decision.outcome is not PhaseGateVerdict.PASS:
+                continue
+            if (decision.project_id, decision.master_plan_digest) != (
+                cursor.project_id,
+                cursor.master_plan_digest,
+            ):
+                raise PhaseGateError(
+                    PhaseGateRefusal.ARTIFACT_INCONSISTENT,
+                    "the gate decision belongs to another plan",
+                )
+            basis = load_phase_gate_basis(runtime_dir, phase_id, number)
+            if basis is None:
+                raise PhaseGateError(
+                    PhaseGateRefusal.ARTIFACT_INCONSISTENT,
+                    "a gate decision exists without its basis",
+                )
+            recorded = any(
+                event.kind is PhaseGateEventKind.PHASE_COMPLETE and event.gate_attempt == number
+                for event in read_phase_gate_events(runtime_dir, phase_id)
+            )
+            if not recorded:
+                _emit(runtime, basis, PhaseGateEventKind.PHASE_COMPLETE)
+                repaired.append(phase_id)
+            break
+    return tuple(repaired)
+
+
 # --- The cycle ---------------------------------------------------------------------------------
 
 
@@ -587,33 +689,18 @@ def run_phase_gate_cycle(
 
         receipt = load_remediation_receipt(runtime_dir, phase_id, result.gate_attempt)
         if receipt is None:
-            spent = sum(
-                load_remediation_receipt(runtime_dir, phase_id, n) is not None
-                for n in list_phase_gate_attempts(runtime_dir, phase_id)
-            )
-            if spent >= bound:
+            if remediations_spent(runtime, phase_id) >= bound:
                 return finish(PhaseGateCycleDisposition.GATE_REMEDIATION_EXHAUSTED)
-            try:
-                receipt = _plan_remediation(
-                    runtime,
-                    cursor,
-                    result,
-                    planning_timeout_seconds=planning_timeout_seconds,
-                    max_output_bytes=max_output_bytes,
-                    termination_grace_seconds=termination_grace_seconds,
-                )
-            except _REMEDIATION_PLAN_FAILURES as exc:
-                return finish(
-                    PhaseGateCycleDisposition.EXECUTION_FAILED,
-                    detail=f"remediation planning: {getattr(exc, 'reason', type(exc).__name__)}",
-                )
-            except PhaseGateError as exc:
-                if exc.refusal is not PhaseGateRefusal.REMEDIATION_INVALID:
-                    raise
-                return finish(
-                    PhaseGateCycleDisposition.EXECUTION_FAILED,
-                    detail=f"remediation planning: {exc.reason}",
-                )
+            receipt, failure = plan_gate_remediation(
+                runtime,
+                cursor,
+                result,
+                planning_timeout_seconds=planning_timeout_seconds,
+                max_output_bytes=max_output_bytes,
+                termination_grace_seconds=termination_grace_seconds,
+            )
+            if receipt is None:
+                return finish(PhaseGateCycleDisposition.EXECUTION_FAILED, detail=failure)
         _apply_remediation(runtime, receipt)
         remediations.append(receipt.outline.subphase_id)
 

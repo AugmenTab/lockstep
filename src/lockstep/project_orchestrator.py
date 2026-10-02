@@ -333,6 +333,28 @@ def _transaction_condition(
     return planning_eligibility(cursor, snapshot).reason
 
 
+def bound_transaction_condition(
+    runtime: AgentRuntime, cursor: ProjectCursor
+) -> PlanningEligibilityReason | None:
+    """Classify the transaction bound to the cursor's active Contract, read-only.
+
+    ``None`` means the bound transaction has not launched yet. Otherwise the cursor's own
+    canonical predicate says whether it has completed with the cursor not yet recording it
+    (``COMPLETION_NOT_RECORDED``), is durably halted, or looks active. A higher-level driver
+    uses this to tell free reconciliation apart from taking new execution authority. Not part
+    of the frozen ``__all__`` surface.
+    """
+    binding = cursor.active_contract
+    if binding is None:
+        raise ProjectOrchestrationError("no contract is bound")
+    transaction_dir = transaction_runtime_dir(runtime.runtime_dir, binding.transaction_run_id)
+    journal_path = transaction_dir / _JOURNAL_NAME
+    state_path = transaction_dir / _STATE_NAME
+    if not (journal_path.exists() or state_path.exists()):
+        return None
+    return _transaction_condition(cursor, journal_path, state_path)
+
+
 def _durable_escalation_disposition(journal_path: Path) -> SupervisorEscalationDisposition | None:
     """The escalation disposition that produced the journal's final halt, if any."""
     events = read_events(journal_path)

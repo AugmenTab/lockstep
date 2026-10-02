@@ -21,6 +21,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
 
+from lockstep.process.budget import active_run_time_budget
+
 _DEFAULT_MAX_OUTPUT_BYTES = 1_048_576
 _POST_KILL_REAP_TIMEOUT_SECONDS = 5.0
 
@@ -109,6 +111,16 @@ class ProcessTimeoutError(Exception):
         self.completed_at = completed_at
         self.elapsed_seconds = elapsed_seconds
         super().__init__(f"process {argv!r} in {cwd} exceeded timeout of {timeout_seconds}s")
+
+
+class RunBudgetTimeoutError(ProcessTimeoutError):
+    """The unattended run's wall-clock budget, not the stage's own timeout, ended the launch.
+
+    Raised when no run time remained at launch (nothing was started) or when the remaining run
+    time was the limiting timeout. It is a :class:`ProcessTimeoutError` so every existing handler
+    still treats the operation as timed out, but the policy that caused the stop stays
+    distinguishable from an ordinary provider or command failure.
+    """
 
 
 def _validate_argv(argv: Sequence[str]) -> tuple[str, ...]:
@@ -221,6 +233,11 @@ def run_process(
     timeout raise. Both the result and the timeout error carry host timing:
     each of *monotonic* and *wall_clock* is read exactly twice, immediately
     before launch and immediately after the child is reaped.
+
+    While an unattended run's :class:`~lockstep.process.budget.RunTimeBudget` is active, no
+    process starts once its time is spent (:class:`RunBudgetTimeoutError`), and *timeout_seconds*
+    is capped to the time that remains; a timeout that cap caused is raised as the same typed
+    error, so the stop is attributable to the run policy rather than to the process.
     """
     validated_argv = _validate_argv(argv)
     if timeout_seconds <= 0:
@@ -234,6 +251,27 @@ def run_process(
     stdin_bytes = _validate_stdin_text(stdin_text)
     validated_env = _validate_env(env)
     resolved_cwd = cwd.resolve()
+
+    # An unattended run's remaining wall-clock budget is a stricter upper bound than the stage's
+    # own timeout; whichever stops the operation sooner wins, and no launch starts past it.
+    budget = active_run_time_budget()
+    budget_limited = False
+    if budget is not None:
+        remaining = budget.remaining_seconds()
+        if remaining <= 0:
+            budget.mark_exhausted()
+            raise RunBudgetTimeoutError(
+                argv=validated_argv,
+                cwd=resolved_cwd,
+                timeout_seconds=0.0,
+                stdout="",
+                stderr="",
+                stdout_truncated=False,
+                stderr_truncated=False,
+            )
+        if remaining < timeout_seconds:
+            timeout_seconds = remaining
+            budget_limited = True
 
     with contextlib.ExitStack() as stack:
         stdout_handle = stack.enter_context(tempfile.TemporaryFile())
@@ -275,7 +313,10 @@ def run_process(
             elapsed_seconds = max(0.0, monotonic() - started_mono)
             stdout, stdout_truncated = _read_bounded_tail(stdout_handle, max_output_bytes)
             stderr, stderr_truncated = _read_bounded_tail(stderr_handle, max_output_bytes)
-            raise ProcessTimeoutError(
+            if budget_limited and budget is not None:
+                budget.mark_exhausted()
+            timeout_type = RunBudgetTimeoutError if budget_limited else ProcessTimeoutError
+            raise timeout_type(
                 argv=validated_argv,
                 cwd=resolved_cwd,
                 timeout_seconds=timeout_seconds,
