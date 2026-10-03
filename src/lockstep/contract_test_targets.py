@@ -12,9 +12,11 @@ by the two points in time that must agree about them:
                                   candidate and the repository state it would run against)
     after Planner authoring       :mod:`lockstep.test_authoring` (over the actual result)
 
-A target that does not exist yet is valid: a RED acceptance test is created during test
-authoring. Only conditions that make a target structurally impossible, or already known to
-be invalid, are findings. The host never rewrites a rejected path; a finding is evidence for
+A RED or GREEN_CHARACTERIZATION target that does not exist yet is valid: the Planner creates
+it during test authoring. A GREEN_REGRESSION target must already exist (11.7-R2), and a
+Contract of GREEN_REGRESSION targets only is refused (nothing for the Planner to author).
+Only conditions that make a target structurally impossible, or already known to be invalid,
+are findings. The host never rewrites a rejected path; a finding is evidence for
 a fresh Planner correction and nothing else.
 """
 
@@ -23,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 
-from lockstep.domain import SubphaseContract
+from lockstep.domain import SubphaseContract, TestExpectation
 
 _GLOB_METACHARACTERS = frozenset("*?[")
 _FORBIDDEN_PATH_ROOTS = (".git", ".lockstep")
@@ -101,6 +103,25 @@ def contract_target_findings(contract: SubphaseContract, roots: Sequence[Path]) 
             findings.append(
                 f"tests[{index}].path = {spec.path!r} rejected: it {reason}; {_REQUIREMENT}"
             )
+        # The transaction starts from the last root (the previous accepted worktree for a
+        # later Sub-phase, else the source checkout): regression evidence must already be there.
+        elif (
+            spec.expectation is TestExpectation.GREEN_REGRESSION
+            and roots
+            and not (roots[-1] / spec.path).is_file()
+        ):
+            findings.append(
+                f"tests[{index}].path = {spec.path!r} rejected: it is green_regression but "
+                "does not already exist as a regular file in the repository; "
+                "green_regression references EXISTING test evidence the Planner will not "
+                "modify (use red, or green_characterization, for a file the Planner must "
+                "author)"
+            )
+    if all(spec.expectation is TestExpectation.GREEN_REGRESSION for spec in contract.tests):
+        findings.append(
+            "tests: every TestSpecification is green_regression, so the Planner would author "
+            "nothing; include at least one red or green_characterization test"
+        )
     return tuple(findings)
 
 

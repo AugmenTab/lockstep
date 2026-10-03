@@ -96,6 +96,12 @@ from lockstep.agents import (
     AgentInvocationRequest,
     invoke_agent,
 )
+from lockstep.baseline_expectations import (
+    authoring_scope_violation,
+    expectation_specs,
+    required_changed_paths,
+    run_baseline_expectations,
+)
 from lockstep.domain import (
     AgentRole,
     AttemptNumber,
@@ -119,6 +125,7 @@ from lockstep.escalation import EscalationProtocolError, EscalationRequest
 from lockstep.escalation_decision import PlannerDecisionKind
 from lockstep.evidence_store import (
     EvidenceStoreError,
+    write_baseline_evidence,
     write_implementation_report,
     write_verification_evidence,
     write_verification_report,
@@ -471,11 +478,13 @@ def _emit_abort(
     cause: FailureCause | None,
     stop_reason: StopReason | None,
     attempt: AttemptNumber = _TRANSACTION_ATTEMPT,
+    subreason: str | None = None,
 ) -> None:
     """Record that the deterministic transaction is about to raise at *stage*.
 
     The boundary no halt/complete event covers: the caller still raises
-    :class:`SupervisorTransactionError`; this only attributes why.
+    :class:`SupervisorTransactionError`; this only attributes why. A typed
+    *subreason* is appended to the stage (``stage:subreason``).
     """
     _emit(
         request,
@@ -484,7 +493,7 @@ def _emit_abort(
         outcome=ExecutionOutcome.FAILURE,
         stop_reason=stop_reason,
         cause=cause,
-        detail=stage,
+        detail=stage if subreason is None else f"{stage}:{subreason}",
     )
 
 
@@ -866,6 +875,18 @@ def _prepare_transaction(
     )
 
 
+def _baseline_prefix(request: SingleSubphaseTransactionRequest) -> tuple[str, ...]:
+    """The configured baseline command prefix: ``baseline_argv`` without its test paths.
+
+    ``baseline_argv`` is the prefix followed by every Contract test path; the baseline stage
+    runs ``prefix + [path]`` once per specification instead of one aggregate command.
+    """
+    count = len(request.test_paths)
+    if count and request.baseline_argv[-count:] == request.test_paths:
+        return request.baseline_argv[:-count]
+    return request.baseline_argv
+
+
 def _author_tests(
     request: SingleSubphaseTransactionRequest,
     ctx: _PreparedTransaction,
@@ -906,18 +927,25 @@ def _author_tests(
             reason=(f"planner process exited with returncode {planner_result.process.returncode}"),
         )
 
-    expected_test_paths = tuple(sorted(request.test_paths))
+    specs = expectation_specs(request.test_paths, request.contract)
     post_planner_snapshot = inspect_repository(ctx.worktree_root)
-    if post_planner_snapshot.dirty_paths != expected_test_paths:
+    scope_violation = authoring_scope_violation(
+        specs, post_planner_snapshot.dirty_paths, ctx.worktree_root
+    )
+    if scope_violation is not None:
         _emit_abort(
             request,
             stage="test_scope",
             cause=FailureCause.SCOPE_VIOLATION,
             stop_reason=StopReason.OUT_OF_SCOPE_CHANGE,
+            subreason=scope_violation.value,
         )
         raise SupervisorTransactionError(
             stage="test_scope",
-            reason="planner dirty paths do not exactly match requested test paths",
+            reason=(
+                f"planner test authoring does not match the Contract expectations: "
+                f"{scope_violation.value}"
+            ),
         )
 
     quality_result = run_process(
@@ -945,31 +973,41 @@ def _author_tests(
         state_path=ctx.state_path,
     )
 
-    baseline_result = run_process(
-        request.baseline_argv,
+    # One logical baseline stage (one BASELINE_VERIFIED event) that judges each
+    # specification by its own expectation, so an intended RED failure can never
+    # hide an unexpected GREEN failure. The evidence is persisted before it is acted on.
+    baseline = run_baseline_expectations(
+        specs,
+        prefix_argv=_baseline_prefix(request),
+        run_id=request.run_id,
+        phase_id=request.phase_id,
+        subphase_id=request.subphase_id,
+        attempt=_TRANSACTION_ATTEMPT,
         cwd=ctx.worktree_root,
         env=ctx.verification_env,
         timeout_seconds=request.command_timeout_seconds,
         max_output_bytes=request.max_output_bytes,
         termination_grace_seconds=request.termination_grace_seconds,
+        runner=run_process,
     )
-    if baseline_result.returncode == 0:
+    write_baseline_evidence(request.runtime_dir, baseline.record)
+    if not baseline.satisfied:
         _emit(
             request,
             ExecutionEventKind.BASELINE_VERIFIED,
             outcome=ExecutionOutcome.FAILURE,
-            cause=FailureCause.TEST_DEFECT,
-            detail="red_baseline_unexpectedly_passed",
+            cause=baseline.cause,
+            detail=baseline.detail,
         )
         raise SupervisorTransactionError(
             stage="baseline",
-            reason="RED baseline unexpectedly passed",
+            reason=f"baseline expectation violated: {baseline.detail}",
         )
     _emit(
         request,
         ExecutionEventKind.BASELINE_VERIFIED,
         outcome=ExecutionOutcome.SUCCESS,
-        detail="red_confirmed",
+        detail="baseline_expectations_satisfied",
     )
 
     _persist_transition(
@@ -985,7 +1023,9 @@ def _author_tests(
         ctx.worktree_root,
         expected_branch=request.branch,
         expected_head_sha=ctx.source_head_sha,
-        paths=request.test_paths,
+        # Only what the Planner authored; an unchanged GREEN_REGRESSION file is still
+        # protected (request.test_paths) but is not part of the commit.
+        paths=required_changed_paths(specs),
         message=request.test_commit_message,
     )
     _emit(

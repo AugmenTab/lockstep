@@ -44,6 +44,7 @@ from lockstep.agents import (
     AgentInvocationResult,
     invoke_agent,
 )
+from lockstep.baseline_expectations import expectation_specs, required_changed_paths
 from lockstep.contract_test_targets import target_path_violation, traverses_symlink
 from lockstep.domain import (
     AgentRole,
@@ -52,6 +53,7 @@ from lockstep.domain import (
     SubphaseContract,
     SubphaseId,
     SubphaseOutline,
+    TestExpectation,
 )
 from lockstep.git import inspect_repository
 from lockstep.planning_store import (
@@ -75,7 +77,8 @@ _AUTHORING_INSTRUCTIONS = (
     "entries.\n"
     "You may inspect the repository read-only to understand existing "
     "architecture, fixtures, test conventions, and public behavior.\n"
-    "Modify exactly the writable test paths listed above and no others.\n"
+    "Create or change exactly the writable test paths whose expectation is red or "
+    "green_characterization, and no others; a green_regression path must be left unchanged.\n"
     "Do not modify production code.\n"
     "Do not modify configuration.\n"
     "Do not modify planning artifacts.\n"
@@ -88,10 +91,11 @@ _AUTHORING_INSTRUCTIONS = (
     "A test with expectation red is intended to fail against the current "
     "pre-implementation repository because required new behavior is "
     "absent.\n"
-    "A test with expectation green_regression protects existing required "
-    "behavior and is intended to pass now.\n"
-    "A test with expectation green_characterization records required "
-    "existing behavior and is intended to pass now.\n"
+    "A test with expectation green_regression references an EXISTING test "
+    "file that already protects required behavior and passes now; leave it "
+    "unchanged and do not rewrite it.\n"
+    "A test with expectation green_characterization is a file you author to "
+    "record required existing behavior and is intended to pass now.\n"
     "You author the test accordingly; you do not execute or claim its "
     "baseline classification yourself.\n"
     "Make each authored test clearly traceable to the acceptance-criterion "
@@ -346,6 +350,12 @@ def author_planner_tests(
         raise TestAuthoringError(
             reason="planner modified paths outside the contract test specification"
         )
+    specs = expectation_specs(test_paths, contract)
+    regression_paths = {
+        path for path, expectation in specs if expectation is TestExpectation.GREEN_REGRESSION
+    }
+    if changed_paths & regression_paths:
+        raise TestAuthoringError(reason="planner modified an existing green_regression test")
 
     changed_test_paths = test_path_set & changed_paths
     for path in test_paths:
@@ -360,9 +370,13 @@ def author_planner_tests(
             reason=f"planner process exited with status {invocation.process.returncode}"
         )
 
-    missing_paths = test_path_set - changed_paths
+    missing_paths = set(required_changed_paths(specs)) - changed_paths
     if missing_paths:
         raise TestAuthoringError(reason="required test path was not changed by the planner")
+    for path in test_paths:
+        if path in regression_paths:
+            _require_present(resolved_worktree, path)
+            _require_regular_file(resolved_worktree, path)
 
     files = tuple(
         AuthoredTestFile(

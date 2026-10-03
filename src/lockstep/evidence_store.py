@@ -31,6 +31,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
 
+from lockstep.baseline_expectations import BaselineEvidenceRecord
 from lockstep.domain import (
     AttemptNumber,
     ImplementationReport,
@@ -45,6 +46,7 @@ _ARTIFACTS_DIR_NAME = "artifacts"
 _IMPLEMENTATION_REPORT_NAME = "implementation-report.json"
 _VERIFICATION_REPORT_NAME = "verification-report.json"
 _VERIFICATION_EVIDENCE_NAME = "verification-evidence.json"
+_BASELINE_EVIDENCE_NAME = "baseline-evidence.json"
 
 
 class EvidenceStoreError(Exception):
@@ -74,6 +76,10 @@ def verification_report_path(runtime_dir: Path, attempt: AttemptNumber) -> Path:
 
 def verification_evidence_path(runtime_dir: Path, attempt: AttemptNumber) -> Path:
     return attempt_artifact_dir(runtime_dir, attempt) / _VERIFICATION_EVIDENCE_NAME
+
+
+def baseline_evidence_path(runtime_dir: Path, attempt: AttemptNumber) -> Path:
+    return attempt_artifact_dir(runtime_dir, attempt) / _BASELINE_EVIDENCE_NAME
 
 
 def _canonical_bytes(model: BaseModel) -> bytes:
@@ -228,6 +234,15 @@ def write_verification_evidence(runtime_dir: Path, record: VerificationEvidenceR
     )
 
 
+def write_baseline_evidence(runtime_dir: Path, record: BaselineEvidenceRecord) -> Path:
+    """Record the bounded per-specification baseline evidence for its own attempt."""
+    return _write_once(
+        baseline_evidence_path(runtime_dir, record.attempt),
+        _canonical_bytes(record),
+        name="baseline evidence",
+    )
+
+
 def load_verification_evidence(
     runtime_dir: Path,
     *,
@@ -258,12 +273,14 @@ def load_verification_evidence(
 __all__ = [
     "EvidenceStoreError",
     "attempt_artifact_dir",
+    "baseline_evidence_path",
     "implementation_report_path",
     "load_implementation_report",
     "load_verification_evidence",
     "load_verification_report",
     "verification_evidence_path",
     "verification_report_path",
+    "write_baseline_evidence",
     "write_implementation_report",
     "write_verification_evidence",
     "write_verification_report",

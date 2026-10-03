@@ -30,7 +30,7 @@ harnesses; this module is only the default.
 
 from __future__ import annotations
 
-from lockstep.domain import SubphaseContract
+from lockstep.domain import SubphaseContract, TestExpectation
 from lockstep.execution_config import require_autonomous_execution
 from lockstep.handoff import build_planner_test_handoff, render_planner_test_handoff
 from lockstep.planning_store import load_frozen_master_plan
@@ -47,10 +47,15 @@ _PATH_PATTERN_CHARACTERS = frozenset("*?[]{}")
 
 _PLANNER_INSTRUCTIONS = (
     "You are the Lockstep Planner authoring the acceptance tests for one Sub-phase.\n"
-    "The frozen Contract below is the requirement authority. Author exactly the tests it "
-    "requires, at exactly the required test paths, so that they fail now because the behavior "
-    "is not implemented yet. Do not modify any other file. You may not change or reinterpret "
-    "the Contract."
+    "The frozen Contract below is the requirement authority. Each test path carries an "
+    "expectation:\n"
+    "- red: author or change this exact file; it must fail now because the behavior is not "
+    "implemented yet.\n"
+    "- green_regression: the file already exists and protects required behavior; leave it "
+    "unchanged (do not rewrite it); it must already pass.\n"
+    "- green_characterization: author or change this exact file to characterize required "
+    "behavior that already exists; it must pass now.\n"
+    "Do not modify any other file. You may not change or reinterpret the Contract."
 )
 _IMPLEMENTER_INSTRUCTIONS = (
     "You are the Lockstep Implementer for one Sub-phase.\n"
@@ -120,6 +125,11 @@ def canonical_transaction_request_factory(runtime: AgentRuntime) -> TransactionR
             _require_exact_path(path, field="test path")
         for path in implementation_paths:
             _require_exact_path(path, field="allowed path")
+        if all(spec.expectation is TestExpectation.GREEN_REGRESSION for spec in contract.tests):
+            # v0.1: the test-first transaction needs Planner-authored evidence to commit.
+            raise TransactionFactoryError(
+                "the Contract has no red or green_characterization test for the Planner to author"
+            )
         try:
             verification = parse_verification_stack(contract.verification_commands)
         except VerificationCommandError as exc:
