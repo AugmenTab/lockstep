@@ -37,13 +37,14 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from lockstep.agents import (
     AgentInvocationRequest,
     AgentInvocationResult,
     invoke_agent,
 )
+from lockstep.contract_test_targets import target_path_violation, traverses_symlink
 from lockstep.domain import (
     AgentRole,
     PhaseId,
@@ -59,9 +60,6 @@ from lockstep.planning_store import (
     load_phase_plan,
 )
 from lockstep.runtime import AgentRuntime
-
-_GLOB_METACHARACTERS = frozenset("*?[")
-_FORBIDDEN_PATH_ROOTS = (".git", ".lockstep")
 
 _CONTRACT_LABEL = "Frozen active Contract:"
 _PHASE_PLAN_LABEL = "Current Phase plan:"
@@ -156,32 +154,16 @@ def _require_clean_baseline(
 
 
 def _validate_test_specification_path(path: str) -> None:
-    if not path or "\x00" in path or "\\" in path:
-        raise TestAuthoringError(reason=f"unsafe test specification path: {path!r}")
-    if path.startswith("/"):
-        raise TestAuthoringError(reason=f"unsafe test specification path: {path!r}")
-    if any(character in path for character in _GLOB_METACHARACTERS):
-        raise TestAuthoringError(reason=f"unsafe test specification path: {path!r}")
-
-    pure = PurePosixPath(path)
-    if pure.as_posix() != path or path == ".":
-        raise TestAuthoringError(reason=f"unsafe test specification path: {path!r}")
-
-    parts = pure.parts
-    if any(part in (".", "..") for part in parts):
-        raise TestAuthoringError(reason=f"unsafe test specification path: {path!r}")
-    if parts and parts[0] in _FORBIDDEN_PATH_ROOTS:
+    # The structural definition is shared with the pre-freeze Contract check (11.7-R1).
+    if target_path_violation(path) is not None:
         raise TestAuthoringError(reason=f"unsafe test specification path: {path!r}")
 
 
 def _require_no_symlink_components(worktree_path: Path, path: str) -> None:
-    current = worktree_path
-    for part in PurePosixPath(path).parts:
-        current = current / part
-        if current.is_symlink():
-            raise TestAuthoringError(
-                reason=f"unsafe test specification path traverses a symlink: {path!r}"
-            )
+    if traverses_symlink(worktree_path, path):
+        raise TestAuthoringError(
+            reason=f"unsafe test specification path traverses a symlink: {path!r}"
+        )
 
 
 def _require_present(worktree_path: Path, path: str) -> None:

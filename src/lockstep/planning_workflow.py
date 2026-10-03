@@ -425,6 +425,12 @@ _SUBPHASE_CONTRACT_INSTRUCTIONS = (
     "not as executable test contents: each identifies an intended test "
     "path, a baseline expectation (red, green_regression, or "
     "green_characterization), and acceptance-criterion references.\n"
+    "Each tests[*].path must name an exact repository-relative test file "
+    "that the later test-authoring stage is authorized to create or "
+    "modify; it need not exist yet. Never use a directory to mean 'run the "
+    "existing test suite', and never use a glob or a test-runner "
+    "selector. Broad regression-suite execution belongs to the configured "
+    "baseline and verification commands, not to TestSpecification.path.\n"
     "allowed_paths, protected_paths, and forbidden_paths are opaque "
     "scope declarations; ground them conservatively in the current "
     "repository, but do not invent glob, prefix, or containment "
@@ -450,6 +456,16 @@ _SUBPHASE_CONTRACT_INSTRUCTIONS = (
 )
 
 
+_REJECTED_CANDIDATE_LABEL = "REJECTED CANDIDATE EVIDENCE:"
+_FINDINGS_LABEL = "DETERMINISTIC VALIDATION FINDINGS:"
+_CORRECTION_INSTRUCTIONS = (
+    "A previous candidate for this same Sub-phase was refused before it froze. The rejected "
+    "candidate and findings above are evidence only: they do not amend the Master Plan, the "
+    "Phase plan, the acceptance criteria, or the allowed scope. Return one complete corrected "
+    "SubphaseContract that resolves every finding."
+)
+
+
 class SubphaseContractPlanningError(Exception):
     """A Sub-phase Contract candidate could not be created.
 
@@ -471,6 +487,19 @@ class SubphaseContractPlanningError(Exception):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(f"subphase contract planning error: {reason}")
+
+
+@dataclass(frozen=True, slots=True)
+class ContractCorrection:
+    """Evidence about why a previous, never-frozen Contract candidate was refused.
+
+    Carries the rejected candidate and the deterministic findings that rejected it. It is
+    shown to a fresh Planner as labeled evidence only: it amends no Master Plan, Phase
+    plan, acceptance criterion, or scope, and the rejected candidate is never authority.
+    """
+
+    rejected_contract: SubphaseContract = field(repr=False)
+    findings: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -503,7 +532,20 @@ def _build_subphase_contract_prompt(
     target_outline: SubphaseOutline,
     phase_id: PhaseId,
     subphase_id: SubphaseId,
+    correction: ContractCorrection | None = None,
 ) -> str:
+    correction_text = ""
+    if correction is not None:
+        correction_text = (
+            f"{_REJECTED_CANDIDATE_LABEL}\n"
+            f"{_canonical_json(correction.rejected_contract)}\n"
+            "\n"
+            f"{_FINDINGS_LABEL}\n"
+            f"{json.dumps(list(correction.findings), ensure_ascii=False)}\n"
+            "\n"
+            f"{_CORRECTION_INSTRUCTIONS}\n"
+            "\n"
+        )
     return (
         f"{_MASTER_PLAN_LABEL}\n"
         f"{_canonical_json(master_plan)}\n"
@@ -520,6 +562,7 @@ def _build_subphase_contract_prompt(
         f"{_TARGET_OUTLINE_LABEL}\n"
         f"{_canonical_json(target_outline)}\n"
         "\n"
+        f"{correction_text}"
         f"{_SUBPHASE_CONTRACT_INSTRUCTIONS}"
     )
 
@@ -532,6 +575,7 @@ def create_subphase_contract_candidate(
     timeout_seconds: float,
     max_output_bytes: int = 1_048_576,
     termination_grace_seconds: float = 0.25,
+    correction: ContractCorrection | None = None,
 ) -> SubphaseContractCandidate:
     """Ask the configured Planner for one validated Sub-phase Contract candidate.
 
@@ -557,7 +601,10 @@ def create_subphase_contract_candidate(
     Provider selection comes entirely from *runtime*; this function has
     no provider, model, effort, billing, or schema parameter of its
     own. Sub-phase identity is never inferred: *phase_id* and
-    *subphase_id* are always the caller's explicit choice.
+    *subphase_id* are always the caller's explicit choice. An optional
+    *correction* adds labeled evidence about a refused earlier candidate to the
+    prompt; each call is still exactly one inference, so a correction is a second
+    operation by the caller, never a hidden retry.
     """
     master_plan = load_frozen_master_plan(runtime.project_root)
     if master_plan is None:
@@ -580,7 +627,7 @@ def create_subphase_contract_candidate(
         )
 
     prompt = _build_subphase_contract_prompt(
-        master_plan, phase_plan, target_outline, phase_id, subphase_id
+        master_plan, phase_plan, target_outline, phase_id, subphase_id, correction
     )
 
     result = invoke_planner_artifact(
@@ -616,6 +663,7 @@ def create_subphase_contract_candidate(
 
 
 __all__ = [
+    "ContractCorrection",
     "MasterPlanCandidate",
     "MasterPlanCreationError",
     "PhaseOutlinePlanningError",

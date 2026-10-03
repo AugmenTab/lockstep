@@ -67,6 +67,7 @@ from pathlib import Path
 
 from lockstep.agent_turn import AgentTurnError
 from lockstep.contract_history import retire_active_subphase_contract
+from lockstep.contract_test_targets import contract_target_findings
 from lockstep.domain import ExecutionEventKind, PhaseId, RunId, SubphaseContract, SubphaseId
 from lockstep.escalation import EscalationProtocolError
 from lockstep.escalation_transport import PlannerDecisionTransportError
@@ -82,7 +83,7 @@ from lockstep.planning_store import (
     publish_phase_plan,
 )
 from lockstep.planning_transport import PlanningTransportError
-from lockstep.planning_workflow import create_subphase_contract_candidate
+from lockstep.planning_workflow import ContractCorrection, create_subphase_contract_candidate
 from lockstep.project_cursor import (
     CompletedSubphase,
     PhaseGateStatus,
@@ -115,6 +116,9 @@ _TRANSACTIONS_DIR_NAME = "transactions"
 _WORKTREES_DIR_NAME = "worktrees"
 _JOURNAL_NAME = "events.jsonl"
 _STATE_NAME = "state.json"
+
+# One candidate plus exactly one fresh correction (11.7-R1); never a third.
+_MAX_CONTRACT_CANDIDATES = 2
 
 # Failures the transaction layer documents as known outcomes of a launch or a
 # resume. Anything else (a store fault, a programming error, a simulated crash)
@@ -443,6 +447,59 @@ def _reconcile_unbound_contract(
     )
 
 
+def _target_roots(runtime: AgentRuntime, cursor: ProjectCursor) -> tuple[Path, ...]:
+    """The repository states the next Contract's tests would be authored against.
+
+    The source checkout, plus -- for a later Sub-phase -- the previous accepted worktree its
+    branch is rooted at, when that worktree is on disk.
+    """
+    roots = [Path(runtime.project_root)]
+    if cursor.completed_subphases:
+        last = cursor.completed_subphases[-1]
+        previous = transaction_worktree_path(runtime.runtime_dir, last.run_id)
+        if previous.is_dir():
+            roots.append(previous)
+    return tuple(roots)
+
+
+def _plan_checked_contract(
+    runtime: AgentRuntime,
+    cursor: ProjectCursor,
+    *,
+    planning_timeout_seconds: float,
+    max_output_bytes: int,
+    termination_grace_seconds: float,
+) -> tuple[SubphaseContract | None, tuple[str, ...]]:
+    """Plan a Contract whose test targets are executable, with one fresh correction at most.
+
+    Returns ``(contract, ())`` for the first candidate with no test-target findings, else
+    ``(None, findings)`` of the second, refused candidate. Nothing is frozen or bound here:
+    a refused candidate is only evidence for the one correction, never authority, and the
+    host never rewrites a rejected path. The correction is a project-level Planner operation,
+    not a child transaction attempt.
+    """
+    assert cursor.current_phase is not None
+    assert cursor.current_subphase is not None
+    roots = _target_roots(runtime, cursor)
+    correction: ContractCorrection | None = None
+    findings: tuple[str, ...] = ()
+    for _ in range(_MAX_CONTRACT_CANDIDATES):
+        candidate = create_subphase_contract_candidate(
+            runtime,
+            phase_id=cursor.current_phase,
+            subphase_id=cursor.current_subphase,
+            timeout_seconds=planning_timeout_seconds,
+            max_output_bytes=max_output_bytes,
+            termination_grace_seconds=termination_grace_seconds,
+            correction=correction,
+        )
+        findings = contract_target_findings(candidate.contract, roots)
+        if not findings:
+            return candidate.contract, ()
+        correction = ContractCorrection(rejected_contract=candidate.contract, findings=findings)
+    return None, findings
+
+
 def _plan_and_bind(
     runtime: AgentRuntime,
     cursor: ProjectCursor,
@@ -451,7 +508,7 @@ def _plan_and_bind(
     planning_timeout_seconds: float,
     max_output_bytes: int,
     termination_grace_seconds: float,
-) -> None:
+) -> ProjectRunResult | None:
     eligibility = planning_eligibility(cursor)
     if not eligibility.eligible:
         raise ProjectOrchestrationError(f"planning is not eligible: {eligibility.reason.value}")
@@ -461,15 +518,20 @@ def _plan_and_bind(
     contract = leftover
     if contract is None:
         _ensure_outline_published(runtime.project_root, runtime.runtime_dir, cursor)
-        candidate = create_subphase_contract_candidate(
+        contract, findings = _plan_checked_contract(
             runtime,
-            phase_id=cursor.current_phase,
-            subphase_id=cursor.current_subphase,
-            timeout_seconds=planning_timeout_seconds,
+            cursor,
+            planning_timeout_seconds=planning_timeout_seconds,
             max_output_bytes=max_output_bytes,
             termination_grace_seconds=termination_grace_seconds,
         )
-        contract = candidate.contract
+        if contract is None:
+            return _stop(
+                runtime,
+                ProjectRunDisposition.EXECUTION_FAILED,
+                None,
+                detail="contract test target rejected after correction: " + " | ".join(findings),
+            )
         freeze_subphase_contract(runtime.project_root, runtime.runtime_dir, contract)
 
     bind_frozen_contract(
@@ -477,6 +539,7 @@ def _plan_and_bind(
         runtime.runtime_dir,
         transaction_run_id=allocate_transaction_run_id(contract.phase_id, contract.subphase_id),
     )
+    return None
 
 
 # --- JIT replanning ----------------------------------------------------------------------
@@ -740,7 +803,7 @@ def step_project_run(
             termination_grace_seconds=termination_grace_seconds,
         )
 
-    _plan_and_bind(
+    return _plan_and_bind(
         runtime,
         cursor,
         leftover,
@@ -748,7 +811,6 @@ def step_project_run(
         max_output_bytes=max_output_bytes,
         termination_grace_seconds=termination_grace_seconds,
     )
-    return None
 
 
 def run_project_phase(
