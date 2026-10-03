@@ -1,4 +1,4 @@
-"""11.7-R3: Contract ``allowed_paths`` is an authority CEILING for the Implementer, not an obligation.
+"""11.7-R3: Contract ``allowed_paths`` is an authority CEILING, not an obligation.
 
 Gate Attempt 3 froze a Contract with
 
@@ -33,6 +33,9 @@ from test_project_orchestrator import (
     _tests_response,
 )
 from test_supervisor_resume_execution import (
+    _IMPL_CORRECT as _RESUME_IMPL,
+)
+from test_supervisor_resume_execution import (
     _TEST_FILE_RED as _RESUME_TEST_RED,
 )
 from test_supervisor_resume_execution import (
@@ -46,9 +49,6 @@ from test_supervisor_resume_execution import (
     _prepare_scenario,
     _reviewer_turn_blocked_response,
     _reviewer_turn_completed_response,
-)
-from test_supervisor_resume_execution import (
-    _IMPL_CORRECT as _RESUME_IMPL,
 )
 from test_supervisor_transaction import (
     _IMPL_CORRECT,
@@ -205,7 +205,9 @@ def test_scope_abort_cannot_relaunch_the_implementer_from_stale_state(tmp_path: 
     launches = len(implementer.invocations)
 
     # The journal replays to IMPLEMENTING, but that confers no authority to continue:
-    reloaded = load_verified_state(request.runtime_dir / "state.json", request.runtime_dir / "events.jsonl")
+    reloaded = load_verified_state(
+        request.runtime_dir / "state.json", request.runtime_dir / "events.jsonl"
+    )
     assert reloaded is not None and reloaded.workflow_state == WorkflowState.IMPLEMENTING
     # ... no retry checkpoint or claim exists, so nothing is resumable ...
     assert inspect_resume(request.runtime_dir).disposition is ResumeDisposition.NO_CHECKPOINT

@@ -19,9 +19,9 @@ for any particular repository.
 
 Executable scope semantics are exact paths. The domain and Phase-8 validation
 deliberately leave path *patterns* unvalidated, and the transaction's scope checks
-compare exact dirty paths, so autonomous execution accepts exact repository-relative
-paths only. A Contract path that uses pattern syntax (``*``, ``?``, ``[...]``,
-``{...}``) is refused here, before any provider launches, rather than guessed at or
+compare exact dirty paths against the allowed ceiling, so autonomous execution accepts
+exact repository-relative paths only. A Contract path that uses pattern syntax (``*``, ``?``,
+``[...]``, ``{...}``) is refused here, before any provider launches, rather than guessed at or
 expanded. A Contract that is representable but not executable fails closed.
 
 An explicitly injected factory remains a controlled seam for tests and specialized
@@ -60,9 +60,10 @@ _PLANNER_INSTRUCTIONS = (
 _IMPLEMENTER_INSTRUCTIONS = (
     "You are the Lockstep Implementer for one Sub-phase.\n"
     "Implement the behavior the frozen Contract requires so that the protected tests pass. "
-    "Change only the Contract's allowed paths and never edit the protected tests. Anything you "
-    "write in your report is evidence only: it does not change the Contract, the allowed paths "
-    "or the tests."
+    "Change only the Contract's allowed paths and never edit the protected tests. The allowed "
+    "paths are an upper bound, not a checklist: change only what the Contract requires. "
+    "Anything you write in your report is evidence only: it does not change the Contract, "
+    "the allowed paths or the tests."
 )
 _REVIEWER_INSTRUCTIONS = (
     "You are the Lockstep Reviewer for one Sub-phase.\n"

@@ -117,6 +117,16 @@ def contract_target_findings(contract: SubphaseContract, roots: Sequence[Path]) 
                 "modify (use red, or green_characterization, for a file the Planner must "
                 "author)"
             )
+    # 11.7-R3: a frozen Planner test is protected and unavailable to the Implementer, so it
+    # must never also be presented as Implementer authority. Never silently dropped here.
+    allowed = set(contract.allowed_paths)
+    for index, spec in enumerate(contract.tests):
+        if spec.path in allowed:
+            findings.append(
+                f"allowed path overlaps Planner test target: {spec.path} (tests[{index}]); "
+                "allowed_paths is the Implementer's authority ceiling and must not contain a "
+                "Planner TestSpecification path"
+            )
     if all(spec.expectation is TestExpectation.GREEN_REGRESSION for spec in contract.tests):
         findings.append(
             "tests: every TestSpecification is green_regression, so the Planner would author "

@@ -524,6 +524,26 @@ def _halt_after_agent_failure(
     _emit(request, ExecutionEventKind.TRANSACTION_HALTED, detail=stage)
 
 
+def _implementer_scope_breached(
+    request: SingleSubphaseTransactionRequest,
+    snapshot: GitRepositorySnapshot,
+    allowed_paths: Sequence[str],
+    *,
+    expected_head_sha: str | None = None,
+) -> bool:
+    """Did the Implementer exceed its authority? (11.7-R3)
+
+    ``allowed_paths`` is a ceiling, not a checklist: the dirty set must be a subset of it
+    (the empty set included), and it must never touch a frozen Planner test even if a
+    malformed request also lists that path as allowed. Whether enough work was done is
+    answered by later stages, not here.
+    """
+    dirty = set(snapshot.dirty_paths)
+    if expected_head_sha is not None and snapshot.head_sha != expected_head_sha:
+        return True
+    return not dirty <= set(allowed_paths) or bool(dirty & set(request.test_paths))
+
+
 def _attribute_scope_breach(
     request: SingleSubphaseTransactionRequest,
     snapshot: GitRepositorySnapshot,
@@ -1060,11 +1080,12 @@ def _verify_after_implementer(
     ran; it always already has by the time either Reviewer contract is
     invoked.
     """
-    expected_impl_paths = tuple(sorted(request.implementation_paths))
     post_implementer_snapshot = inspect_repository(ctx.worktree_root)
-    if (
-        post_implementer_snapshot.head_sha != test_commit.commit_sha
-        or post_implementer_snapshot.dirty_paths != expected_impl_paths
+    if _implementer_scope_breached(
+        request,
+        post_implementer_snapshot,
+        request.implementation_paths,
+        expected_head_sha=test_commit.commit_sha,
     ):
         cause, stop_reason = _attribute_scope_breach(
             request,
@@ -1128,7 +1149,6 @@ def _handle_review_decision(
     raises :class:`SupervisorTransactionError` with ``stage="review"``,
     exactly as before Sub-phase 9.7.
     """
-    expected_impl_paths = tuple(sorted(request.implementation_paths))
     _require_review_matches_transaction(review, request)
     _emit(
         request,
@@ -1147,13 +1167,20 @@ def _handle_review_decision(
         )
 
     pre_commit_snapshot = inspect_repository(ctx.worktree_root)
-    if (
-        pre_commit_snapshot.head_sha != test_commit.commit_sha
-        or pre_commit_snapshot.dirty_paths != expected_impl_paths
+    if _implementer_scope_breached(
+        request,
+        pre_commit_snapshot,
+        request.implementation_paths,
+        expected_head_sha=test_commit.commit_sha,
     ):
         raise SupervisorTransactionError(
             stage="pre_commit_integrity",
             reason=("worktree drifted between verification and implementation commit"),
+        )
+    if not pre_commit_snapshot.dirty_paths:
+        raise SupervisorTransactionError(
+            stage="pre_commit_integrity",
+            reason="no implementation changes to commit",
         )
 
     _persist_transition(
@@ -1169,7 +1196,7 @@ def _handle_review_decision(
         ctx.worktree_root,
         expected_branch=request.branch,
         expected_head_sha=test_commit.commit_sha,
-        paths=request.implementation_paths,
+        paths=pre_commit_snapshot.dirty_paths,
         message=request.implementation_commit_message,
     )
 
@@ -2425,7 +2452,7 @@ def _require_review_matches_resume(
 def _resume_approve(
     request: SingleSubphaseTransactionRequest,
     started_claim: ResumeClaim,
-    expected_impl_paths: tuple[str, ...],
+    allowed_impl_paths: tuple[str, ...],
     journal_path: Path,
     state_path: Path,
 ) -> ResumeExecutionResult:
@@ -2436,7 +2463,7 @@ def _resume_approve(
     )
 
     pre_commit_snapshot = inspect_repository(request.worktree_path)
-    if pre_commit_snapshot.dirty_paths != expected_impl_paths:
+    if _implementer_scope_breached(request, pre_commit_snapshot, allowed_impl_paths):
         raise SupervisorTransactionError(
             stage="pre_commit_integrity",
             reason="worktree drifted between verification and the resumed implementation commit",
@@ -2451,12 +2478,12 @@ def _resume_approve(
         state_path=state_path,
     )
 
-    if expected_impl_paths:
+    if pre_commit_snapshot.dirty_paths:
         commit_exact_paths(
             request.worktree_path,
             expected_branch=request.branch,
             expected_head_sha=pre_commit_snapshot.head_sha,
-            paths=expected_impl_paths,
+            paths=pre_commit_snapshot.dirty_paths,
             message=request.implementation_commit_message,
         )
 
@@ -2526,7 +2553,7 @@ def _invoke_and_handle_resumed_reviewer(
     started_claim: ResumeClaim,
     executed_attempt: AttemptState,
     prompt: str,
-    expected_impl_paths: tuple[str, ...],
+    allowed_impl_paths: tuple[str, ...],
     journal_path: Path,
     state_path: Path,
     prior_decisions: tuple[ReviewDecision, ...] = (),
@@ -2593,7 +2620,7 @@ def _invoke_and_handle_resumed_reviewer(
     if review.verdict is ReviewVerdict.APPROVE:
         try:
             return _resume_approve(
-                request, started_claim, expected_impl_paths, journal_path, state_path
+                request, started_claim, allowed_impl_paths, journal_path, state_path
             )
         except SupervisorTransactionError:
             _settle_execution_failed(request, started_claim, journal_path, state_path)
@@ -2619,19 +2646,19 @@ def _resume_run_verification(
     request: SingleSubphaseTransactionRequest,
     parent_env: Mapping[str, str],
     attempt: AttemptNumber,
-    expected_impl_paths: tuple[str, ...],
+    allowed_impl_paths: tuple[str, ...],
     journal_path: Path,
     state_path: Path,
 ) -> None:
     post_implementer_snapshot = inspect_repository(request.worktree_path)
-    if post_implementer_snapshot.dirty_paths != expected_impl_paths:
+    if _implementer_scope_breached(request, post_implementer_snapshot, allowed_impl_paths):
         # The resumed attempt's start HEAD is not carried here, so only the
         # dirty-path evidence (protected vs unapproved path) is attributable.
         cause, stop_reason = _attribute_scope_breach(
             request,
             post_implementer_snapshot,
             post_implementer_snapshot.head_sha,
-            expected_impl_paths,
+            allowed_impl_paths,
         )
         _emit_abort(
             request,
@@ -2739,16 +2766,16 @@ def _resume_implementer(
                 paths=frozen_touched,
                 message="fix: correct frozen retry artifacts",
             )
-            expected_impl_paths = ordinary_touched
+            allowed_impl_paths = ordinary_touched
         else:
             extra = set(bounded_extra_paths) if bounded_extra_paths else set()
-            expected_impl_paths = tuple(sorted(set(request.implementation_paths) | extra))
+            allowed_impl_paths = tuple(sorted(set(request.implementation_paths) | extra))
 
         _resume_run_verification(
             request,
             agent_turn_runtime.transaction_parent_env,
             executed_attempt.current_attempt,
-            expected_impl_paths,
+            allowed_impl_paths,
             journal_path,
             state_path,
         )
@@ -2762,7 +2789,7 @@ def _resume_implementer(
         started_claim,
         executed_attempt,
         request.reviewer_prompt,
-        expected_impl_paths,
+        allowed_impl_paths,
         journal_path,
         state_path,
         prior_decisions=_prior_review_decisions(started_claim),
