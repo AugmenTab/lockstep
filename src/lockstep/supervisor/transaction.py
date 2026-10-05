@@ -76,6 +76,13 @@ Reviewer stage from durable state (:mod:`lockstep.handoff`). A request that carr
 its frozen ``contract`` also gets canonical Implementer and rework handoffs. None of
 this changes retry authority, the claim/settlement protocol or the workflow state
 machine.
+
+Phase 12.2 lets a request also carry its durable ``context`` sources. The Implementer,
+rework and late Reviewer prompts are then base instructions followed by a rendered
+:class:`~lockstep.context.context_pack.ContextPack` built at that role's invocation from
+the same handoff plus the Project Digest and explicitly selected documents. A pack that
+cannot be built fails closed exactly like a drifted handoff. Requests without ``context``
+keep the accepted 11.4 prompts byte for byte.
 """
 
 from __future__ import annotations
@@ -101,6 +108,13 @@ from lockstep.baseline_expectations import (
     expectation_specs,
     required_changed_paths,
     run_baseline_expectations,
+)
+from lockstep.context.context_pack import render_context_pack
+from lockstep.context.context_pack_builder import (
+    ContextSources,
+    build_implementer_context_pack,
+    build_reviewer_context_pack,
+    build_rework_context_pack,
 )
 from lockstep.domain import (
     AgentRole,
@@ -254,6 +268,13 @@ class SingleSubphaseTransactionRequest:
     # requests) the prompt fields are used as given and no Contract section is
     # composed.
     contract: SubphaseContract | None = field(default=None, repr=False)
+
+    # Where the durable context sources of this project live (Phase 12.2). When set
+    # together with ``contract``, each role prompt is the base instructions followed by
+    # a ContextPack assembled at that role's invocation (Project Digest, selected
+    # documents, the handoff's authority and evidence). When ``None`` -- an injected
+    # request -- the accepted 11.4 handoff rendering is used unchanged.
+    context: ContextSources | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_path", Path(self.source_path).resolve())
@@ -783,7 +804,10 @@ def _initial_implementer_prompt(
         contract=request.contract,
         test_paths=request.test_paths,
     )
-    return request.implementer_prompt + render_implementer_handoff(handoff)
+    if request.context is None:
+        return request.implementer_prompt + render_implementer_handoff(handoff)
+    pack = build_implementer_context_pack(request.context, handoff)
+    return request.implementer_prompt + render_context_pack(pack)
 
 
 def _late_reviewer_prompt(
@@ -825,7 +849,9 @@ def _late_reviewer_prompt(
         test_paths=request.test_paths,
         prior_decisions=prior_decisions,
     )
-    return base_prompt + render_reviewer_handoff(handoff)
+    if request.context is None:
+        return base_prompt + render_reviewer_handoff(handoff)
+    return base_prompt + render_context_pack(build_reviewer_context_pack(request.context, handoff))
 
 
 @dataclass(frozen=True, slots=True)
@@ -2238,7 +2264,10 @@ def _resume_implementer_prompt(
         retry=retry,
         review_decision=review_decision,
     )
-    return request.implementer_prompt + render_rework_handoff(handoff) + tail
+    if request.context is None:
+        return request.implementer_prompt + render_rework_handoff(handoff) + tail
+    pack = build_rework_context_pack(request.context, handoff)
+    return request.implementer_prompt + render_context_pack(pack) + tail
 
 
 def _record_resume_settled(
