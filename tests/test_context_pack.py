@@ -478,13 +478,19 @@ def test_the_public_surfaces_are_exactly_these() -> None:
     assert set(context_pack.__all__) == {
         "CONTEXT_PACK_HEADER",
         "SOURCE_AUTHORITY",
+        "SOURCE_STABILITY",
+        "STABLE_CONTEXT_HEADER",
         "ContextCompleteness",
         "ContextIdentity",
+        "ContextLayout",
         "ContextOperation",
         "ContextPack",
         "ContextPackError",
         "ContextSection",
         "ContextSourceKind",
+        "ContextStability",
+        "compose_context_prompt",
+        "layout_context_pack",
         "render_context_pack",
     }
     assert set(context_pack_builder.__all__) == {
