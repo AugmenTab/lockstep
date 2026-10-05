@@ -930,14 +930,25 @@ def test_MN_digest_modules_do_not_reach_into_orchestration_or_providers(module: 
         assert not name.startswith(_FORBIDDEN_IMPORT_PREFIXES), name
 
 
+# Corrected by Planner ruling (12.2): ProjectDigest semantics belong to the common
+# context subsystem only. Outside `lockstep/context/` nothing may name them; inside
+# it, only this explicit allowlist may (new context modules are not admitted
+# automatically). Orchestration, adapters, turn layers, CLI and runtime reach the
+# Digest only through the provider-neutral ContextPack API.
+_DIGEST_AWARE_MODULES = frozenset(
+    {
+        "context/project_digest.py",
+        "context/project_digest_store.py",
+        "context/context_pack.py",
+        "context/context_pack_builder.py",
+    }
+)
+
+
 def test_MN_no_prompt_or_cli_integration_is_pulled_forward() -> None:
     src = Path(project_digest.__file__).resolve().parents[1]
-    digest_modules = {
-        Path(project_digest.__file__).resolve(),
-        Path(project_digest_store.__file__).resolve(),
-    }
     for path in src.rglob("*.py"):
-        if path.resolve() in digest_modules:
+        if path.resolve().relative_to(src).as_posix() in _DIGEST_AWARE_MODULES:
             continue
         text = path.read_text(encoding="utf-8")
         assert "project_digest" not in text, path
