@@ -14,8 +14,10 @@ the resolver's sole permitted filesystem side effect.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 
 from lockstep.agents.claude import ClaudeAdapter, ClaudeCliStatus
 from lockstep.agents.codex import CodexAdapter, CodexCliStatus
@@ -25,6 +27,8 @@ from lockstep.agents.routing import AgentProvider, AgentRoleRoute, AgentRoutingP
 from lockstep.domain import AgentRole, BillingMode
 
 _SUPPORTED_BILLING_MODES: frozenset[BillingMode] = frozenset({BillingMode.SUBSCRIPTION_ONLY})
+
+_EMPTY_INHERITED_ENV: Mapping[str, str] = MappingProxyType({})
 
 _ROLE_ORDER: tuple[tuple[str, AgentRole], ...] = (
     ("planner", AgentRole.PLANNER),
@@ -52,12 +56,25 @@ class AgentProviderStatuses:
     """Already-probed provider status carried into adapter resolution.
 
     A provider's status may be absent (``None``) when no route in the
-    policy being resolved selects that provider. This object probes
-    nothing; it is inert evidence supplied by the caller.
+    policy being resolved selects that provider. ``claude_inherited_env``
+    is the optional part of the Claude provider environment (``USER``
+    only) under which the Claude status was established; resolution binds
+    it into every Claude adapter so inference runs under the same
+    environment the preflight verified. It is excluded from :func:`repr`.
+    This object probes nothing; it is inert evidence supplied by the
+    caller.
     """
 
     claude: ClaudeCliStatus | None = None
     codex: CodexCliStatus | None = None
+    claude_inherited_env: Mapping[str, str] = field(
+        default=_EMPTY_INHERITED_ENV, repr=False, hash=False
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "claude_inherited_env", MappingProxyType(dict(self.claude_inherited_env))
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +126,7 @@ def _build_adapter(
             model=route.model,
             effort=route.effort,
             claude_config_dir=claude_config_dir,
+            inherited_env=statuses.claude_inherited_env,
         )
 
     assert statuses.codex is not None

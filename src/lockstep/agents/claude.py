@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 
@@ -73,6 +73,14 @@ _FLAG_TOKEN_PATTERN: dict[str, re.Pattern[str]] = {
 }
 
 _EMPTY_EXPLICIT_ENV: Mapping[str, str] = MappingProxyType({})
+
+# The one Claude provider environment policy, shared by the preflight probes
+# and every ClaudeAdapter command. HOME and PATH are required; USER is
+# inherited only when the operator environment supplies it (macOS
+# keychain-backed subscription login is looked up by user name). No other
+# ambient variable reaches a Claude process.
+_CLAUDE_REQUIRED_ENV_NAMES: tuple[str, ...] = ("HOME", "PATH")
+_CLAUDE_INHERITED_ENV_NAMES: tuple[str, ...] = ("USER",)
 
 _SUPPORTED_ADAPTER_ROLES: frozenset[AgentRole] = frozenset(
     {AgentRole.PLANNER, AgentRole.IMPLEMENTER, AgentRole.REVIEWER}
@@ -141,19 +149,46 @@ class ClaudePreflightError(Exception):
         super().__init__(f"Claude preflight failed during {stage}: {reason}")
 
 
+def claude_inherited_environment(parent_env: Mapping[str, str]) -> Mapping[str, str]:
+    """Return the optional variables a Claude process inherits from *parent_env*.
+
+    Exactly ``USER`` when *parent_env* supplies it, and nothing otherwise; a
+    missing ``USER`` is never invented. The result is what
+    :class:`ClaudeAdapter` binds as ``inherited_env`` so inference commands
+    reproduce the environment under which the preflight probes ran.
+    """
+    selected = {
+        name: parent_env[name] for name in _CLAUDE_INHERITED_ENV_NAMES if name in parent_env
+    }
+    return MappingProxyType(build_process_environment(selected, inherit_names=()))
+
+
+def _claude_explicit_env(
+    inherited_env: Mapping[str, str],
+    claude_config_dir: Path | None,
+) -> Mapping[str, str]:
+    if not inherited_env and claude_config_dir is None:
+        return _EMPTY_EXPLICIT_ENV
+    explicit = dict(inherited_env)
+    if claude_config_dir is not None:
+        explicit["CLAUDE_CONFIG_DIR"] = str(claude_config_dir.resolve())
+    return MappingProxyType(explicit)
+
+
 def _build_probe_env(
     parent_env: Mapping[str, str],
     claude_config_dir: Path | None,
 ) -> dict[str, str]:
-    if claude_config_dir is None:
-        explicit: Mapping[str, str] = _EMPTY_EXPLICIT_ENV
-    else:
-        explicit = MappingProxyType({"CLAUDE_CONFIG_DIR": str(claude_config_dir.resolve())})
+    required_source = {
+        name: parent_env[name] for name in _CLAUDE_REQUIRED_ENV_NAMES if name in parent_env
+    }
     return build_process_environment(
-        parent_env,
+        required_source,
         inherit_names=(),
-        explicit_env=explicit,
-        required_names=("HOME", "PATH"),
+        explicit_env=_claude_explicit_env(
+            claude_inherited_environment(parent_env), claude_config_dir
+        ),
+        required_names=_CLAUDE_REQUIRED_ENV_NAMES,
     )
 
 
@@ -266,11 +301,11 @@ def probe_claude_cli(
     """Execute the three non-inference Claude Code probes and return evidence.
 
     Runs ``claude --version``, ``claude --help``, and
-    ``claude auth status`` under a probe environment that inherits only
-    ``HOME`` and ``PATH`` from *parent_env* and, when supplied,
-    substitutes an explicit ``CLAUDE_CONFIG_DIR`` resolved from
-    *claude_config_dir*. No ambient Anthropic or cloud-provider
-    credential variables are inherited. The returned
+    ``claude auth status`` under the Claude provider environment: ``HOME``
+    and ``PATH`` (required) and ``USER`` (when present) from *parent_env*
+    and, when supplied, an explicit ``CLAUDE_CONFIG_DIR`` resolved from
+    *claude_config_dir*. No other ambient variable, and in particular no
+    Anthropic or cloud-provider credential variable, is inherited. The returned
     :class:`ClaudeCliStatus` is diagnostic evidence only; subscription
     readiness is decided by :func:`require_claude_subscription_ready`.
     """
@@ -536,8 +571,12 @@ class ClaudeAdapter:
     Reviewer additionally receives the canonical :class:`ReviewDecision` JSON
     Schema inline so its envelope ``result`` is the raw canonical artifact.
     The prompt is transported only through :attr:`AgentCommand.stdin_text`.
-    Construction and ``build_command`` perform no process, filesystem, or
-    network work.
+    ``inherited_env`` is the Claude provider environment's optional part
+    (``USER`` only, as produced by :func:`claude_inherited_environment`),
+    bound at resolution so every command reproduces the preflight's
+    environment over a ``HOME``/``PATH`` parent; it is excluded from
+    :func:`repr`. Construction and ``build_command`` perform no process,
+    filesystem, or network work.
     """
 
     role: AgentRole
@@ -545,6 +584,7 @@ class ClaudeAdapter:
     model: str
     effort: str
     claude_config_dir: Path | None = None
+    inherited_env: Mapping[str, str] = field(default=_EMPTY_EXPLICIT_ENV, repr=False, hash=False)
 
     @property
     def name(self) -> str:
@@ -573,6 +613,16 @@ class ClaudeAdapter:
             resolved = Path(self.claude_config_dir).resolve()
             object.__setattr__(self, "claude_config_dir", resolved)
 
+        unapproved = sorted(set(self.inherited_env) - set(_CLAUDE_INHERITED_ENV_NAMES))
+        if unapproved:
+            raise ClaudeAdapterError(
+                "inherited_env may bind only "
+                + ", ".join(_CLAUDE_INHERITED_ENV_NAMES)
+                + "; got "
+                + ", ".join(unapproved)
+            )
+        object.__setattr__(self, "inherited_env", MappingProxyType(dict(self.inherited_env)))
+
         require_claude_subscription_ready(self.status)
         _require_adapter_capabilities(self.status, self.role)
 
@@ -582,8 +632,8 @@ class ClaudeAdapter:
         Validates that *request*'s role matches this adapter and that
         the billing mode is :attr:`BillingMode.SUBSCRIPTION_ONLY`, then
         assembles the fixed Sub-phase 6.3 argv with the prompt bound
-        only to :attr:`AgentCommand.stdin_text` and
-        ``CLAUDE_CONFIG_DIR`` bound only to
+        only to :attr:`AgentCommand.stdin_text`, and ``USER`` (from
+        ``inherited_env``) and ``CLAUDE_CONFIG_DIR`` bound only to
         :attr:`AgentCommand.explicit_env` when configured.
         """
         if request.role is not self.role:
@@ -621,16 +671,10 @@ class ClaudeAdapter:
         if self.role is AgentRole.REVIEWER:
             argv.extend(("--json-schema", _canonical_review_schema_json()))
 
-        explicit_env: Mapping[str, str]
-        if self.claude_config_dir is None:
-            explicit_env = _EMPTY_EXPLICIT_ENV
-        else:
-            explicit_env = MappingProxyType({"CLAUDE_CONFIG_DIR": str(self.claude_config_dir)})
-
         return AgentCommand(
             argv=tuple(argv),
             inherit_names=(),
-            explicit_env=explicit_env,
-            required_names=("HOME", "PATH"),
+            explicit_env=_claude_explicit_env(self.inherited_env, self.claude_config_dir),
+            required_names=_CLAUDE_REQUIRED_ENV_NAMES,
             stdin_text=request.prompt,
         )

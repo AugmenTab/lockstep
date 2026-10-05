@@ -26,6 +26,7 @@ from pathlib import Path
 
 from lockstep.agents.claude import (
     ClaudeCliStatus,
+    claude_inherited_environment,
     probe_claude_cli,
     require_claude_subscription_ready,
 )
@@ -75,7 +76,9 @@ class AgentProviderDiagnostics:
     provider the routing policy does not select, its executable and
     runtime-directory fields are ``None``. Stores no parent environment,
     PATH value, prompt, credential, raw process output, or temporary
-    probe directory.
+    probe directory; the only environment value carried is the Claude
+    provider environment's optional ``USER`` inside ``statuses`` (hidden
+    from :func:`repr`), which adapter resolution must reproduce.
     """
 
     statuses: AgentProviderStatuses
@@ -231,7 +234,13 @@ def diagnose_agent_providers(
             )
 
     return AgentProviderDiagnostics(
-        statuses=AgentProviderStatuses(claude=claude_status, codex=codex_status),
+        statuses=AgentProviderStatuses(
+            claude=claude_status,
+            codex=codex_status,
+            claude_inherited_env=(
+                claude_inherited_environment(parent_env) if claude_status is not None else {}
+            ),
+        ),
         claude_executable=claude_resolved,
         codex_executable=codex_resolved,
         claude_config_dir=claude_config_dir,
