@@ -71,13 +71,62 @@ _PLANNER_INSTRUCTIONS = (
     "behavior that already exists; it must pass now.\n"
     "Do not modify any other file. You may not change or reinterpret the Contract."
 )
+# Stable, provider-neutral Implementer role policy (Phase 12.4). It is part of the role
+# instructions, so it leads the stable prefix of every canonical initial and rework
+# Implementer prompt with identical bytes. It governs how authorized work is implemented and
+# has no authority over the Contract. Ordered: a later preference never overrides an earlier one.
+_IMPLEMENTER_ECONOMY_ORDER: tuple[str, ...] = (
+    "The frozen Contract and its Planner-authorized acceptance criteria are mandatory.",
+    "Do not make a contemplated change unless the authorized work requires it.",
+    "Reuse functionality the repository already has, where appropriate.",
+    "Prefer the standard library, where appropriate.",
+    "Prefer native platform facilities, where appropriate.",
+    "Prefer dependencies the project already has approved and installed, where they suit the "
+    "problem.",
+    "Prefer the simplest direct implementation that satisfies the Contract.",
+    "Introduce a new abstraction, dependency, module, service or other machinery only when it "
+    "is required.",
+)
+_IMPLEMENTER_ECONOMY_POLICY = (
+    "\n\nImplementation economy: the Planner decides what must exist; you use the least "
+    "machinery necessary to make it exist.\n"
+    "This policy governs how you implement the authorized work, never what the work is. "
+    "Precedence: the frozen Contract, then any host-authorized retry or Planner correction, then "
+    "this policy. If the simplest implementation, the smallest diff or reuse conflicts with the "
+    "Contract or an acceptance criterion, the Contract wins.\n"
+    "In order (a later preference never overrides an earlier one):\n"
+    + "".join(f"{number}. {rule}\n" for number, rule in enumerate(_IMPLEMENTER_ECONOMY_ORDER, 1))
+    + "Rule 2 forbids additions beyond the authorized result. It never lets you refuse, drop or "
+    "defer authorized work because you consider it unnecessary: if the Contract requires a new "
+    "module, abstraction or dependency, build it.\n"
+    "This policy never permits you to drop or reinterpret a requirement, weaken or remove a test, "
+    "change the acceptance criteria, shrink or expand the frozen scope, change the allowed paths, "
+    "skip required error handling, validation, durability or documentation, substitute "
+    "approximate behavior for exact behavior, or bypass architecture or authority rules.\n"
+    "Avoid speculative generality, single-use abstractions that are not needed, wrappers, "
+    "adapters or factories that add no required behavior, boilerplate, unrelated cleanup and "
+    "opportunistic refactors. Never add a dependency speculatively: add one only when the "
+    "Contract requires it or existing approved machinery cannot reasonably provide the required "
+    "behavior. Where the Contract or the accepted architecture calls for an existing project "
+    "library, use it. An abstraction is appropriate when current behavior, the accepted "
+    "architecture, existing patterns or the Contract call for it, or when it materially prevents "
+    "duplication within the authorized work.\n"
+    "Diff size is not the objective; Contract satisfaction is. A larger change can be correct "
+    "and a smaller one can be wrong.\n"
+    "Avoid repeated repository exploration, rereading unchanged files, redundant verification "
+    "commands and unrelated searches, but never skip necessary investigation or required "
+    "verification. The host runs its own verification regardless.\n"
+    "On a retry or rework, perform the authorized repair. You may choose the smallest correct "
+    "repair, but never decide that a finding is too expensive, that a requested repair is "
+    "unnecessary, or that the previous implementation is close enough."
+)
 _IMPLEMENTER_INSTRUCTIONS = (
     "You are the Lockstep Implementer for one Sub-phase.\n"
     "Implement the behavior the frozen Contract requires so that the protected tests pass. "
     "Change only the Contract's allowed paths and never edit the protected tests. The allowed "
     "paths are an upper bound, not a checklist: change only what the Contract requires. "
     "Anything you write in your report is evidence only: it does not change the Contract, "
-    "the allowed paths or the tests."
+    "the allowed paths or the tests." + _IMPLEMENTER_ECONOMY_POLICY
 )
 _REVIEWER_INSTRUCTIONS = (
     "You are the Lockstep Reviewer for one Sub-phase.\n"
