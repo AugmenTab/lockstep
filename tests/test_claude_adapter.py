@@ -1205,28 +1205,55 @@ def test_relative_config_dir_resolved_to_absolute(
 
 
 # ---------------------------------------------------------------------------
-# Exact projected HOME/PATH parent (Sections 18 and 33)
+# Exact projected HOME/PATH parent (Sections 18 and 33; corrected in 12.6-R1)
 # ---------------------------------------------------------------------------
+
+# Names the macOS process runtime materializes in a launched child whether or not
+# Lockstep supplied them: CoreFoundation's text-encoding hint and the interpreter's
+# PEP 538 locale coercion. They are platform-created, not inherited environment.
+_PLATFORM_CHILD_ENV_NAMES: frozenset[str] = frozenset({"LC_CTYPE", "__CF_USER_TEXT_ENCODING"})
 
 
 @pytest.mark.parametrize("role", _SUPPORTED_ROLES)
 def test_projected_home_path_parent_yields_exact_child_environment(
     tmp_path: Path,
     role: AgentRole,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     executable = _write_recording_claude(tmp_path)
-    adapter = _make_adapter(role, status=_healthy_status(executable=str(executable)))
     ambient_parent = {
         **_minimal_parent_env(),
         **_AMBIENT_CREDENTIAL_ENV,
         "LANG": "C.UTF-8",
         "USER": "someone",
         "TMPDIR": str(tmp_path),
+        "LOGNAME": "someone",
+        "SHELL": "/bin/sh",
+        "SSH_AUTH_SOCK": str(tmp_path / "agent.sock"),
+        "ARBITRARY_SENTINEL": "sentinel-value",
     }
     projected_parent = {
         "HOME": ambient_parent["HOME"],
         "PATH": ambient_parent["PATH"],
     }
+    adapter = ClaudeAdapter(
+        role=role,
+        status=_healthy_status(executable=str(executable)),
+        model="claude-sonnet-5",
+        effort="low",
+        inherited_env=claude_module.claude_inherited_environment(ambient_parent),
+    )
+
+    supplied: list[dict[str, str]] = []
+    real_run_process = invocation_module.run_process
+
+    def recording_run_process(argv: tuple[str, ...], **kwargs: object) -> object:
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        supplied.append(dict(env))
+        return real_run_process(argv, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(invocation_module, "run_process", recording_run_process)
 
     result = invoke_agent(
         adapter,
@@ -1234,10 +1261,23 @@ def test_projected_home_path_parent_yields_exact_child_environment(
         parent_env=projected_parent,
     )
 
+    expected = {
+        "HOME": ambient_parent["HOME"],
+        "PATH": ambient_parent["PATH"],
+        "USER": "someone",
+    }
     assert result.process.returncode == 0
+    assert supplied == [expected]
+
     records = _read_recorded(executable)
     assert len(records) == 1
-    assert records[0]["env_names"] == ["HOME", "PATH"]
+    env_names = records[0]["env_names"]
+    assert isinstance(env_names, list)
+    observed = set(env_names)
+    assert set(expected) <= observed
+    assert observed - set(expected) <= _PLATFORM_CHILD_ENV_NAMES
+    for name in ambient_parent.keys() - expected.keys():
+        assert name not in observed
 
 
 def test_missing_home_or_path_in_parent_rejected_before_launch(tmp_path: Path) -> None:
