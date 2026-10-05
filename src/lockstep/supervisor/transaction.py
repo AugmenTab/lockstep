@@ -80,7 +80,10 @@ machine.
 Phase 12.2 lets a request also carry its durable ``context`` sources. The Implementer,
 rework and late Reviewer prompts are then base instructions followed by a rendered
 :class:`~lockstep.context.context_pack.ContextPack` built at that role's invocation from
-the same handoff plus the Project Digest and explicitly selected documents. A pack that
+the same handoff plus the Project Digest and explicitly selected documents. Since Phase
+12.3 they are composed through
+:func:`~lockstep.context.context_pack.compose_context_prompt`, so the instructions and
+the pack's stable sources form a prefix that precedes every volatile byte. A pack that
 cannot be built fails closed exactly like a drifted handoff. Requests without ``context``
 keep the accepted 11.4 prompts byte for byte.
 """
@@ -109,7 +112,7 @@ from lockstep.baseline_expectations import (
     required_changed_paths,
     run_baseline_expectations,
 )
-from lockstep.context.context_pack import render_context_pack
+from lockstep.context.context_pack import compose_context_prompt
 from lockstep.context.context_pack_builder import (
     ContextSources,
     build_implementer_context_pack,
@@ -807,7 +810,7 @@ def _initial_implementer_prompt(
     if request.context is None:
         return request.implementer_prompt + render_implementer_handoff(handoff)
     pack = build_implementer_context_pack(request.context, handoff)
-    return request.implementer_prompt + render_context_pack(pack)
+    return compose_context_prompt(request.implementer_prompt, pack).text
 
 
 def _late_reviewer_prompt(
@@ -851,7 +854,8 @@ def _late_reviewer_prompt(
     )
     if request.context is None:
         return base_prompt + render_reviewer_handoff(handoff)
-    return base_prompt + render_context_pack(build_reviewer_context_pack(request.context, handoff))
+    pack = build_reviewer_context_pack(request.context, handoff)
+    return compose_context_prompt(base_prompt, pack).text
 
 
 @dataclass(frozen=True, slots=True)
@@ -2267,7 +2271,7 @@ def _resume_implementer_prompt(
     if request.context is None:
         return request.implementer_prompt + render_rework_handoff(handoff) + tail
     pack = build_rework_context_pack(request.context, handoff)
-    return request.implementer_prompt + render_context_pack(pack) + tail
+    return compose_context_prompt(request.implementer_prompt, pack, trailer=tail).text
 
 
 def _record_resume_settled(

@@ -24,10 +24,33 @@ Findings and a JIT Planner never sees Implementer or Reviewer prose.
 
 The structured pack is canonical; :func:`render_context_pack` is a deterministic
 projection of it. Section content is one line of canonical JSON, so no source --
-including a selected document -- can begin a line and spoof a heading. The rendering
-starts with a provenance manifest (:data:`CONTEXT_PACK_HEADER` plus one JSON line)
-naming every source, then emits each section exactly as the 11.4 handoff renderers
-do, so the accepted role-section layout is preserved byte for byte.
+including a selected document -- can begin a line and spoof a heading. Each section
+is emitted exactly as the 11.4 handoff renderers do, so the accepted role-section
+layout is preserved byte for byte.
+
+Since Phase 12.3 the rendering is laid out from the most reusable to the most volatile
+material (:func:`layout_context_pack`)::
+
+    STABLE_CONTEXT_HEADER + manifest of the stable sources      stable prefix
+        Project Digest, instructions, documentation, skills,
+        frozen Master Plan / current-Phase excerpt
+    ---------------------------------------------------- boundary
+    CONTEXT_PACK_HEADER + complete manifest (operation,        volatile suffix
+        identity, every source)
+        Contract, tests, basis, evidence, retry control,
+        completed history, provisional outline, Reviewer identity
+
+Stability is a layout property, not an authority property: it follows the source kind
+through the fixed :data:`SOURCE_STABILITY` map, and :data:`SOURCE_AUTHORITY` is
+untouched. A pack orders its stable sources first, so pack order and rendering order
+agree. The stable prefix names no invocation identity and no volatile reference, so
+repeated fresh invocations of one role over unchanged stable sources begin with the
+same bytes -- a property a provider may exploit for prefix caching, never one that
+correctness depends on. Nothing is cached here: the prefix is recomputed from the pack
+every time and changes whenever any stable source's bytes change. A pack without stable
+sources has an empty stable prefix and renders exactly as in 12.2. The complete manifest
+after the boundary still names every source, stable ones included: that is the accepted
+12.2 provenance index, repeated as metadata only (references, never content).
 
 Every function here is pure: no filesystem, Git, process, clock, network, or model
 access. Durable sources are read by :mod:`lockstep.context.context_pack_builder`.
@@ -37,6 +60,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Annotated, Self
@@ -59,6 +83,11 @@ _CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion.model_validate(1)
 CONTEXT_PACK_HEADER = (
     "\n\n---\n# CONTEXT PACK (host-assembled derived context; each section keeps the "
     "authority of its source and gains none)\n"
+)
+
+STABLE_CONTEXT_HEADER = (
+    "\n\n---\n# STABLE CONTEXT (host-assembled from stable sources; layout only, not "
+    "authority: each section keeps the authority of its source and gains none)\n"
 )
 
 _TITLE_PATTERN = re.compile(r"^[A-Z][A-Z /]*[A-Z]$")
@@ -122,6 +151,16 @@ class ContextCompleteness(StrEnum):
     EXCERPT = "excerpt"
 
 
+class ContextStability(StrEnum):
+    """Where a source belongs in the layout: the reusable prefix or the volatile suffix.
+
+    A layout property only. It never changes a section's authority.
+    """
+
+    STABLE = "stable"
+    VOLATILE = "volatile"
+
+
 _K = ContextSourceKind
 _A = AuthorityKind
 
@@ -147,6 +186,33 @@ SOURCE_AUTHORITY: MappingProxyType[ContextSourceKind, AuthorityKind] = MappingPr
     }
 )
 """The one authority class of every source kind. A section cannot choose its own."""
+
+_S = ContextStability
+
+SOURCE_STABILITY: MappingProxyType[ContextSourceKind, ContextStability] = MappingProxyType(
+    {
+        _K.PROJECT_DIGEST: _S.STABLE,
+        _K.PROJECT_INSTRUCTIONS: _S.STABLE,
+        _K.PROJECT_DOCUMENTATION: _S.STABLE,
+        _K.SKILL: _S.STABLE,
+        _K.MASTER_PLAN: _S.STABLE,
+        _K.PHASE_CONTEXT: _S.STABLE,
+        # Grows with every accepted Sub-phase.
+        _K.COMPLETED_HISTORY: _S.VOLATILE,
+        _K.PROVISIONAL_OUTLINE: _S.VOLATILE,
+        _K.CONTRACT: _S.VOLATILE,
+        _K.REQUIRED_TESTS: _S.VOLATILE,
+        _K.FROZEN_TESTS: _S.VOLATILE,
+        _K.RETRY_CONTROL: _S.VOLATILE,
+        _K.IMPLEMENTATION_REPORT: _S.VOLATILE,
+        _K.VERIFICATION_REPORT: _S.VOLATILE,
+        _K.REVIEW_FINDINGS: _S.VOLATILE,
+        _K.REVIEW_HISTORY: _S.VOLATILE,
+        _K.REPOSITORY_STATE: _S.VOLATILE,
+    }
+)
+"""The layout class of every source kind: stable while its source bytes are unchanged
+across invocations of a role, or volatile per Sub-phase, attempt or invocation."""
 
 _ALWAYS_EXACT = frozenset(
     {
@@ -316,6 +382,9 @@ class ContextPack(_PackModel):
         references = [section.reference for section in self.sections]
         if len(set(references)) != len(references):
             raise ValueError("duplicate source reference")
+        stability = [SOURCE_STABILITY[kind] for kind in kinds]
+        if stability != sorted(stability, key=lambda s: s is _S.VOLATILE):
+            raise ValueError("a stable source follows a volatile source")
         return self
 
 
@@ -326,41 +395,74 @@ def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def _manifest(pack: ContextPack) -> str:
-    return _json(
-        {
-            "schema_version": pack.schema_version.root,
-            "operation": pack.operation.value,
-            "identity": pack.identity.model_dump(mode="json"),
-            "sources": [
-                {
-                    "title": section.title,
-                    "kind": section.kind.value,
-                    "authority": section.authority.value,
-                    "reference": section.reference,
-                    "completeness": section.completeness.value,
-                    "version": section.version,
-                }
-                for section in pack.sections
-            ],
-        }
-    )
+def _provenance(section: ContextSection) -> dict[str, object]:
+    return {
+        "title": section.title,
+        "kind": section.kind.value,
+        "authority": section.authority.value,
+        "reference": section.reference,
+        "completeness": section.completeness.value,
+        "version": section.version,
+    }
 
 
-def render_context_pack(pack: ContextPack) -> str:
-    """Project *pack* into provider-neutral prompt text, deterministically.
+def _render_section(section: ContextSection) -> str:
+    return f"\n\n---\n## {section.title} [{section.authority.value}]\n{section.content}\n"
 
-    The manifest names every source's kind, authority, reference, completeness and
-    version; each section follows in pack order under ``## TITLE [authority]``. A
-    Reviewer pack ends with the host identity the Review Decision must copy.
+
+@dataclass(frozen=True, slots=True)
+class ContextLayout:
+    """Provider-facing text split at the stability boundary.
+
+    *stable_prefix* holds only material that is identical across invocations of one
+    role while its stable sources are unchanged; *volatile_suffix* holds everything
+    else. The boundary is host structure, not provider cache control, and carries no
+    authority.
     """
-    text = CONTEXT_PACK_HEADER + _manifest(pack) + "\n"
-    for section in pack.sections:
-        text += f"\n\n---\n## {section.title} [{section.authority.value}]\n{section.content}\n"
+
+    stable_prefix: str
+    volatile_suffix: str
+
+    @property
+    def text(self) -> str:
+        """The combined provider-facing text."""
+        return self.stable_prefix + self.volatile_suffix
+
+
+def layout_context_pack(pack: ContextPack) -> ContextLayout:
+    """Project *pack* into its stable prefix and volatile suffix, deterministically.
+
+    The stable prefix is the stable sources under a manifest naming only them; empty
+    when the pack has none. The volatile suffix opens with the complete manifest --
+    operation, identity, and every source's kind, authority, reference, completeness
+    and version -- then each volatile section in pack order under
+    ``## TITLE [authority]``. A Reviewer pack ends with the host identity the Review
+    Decision must copy.
+    """
+    stable = [s for s in pack.sections if SOURCE_STABILITY[s.kind] is _S.STABLE]
+    volatile = [s for s in pack.sections if SOURCE_STABILITY[s.kind] is _S.VOLATILE]
+
+    prefix = ""
+    if stable:
+        manifest = {
+            "schema_version": pack.schema_version.root,
+            "sources": [_provenance(section) for section in stable],
+        }
+        prefix = STABLE_CONTEXT_HEADER + _json(manifest) + "\n"
+        prefix += "".join(_render_section(section) for section in stable)
+
+    complete = {
+        "schema_version": pack.schema_version.root,
+        "operation": pack.operation.value,
+        "identity": pack.identity.model_dump(mode="json"),
+        "sources": [_provenance(section) for section in pack.sections],
+    }
+    suffix = CONTEXT_PACK_HEADER + _json(complete) + "\n"
+    suffix += "".join(_render_section(section) for section in volatile)
     if pack.operation is ContextOperation.REVIEW:
         identity = pack.identity
         assert identity.subphase_id is not None and identity.attempt is not None
-        text += (
+        suffix += (
             REVIEWER_IDENTITY_HEADER
             + _json(
                 {
@@ -372,18 +474,45 @@ def render_context_pack(pack: ContextPack) -> str:
             )
             + "\n"
         )
-    return text
+    return ContextLayout(stable_prefix=prefix, volatile_suffix=suffix)
+
+
+def compose_context_prompt(
+    instructions: str, pack: ContextPack, *, trailer: str = ""
+) -> ContextLayout:
+    """A role prompt: *instructions*, then *pack*'s layout, then *trailer*.
+
+    Role instructions are fixed per role, so they lead the stable prefix; a trailer
+    (a resume tail, or instructions that refer to the material "above") belongs to
+    the volatile side.
+    """
+    layout = layout_context_pack(pack)
+    return ContextLayout(
+        stable_prefix=instructions + layout.stable_prefix,
+        volatile_suffix=layout.volatile_suffix + trailer,
+    )
+
+
+def render_context_pack(pack: ContextPack) -> str:
+    """Project *pack* into provider-neutral prompt text: its stable prefix, then its suffix."""
+    return layout_context_pack(pack).text
 
 
 __all__ = [
     "CONTEXT_PACK_HEADER",
     "SOURCE_AUTHORITY",
+    "SOURCE_STABILITY",
+    "STABLE_CONTEXT_HEADER",
     "ContextCompleteness",
     "ContextIdentity",
+    "ContextLayout",
     "ContextOperation",
     "ContextPack",
     "ContextPackError",
     "ContextSection",
     "ContextSourceKind",
+    "ContextStability",
+    "compose_context_prompt",
+    "layout_context_pack",
     "render_context_pack",
 ]

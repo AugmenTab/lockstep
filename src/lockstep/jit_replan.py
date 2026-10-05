@@ -50,7 +50,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError, field_validator
 
-from lockstep.context.context_pack import ContextPackError, render_context_pack
+from lockstep.context.context_pack import ContextPackError, compose_context_prompt
 from lockstep.context.context_pack_builder import (
     ContextSelection,
     ContextSources,
@@ -374,7 +374,8 @@ def _jit_replan_context_prompt(
         )
     except ContextPackError as exc:
         raise JitReplanError(f"context pack: {exc.reason}") from exc
-    return render_context_pack(pack) + "\n" + _REPLAN_INSTRUCTIONS
+    # The instructions refer to the material "above", so they stay after it.
+    return compose_context_prompt("", pack, trailer="\n" + _REPLAN_INSTRUCTIONS).text
 
 
 def build_jit_replan_prompt(
