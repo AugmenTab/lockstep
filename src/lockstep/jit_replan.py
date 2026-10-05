@@ -29,6 +29,12 @@ is idempotent, so a crash between the two publications is repaired the same way.
 
 Every call performs at most one fresh Planner inference, derived entirely from
 durable repository and planning state. Writers are assumed single-process.
+
+Since Phase 12.2 the fresh Planner's prompt is a rendered
+:class:`~lockstep.context.context_pack.ContextPack` (the Project Digest when frozen,
+the frozen Master Plan, the immutable completed history, the provisional suffix and
+the accepted basis) followed by the replan instructions. :func:`build_jit_replan_prompt`
+remains the accepted pure label-based projection of the same durable inputs.
 """
 
 from __future__ import annotations
@@ -44,6 +50,12 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError, field_validator
 
+from lockstep.context.context_pack import ContextPackError, render_context_pack
+from lockstep.context.context_pack_builder import (
+    ContextSelection,
+    ContextSources,
+    build_jit_replan_context_pack,
+)
 from lockstep.domain import (
     MasterPlan,
     PhaseId,
@@ -341,6 +353,30 @@ def _outlines_json(outlines: tuple[SubphaseOutline, ...]) -> str:
     return _canonical_json([o.model_dump(mode="json") for o in outlines])
 
 
+def _jit_replan_context_prompt(
+    runtime: AgentRuntime,
+    selection: ContextSelection,
+    master_plan: MasterPlan,
+    phase_plan: PhasePlan,
+    cursor: ProjectCursor,
+    basis: ReplanBasis,
+) -> str:
+    """The fresh Planner's prompt: a ContextPack rebuilt from durable state, then instructions."""
+    sources = ContextSources(
+        project_id=cursor.project_id,
+        project_root=runtime.project_root,
+        runtime_dir=runtime.runtime_dir,
+        selection=selection,
+    )
+    try:
+        pack = build_jit_replan_context_pack(
+            sources, master_plan=master_plan, phase_plan=phase_plan, cursor=cursor, basis=basis
+        )
+    except ContextPackError as exc:
+        raise JitReplanError(f"context pack: {exc.reason}") from exc
+    return render_context_pack(pack) + "\n" + _REPLAN_INSTRUCTIONS
+
+
 def build_jit_replan_prompt(
     master_plan: MasterPlan, phase_plan: PhasePlan, cursor: ProjectCursor, basis: ReplanBasis
 ) -> str:
@@ -461,6 +497,7 @@ def _accept_new_replan(
     timeout_seconds: float,
     max_output_bytes: int,
     termination_grace_seconds: float,
+    context_selection: ContextSelection,
 ) -> ReplanReceipt:
     project_root, runtime_dir = runtime.project_root, runtime.runtime_dir
     completed = _phase_completed(cursor)
@@ -483,7 +520,9 @@ def _accept_new_replan(
     result = invoke_planner_artifact(
         planning_runtime,
         kind=PlanningArtifactKind.PHASE_PLAN,
-        prompt=build_jit_replan_prompt(master, published, cursor, basis),
+        prompt=_jit_replan_context_prompt(
+            runtime, context_selection, master, published, cursor, basis
+        ),
         timeout_seconds=timeout_seconds,
         max_output_bytes=max_output_bytes,
         termination_grace_seconds=termination_grace_seconds,
@@ -540,6 +579,7 @@ def run_jit_replan(
     timeout_seconds: float,
     max_output_bytes: int = 1_048_576,
     termination_grace_seconds: float = 0.25,
+    context_selection: ContextSelection | None = None,
 ) -> ReplanReceipt | None:
     """Replan the unfinished outline after the most recently completed Sub-phase.
 
@@ -549,7 +589,8 @@ def run_jit_replan(
     applied. Calling it again for the same completed Sub-phase never invokes the
     Planner again: an applied receipt is returned unchanged and an accepted one is
     applied. Refused while any Contract is frozen but not yet reflected by an
-    applied replan.
+    applied replan. *context_selection* explicitly selects optional ContextPack
+    documents for the fresh Planner; omitted, none are.
     """
     project_root, runtime_dir = runtime.project_root, runtime.runtime_dir
     cursor = load_project_cursor(project_root, runtime_dir)
@@ -575,6 +616,9 @@ def run_jit_replan(
             timeout_seconds=timeout_seconds,
             max_output_bytes=max_output_bytes,
             termination_grace_seconds=termination_grace_seconds,
+            context_selection=(
+                context_selection if context_selection is not None else ContextSelection()
+            ),
         )
     _apply_receipt(project_root, runtime_dir, cursor, receipt)
     return receipt

@@ -11,7 +11,9 @@ canonical sources only::
     test scope      Contract.tests[*].path
     impl. scope     Contract.allowed_paths
     verification    every Contract.verification_commands entry, as shell-free argv
-    role semantics  typed handoffs (:mod:`lockstep.handoff`)
+    role semantics  typed handoffs (:mod:`lockstep.handoff`) wrapped in ContextPacks
+                    (:mod:`lockstep.context.context_pack_builder`)
+    context         the Project Digest when frozen, and explicitly selected documents
     commit messages deterministic host policy from the Phase and Sub-phase ids
 
 Nothing is derived from Implementer or Reviewer prose, and nothing is hard-coded
@@ -24,15 +26,27 @@ exact repository-relative paths only. A Contract path that uses pattern syntax (
 ``[...]``, ``{...}``) is refused here, before any provider launches, rather than guessed at or
 expanded. A Contract that is representable but not executable fails closed.
 
+Every request carries its durable :class:`~lockstep.context.context_pack_builder.ContextSources`,
+so the Supervisor composes each role's ContextPack at that role's invocation. The
+test-authoring pack is composed here, from the frozen Master Plan, the Project Digest and
+the frozen Contract. Document selection is explicit: the optional *context_selection*
+names exact repository files and the operations they serve; by default none are selected.
+
 An explicitly injected factory remains a controlled seam for tests and specialized
 harnesses; this module is only the default.
 """
 
 from __future__ import annotations
 
+from lockstep.context.context_pack import ContextPackError, render_context_pack
+from lockstep.context.context_pack_builder import (
+    ContextSelection,
+    ContextSources,
+    build_test_authoring_context_pack,
+)
 from lockstep.domain import SubphaseContract, TestExpectation
 from lockstep.execution_config import require_autonomous_execution
-from lockstep.handoff import build_planner_test_handoff, render_planner_test_handoff
+from lockstep.handoff import build_planner_test_handoff
 from lockstep.planning_store import load_frozen_master_plan
 from lockstep.project_orchestrator import (
     ProjectOrchestrationError,
@@ -98,15 +112,21 @@ def _require_exact_path(value: str, *, field: str) -> None:
         raise TransactionFactoryError(f"{field} is not an exact repository-relative path")
 
 
-def canonical_transaction_request_factory(runtime: AgentRuntime) -> TransactionRequestFactory:
+def canonical_transaction_request_factory(
+    runtime: AgentRuntime, *, context_selection: ContextSelection | None = None
+) -> TransactionRequestFactory:
     """Build the host-owned factory for *runtime*, refusing an unready configuration.
 
     Raises :class:`~lockstep.execution_config.ExecutionConfigError` immediately when
     the project's ``[execution]`` configuration cannot drive autonomous execution,
-    so nothing launches against an unconfigured project.
+    so nothing launches against an unconfigured project. *context_selection* is the
+    explicit choice of optional ContextPack sources; omitted, no documents are
+    selected and a frozen Project Digest is included when one exists.
     """
     execution = runtime.config.execution
     require_autonomous_execution(execution)
+
+    selection = context_selection if context_selection is not None else ContextSelection()
 
     routing = runtime.config.routing
     billing_mode = routing.planner.billing_mode
@@ -142,6 +162,16 @@ def canonical_transaction_request_factory(runtime: AgentRuntime) -> TransactionR
             subphase_id=contract.subphase_id,
             contract=contract,
         )
+        context = ContextSources(
+            project_id=master.project_id,
+            project_root=runtime.project_root,
+            runtime_dir=runtime.runtime_dir,
+            selection=selection,
+        )
+        try:
+            planner_pack = build_test_authoring_context_pack(context, planner_handoff)
+        except ContextPackError as exc:
+            raise TransactionFactoryError(f"context pack: {exc.reason}") from exc
         label = f"{contract.phase_id.root}.{contract.subphase_id.root}"
 
         return SingleSubphaseTransactionRequest(
@@ -154,7 +184,7 @@ def canonical_transaction_request_factory(runtime: AgentRuntime) -> TransactionR
             runtime_dir=placement.runtime_dir,
             branch=placement.branch,
             billing_mode=billing_mode,
-            planner_prompt=_PLANNER_INSTRUCTIONS + render_planner_test_handoff(planner_handoff),
+            planner_prompt=_PLANNER_INSTRUCTIONS + render_context_pack(planner_pack),
             implementer_prompt=_IMPLEMENTER_INSTRUCTIONS,
             reviewer_prompt=_REVIEWER_INSTRUCTIONS,
             test_paths=test_paths,
@@ -171,6 +201,7 @@ def canonical_transaction_request_factory(runtime: AgentRuntime) -> TransactionR
             base_branch=placement.base_branch,
             verification_commands=verification,
             contract=contract,
+            context=context,
         )
 
     return build
