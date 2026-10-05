@@ -38,7 +38,7 @@ harnesses; this module is only the default.
 
 from __future__ import annotations
 
-from lockstep.context.context_pack import ContextPackError, render_context_pack
+from lockstep.context.context_pack import ContextPackError, compose_context_prompt
 from lockstep.context.context_pack_builder import (
     ContextSelection,
     ContextSources,
@@ -184,7 +184,7 @@ def canonical_transaction_request_factory(
             runtime_dir=placement.runtime_dir,
             branch=placement.branch,
             billing_mode=billing_mode,
-            planner_prompt=_PLANNER_INSTRUCTIONS + render_context_pack(planner_pack),
+            planner_prompt=compose_context_prompt(_PLANNER_INSTRUCTIONS, planner_pack).text,
             implementer_prompt=_IMPLEMENTER_INSTRUCTIONS,
             reviewer_prompt=_REVIEWER_INSTRUCTIONS,
             test_paths=test_paths,
