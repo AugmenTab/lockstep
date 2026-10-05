@@ -1274,7 +1274,6 @@ def test_end_to_end_fake_transaction_through_full_production_path(tmp_path: Path
 
     forbidden_env_names = (
         "LANG",
-        "USER",
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
         "ARBITRARY_SENTINEL",
@@ -1286,3 +1285,15 @@ def test_end_to_end_fake_transaction_through_full_production_path(tmp_path: Path
         assert env.get("PATH") == str(bin_dir)
         for forbidden in forbidden_env_names:
             assert forbidden not in env
+
+    # 12.6-R1: USER reaches Claude only through the Claude-specific inheritance
+    # path; Codex does not inherit it merely because the operator has it.
+    planner_env = inference[0]["env"]
+    implementer_env = inference[1]["env"]
+    reviewer_env = inference[2]["env"]
+    assert isinstance(planner_env, dict)
+    assert isinstance(implementer_env, dict)
+    assert isinstance(reviewer_env, dict)
+    assert implementer_env.get("USER") == "tester"
+    assert "USER" not in planner_env
+    assert "USER" not in reviewer_env
