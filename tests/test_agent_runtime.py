@@ -113,6 +113,7 @@ _CODEX_EXEC_HELP_TEXT = (
     "  --sandbox <mode>         option description\n"
     "  --color <mode>           option description\n"
     "  --output-schema <path>   option description\n"
+    "  -c, --config <key=value> option description\n"
 )
 
 _CODEX_DOCTOR_OK = json.dumps(

@@ -47,6 +47,8 @@ _BASE_ARGV_TAIL: tuple[str, ...] = (
     "-p",
     "--safe-mode",
     "--restricted",
+    "--settings",
+    '{"pluginConfigs":{"cc-plugin-agents-md@builtin":{"options":{"instructionFiles":"claude-md"}}}}',
     "--no-session-persistence",
     "--permission-prompts",
     "none",
