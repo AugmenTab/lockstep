@@ -29,8 +29,9 @@ expanded. A Contract that is representable but not executable fails closed.
 Every request carries its durable :class:`~lockstep.context.context_pack_builder.ContextSources`,
 so the Supervisor composes each role's ContextPack at that role's invocation. The
 test-authoring pack is composed here, from the frozen Master Plan, the Project Digest and
-the frozen Contract. Document selection is explicit: the optional *context_selection*
-names exact repository files and the operations they serve; by default none are selected.
+the frozen Contract. Document selection is explicit: by default it is the project's tracked
+durable selection (:mod:`lockstep.context.context_selection_store`), read freshly for every
+request; the optional *context_selection* is the controlled seam that replaces it.
 
 An explicitly injected factory remains a controlled seam for tests and specialized
 harnesses; this module is only the default.
@@ -43,6 +44,10 @@ from lockstep.context.context_pack_builder import (
     ContextSelection,
     ContextSources,
     build_test_authoring_context_pack,
+)
+from lockstep.context.context_selection_store import (
+    ContextSelectionStoreError,
+    load_context_selection,
 )
 from lockstep.domain import SubphaseContract, TestExpectation
 from lockstep.execution_config import require_autonomous_execution
@@ -169,13 +174,12 @@ def canonical_transaction_request_factory(
     Raises :class:`~lockstep.execution_config.ExecutionConfigError` immediately when
     the project's ``[execution]`` configuration cannot drive autonomous execution,
     so nothing launches against an unconfigured project. *context_selection* is the
-    explicit choice of optional ContextPack sources; omitted, no documents are
-    selected and a frozen Project Digest is included when one exists.
+    explicit choice of optional ContextPack sources; omitted, every request loads the
+    project's tracked durable selection afresh (absent: none). A frozen Project Digest
+    is included when one exists.
     """
     execution = runtime.config.execution
     require_autonomous_execution(execution)
-
-    selection = context_selection if context_selection is not None else ContextSelection()
 
     routing = runtime.config.routing
     billing_mode = routing.planner.billing_mode
@@ -204,6 +208,14 @@ def canonical_transaction_request_factory(
             verification = parse_verification_stack(contract.verification_commands)
         except VerificationCommandError as exc:
             raise TransactionFactoryError(f"verification commands: {exc.reason}") from exc
+
+        if context_selection is not None:
+            selection = context_selection
+        else:
+            try:
+                selection = load_context_selection(runtime.project_root)
+            except ContextSelectionStoreError as exc:
+                raise TransactionFactoryError(f"context selection: {exc.reason}") from exc
 
         planner_handoff = build_planner_test_handoff(
             run_id=placement.run_id,

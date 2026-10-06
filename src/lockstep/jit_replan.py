@@ -56,6 +56,10 @@ from lockstep.context.context_pack_builder import (
     ContextSources,
     build_jit_replan_context_pack,
 )
+from lockstep.context.context_selection_store import (
+    ContextSelectionStoreError,
+    load_context_selection,
+)
 from lockstep.domain import (
     MasterPlan,
     PhaseId,
@@ -362,6 +366,17 @@ def _jit_replan_context_prompt(
     basis: ReplanBasis,
 ) -> str:
     """The fresh Planner's prompt: a ContextPack rebuilt from durable state, then instructions."""
+    # Imported here: the finalization module reaches the Phase gate, which imports the
+    # orchestrator, which imports this module.
+    from lockstep.phase_context_finalization import (
+        PhaseContextFinalizationError,
+        finalized_phase_references,
+    )
+
+    try:
+        finalized = finalized_phase_references(runtime.runtime_dir, cursor)
+    except PhaseContextFinalizationError as exc:
+        raise JitReplanError(f"phase finalization: {exc.reason}") from exc
     sources = ContextSources(
         project_id=cursor.project_id,
         project_root=runtime.project_root,
@@ -370,7 +385,12 @@ def _jit_replan_context_prompt(
     )
     try:
         pack = build_jit_replan_context_pack(
-            sources, master_plan=master_plan, phase_plan=phase_plan, cursor=cursor, basis=basis
+            sources,
+            master_plan=master_plan,
+            phase_plan=phase_plan,
+            cursor=cursor,
+            basis=basis,
+            finalized_phases=finalized,
         )
     except ContextPackError as exc:
         raise JitReplanError(f"context pack: {exc.reason}") from exc
@@ -591,7 +611,8 @@ def run_jit_replan(
     Planner again: an applied receipt is returned unchanged and an accepted one is
     applied. Refused while any Contract is frozen but not yet reflected by an
     applied replan. *context_selection* explicitly selects optional ContextPack
-    documents for the fresh Planner; omitted, none are.
+    documents for the fresh Planner; omitted, the project's tracked durable selection is
+    loaded afresh (absent: none).
     """
     project_root, runtime_dir = runtime.project_root, runtime.runtime_dir
     cursor = load_project_cursor(project_root, runtime_dir)
@@ -609,6 +630,11 @@ def run_jit_replan(
         raise JitReplanError("a frozen subphase contract is active; it cannot be replanned")
 
     if receipt is None:
+        if context_selection is None:
+            try:
+                context_selection = load_context_selection(project_root)
+            except ContextSelectionStoreError as exc:
+                raise JitReplanError(f"context selection: {exc.reason}") from exc
         receipt = _accept_new_replan(
             runtime,
             cursor,
@@ -617,9 +643,7 @@ def run_jit_replan(
             timeout_seconds=timeout_seconds,
             max_output_bytes=max_output_bytes,
             termination_grace_seconds=termination_grace_seconds,
-            context_selection=(
-                context_selection if context_selection is not None else ContextSelection()
-            ),
+            context_selection=context_selection,
         )
     _apply_receipt(project_root, runtime_dir, cursor, receipt)
     return receipt
