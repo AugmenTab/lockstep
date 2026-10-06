@@ -294,6 +294,9 @@ def test_source_kinds_cover_the_canonical_categories() -> None:
         "rework",
         "review",
         "jit_replan",
+        "contract_planning",
+        "phase_planning",
+        "gate_remediation",
     }
 
 

@@ -537,12 +537,35 @@ def _extract_line_after(prompt: str, label: str) -> str:
     return lines[marker_index + 1]
 
 
+# 12.10-R1: the Master Plan and the current Phase plan reach the Contract Planner exactly
+# once, through their ContextPack sections; the trailer no longer repeats either payload.
+_MASTER_PLAN_SECTION = "## MASTER PLAN [frozen_requirement]"
+_PHASE_PLAN_SECTION = "## CURRENT PROVISIONAL PHASE PLAN [provisional_plan]"
+
+
+def _extract_section(prompt: str, heading: str) -> dict[str, object]:
+    lines = prompt.splitlines()
+    assert lines.count(heading) == 1
+    section = json.loads(lines[lines.index(heading) + 1])
+    assert isinstance(section, dict)
+    return section
+
+
 def _extract_master_plan_json(prompt: str) -> dict[str, object]:
-    return json.loads(_extract_line_after(prompt, _MASTER_PLAN_LABEL))
+    master_plan = _extract_section(prompt, _MASTER_PLAN_SECTION)["master_plan"]
+    assert isinstance(master_plan, dict)
+    return master_plan
 
 
 def _extract_phase_plan_json(prompt: str) -> dict[str, object]:
-    return json.loads(_extract_line_after(prompt, _PHASE_PLAN_LABEL))
+    phase_plan = _extract_section(prompt, _PHASE_PLAN_SECTION)["phase_plan"]
+    assert isinstance(phase_plan, dict)
+    return phase_plan
+
+
+def _legacy_payload(model: MasterPlan | PhasePlan) -> str:
+    """The pre-R1 trailer serialization of a plan payload."""
+    return json.dumps(model.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":"))
 
 
 def _extract_target_phase(prompt: str) -> str:
@@ -979,12 +1002,20 @@ def test_prompt_contains_exact_master_plan_context(tmp_path: Path) -> None:
     prompt, _runtime, _bin_dir, master_plan, _pp = _create_candidate_and_capture_stdin(tmp_path)
 
     assert _extract_master_plan_json(prompt) == master_plan.model_dump(mode="json")
+    # Exactly once: the ContextPack is the only carrier; no duplicate trailer payload.
+    assert prompt.count('"master_plan":') == 1
+    assert _MASTER_PLAN_LABEL not in prompt.splitlines()
+    assert _legacy_payload(master_plan) not in prompt
 
 
 def test_prompt_contains_exact_current_phase_plan_context(tmp_path: Path) -> None:
     prompt, _runtime, _bin_dir, _mp, phase_plan = _create_candidate_and_capture_stdin(tmp_path)
 
     assert _extract_phase_plan_json(prompt) == phase_plan.model_dump(mode="json")
+    # Exactly once: the ContextPack is the only carrier; no duplicate trailer payload.
+    assert prompt.count('"phase_plan":') == 1
+    assert _PHASE_PLAN_LABEL not in prompt.splitlines()
+    assert _legacy_payload(phase_plan) not in prompt
 
 
 def test_prompt_contains_exact_target_outline_context(tmp_path: Path) -> None:

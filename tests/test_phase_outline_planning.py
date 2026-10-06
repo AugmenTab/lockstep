@@ -451,9 +451,18 @@ def _extract_line_after(prompt: str, label: str) -> str:
     return lines[marker_index + 1]
 
 
+# 12.10-R1: the Master Plan reaches the Phase-outline Planner exactly once, through its
+# ContextPack section; the trailer no longer repeats the payload.
+_MASTER_PLAN_SECTION = "## MASTER PLAN [frozen_requirement]"
+
+
 def _extract_master_plan_json(prompt: str) -> dict[str, object]:
-    raw = _extract_line_after(prompt, _MASTER_PLAN_LABEL)
-    return json.loads(raw)
+    lines = prompt.splitlines()
+    assert lines.count(_MASTER_PLAN_SECTION) == 1
+    section = json.loads(lines[lines.index(_MASTER_PLAN_SECTION) + 1])
+    master_plan = section["master_plan"]
+    assert isinstance(master_plan, dict)
+    return master_plan
 
 
 def _extract_target_phase(prompt: str) -> str:
@@ -709,6 +718,13 @@ def test_prompt_contains_exact_master_plan_context(tmp_path: Path) -> None:
     prompt, _runtime, _bin_dir, master_plan = _create_candidate_and_capture_stdin(tmp_path)
 
     assert _extract_master_plan_json(prompt) == master_plan.model_dump(mode="json")
+    # Exactly once: the ContextPack is the only carrier; no duplicate trailer payload.
+    assert prompt.count('"master_plan":') == 1
+    assert _MASTER_PLAN_LABEL not in prompt.splitlines()
+    legacy = json.dumps(
+        master_plan.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
+    )
+    assert legacy not in prompt
 
 
 def test_prompt_contains_required_planning_instructions(tmp_path: Path) -> None:
