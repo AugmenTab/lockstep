@@ -7,7 +7,9 @@ routing policy, an explicit operator parent environment, and optional
 untracked machine overrides; resolves each uniquely selected provider's
 executable, guards against the transient Claude npx-cache install
 failure observed during Phase 6 qualification, and runs the frozen
-production preflight/subscription-readiness checks for
+production preflight/subscription-readiness checks plus the 12.7
+semantic-isolation checks (and, for Codex, the generic ``-c/--config``
+capability) for
 :mod:`lockstep.agents.claude` and :mod:`lockstep.agents.codex`. Performs
 no adapter resolution, no model inference, and no project-configuration
 or Supervisor access; the resulting
@@ -28,13 +30,10 @@ from lockstep.agents.claude import (
     ClaudeCliStatus,
     claude_inherited_environment,
     probe_claude_cli,
+    require_claude_instruction_isolation,
     require_claude_subscription_ready,
 )
-from lockstep.agents.codex import (
-    CodexCliStatus,
-    probe_codex_cli,
-    require_codex_subscription_ready,
-)
+from lockstep.agents.codex import CodexCliStatus, diagnose_codex_cli
 from lockstep.agents.resolution import AgentProviderStatuses
 from lockstep.agents.routing import AgentProvider, AgentRoutingPolicy
 
@@ -214,23 +213,23 @@ def diagnose_agent_providers(
         probe_cwd = Path(raw_probe_dir)
 
         if claude_resolved is not None:
-            claude_status = require_claude_subscription_ready(
-                probe_claude_cli(
-                    claude_executable=str(claude_resolved),
-                    parent_env=parent_env,
-                    cwd=probe_cwd,
-                    claude_config_dir=claude_config_dir,
+            claude_status = require_claude_instruction_isolation(
+                require_claude_subscription_ready(
+                    probe_claude_cli(
+                        claude_executable=str(claude_resolved),
+                        parent_env=parent_env,
+                        cwd=probe_cwd,
+                        claude_config_dir=claude_config_dir,
+                    )
                 )
             )
 
         if codex_resolved is not None:
-            codex_status = require_codex_subscription_ready(
-                probe_codex_cli(
-                    codex_executable=str(codex_resolved),
-                    parent_env=parent_env,
-                    cwd=probe_cwd,
-                    codex_home=codex_home,
-                )
+            codex_status = diagnose_codex_cli(
+                codex_executable=str(codex_resolved),
+                parent_env=parent_env,
+                cwd=probe_cwd,
+                codex_home=codex_home,
             )
 
     return AgentProviderDiagnostics(

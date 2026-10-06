@@ -12,7 +12,9 @@ from lockstep.agents.claude import (
     ClaudeAdapterError,
     ClaudeCliStatus,
     ClaudePreflightError,
+    managed_claude_instructions_path,
     probe_claude_cli,
+    require_claude_instruction_isolation,
     require_claude_subscription_ready,
 )
 from lockstep.agents.codex import (
@@ -20,7 +22,9 @@ from lockstep.agents.codex import (
     CodexAdapterError,
     CodexCliStatus,
     CodexPreflightError,
+    diagnose_codex_cli,
     probe_codex_cli,
+    require_codex_instruction_isolation,
     require_codex_subscription_ready,
 )
 from lockstep.agents.codex_review import materialize_codex_review_schema
@@ -94,14 +98,18 @@ __all__ = [
     "StructuredOutputAdapterError",
     "UsageReportingAdapter",
     "diagnose_agent_providers",
+    "diagnose_codex_cli",
     "invoke_agent",
+    "managed_claude_instructions_path",
     "materialize_codex_review_schema",
     "prepare_structured_planner_adapter",
     "prepare_structured_role_adapter",
     "probe_claude_cli",
     "probe_codex_cli",
     "record_invocation_returned",
+    "require_claude_instruction_isolation",
     "require_claude_subscription_ready",
+    "require_codex_instruction_isolation",
     "require_codex_subscription_ready",
     "resolve_agent_adapters",
     "to_openai_strict_json_schema",

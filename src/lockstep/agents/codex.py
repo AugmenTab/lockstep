@@ -4,9 +4,11 @@ Answers deterministic yes/no questions about a configured Codex
 executable — is it usable, does it expose the exec options Lockstep's
 adapter needs, is its stored authentication explicitly ChatGPT-backed,
 and are stored API-key credentials absent — without executing any
-model turn. Also constructs deterministic Codex ``exec`` invocations
-for the subscription-backed Planner, Implementer, and Reviewer roles
-via :class:`CodexAdapter`. All external commands are executed through
+model turn. Also detects, by presence only, a global Codex instruction
+file that would add hidden semantics outside Lockstep's ContextPack, and
+constructs deterministic Codex ``exec`` invocations for the
+subscription-backed Planner, Implementer, and Reviewer roles via
+:class:`CodexAdapter`. All external commands are executed through
 :mod:`lockstep.process`; ambient OpenAI/Codex API credentials are
 structurally excluded from every probe and every adapter command.
 """
@@ -14,6 +16,7 @@ structurally excluded from every probe and every adapter command.
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
@@ -44,6 +47,24 @@ _ADDITIONAL_HELP_TOKENS: tuple[str, ...] = (
     "--output-schema",
 )
 
+# The generic per-run config override mechanism (``-c, --config <key=value>``).
+# Diagnosis qualifies that the mechanism exists; it cannot prove that any
+# individual key is understood by the installed Codex.
+_CONFIG_OVERRIDE_TOKENS: tuple[str, ...] = ("-c", "--config")
+
+# Codex's global instruction files under the effective CODEX_HOME. Project
+# AGENTS discovery is disabled per run, but these are not covered by that
+# override, so their presence fails closed.
+_GLOBAL_INSTRUCTION_FILE_NAMES: tuple[str, ...] = ("AGENTS.md", "AGENTS.override.md")
+
+# Per-run overrides that disable Codex-native project semantics: project
+# AGENTS.md discovery and native skill instruction injection. Project
+# instructions and skills reach Codex only through the ContextPack prompt.
+_SEMANTIC_SUPPRESSION_CONFIG: tuple[str, ...] = (
+    "project_doc_max_bytes=0",
+    "skills.include_instructions=false",
+)
+
 _AUTH_CHECK_KEY = "auth.credentials"
 _SUPPORTED_DOCTOR_SCHEMA_VERSION = 1
 
@@ -56,7 +77,7 @@ _REQUIRED_AUTH_CHECK_STATUS = "ok"
 
 _FLAG_TOKEN_PATTERN: dict[str, re.Pattern[str]] = {
     flag: re.compile(rf"(?<![A-Za-z0-9_\-]){re.escape(flag)}(?![A-Za-z0-9_\-])")
-    for flag in (*_REQUIRED_EXEC_CAPABILITIES, *_ADDITIONAL_HELP_TOKENS)
+    for flag in (*_REQUIRED_EXEC_CAPABILITIES, *_ADDITIONAL_HELP_TOKENS, *_CONFIG_OVERRIDE_TOKENS)
 }
 
 _SUPPORTED_ADAPTER_ROLES: frozenset[AgentRole] = frozenset(
@@ -81,9 +102,11 @@ class CodexCliStatus:
     used, its self-reported version string, the doctor schema version,
     doctor overall status, doctor process return code, the
     ``auth.credentials`` check status, the three stored-credential
-    detail values, and the four exec-flag capability booleans.
-    Deliberately excludes raw doctor stdout/stderr, environment values,
-    auth tokens, API-key values, and any ``HOME`` contents.
+    detail values, the exec-flag capability booleans, and whether a
+    global Codex instruction file is present under the effective
+    ``CODEX_HOME``. Deliberately excludes raw doctor stdout/stderr,
+    environment values, auth tokens, API-key values, instruction file
+    paths or contents, and any ``HOME`` contents.
     """
 
     executable: str
@@ -106,14 +129,17 @@ class CodexCliStatus:
     supports_exec_ignore_rules: bool = False
     supports_exec_output_schema: bool = False
 
+    global_instructions_present: bool = False
+
 
 class CodexPreflightError(Exception):
     """A stage of the Codex preflight rejected the observed evidence.
 
     Carries the failing ``stage`` (``version``, ``capabilities``,
-    ``doctor``, or ``auth``) and a short sanitized ``reason``. Never
-    carries raw doctor stdout/stderr, environment values, auth tokens,
-    or API-key values.
+    ``doctor``, ``auth``, or ``policy``) and a short sanitized
+    ``reason``. Never carries raw doctor stdout/stderr, environment
+    values, auth tokens, API-key values, or instruction file paths or
+    contents.
     """
 
     def __init__(self, *, stage: str, reason: str) -> None:
@@ -158,6 +184,14 @@ def _run_codex(
 
 def _flag_supported(help_text: str, flag: str) -> bool:
     return _FLAG_TOKEN_PATTERN[flag].search(help_text) is not None
+
+
+def _global_instructions_present(probe_env: Mapping[str, str], codex_home: Path | None) -> bool:
+    # The effective home is the explicit override, else $HOME/.codex; an
+    # ambient CODEX_HOME is never forwarded, so it is never consulted.
+    # Presence only: nothing is opened or read.
+    home = codex_home.resolve() if codex_home is not None else Path(probe_env["HOME"]) / ".codex"
+    return any(os.path.lexists(home / name) for name in _GLOBAL_INSTRUCTION_FILE_NAMES)
 
 
 def _parse_optional_bool(value: object) -> bool | None:
@@ -277,11 +311,70 @@ def probe_codex_cli(
     ``codex doctor --json`` under a probe environment that inherits only
     ``HOME`` and ``PATH`` from *parent_env* and, when supplied,
     substitutes an explicit ``CODEX_HOME`` from *codex_home*. No
-    ambient OpenAI/Codex API credential variables are inherited. The
-    returned :class:`CodexCliStatus` is diagnostic evidence only;
+    ambient OpenAI/Codex API credential variables are inherited. Also
+    records, by presence only, whether a global ``AGENTS.md`` or
+    ``AGENTS.override.md`` exists under the effective ``CODEX_HOME``.
+    The returned :class:`CodexCliStatus` is diagnostic evidence only;
     subscription readiness is decided by
-    :func:`require_codex_subscription_ready`.
+    :func:`require_codex_subscription_ready` and semantic isolation by
+    :func:`require_codex_instruction_isolation`.
     """
+    status, _help_text = _probe_codex_evidence(
+        codex_executable=codex_executable,
+        parent_env=parent_env,
+        cwd=cwd,
+        codex_home=codex_home,
+        timeout_seconds=timeout_seconds,
+        max_output_bytes=max_output_bytes,
+    )
+    return status
+
+
+def diagnose_codex_cli(
+    *,
+    codex_executable: str,
+    parent_env: Mapping[str, str],
+    cwd: Path,
+    codex_home: Path | None = None,
+    timeout_seconds: float = 15.0,
+    max_output_bytes: int = 1_048_576,
+) -> CodexCliStatus:
+    """Return canonical-execution-ready Codex evidence or raise.
+
+    Runs the same probes as :func:`probe_codex_cli`, then requires that
+    ``codex exec --help`` advertises the generic per-run config override
+    mechanism (``-c`` / ``--config``) that every :class:`CodexAdapter`
+    command depends on, then applies
+    :func:`require_codex_subscription_ready` and
+    :func:`require_codex_instruction_isolation`. The help check
+    qualifies the mechanism only; it does not establish that any
+    individual config key is understood by the installed Codex.
+    """
+    status, help_text = _probe_codex_evidence(
+        codex_executable=codex_executable,
+        parent_env=parent_env,
+        cwd=cwd,
+        codex_home=codex_home,
+        timeout_seconds=timeout_seconds,
+        max_output_bytes=max_output_bytes,
+    )
+    if not all(_flag_supported(help_text, token) for token in _CONFIG_OVERRIDE_TOKENS):
+        raise CodexPreflightError(
+            stage="capabilities",
+            reason="codex exec is missing required option(s): -c/--config",
+        )
+    return require_codex_instruction_isolation(require_codex_subscription_ready(status))
+
+
+def _probe_codex_evidence(
+    *,
+    codex_executable: str,
+    parent_env: Mapping[str, str],
+    cwd: Path,
+    codex_home: Path | None,
+    timeout_seconds: float,
+    max_output_bytes: int,
+) -> tuple[CodexCliStatus, str]:
     resolved_cwd = cwd.resolve()
     probe_env = _build_probe_env(parent_env, codex_home)
 
@@ -330,7 +423,7 @@ def probe_codex_cli(
     )
     evidence = _parse_doctor_stdout(doctor_result.stdout)
 
-    return CodexCliStatus(
+    status = CodexCliStatus(
         executable=codex_executable,
         version=version,
         doctor_schema_version=evidence.schema_version,
@@ -346,7 +439,9 @@ def probe_codex_cli(
         supports_exec_color=_flag_supported(help_text, "--color"),
         supports_exec_ignore_rules=_flag_supported(help_text, "--ignore-rules"),
         supports_exec_output_schema=_flag_supported(help_text, "--output-schema"),
+        global_instructions_present=_global_instructions_present(probe_env, codex_home),
     )
+    return status, help_text
 
 
 def require_codex_subscription_ready(status: CodexCliStatus) -> CodexCliStatus:
@@ -400,6 +495,26 @@ def require_codex_subscription_ready(status: CodexCliStatus) -> CodexCliStatus:
         raise CodexPreflightError(
             stage="auth",
             reason=("a stored API-key credential is present; SUBSCRIPTION_ONLY requires none"),
+        )
+    return status
+
+
+def require_codex_instruction_isolation(status: CodexCliStatus) -> CodexCliStatus:
+    """Return *status* unchanged when no global Codex instruction file is present.
+
+    A global ``AGENTS.md`` / ``AGENTS.override.md`` under the effective
+    ``CODEX_HOME`` would reach the model as instructions that are not
+    Lockstep-selected project semantics and are not suppressed by the
+    per-run project-doc override. Raises :class:`CodexPreflightError`
+    with stage ``policy``; the reason names neither path nor contents.
+    """
+    if status.global_instructions_present:
+        raise CodexPreflightError(
+            stage="policy",
+            reason=(
+                "a global Codex instruction file is present; canonical Lockstep "
+                "execution requires provider-neutral project semantics"
+            ),
         )
     return status
 
@@ -505,7 +620,10 @@ class CodexAdapter:
     subscription-ready capability evidence via
     :func:`require_codex_subscription_ready` plus the additional
     ``--ignore-rules`` capability and, for Reviewer, the
-    ``--output-schema`` capability. The prompt is transported through
+    ``--output-schema`` capability, and rejects a status reporting a
+    global Codex instruction file. Every command disables Codex-native
+    project AGENTS discovery and native skill instruction injection
+    through per-run config overrides. The prompt is transported through
     :attr:`AgentCommand.stdin_text`; it never appears in argv or in
     the explicit environment. ``build_command`` performs no process,
     filesystem, or network work.
@@ -563,6 +681,7 @@ class CodexAdapter:
             object.__setattr__(self, "codex_home", resolved_home)
 
         require_codex_subscription_ready(self.status)
+        require_codex_instruction_isolation(self.status)
 
         if not self.status.supports_exec_ignore_rules:
             raise CodexPreflightError(
@@ -616,6 +735,8 @@ class CodexAdapter:
             "-c",
             reasoning_config,
         ]
+        for override in _SEMANTIC_SUPPRESSION_CONFIG:
+            argv.extend(("-c", override))
         if self.role is AgentRole.REVIEWER:
             assert self.review_output_schema_path is not None
             argv.extend(("--output-schema", str(self.review_output_schema_path)))
