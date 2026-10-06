@@ -5,6 +5,7 @@ normal successful work, while always knowing why it may continue and exactly whe
 
     load run control + ProjectCursor
         -> repair derived evidence               (a missing PHASE_COMPLETE event; evidence only)
+        -> finish completed-Phase teardown       (transient residue only; a refusal stops the run)
         -> project complete?                     stop PROJECT_COMPLETE
         -> requested Phase boundary reached?     stop PHASE_BOUNDARY_REACHED
         -> authoritative usage exhaustion?       stop USAGE_LIMIT
@@ -77,6 +78,7 @@ from lockstep.phase_gate_cycle import (
     remediations_spent,
     repair_phase_complete_evidence,
 )
+from lockstep.phase_teardown import ensure_completed_phase_teardown
 from lockstep.planning import PlanningValidationError
 from lockstep.planning_store import load_active_subphase_contract, load_frozen_master_plan
 from lockstep.planning_transport import PlanningTransportError
@@ -324,6 +326,8 @@ class _Driver:
         for _ in range(limit):
             cursor = _load_or_initialize(runtime)
             repair_phase_complete_evidence(runtime)
+            # A completed Phase's pending teardown is finished before any further work.
+            ensure_completed_phase_teardown(runtime)
 
             if cursor.phase_gate_status is PhaseGateStatus.PROJECT_COMPLETE:
                 return self.stop(AutonomousRunDisposition.PROJECT_COMPLETE)

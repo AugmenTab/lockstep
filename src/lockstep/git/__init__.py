@@ -20,8 +20,12 @@ from lockstep.git.repository import (
     require_clean_repository,
 )
 from lockstep.git.worktree import (
+    RegisteredWorktree,
     WorktreeCreationError,
     create_run_worktree,
+    linked_worktree_common_dir,
+    registered_worktrees,
+    remove_linked_worktree,
 )
 
 __all__ = [
@@ -30,11 +34,15 @@ __all__ = [
     "GitCommitPolicyError",
     "GitCommitResult",
     "GitRepositorySnapshot",
+    "RegisteredWorktree",
     "RepositoryChange",
     "WorktreeCreationError",
     "commit_exact_paths",
     "create_run_worktree",
     "inspect_repository",
+    "linked_worktree_common_dir",
     "measure_repository_change",
+    "registered_worktrees",
+    "remove_linked_worktree",
     "require_clean_repository",
 ]
