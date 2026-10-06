@@ -941,6 +941,9 @@ _DIGEST_AWARE_MODULES = frozenset(
         "context/project_digest_store.py",
         "context/context_pack.py",
         "context/context_pack_builder.py",
+        # Corrected by Planner ruling (12.8, C2 option a): the Phase-context
+        # finalization module may read and record the verified Digest identity only.
+        "phase_context_finalization.py",
     }
 )
 

@@ -294,7 +294,18 @@ def test_run_control_competes_with_neither_the_cursor_nor_a_child_journal(
     assert (project_run_dir(project.runtime_dir, result.project_run_id)).is_dir()
     assert not (project.runtime_dir / "events.jsonl").exists()
     assert not (project.runtime_dir / "state.json").exists()
-    assert [p.name for p in (project.runtime_dir / "project").iterdir()] == ["cursor.json"]
+    # Corrected by Planner ruling (12.8, C1): a run that completes Phases also holds
+    # exactly one immutable Phase-context finalization per completed Phase.
+    assert sorted(p.name for p in (project.runtime_dir / "project").iterdir()) == [
+        "cursor.json",
+        "phase-context",
+    ]
+    assert sorted(
+        p.name for p in (project.runtime_dir / "project" / "phase-context").iterdir()
+    ) == [
+        f"{_P1.root}.json",
+        f"{_P2.root}.json",
+    ]
 
 
 def test_child_transaction_telemetry_is_unchanged_by_the_unattended_run(
