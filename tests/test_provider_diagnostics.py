@@ -52,6 +52,7 @@ _CODEX_EXEC_FLAGS: tuple[str, ...] = (
     "--ignore-user-config",
     "--sandbox",
     "--color",
+    "-c, --config <key=value>",
 )
 
 

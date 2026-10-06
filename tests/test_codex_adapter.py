@@ -318,6 +318,10 @@ def test_planner_command_argv_matches_deterministic_sequence(tmp_path: Path) -> 
         "gpt-5-planner",
         "-c",
         'model_reasoning_effort="medium"',
+        "-c",
+        "project_doc_max_bytes=0",
+        "-c",
+        "skills.include_instructions=false",
         "-",
     )
 
@@ -365,6 +369,10 @@ def test_implementer_command_matches_planner_shape_with_workspace_write(
         "gpt-5-implementer",
         "-c",
         'model_reasoning_effort="high"',
+        "-c",
+        "project_doc_max_bytes=0",
+        "-c",
+        "skills.include_instructions=false",
         "-",
     )
 
@@ -417,8 +425,10 @@ def test_reviewer_command_includes_output_schema_and_read_only_sandbox(
     assert command.argv[schema_index + 1] == str(schema_path.resolve())
 
     dash_c_positions = [i for i, tok in enumerate(command.argv) if tok == "-c"]
-    assert len(dash_c_positions) == 1
+    assert len(dash_c_positions) == 3
     assert command.argv[dash_c_positions[0] + 1] == 'model_reasoning_effort="high"'
+    assert command.argv[dash_c_positions[1] + 1] == "project_doc_max_bytes=0"
+    assert command.argv[dash_c_positions[2] + 1] == "skills.include_instructions=false"
 
     assert command.stdin_text == "reviewer-prompt-SECRET"
     for arg in command.argv:
@@ -654,7 +664,7 @@ def test_reasoning_effort_special_chars_stay_in_single_argv_element(
     command = adapter.build_command(request)
 
     dash_c_positions = [i for i, tok in enumerate(command.argv) if tok == "-c"]
-    assert len(dash_c_positions) == 1
+    assert len(dash_c_positions) == 3
 
     value_index = dash_c_positions[0] + 1
     value = command.argv[value_index]

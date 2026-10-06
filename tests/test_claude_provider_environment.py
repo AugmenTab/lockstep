@@ -98,7 +98,7 @@ _CLAUDE_HELP_TEXT = (
 _CODEX_EXEC_HELP_TEXT = (
     "Usage: codex exec [OPTIONS]\n"
     "  --ephemeral\n  --ignore-user-config\n  --ignore-rules\n  --sandbox\n"
-    "  --color\n  --output-schema\n"
+    "  --color\n  --output-schema\n  -c, --config\n"
 )
 
 _CODEX_DOCTOR_OK = json.dumps(
