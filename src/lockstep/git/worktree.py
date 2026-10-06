@@ -1,16 +1,21 @@
-"""Supervisor-owned creation of isolated run worktrees.
+"""Supervisor-owned creation, and Git-aware removal, of isolated run worktrees.
 
 Turns a clean, attached source checkout into a new linked Git worktree
 on a new run-specific branch rooted at the exact HEAD observed during
 precondition inspection. Deterministic policy failures raise
 ``WorktreeCreationError``; underlying Git-command failures raise the
 existing ``GitCommandError``.
+
+Removal goes through ``git worktree remove`` without ``--force``, so Git
+itself unregisters the worktree, refuses one holding uncommitted or
+untracked data, and never touches a branch or commit.
 """
 
 from __future__ import annotations
 
 import subprocess
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from lockstep.git.repository import (
@@ -253,3 +258,134 @@ def create_run_worktree(
     )
 
     return inspect_repository(resolved_target)
+
+
+# --- Registered linked worktrees and their removal ------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RegisteredWorktree:
+    """One worktree registration as ``git worktree list --porcelain`` reports it."""
+
+    path: Path
+    head_sha: str | None
+    branch: str | None
+    locked: bool
+    prunable: bool
+
+
+def linked_worktree_common_dir(worktree_path: Path) -> Path:
+    """The common Git directory of the linked worktree rooted exactly at *worktree_path*.
+
+    Refuses (``GitCommandError``) a path that is not the root of a *linked* worktree: a main
+    checkout, a subdirectory, or a directory that is not a repository at all.
+    """
+    root = worktree_path.resolve()
+    result = _run_git(
+        root,
+        (
+            "rev-parse",
+            "--path-format=absolute",
+            "--show-toplevel",
+            "--git-dir",
+            "--git-common-dir",
+        ),
+        check=True,
+    )
+    lines = result.stdout.splitlines()
+    if len(lines) != 3:
+        raise GitCommandError(
+            path=root, git_args=("rev-parse",), reason="unexpected rev-parse output", returncode=0
+        )
+    toplevel, git_dir, common_dir = (Path(line) for line in lines)
+    if toplevel.resolve() != root:
+        raise GitCommandError(
+            path=root, git_args=("rev-parse",), reason="not a worktree root", returncode=0
+        )
+    if git_dir.resolve() == common_dir.resolve():
+        raise GitCommandError(
+            path=root, git_args=("rev-parse",), reason="not a linked worktree", returncode=0
+        )
+    return common_dir.resolve()
+
+
+def _registration(fields: list[str]) -> RegisteredWorktree:
+    path: Path | None = None
+    head: str | None = None
+    branch: str | None = None
+    locked = prunable = False
+    for field in fields:
+        key, _, value = field.partition(" ")
+        if key == "worktree":
+            path = Path(value)
+        elif key == "HEAD":
+            head = value
+        elif key == "branch":
+            branch = value.removeprefix("refs/heads/")
+        elif key == "locked":
+            locked = True
+        elif key == "prunable":
+            prunable = True
+    if path is None:
+        raise ValueError("a worktree registration without a path")
+    return RegisteredWorktree(
+        path=path, head_sha=head, branch=branch, locked=locked, prunable=prunable
+    )
+
+
+def registered_worktrees(common_dir: Path) -> tuple[RegisteredWorktree, ...]:
+    """Every worktree registered in the repository whose common Git directory is *common_dir*."""
+    result = _run_git_dir(common_dir, ("worktree", "list", "--porcelain", "-z"))
+    registrations: list[RegisteredWorktree] = []
+    fields: list[str] = []
+    for field in result.stdout.split("\0"):
+        if field:
+            fields.append(field)
+            continue
+        if fields:
+            try:
+                registrations.append(_registration(fields))
+            except ValueError as exc:
+                raise GitCommandError(
+                    path=common_dir,
+                    git_args=("worktree", "list"),
+                    reason=str(exc),
+                    returncode=0,
+                ) from exc
+            fields = []
+    return tuple(registrations)
+
+
+def remove_linked_worktree(common_dir: Path, worktree_path: Path) -> None:
+    """Unregister and delete one linked worktree the way Git itself does, never forcing it.
+
+    Git refuses a worktree with tracked modifications or untracked files, and a locked one; a
+    registration whose directory is already gone is unregistered alone. Branches and commits
+    are never touched.
+    """
+    _run_git_dir(common_dir, ("worktree", "remove", str(worktree_path)))
+
+
+def _run_git_dir(common_dir: Path, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    argv = ["git", f"--git-dir={common_dir}", *args]
+    try:
+        result = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            check=False,
+            shell=False,
+        )
+    except OSError as exc:
+        raise GitCommandError(
+            path=common_dir, git_args=tuple(args), reason=str(exc), returncode=None
+        ) from exc
+    if result.returncode != 0:
+        raise GitCommandError(
+            path=common_dir,
+            git_args=tuple(args),
+            reason=result.stderr.strip() or f"git exited with {result.returncode}",
+            returncode=result.returncode,
+        )
+    return result
