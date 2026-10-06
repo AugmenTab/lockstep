@@ -77,6 +77,20 @@ def is_ancestor(root: Path, ancestor: str, descendant: str) -> bool:
     return result.returncode == 0
 
 
+def branch_commit(root: Path, branch: str) -> str | None:
+    """The commit local branch *branch* points at, or ``None`` if no such branch exists."""
+    if not branch or branch.startswith("-"):
+        raise GitCommandError(
+            path=root, git_args=("rev-parse",), reason="invalid branch name", returncode=None
+        )
+    result = _run_git_text(
+        root, ["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}^{{commit}}"], check=False
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
 def _worktree_bytes(root: Path, path: str) -> bytes | None:
     target = root / path
     if target.is_file():

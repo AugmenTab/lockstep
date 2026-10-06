@@ -55,7 +55,7 @@ from lockstep.context.context_pack import (
 from lockstep.context.project_digest import project_digest_identity
 from lockstep.context.project_digest_store import ProjectDigestStoreError, load_project_digest
 from lockstep.contract_test_targets import target_path_violation, traverses_symlink
-from lockstep.domain import AgentRole, MasterPlan, PhasePlan, ProjectId
+from lockstep.domain import AgentRole, MasterPlan, PhaseId, PhasePlan, ProjectId
 from lockstep.handoff import (
     ContractAuthority,
     HandoffIdentity,
@@ -573,11 +573,16 @@ def build_jit_replan_context_pack(
     phase_plan: PhasePlan,
     cursor: ProjectCursor,
     basis: ReplanBasis,
+    finalized_phases: Sequence[tuple[PhaseId, str]] = (),
 ) -> ContextPack:
     """A fresh JIT Planner's pack, from the frozen plan, the cursor and the accepted basis.
 
     The completed prefix of *phase_plan* is immutable history; the rest is the
     provisional suffix. No Implementer or Reviewer material is admitted.
+    *finalized_phases* are ``(phase_id, identity)`` references to the verified
+    finalizations of completed earlier Phases (Phase 12.8); they join the same
+    completed-history section as compact references only, and the member is absent
+    when there are none.
     """
     operation = ContextOperation.JIT_REPLAN
     digest = master_plan_digest(master_plan)
@@ -593,6 +598,23 @@ def build_jit_replan_context_pack(
         e.subphase_id for e in completed
     ):
         raise ContextPackError("the phase plan diverges from the completed history")
+
+    if any(phase_id not in cursor.completed_phases for phase_id, _ in finalized_phases):
+        raise ContextPackError("a finalized phase is not in the completed history")
+    history: dict[str, object] = {
+        "phase_id": cursor.current_phase.root,
+        "subphases": [o.model_dump(mode="json") for o in phase_plan.subphases[:count]],
+        "accepted": [e.model_dump(mode="json") for e in completed],
+    }
+    if finalized_phases:
+        history["finalized_phases"] = [
+            {
+                "phase_id": phase_id.root,
+                "identity": sha256,
+                "reference": f"phase-context:{phase_id.root}@{sha256}",
+            }
+            for phase_id, sha256 in finalized_phases
+        ]
 
     phase = cursor.current_phase.root
     identity = ContextIdentity(
@@ -614,11 +636,7 @@ def build_jit_replan_context_pack(
                 _K.COMPLETED_HISTORY,
                 _TITLE_COMPLETED,
                 f"project-cursor:revision-{cursor.revision}#completed",
-                {
-                    "phase_id": phase,
-                    "subphases": [o.model_dump(mode="json") for o in phase_plan.subphases[:count]],
-                    "accepted": [e.model_dump(mode="json") for e in completed],
-                },
+                history,
             ),
             _section(
                 _K.PROVISIONAL_OUTLINE,

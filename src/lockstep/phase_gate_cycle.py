@@ -5,7 +5,8 @@ with the host transitions around a Phase boundary, in a dedicated higher-level l
 neither the gate nor the ordinary Sub-phase runner ever completes a Phase or repairs one::
 
     cursor READY -> gate attempt n -> accepted decision
-        PASS -> next Phase's outline published, cursor advanced (or project complete)
+        PASS -> the Phase's context finalization published and verified (12.8)
+             -> next Phase's outline published, cursor advanced (or project complete)
         FAIL -> a fresh Planner plans exactly one remediation Sub-phase (the gate findings are
                 evidence, not requirements) -> host-validated, durably accepted
              -> the same Phase reopened with that Sub-phase -> the ordinary 11.2-11.4 runner
@@ -43,6 +44,7 @@ from lockstep.agents import (
     StructuredOutputAdapterError,
 )
 from lockstep.domain import MasterPlan, PhaseId, PhasePlan, SubphaseId, SubphaseOutline
+from lockstep.phase_context_finalization import finalize_phase_context
 from lockstep.phase_gate import (
     PhaseGateAttemptDisposition,
     PhaseGateAttemptResult,
@@ -174,12 +176,15 @@ def _emit(
 def complete_phase_from_gate_pass(
     runtime: AgentRuntime, decision: PhaseGateDecision
 ) -> ProjectCursor:
-    """Apply an accepted gate PASS: publish the next Phase's outline, then advance the cursor.
+    """Apply an accepted gate PASS: finalize the Phase, publish the next outline, advance.
 
-    Only a PASS decision bound to this project and Master Plan can be applied. Both steps
-    are idempotent, so a crash between them (or after them) is repaired by calling this again:
-    the Phase joins the completed history exactly once and ``PHASE_COMPLETE`` is recorded
-    exactly once. The successor Phase starts from its own frozen outline; nothing is invented.
+    Only a PASS decision bound to this project and Master Plan can be applied. The Phase's
+    immutable context finalization (:mod:`lockstep.phase_context_finalization`) is published
+    and verified first; a Phase whose finalization cannot be established never completes.
+    Every step is idempotent, so a crash between them (or after them) is repaired by calling
+    this again: the finalization is never rewritten, the Phase joins the completed history
+    exactly once and ``PHASE_COMPLETE`` is recorded exactly once. The successor Phase starts
+    from its own frozen outline; nothing is invented.
     """
     if decision.outcome is not PhaseGateVerdict.PASS:
         raise PhaseGateError(
@@ -204,6 +209,7 @@ def complete_phase_from_gate_pass(
             PhaseGateRefusal.ARTIFACT_INCONSISTENT, "a gate decision exists without its basis"
         )
 
+    finalize_phase_context(runtime, decision)  # durable handoff before any Phase transition
     if decision.phase_id not in cursor.completed_phases:
         master = load_frozen_master_plan(project_root)
         if master is None:
