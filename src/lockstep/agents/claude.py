@@ -4,7 +4,9 @@ Answers deterministic yes/no questions about a configured Claude Code
 executable — is it a supported version, does its help surface advertise
 the flags Lockstep's adapter requires, and does its stored
 authentication describe an active claude.ai first-party paid
-subscription — without executing any model turn. Also constructs
+subscription — without executing any model turn. Also detects, by
+presence only, a platform-managed CLAUDE.md that would add hidden
+semantics outside Lockstep's ContextPack, and constructs
 deterministic Claude Code print-mode invocations for the
 subscription-backed Planner, Implementer, and Reviewer roles via
 :class:`ClaudeAdapter`. All external commands are executed through
@@ -16,7 +18,9 @@ every adapter command by the allowlist-based environment builder.
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -74,6 +78,28 @@ _FLAG_TOKEN_PATTERN: dict[str, re.Pattern[str]] = {
 
 _EMPTY_EXPLICIT_ENV: Mapping[str, str] = MappingProxyType({})
 
+# Defense in depth around --safe-mode / --restricted: pin the built-in
+# AGENTS.md plugin to CLAUDE.md-only so an operator's user settings cannot
+# change native instruction discovery underneath Lockstep. Compact, sorted
+# JSON so the argv is byte-deterministic.
+_AGENTS_PLUGIN_SETTINGS = json.dumps(
+    {
+        "pluginConfigs": {
+            "cc-plugin-agents-md@builtin": {"options": {"instructionFiles": "claude-md"}}
+        }
+    },
+    separators=(",", ":"),
+    sort_keys=True,
+)
+
+_MANAGED_INSTRUCTIONS_PATHS: Mapping[str, Path] = MappingProxyType(
+    {
+        "darwin": Path("/Library/Application Support/ClaudeCode/CLAUDE.md"),
+        "win32": Path("C:\\Program Files\\ClaudeCode\\CLAUDE.md"),
+    }
+)
+_LINUX_MANAGED_INSTRUCTIONS_PATH = Path("/etc/claude-code/CLAUDE.md")
+
 # The one Claude provider environment policy, shared by the preflight probes
 # and every ClaudeAdapter command. HOME and PATH are required; USER is
 # inherited only when the operator environment supplies it (macOS
@@ -103,10 +129,12 @@ class ClaudeCliStatus:
     the four fields Lockstep reads from ``claude auth status``
     (``loggedIn``, ``authMethod``, ``apiProvider``, ``subscriptionType``),
     and one boolean per Phase-6 CLI flag observed in the installed help
-    surface. ``supports_bare`` is diagnostic only: ``--bare`` is
+    surface, plus whether a platform-managed CLAUDE.md is present.
+    ``supports_bare`` is diagnostic only: ``--bare`` is
     incompatible with claude.ai subscription OAuth and is never used by
     :class:`ClaudeAdapter`. Deliberately excludes email, organization
-    identifiers, credential paths, and any auth-token material.
+    identifiers, credential paths, managed instruction paths or contents,
+    and any auth-token material.
     """
 
     executable: str
@@ -133,12 +161,14 @@ class ClaudeCliStatus:
     supports_safe_mode: bool = False
     supports_allowed_tools: bool = False
 
+    managed_instructions_present: bool = False
+
 
 class ClaudePreflightError(Exception):
     """A stage of the Claude Code preflight rejected the observed evidence.
 
     Carries the failing ``stage`` (``version``, ``capabilities``,
-    ``auth``, ``subscription``, or ``environment``) and a short
+    ``auth``, ``subscription``, ``environment``, or ``policy``) and a short
     sanitized ``reason``. Never carries raw auth JSON, environment
     values, credential material, or user-identity fields.
     """
@@ -147,6 +177,16 @@ class ClaudePreflightError(Exception):
         self.stage = stage
         self.reason = reason
         super().__init__(f"Claude preflight failed during {stage}: {reason}")
+
+
+def managed_claude_instructions_path(platform: str = sys.platform) -> Path:
+    """Return the platform-managed Claude Code CLAUDE.md location for *platform*.
+
+    macOS uses ``/Library/Application Support/ClaudeCode``, Windows
+    ``C:\\Program Files\\ClaudeCode``, and every other platform (Linux, WSL)
+    ``/etc/claude-code``. The file is only ever checked for presence.
+    """
+    return _MANAGED_INSTRUCTIONS_PATHS.get(platform, _LINUX_MANAGED_INSTRUCTIONS_PATH)
 
 
 def claude_inherited_environment(parent_env: Mapping[str, str]) -> Mapping[str, str]:
@@ -297,6 +337,7 @@ def probe_claude_cli(
     claude_config_dir: Path | None = None,
     timeout_seconds: float = 15.0,
     max_output_bytes: int = 1_048_576,
+    managed_instructions_path: Path | None = None,
 ) -> ClaudeCliStatus:
     """Execute the three non-inference Claude Code probes and return evidence.
 
@@ -305,9 +346,13 @@ def probe_claude_cli(
     and ``PATH`` (required) and ``USER`` (when present) from *parent_env*
     and, when supplied, an explicit ``CLAUDE_CONFIG_DIR`` resolved from
     *claude_config_dir*. No other ambient variable, and in particular no
-    Anthropic or cloud-provider credential variable, is inherited. The returned
+    Anthropic or cloud-provider credential variable, is inherited. Also
+    records, by presence only, whether a managed CLAUDE.md exists at
+    *managed_instructions_path* (by default
+    :func:`managed_claude_instructions_path`). The returned
     :class:`ClaudeCliStatus` is diagnostic evidence only; subscription
-    readiness is decided by :func:`require_claude_subscription_ready`.
+    readiness is decided by :func:`require_claude_subscription_ready` and
+    semantic isolation by :func:`require_claude_instruction_isolation`.
     """
     resolved_cwd = cwd.resolve()
     probe_env = _build_probe_env(parent_env, claude_config_dir)
@@ -363,6 +408,12 @@ def probe_claude_cli(
         )
     logged_in, auth_method, api_provider, subscription_type = _parse_auth_status(auth_result.stdout)
 
+    managed_path = (
+        managed_claude_instructions_path()
+        if managed_instructions_path is None
+        else managed_instructions_path
+    )
+
     return ClaudeCliStatus(
         executable=claude_executable,
         version=version,
@@ -390,6 +441,8 @@ def probe_claude_cli(
             _flag_supported(help_text, "--allowedTools")
             or _flag_supported(help_text, "--allowed-tools")
         ),
+        # Presence only: the managed file is never opened or read.
+        managed_instructions_present=os.path.lexists(managed_path),
     )
 
 
@@ -431,6 +484,26 @@ def require_claude_subscription_ready(status: ClaudeCliStatus) -> ClaudeCliStatu
             stage="subscription",
             reason=(
                 f"subscriptionType {subscription!r} is not a supported paid Claude subscription"
+            ),
+        )
+    return status
+
+
+def require_claude_instruction_isolation(status: ClaudeCliStatus) -> ClaudeCliStatus:
+    """Return *status* unchanged when no managed CLAUDE.md is present.
+
+    A managed CLAUDE.md is organization prompt content that Lockstep cannot
+    prove ``--safe-mode`` suppresses, so it would reach the model as hidden
+    Claude-only semantics. Raises :class:`ClaudePreflightError` with stage
+    ``policy``; the reason names neither path nor contents. Managed
+    settings (execution constraints) are unaffected.
+    """
+    if status.managed_instructions_present:
+        raise ClaudePreflightError(
+            stage="policy",
+            reason=(
+                "a managed Claude instruction file is present; canonical Lockstep "
+                "execution requires provider-neutral project semantics"
             ),
         )
     return status
@@ -562,9 +635,12 @@ class ClaudeAdapter:
     :attr:`BillingMode.SUBSCRIPTION_ONLY`. Construction requires
     subscription readiness via :func:`require_claude_subscription_ready`
     plus the adapter's CLI capability surface (``--safe-mode`` and
-    ``--allowedTools`` included; ``--bare`` never). Every command pins
+    ``--allowedTools`` included; ``--bare`` never), and rejects a status
+    reporting a managed CLAUDE.md. Every command pins
     the configured model and effort, runs in safe, restricted,
-    non-persistent print mode with permission prompts disabled and JSON
+    non-persistent print mode, with the built-in AGENTS.md plugin pinned to
+    CLAUDE.md-only by an explicit ``--settings`` payload, permission prompts
+    disabled and JSON
     result-envelope output, exposes an explicit role-specific tool list, and
     denies MCP tools. :meth:`normalize_output` unwraps that envelope so
     orchestrators see only the content (and usage is attributed from it). The
@@ -624,6 +700,7 @@ class ClaudeAdapter:
         object.__setattr__(self, "inherited_env", MappingProxyType(dict(self.inherited_env)))
 
         require_claude_subscription_ready(self.status)
+        require_claude_instruction_isolation(self.status)
         _require_adapter_capabilities(self.status, self.role)
 
     def build_command(self, request: AgentInvocationRequest) -> AgentCommand:
@@ -652,6 +729,8 @@ class ClaudeAdapter:
             "-p",
             "--safe-mode",
             "--restricted",
+            "--settings",
+            _AGENTS_PLUGIN_SETTINGS,
             "--no-session-persistence",
             "--permission-prompts",
             "none",
