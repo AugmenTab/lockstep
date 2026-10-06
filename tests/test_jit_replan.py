@@ -444,9 +444,12 @@ def test_the_receipt_is_not_a_competing_progress_authority(
         "transactions",
         "worktrees",
     }
+    # 12.10-R1: this run performed project-level Planner inference (Contract planning and
+    # JIT replans), so the planning directory also holds its invocation journal.
     assert {p.name for p in (project.runtime_dir / "planning").iterdir()} == {
         "phase-plan.json",
         "replans",
+        "invocations.jsonl",
     }
 
 
