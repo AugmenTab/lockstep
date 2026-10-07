@@ -12,7 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from lockstep.git.repository import GitCommandError, _run_git_text
+from lockstep.git.repository import (
+    GitCommandError,
+    _decode_nul_paths,
+    _run_git_bytes,
+    _run_git_text,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,3 +63,21 @@ def measure_repository_change(root: Path, base_sha: str, head_sha: str) -> Repos
         lines_deleted=deleted,
         binary_files_changed=binary,
     )
+
+
+def changed_paths_between(root: Path, base_sha: str, head_sha: str) -> tuple[str, ...]:
+    """The sorted paths that differ between commit *base_sha* and commit *head_sha*.
+
+    Same commit-object basis as :func:`measure_repository_change` (no renames, no working
+    tree, index or untracked file), so the two always describe the same change.
+    """
+    for sha in (base_sha, head_sha):
+        if not sha or sha.startswith("-"):
+            raise GitCommandError(
+                path=root,
+                git_args=("diff", "--name-only"),
+                reason=f"invalid commit reference {sha!r}",
+                returncode=None,
+            )
+    result = _run_git_bytes(root, ["diff", "--name-only", "--no-renames", "-z", base_sha, head_sha])
+    return tuple(sorted(_decode_nul_paths(result.stdout)))

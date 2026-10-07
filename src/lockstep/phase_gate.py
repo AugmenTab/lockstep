@@ -32,6 +32,8 @@ belong to :mod:`lockstep.phase_gate_cycle`, which composes this module.
 Layout beneath the project run root (``runtime.runtime_dir``)::
 
     phase-gates/<phase-id>/events.jsonl          typed project-level gate journal
+    phase-gates/<phase-id>/review-invocations.jsonl
+                                       semantic-review invocation attribution (13.1)
     phase-gates/<phase-id>/attempt-<n>/basis.json
                                        evidence.json
                                        decision.json      the acceptance point
@@ -83,6 +85,8 @@ from lockstep.agents import (
 from lockstep.domain import (
     AcceptanceCriterion,
     AgentRole,
+    ExecutionOutcome,
+    FailureCause,
     MasterPlan,
     PhaseId,
     PhasePlan,
@@ -94,6 +98,10 @@ from lockstep.domain import (
 )
 from lockstep.execution_config import ExecutionConfigError, require_phase_gate_execution
 from lockstep.git import GitCommandError, inspect_repository
+from lockstep.phase_gate_review_invocation import (
+    PhaseGateReviewInvocationIdentity,
+    PhaseGateReviewInvocationRecorder,
+)
 from lockstep.planning_store import load_active_subphase_contract, load_frozen_master_plan
 from lockstep.planning_transport import PlanningTransportError
 from lockstep.process import (
@@ -773,12 +781,19 @@ def invoke_planner_review(
     timeout_seconds: float,
     max_output_bytes: int,
     termination_grace_seconds: float,
+    review_identity: PhaseGateReviewInvocationIdentity | None = None,
 ) -> PhaseGateReview:
     """Invoke the configured Planner once and hydrate its structured Phase-gate review.
 
     The same provider-neutral path every Planner artifact takes (adapter, structured
     schema, private-stdin inference, strict hydration), for the one artifact the planning
     transport does not know. Exactly one inference: no retry, fallback, or repair.
+
+    With a host-issued *review_identity* (13.1), the invocation is journaled in the Phase's
+    gate-owned review journal: STARTED immediately before the process launches and RETURNED
+    once its result is known -- a non-zero exit, an output budget overrun or a review that
+    does not hydrate is recorded as a failure before the typed error is raised. The journal
+    is attribution only; the provider never sees the identity.
     """
     structured = prepare_structured_planner_adapter(
         runtime.adapters.planner,
@@ -795,15 +810,40 @@ def invoke_planner_review(
         max_output_bytes=max_output_bytes,
         termination_grace_seconds=termination_grace_seconds,
     )
-    process = invoke_agent(structured, request, parent_env=runtime.transaction_parent_env).process
+    recorder = (
+        None
+        if review_identity is None
+        else PhaseGateReviewInvocationRecorder(
+            runtime_dir=runtime.runtime_dir, identity=review_identity, adapter=structured
+        )
+    )
+    invocation = invoke_agent(
+        structured, request, parent_env=runtime.transaction_parent_env, recorder=recorder
+    )
+    process = invocation.process
+
+    def returned(outcome: ExecutionOutcome, cause: FailureCause | None = None) -> None:
+        if recorder is not None:
+            recorder.returned(
+                outcome=outcome,
+                returncode=process.returncode,
+                usage=invocation.usage,
+                cause=cause,
+            )
+
     if process.returncode != 0:
+        returned(ExecutionOutcome.FAILURE)
         raise PlanningTransportError("planner process exited non-zero")
     if process.stdout_truncated:
+        returned(ExecutionOutcome.FAILURE, FailureCause.MALFORMED_OUTPUT)
         raise PlanningTransportError("planner review exceeded the configured output budget")
     try:
-        return PhaseGateReview.model_validate_json(process.stdout)
+        review = PhaseGateReview.model_validate_json(process.stdout)
     except ValidationError:
+        returned(ExecutionOutcome.FAILURE, FailureCause.MALFORMED_OUTPUT)
         raise PlanningTransportError("planner output is not a valid phase-gate-review") from None
+    returned(ExecutionOutcome.SUCCESS)
+    return review
 
 
 # Failures that mean "the review could not be obtained", never "the Phase failed".
@@ -1284,6 +1324,12 @@ def _obtain_review(
             timeout_seconds=timeout_seconds,
             max_output_bytes=max_output_bytes,
             termination_grace_seconds=termination_grace_seconds,
+            # Attribution only: the invocation belongs to this gate attempt (13.1).
+            review_identity=PhaseGateReviewInvocationIdentity.issue(
+                project_id=basis.project_id,
+                phase_id=basis.phase_id,
+                gate_attempt=basis.gate_attempt,
+            ),
         )
     except _REVIEW_FAILURES as exc:
         return _execution_failed(
