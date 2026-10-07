@@ -55,7 +55,15 @@ from lockstep.context.context_pack import (
 from lockstep.context.project_digest import project_digest_identity
 from lockstep.context.project_digest_store import ProjectDigestStoreError, load_project_digest
 from lockstep.contract_test_targets import target_path_violation, traverses_symlink
-from lockstep.domain import AgentRole, MasterPlan, PhaseId, PhasePlan, ProjectId
+from lockstep.domain import (
+    AgentRole,
+    MasterPlan,
+    PhaseId,
+    PhasePlan,
+    ProjectId,
+    SubphaseId,
+    SubphaseOutline,
+)
 from lockstep.handoff import (
     ContractAuthority,
     HandoffIdentity,
@@ -78,6 +86,7 @@ from lockstep.project_cursor import ProjectCursor, master_plan_digest
 
 if TYPE_CHECKING:
     from lockstep.jit_replan import ReplanBasis
+    from lockstep.phase_gate import PhaseGateBasis, PhaseGateDecision, PhaseGateEvidence
 
 CONTEXT_DOCUMENT_MAX_BYTES = 64 * 1024
 CONTEXT_DOCUMENTS_MAX_TOTAL_BYTES = 256 * 1024
@@ -116,6 +125,9 @@ _TITLE_MASTER_PLAN = "MASTER PLAN"
 _TITLE_COMPLETED = "COMPLETED HISTORY"
 _TITLE_UNFINISHED = "UNFINISHED PROVISIONAL OUTLINE"
 _TITLE_ACCEPTED_BASIS = "ACCEPTED REPOSITORY BASIS"
+_TITLE_PHASE_PLAN = "CURRENT PROVISIONAL PHASE PLAN"
+_TITLE_GATE_DECISION = "PHASE GATE FAILURE FINDINGS"
+_TITLE_GATE_EVIDENCE = "PHASE GATE COMMAND EVIDENCE"
 
 
 # --- Selection and sources ------------------------------------------------------------
@@ -566,6 +578,78 @@ def build_reviewer_context_pack(sources: ContextSources, handoff: ReviewerHandof
     )
 
 
+def _master_plan(master_plan: MasterPlan) -> ContextSection:
+    digest = master_plan_digest(master_plan)
+    return _section(
+        _K.MASTER_PLAN,
+        _TITLE_MASTER_PLAN,
+        f"master-plan:{digest}",
+        {"master_plan_digest": digest, "master_plan": master_plan.model_dump(mode="json")},
+        version=digest,
+    )
+
+
+def _completed_history(
+    cursor: ProjectCursor,
+    phase_id: PhaseId,
+    outlines: Sequence[SubphaseOutline],
+    finalized_phases: Sequence[tuple[PhaseId, str]],
+) -> ContextSection:
+    """The immutable completed history of *phase_id*, plus earlier Phases' finalizations.
+
+    *outlines* is the Phase's current outline; its completed prefix must name exactly the
+    cursor's accepted Sub-phases of that Phase. Finalized Phases (12.8) join as compact
+    references only, and the member is absent when there are none.
+    """
+    completed = tuple(e for e in cursor.completed_subphases if e.phase_id == phase_id)
+    count = len(completed)
+    if tuple(o.subphase_id for o in outlines[:count]) != tuple(e.subphase_id for e in completed):
+        raise ContextPackError("the phase plan diverges from the completed history")
+    if any(finalized not in cursor.completed_phases for finalized, _ in finalized_phases):
+        raise ContextPackError("a finalized phase is not in the completed history")
+    history: dict[str, object] = {
+        "phase_id": phase_id.root,
+        "subphases": [o.model_dump(mode="json") for o in outlines[:count]],
+        "accepted": [e.model_dump(mode="json") for e in completed],
+    }
+    if finalized_phases:
+        history["finalized_phases"] = [
+            {
+                "phase_id": finalized.root,
+                "identity": sha256,
+                "reference": f"phase-context:{finalized.root}@{sha256}",
+            }
+            for finalized, sha256 in finalized_phases
+        ]
+    return _section(
+        _K.COMPLETED_HISTORY,
+        _TITLE_COMPLETED,
+        f"project-cursor:revision-{cursor.revision}#completed",
+        history,
+    )
+
+
+def _accepted_basis(basis: ReplanBasis) -> ContextSection:
+    return _section(
+        _K.REPOSITORY_STATE,
+        _TITLE_ACCEPTED_BASIS,
+        f"git:{basis.commit}#accepted-basis",
+        basis.model_dump(mode="json"),
+        version=basis.commit,
+    )
+
+
+def _require_planning_state(
+    sources: ContextSources, master_plan: MasterPlan, cursor: ProjectCursor | None
+) -> None:
+    if master_plan.project_id != sources.project_id or (
+        cursor is not None and cursor.project_id != sources.project_id
+    ):
+        raise ContextPackError("the planning state names a different project")
+    if cursor is not None and master_plan_digest(master_plan) != cursor.master_plan_digest:
+        raise ContextPackError("the master plan is not the one the cursor is bound to")
+
+
 def build_jit_replan_context_pack(
     sources: ContextSources,
     *,
@@ -585,36 +669,13 @@ def build_jit_replan_context_pack(
     when there are none.
     """
     operation = ContextOperation.JIT_REPLAN
-    digest = master_plan_digest(master_plan)
-    if master_plan.project_id != sources.project_id or cursor.project_id != sources.project_id:
-        raise ContextPackError("the planning state names a different project")
-    if digest != cursor.master_plan_digest:
-        raise ContextPackError("the master plan is not the one the cursor is bound to")
+    _require_planning_state(sources, master_plan, cursor)
     if cursor.current_phase is None or phase_plan.phase_id != cursor.current_phase:
         raise ContextPackError("the phase plan is not the cursor's current phase")
-    completed = tuple(e for e in cursor.completed_subphases if e.phase_id == cursor.current_phase)
-    count = len(completed)
-    if tuple(o.subphase_id for o in phase_plan.subphases[:count]) != tuple(
-        e.subphase_id for e in completed
-    ):
-        raise ContextPackError("the phase plan diverges from the completed history")
-
-    if any(phase_id not in cursor.completed_phases for phase_id, _ in finalized_phases):
-        raise ContextPackError("a finalized phase is not in the completed history")
-    history: dict[str, object] = {
-        "phase_id": cursor.current_phase.root,
-        "subphases": [o.model_dump(mode="json") for o in phase_plan.subphases[:count]],
-        "accepted": [e.model_dump(mode="json") for e in completed],
-    }
-    if finalized_phases:
-        history["finalized_phases"] = [
-            {
-                "phase_id": phase_id.root,
-                "identity": sha256,
-                "reference": f"phase-context:{phase_id.root}@{sha256}",
-            }
-            for phase_id, sha256 in finalized_phases
-        ]
+    history = _completed_history(
+        cursor, cursor.current_phase, phase_plan.subphases, finalized_phases
+    )
+    count = sum(e.phase_id == cursor.current_phase for e in cursor.completed_subphases)
 
     phase = cursor.current_phase.root
     identity = ContextIdentity(
@@ -625,19 +686,8 @@ def build_jit_replan_context_pack(
         identity,
         [
             *_guidance(sources, operation),
-            _section(
-                _K.MASTER_PLAN,
-                _TITLE_MASTER_PLAN,
-                f"master-plan:{digest}",
-                {"master_plan_digest": digest, "master_plan": master_plan.model_dump(mode="json")},
-                version=digest,
-            ),
-            _section(
-                _K.COMPLETED_HISTORY,
-                _TITLE_COMPLETED,
-                f"project-cursor:revision-{cursor.revision}#completed",
-                history,
-            ),
+            _master_plan(master_plan),
+            history,
             _section(
                 _K.PROVISIONAL_OUTLINE,
                 _TITLE_UNFINISHED,
@@ -647,12 +697,193 @@ def build_jit_replan_context_pack(
                     "subphases": [o.model_dump(mode="json") for o in phase_plan.subphases[count:]],
                 },
             ),
+            _accepted_basis(basis),
+        ],
+    )
+
+
+def _accepted_history(
+    cursor: ProjectCursor | None,
+    basis: ReplanBasis | None,
+    phase_id: PhaseId,
+    outlines: Sequence[SubphaseOutline],
+    finalized_phases: Sequence[tuple[PhaseId, str]],
+) -> tuple[ContextSection, ContextSection] | None:
+    """Completed history and the accepted basis: both exactly when something was accepted.
+
+    The first-ever planning of a project legitimately has neither and fabricates neither;
+    once history exists, planning without either is refused.
+    """
+    accepted = cursor is not None and bool(cursor.completed_subphases)
+    if basis is None:
+        if accepted:
+            raise ContextPackError("the accepted repository basis is required and is missing")
+        return None
+    if not accepted:
+        raise ContextPackError("an accepted basis was supplied without accepted history")
+    assert cursor is not None
+    last = cursor.completed_subphases[-1]
+    if (basis.phase_id, basis.subphase_id, basis.run_id, basis.contract_digest) != (
+        last.phase_id,
+        last.subphase_id,
+        last.run_id,
+        last.contract_digest,
+    ):
+        raise ContextPackError("the accepted basis is not the latest accepted sub-phase")
+    return (
+        _completed_history(cursor, phase_id, outlines, finalized_phases),
+        _accepted_basis(basis),
+    )
+
+
+def _phase_plan_digest(phase_plan: PhasePlan) -> str:
+    return hashlib.sha256(_json(phase_plan.model_dump(mode="json")).encode("utf-8")).hexdigest()
+
+
+def build_contract_planning_context_pack(
+    sources: ContextSources,
+    *,
+    master_plan: MasterPlan,
+    phase_plan: PhasePlan,
+    target_subphase_id: SubphaseId,
+    cursor: ProjectCursor | None,
+    basis: ReplanBasis | None,
+    finalized_phases: Sequence[tuple[PhaseId, str]] = (),
+) -> ContextPack:
+    """The next-Contract Planner's pack (12.10-R1): plan, outline, history and accepted basis.
+
+    The frozen Master Plan and the current published Phase plan are always carried, exactly
+    once; the trailer names only the target. Completed history and the accepted basis join
+    exactly when something has been accepted. There is no Contract yet and none is invented.
+    Deliberately not part of the frozen ``__all__`` surface.
+    """
+    operation = ContextOperation.CONTRACT_PLANNING
+    _require_planning_state(sources, master_plan, cursor)
+    if all(p.phase_id != phase_plan.phase_id for p in master_plan.phases):
+        raise ContextPackError("the phase plan is not a phase of the master plan")
+    if all(o.subphase_id != target_subphase_id for o in phase_plan.subphases):
+        raise ContextPackError("the target sub-phase is not in the phase plan")
+    history = _accepted_history(
+        cursor, basis, phase_plan.phase_id, phase_plan.subphases, finalized_phases
+    )
+    digest = _phase_plan_digest(phase_plan)
+    outline = _section(
+        _K.PROVISIONAL_OUTLINE,
+        _TITLE_PHASE_PLAN,
+        f"phase-plan:{digest}",
+        {"phase_plan_digest": digest, "phase_plan": phase_plan.model_dump(mode="json")},
+        version=digest,
+    )
+    identity = ContextIdentity(
+        project_id=sources.project_id,
+        phase_id=phase_plan.phase_id,
+        subphase_id=target_subphase_id,
+        role=AgentRole.PLANNER,
+    )
+    sections = [*_guidance(sources, operation), _master_plan(master_plan)]
+    if history is None:
+        sections.append(outline)
+    else:
+        sections.extend((history[0], outline, history[1]))
+    return _pack(operation, identity, sections)
+
+
+def build_phase_planning_context_pack(
+    sources: ContextSources,
+    *,
+    master_plan: MasterPlan,
+    phase_id: PhaseId,
+    current_outline: PhasePlan | None,
+    cursor: ProjectCursor | None,
+    basis: ReplanBasis | None,
+    finalized_phases: Sequence[tuple[PhaseId, str]] = (),
+) -> ContextPack:
+    """The Phase-outline Planner's pack (12.10-R1): Master Plan, then history and basis.
+
+    The outline being created is never in its own pack; a current provisional outline stays
+    request material in the trailer. Deliberately not part of the frozen ``__all__`` surface.
+    """
+    operation = ContextOperation.PHASE_PLANNING
+    _require_planning_state(sources, master_plan, cursor)
+    if all(p.phase_id != phase_id for p in master_plan.phases):
+        raise ContextPackError("the target phase is not in the master plan")
+    outlines = current_outline.subphases if current_outline is not None else ()
+    history = _accepted_history(cursor, basis, phase_id, outlines, finalized_phases)
+    identity = ContextIdentity(
+        project_id=sources.project_id, phase_id=phase_id, role=AgentRole.PLANNER
+    )
+    return _pack(
+        operation,
+        identity,
+        [*_guidance(sources, operation), _master_plan(master_plan), *(history or ())],
+    )
+
+
+def build_gate_remediation_context_pack(
+    sources: ContextSources,
+    *,
+    master_plan: MasterPlan,
+    phase_plan: PhasePlan,
+    cursor: ProjectCursor,
+    basis: PhaseGateBasis,
+    decision: PhaseGateDecision,
+    evidence: PhaseGateEvidence,
+    remediation_subphase_id: SubphaseId,
+    finalized_phases: Sequence[tuple[PhaseId, str]] = (),
+) -> ContextPack:
+    """The gate-remediation Planner's pack (12.10-R1).
+
+    Stable project context, the Phase's completed history, the audited gate basis, and the
+    failed attempt's decision and command evidence. The failure stays volatile execution
+    evidence: it explains why the frozen requirements are unmet and never becomes one.
+    Deliberately not part of the frozen ``__all__`` surface.
+    """
+    operation = ContextOperation.GATE_REMEDIATION
+    _require_planning_state(sources, master_plan, cursor)
+    if (decision.phase_id, decision.gate_attempt, decision.basis_commit) != (
+        basis.phase_id,
+        basis.gate_attempt,
+        basis.commit,
+    ) or (evidence.phase_id, evidence.gate_attempt, evidence.basis_commit) != (
+        basis.phase_id,
+        basis.gate_attempt,
+        basis.commit,
+    ):
+        raise ContextPackError("the gate artifacts belong to different attempts")
+    if phase_plan.phase_id != basis.phase_id:
+        raise ContextPackError("the phase plan is not the gated phase")
+    attempt = f"phase-gate:{basis.phase_id.root}/attempt-{basis.gate_attempt}"
+    identity = ContextIdentity(
+        project_id=sources.project_id,
+        phase_id=basis.phase_id,
+        subphase_id=remediation_subphase_id,
+        role=AgentRole.PLANNER,
+    )
+    return _pack(
+        operation,
+        identity,
+        [
+            *_guidance(sources, operation),
+            _master_plan(master_plan),
+            _completed_history(cursor, basis.phase_id, phase_plan.subphases, finalized_phases),
             _section(
                 _K.REPOSITORY_STATE,
                 _TITLE_ACCEPTED_BASIS,
                 f"git:{basis.commit}#accepted-basis",
                 basis.model_dump(mode="json"),
                 version=basis.commit,
+            ),
+            _section(
+                _K.REVIEW_FINDINGS,
+                _TITLE_GATE_DECISION,
+                f"{attempt}#decision",
+                decision.model_dump(mode="json"),
+            ),
+            _section(
+                _K.VERIFICATION_REPORT,
+                _TITLE_GATE_EVIDENCE,
+                f"{attempt}#evidence",
+                evidence.model_dump(mode="json"),
             ),
         ],
     )

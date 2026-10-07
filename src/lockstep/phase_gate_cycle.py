@@ -28,6 +28,15 @@ artifact intact.
 Crash safety comes from durable acceptance points, never from process memory. An accepted
 decision is reused, never re-decided; an accepted remediation plan is applied, never asked for
 twice; every application step is idempotent. Writers are assumed single-process.
+
+Since 12.10-R1 the remediation Planner's prompt is a rendered ``gate_remediation`` ContextPack
+(Project Digest and selected guidance, the frozen Master Plan, the Phase's completed history,
+the audited gate basis, and the failed attempt's decision and command evidence -- the failure
+always volatile execution evidence) followed by a trailer that only names the target, the
+allocated remediation id and the pack section carrying each input.
+:func:`build_gate_remediation_prompt` remains the accepted pure label-based projection of the
+same durable inputs. The inference carries a host-issued planning identity whose target is the
+allocated remediation id, and its STARTED / RETURNED evidence lands in the planning journal.
 """
 
 from __future__ import annotations
@@ -43,8 +52,26 @@ from lockstep.agents import (
     OpenAIStrictSchemaError,
     StructuredOutputAdapterError,
 )
+from lockstep.context.context_pack import (
+    ContextPack,
+    ContextPackError,
+    ContextSourceKind,
+    compose_context_prompt,
+)
+from lockstep.context.context_pack_builder import (
+    ContextSources,
+    build_gate_remediation_context_pack,
+)
+from lockstep.context.context_selection_store import (
+    ContextSelectionStoreError,
+    load_context_selection,
+)
 from lockstep.domain import MasterPlan, PhaseId, PhasePlan, SubphaseId, SubphaseOutline
-from lockstep.phase_context_finalization import finalize_phase_context
+from lockstep.phase_context_finalization import (
+    PhaseContextFinalizationError,
+    finalize_phase_context,
+    finalized_phase_references,
+)
 from lockstep.phase_gate import (
     PhaseGateAttemptDisposition,
     PhaseGateAttemptResult,
@@ -68,6 +95,7 @@ from lockstep.phase_gate import (
     write_remediation_receipt,
 )
 from lockstep.planning import PlanningValidationError, validate_master_plan
+from lockstep.planning_invocation import PlanningInvocationIdentity, PlanningStage
 from lockstep.planning_store import load_frozen_master_plan, load_phase_plan, publish_phase_plan
 from lockstep.planning_transport import (
     PlanningArtifactKind,
@@ -299,6 +327,74 @@ def build_gate_remediation_prompt(
     )
 
 
+def _remediation_context_prompt(
+    runtime: AgentRuntime,
+    master: MasterPlan,
+    published: PhasePlan,
+    cursor: ProjectCursor,
+    basis: PhaseGateBasis,
+    decision: PhaseGateDecision,
+    evidence: PhaseGateEvidence,
+    remediation_subphase_id: SubphaseId,
+) -> str:
+    """The remediation Planner's prompt: a ContextPack rebuilt from durable state, then the
+    remediation request, which names each input by the reference of the section carrying it.
+    """
+    try:
+        selection = load_context_selection(runtime.project_root)
+        finalized = finalized_phase_references(runtime.runtime_dir, cursor)
+        pack: ContextPack = build_gate_remediation_context_pack(
+            ContextSources(
+                project_id=basis.project_id,
+                project_root=runtime.project_root,
+                runtime_dir=runtime.runtime_dir,
+                selection=selection,
+            ),
+            master_plan=master,
+            phase_plan=published,
+            cursor=cursor,
+            basis=basis,
+            decision=decision,
+            evidence=evidence,
+            remediation_subphase_id=remediation_subphase_id,
+            finalized_phases=finalized,
+        )
+    except (ContextSelectionStoreError, ContextPackError, PhaseContextFinalizationError) as exc:
+        raise PhaseGateError(
+            PhaseGateRefusal.ARTIFACT_INCONSISTENT, f"remediation context: {exc.reason}"
+        ) from exc
+    reference = {section.kind: section.reference for section in pack.sections}
+    failure = (
+        f"{reference[ContextSourceKind.REVIEW_FINDINGS]} "
+        f"{reference[ContextSourceKind.VERIFICATION_REPORT]}"
+    )
+    request = (
+        "\n"
+        f"{_TARGET_PHASE_LABEL}\n"
+        f"{basis.phase_id.root}\n"
+        "\n"
+        "Each input below is carried by the context section with the named reference.\n"
+        "\n"
+        f"{_MASTER_PLAN_LABEL}\n"
+        f"{reference[ContextSourceKind.MASTER_PLAN]}\n"
+        "\n"
+        f"{_COMPLETED_LABEL}\n"
+        f"{reference[ContextSourceKind.COMPLETED_HISTORY]}\n"
+        "\n"
+        f"{_BASIS_LABEL}\n"
+        f"{reference[ContextSourceKind.REPOSITORY_STATE]}\n"
+        "\n"
+        f"{_FAILURE_LABEL}\n"
+        f"{failure}\n"
+        "\n"
+        f"{_REMEDIATION_ID_LABEL}\n"
+        f"{remediation_subphase_id.root}\n"
+        "\n"
+        f"{_REMEDIATION_INSTRUCTIONS}"
+    )
+    return compose_context_prompt("", pack, trailer=request).text
+
+
 def _remediation_invalid(reason: str) -> PhaseGateError:
     return PhaseGateError(PhaseGateRefusal.REMEDIATION_INVALID, reason)
 
@@ -397,12 +493,18 @@ def _plan_remediation(
     result = invoke_planner_artifact(
         planning_runtime,
         kind=PlanningArtifactKind.PHASE_PLAN,
-        prompt=build_gate_remediation_prompt(
-            master, published.subphases, basis, decision, evidence, remediation_id
+        prompt=_remediation_context_prompt(
+            runtime, master, published, cursor, basis, decision, evidence, remediation_id
         ),
         timeout_seconds=planning_timeout_seconds,
         max_output_bytes=max_output_bytes,
         termination_grace_seconds=termination_grace_seconds,
+        planning_identity=PlanningInvocationIdentity.issue(
+            project_id=basis.project_id,
+            phase_id=basis.phase_id,
+            target_subphase_id=remediation_id,
+            stage=PlanningStage.GATE_REMEDIATION,
+        ),
     )
     if result.kind is not PlanningArtifactKind.PHASE_PLAN or not isinstance(
         result.artifact, PhasePlan

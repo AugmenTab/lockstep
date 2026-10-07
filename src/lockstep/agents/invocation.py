@@ -143,6 +143,28 @@ class UsageReportingAdapter(Protocol):
     def normalize_output(self, process: ProcessResult) -> AdapterOutput: ...
 
 
+@runtime_checkable
+class InvocationRecorder(Protocol):
+    """Optional observer of one invocation that is not a transaction's (12.10-R1).
+
+    :func:`invoke_agent` calls :meth:`started` immediately before the process launches --
+    after the command and its environment were built -- and :meth:`returned` for an
+    abnormal process failure (timeout, launch failure, interruption). A normal return is
+    classified and recorded by the caller, which alone knows whether the output was usable.
+    """
+
+    def started(self) -> None: ...
+
+    def returned(
+        self,
+        *,
+        outcome: ExecutionOutcome,
+        returncode: int | None = None,
+        usage: InvocationUsage | None = None,
+        cause: FailureCause | None = None,
+    ) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class AgentInvocationResult:
     """Immutable record of a completed agent invocation."""
@@ -218,6 +240,7 @@ def invoke_agent(
     parent_env: Mapping[str, str],
     runtime_dir: Path | None = None,
     record_return: bool = True,
+    recorder: InvocationRecorder | None = None,
 ) -> AgentInvocationResult:
     """Compose adapter, environment policy, and process runner.
 
@@ -242,6 +265,10 @@ def invoke_agent(
     observational and confer no authority; a failure to append the start
     record propagates before any process is launched.
 
+    A *recorder* (a project-level planning invocation, which has no transaction journal)
+    is told the same start, and the same abnormal failures; its normal return is left to
+    the caller.
+
     The returned result carries an :class:`InvocationUsage` -- host-observed
     timing and exit status, the adapter's configured model/effort, and
     whatever telemetry a :class:`UsageReportingAdapter` could read -- and, when
@@ -265,6 +292,17 @@ def invoke_agent(
         record_execution_event(
             runtime_dir, kind=ExecutionEventKind.INVOCATION_STARTED, identity=identity
         )
+    if recorder is not None:
+        recorder.started()
+
+    def abnormal_return(
+        *, usage: InvocationUsage | None = None, cause: FailureCause | None = None
+    ) -> None:
+        record_invocation_returned(
+            runtime_dir, identity, outcome=ExecutionOutcome.FAILURE, usage=usage, cause=cause
+        )
+        if recorder is not None:
+            recorder.returned(outcome=ExecutionOutcome.FAILURE, usage=usage, cause=cause)
 
     try:
         process = run_process(
@@ -277,10 +315,7 @@ def invoke_agent(
             stdin_text=command.stdin_text,
         )
     except ProcessTimeoutError as exc:
-        record_invocation_returned(
-            runtime_dir,
-            identity,
-            outcome=ExecutionOutcome.FAILURE,
+        abnormal_return(
             usage=_build_usage(
                 adapter,
                 process=exc,
@@ -291,15 +326,10 @@ def invoke_agent(
         )
         raise
     except ProcessLaunchError:
-        record_invocation_returned(
-            runtime_dir,
-            identity,
-            outcome=ExecutionOutcome.FAILURE,
-            cause=cause_for_invocation_failure(None, launch_failed=True),
-        )
+        abnormal_return(cause=cause_for_invocation_failure(None, launch_failed=True))
         raise
     except BaseException:
-        record_invocation_returned(runtime_dir, identity, outcome=ExecutionOutcome.FAILURE)
+        abnormal_return()
         raise
 
     telemetry = ProviderTelemetry()

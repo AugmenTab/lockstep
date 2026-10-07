@@ -19,9 +19,12 @@ no semantic (cross-reference) validation of a hydrated candidate — that
 composition belongs to later Phase-8 planning workflows built on
 :mod:`lockstep.planning` and :mod:`lockstep.planning_store` — and it
 implements no durable persistence of its own beyond the schema artifact
-that :mod:`lockstep.agents.structured_output` writes for a Codex Planner.
-Every call performs exactly one Planner inference; there is no retry, no
-alternate provider, and no fallback model.
+that :mod:`lockstep.agents.structured_output` writes for a Codex Planner,
+and -- when the caller passes a host-issued
+:class:`~lockstep.planning_invocation.PlanningInvocationIdentity` (12.10-R1)
+-- the invocation's STARTED / RETURNED evidence in the project-level
+planning journal. Every call performs exactly one Planner inference; there
+is no retry, no alternate provider, and no fallback model.
 """
 
 from __future__ import annotations
@@ -37,7 +40,15 @@ from lockstep.agents import (
     invoke_agent,
     prepare_structured_planner_adapter,
 )
-from lockstep.domain import AgentRole, MasterPlan, PhasePlan, SubphaseContract
+from lockstep.domain import (
+    AgentRole,
+    ExecutionOutcome,
+    FailureCause,
+    MasterPlan,
+    PhasePlan,
+    SubphaseContract,
+)
+from lockstep.planning_invocation import PlanningInvocationIdentity, PlanningInvocationRecorder
 from lockstep.runtime import AgentRuntime
 
 PlanningArtifact = MasterPlan | PhasePlan | SubphaseContract
@@ -104,6 +115,7 @@ def invoke_planner_artifact(
     timeout_seconds: float,
     max_output_bytes: int = 1_048_576,
     termination_grace_seconds: float = 0.25,
+    planning_identity: PlanningInvocationIdentity | None = None,
 ) -> PlanningArtifactResult:
     """Invoke the configured Planner once and hydrate its typed *kind* artifact.
 
@@ -116,6 +128,13 @@ def invoke_planner_artifact(
     one Planner inference: no retry, no alternate provider, no fallback
     model, and no semantic (cross-reference) validation of the hydrated
     candidate.
+
+    With a host-issued *planning_identity*, the invocation is journaled in
+    ``runtime.runtime_dir``'s planning journal: STARTED immediately before the
+    process launches and RETURNED once its result is known -- a non-zero exit,
+    an output budget overrun or an artifact that does not hydrate is recorded as
+    a failure before the typed error is raised. The provider never sees the
+    identity.
     """
     _validate_prompt(prompt)
 
@@ -139,16 +158,38 @@ def invoke_planner_artifact(
         termination_grace_seconds=termination_grace_seconds,
     )
 
+    recorder = (
+        None
+        if planning_identity is None
+        else PlanningInvocationRecorder(
+            runtime_dir=runtime.runtime_dir,
+            identity=planning_identity,
+            adapter=structured_adapter,
+        )
+    )
     invocation = invoke_agent(
         structured_adapter,
         request,
         parent_env=runtime.transaction_parent_env,
+        recorder=recorder,
     )
 
     process = invocation.process
+
+    def returned(outcome: ExecutionOutcome, cause: FailureCause | None = None) -> None:
+        if recorder is not None:
+            recorder.returned(
+                outcome=outcome,
+                returncode=process.returncode,
+                usage=invocation.usage,
+                cause=cause,
+            )
+
     if process.returncode != 0:
+        returned(ExecutionOutcome.FAILURE)
         raise PlanningTransportError("planner process exited non-zero")
     if process.stdout_truncated:
+        returned(ExecutionOutcome.FAILURE, FailureCause.MALFORMED_OUTPUT)
         raise PlanningTransportError(
             "planner structured output exceeded the configured output budget"
         )
@@ -156,9 +197,11 @@ def invoke_planner_artifact(
     try:
         artifact = artifact_type.model_validate_json(process.stdout)
     except ValidationError:
+        returned(ExecutionOutcome.FAILURE, FailureCause.MALFORMED_OUTPUT)
         raise PlanningTransportError(
             f"planner output is not a valid {kind.value} artifact"
         ) from None
+    returned(ExecutionOutcome.SUCCESS)
 
     return PlanningArtifactResult(kind=kind, artifact=artifact, invocation=invocation)
 

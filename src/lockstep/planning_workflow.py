@@ -30,16 +30,42 @@ candidate: it returns a validated proposal. The explicit
 actions that make planning state durable, and this module imports
 neither. Every call performs at most one Planner inference: there is no
 retry, no repair prompt, and no provider or model fallback.
+
+Since 12.10-R1, Phase-outline and Contract planning are project-level
+planning operations with the same discipline as JIT replanning: once the
+project cursor records accepted work, the Planner runs in the verified latest
+accepted worktree (:mod:`lockstep.planning_basis`) -- never the stale source
+checkout -- and the basis is re-verified before a candidate is returned; the
+prompt is a rendered ``phase_planning`` / ``contract_planning`` ContextPack
+built afresh from durable state (Project Digest, the tracked ContextSelection,
+the frozen Master Plan, the current outline, completed history and the
+accepted basis) followed by the operation's request; and each inference
+carries a host-issued
+:class:`~lockstep.planning_invocation.PlanningInvocationIdentity` whose
+STARTED / RETURNED evidence lands in the planning journal. Master Plan
+creation stays pre-project and unchanged.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel
 
 from lockstep.agents import AgentInvocationResult
+from lockstep.context.context_pack import ContextPack, ContextPackError, compose_context_prompt
+from lockstep.context.context_pack_builder import (
+    ContextSources,
+    build_contract_planning_context_pack,
+    build_phase_planning_context_pack,
+)
+from lockstep.context.context_selection_store import (
+    ContextSelectionStoreError,
+    load_context_selection,
+)
 from lockstep.domain import (
     MasterPlan,
     PhaseId,
@@ -49,13 +75,23 @@ from lockstep.domain import (
     SubphaseId,
     SubphaseOutline,
 )
+from lockstep.jit_replan import ReplanBasis
 from lockstep.planning import validate_master_plan, validate_subphase_contract
+from lockstep.planning_basis import (
+    AcceptedPlanningBasis,
+    PlanningBasisError,
+    accepted_planning_basis,
+    finalized_planning_references,
+    require_unmoved_planning_basis,
+)
+from lockstep.planning_invocation import PlanningInvocationIdentity, PlanningStage
 from lockstep.planning_store import (
     load_active_subphase_contract,
     load_frozen_master_plan,
     load_phase_plan,
 )
 from lockstep.planning_transport import PlanningArtifactKind, invoke_planner_artifact
+from lockstep.project_cursor_store import load_project_cursor
 from lockstep.runtime import AgentRuntime
 
 _PROJECT_ID_LABEL = "Project ID:"
@@ -196,10 +232,81 @@ def create_master_plan_candidate(
 
 
 # ---------------------------------------------------------------------------
+# Project-level planning context (12.10-R1)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _PlanningContext:
+    """Where and with what a project-level Planner runs: the accepted basis and the pack."""
+
+    runtime: AgentRuntime
+    selected: AcceptedPlanningBasis | None
+    pack: ContextPack
+
+
+def _planning_context(
+    runtime: AgentRuntime,
+    master_plan: MasterPlan,
+    refuse: Callable[[str], Exception],
+    build: Callable[..., ContextPack],
+    **arguments: object,
+) -> _PlanningContext:
+    """Select and verify the accepted basis, then build the operation's ContextPack.
+
+    Durable configuration (the tracked ContextSelection, selected documents, the Digest) is
+    read from the project root; only the Planner's working directory moves to the basis.
+    """
+    project_root, runtime_dir = runtime.project_root, runtime.runtime_dir
+    try:
+        cursor = load_project_cursor(project_root, runtime_dir)
+        selected = accepted_planning_basis(runtime_dir, cursor)
+        finalized = finalized_planning_references(runtime_dir, cursor)
+    except PlanningBasisError as exc:
+        raise refuse(f"accepted basis: {exc.reason}") from exc
+    try:
+        selection = load_context_selection(project_root)
+    except ContextSelectionStoreError as exc:
+        raise refuse(f"context selection: {exc.reason}") from exc
+    sources = ContextSources(
+        project_id=master_plan.project_id,
+        project_root=project_root,
+        runtime_dir=runtime_dir,
+        selection=selection,
+    )
+    basis: ReplanBasis | None = None if selected is None else selected.basis
+    try:
+        pack = build(
+            sources,
+            master_plan=master_plan,
+            cursor=cursor,
+            basis=basis,
+            finalized_phases=finalized,
+            **arguments,
+        )
+    except ContextPackError as exc:
+        raise refuse(f"context pack: {exc.reason}") from exc
+    planning_runtime = (
+        runtime
+        if selected is None
+        else dataclasses.replace(runtime, project_root=selected.worktree)
+    )
+    return _PlanningContext(runtime=planning_runtime, selected=selected, pack=pack)
+
+
+def _require_unmoved(context: _PlanningContext, refuse: Callable[[str], Exception]) -> None:
+    if context.selected is None:
+        return
+    try:
+        require_unmoved_planning_basis(context.selected)
+    except PlanningBasisError as exc:
+        raise refuse(f"accepted basis: {exc.reason}") from exc
+
+
+# ---------------------------------------------------------------------------
 # Phase outline candidate creation (Sub-phase 8.5)
 # ---------------------------------------------------------------------------
 
-_MASTER_PLAN_LABEL = "Frozen Master Plan:"
 _TARGET_PHASE_LABEL = "Target phase_id:"
 _CURRENT_OUTLINE_LABEL = "Current provisional outline:"
 
@@ -288,15 +395,10 @@ def _canonical_json(model: BaseModel) -> str:
     return json.dumps(model.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":"))
 
 
-def _build_phase_plan_prompt(
-    master_plan: MasterPlan,
-    phase_id: PhaseId,
-    current_outline: PhasePlan | None,
-) -> str:
+def _build_phase_plan_request(phase_id: PhaseId, current_outline: PhasePlan | None) -> str:
+    """The Phase-outline request that follows its ContextPack (which carries the Master Plan)."""
     current_outline_text = "null" if current_outline is None else _canonical_json(current_outline)
     return (
-        f"{_MASTER_PLAN_LABEL}\n"
-        f"{_canonical_json(master_plan)}\n"
         "\n"
         f"{_TARGET_PHASE_LABEL}\n"
         f"{phase_id.root}\n"
@@ -358,16 +460,33 @@ def create_phase_plan_candidate(
         else None
     )
 
-    prompt = _build_phase_plan_prompt(master_plan, phase_id, current_outline)
+    context = _planning_context(
+        runtime,
+        master_plan,
+        PhaseOutlinePlanningError,
+        build_phase_planning_context_pack,
+        phase_id=phase_id,
+        current_outline=current_outline,
+    )
+    prompt = compose_context_prompt(
+        "", context.pack, trailer=_build_phase_plan_request(phase_id, current_outline)
+    ).text
 
     result = invoke_planner_artifact(
-        runtime,
+        context.runtime,
         kind=PlanningArtifactKind.PHASE_PLAN,
         prompt=prompt,
         timeout_seconds=timeout_seconds,
         max_output_bytes=max_output_bytes,
         termination_grace_seconds=termination_grace_seconds,
+        planning_identity=PlanningInvocationIdentity.issue(
+            project_id=master_plan.project_id,
+            phase_id=phase_id,
+            target_subphase_id=None,
+            stage=PlanningStage.PHASE_PLANNING,
+        ),
     )
+    _require_unmoved(context, PhaseOutlinePlanningError)
 
     if result.kind is not PlanningArtifactKind.PHASE_PLAN or not isinstance(
         result.artifact, PhasePlan
@@ -399,7 +518,6 @@ def create_phase_plan_candidate(
 # Sub-phase Contract candidate creation (Sub-phase 8.6)
 # ---------------------------------------------------------------------------
 
-_PHASE_PLAN_LABEL = "Current Phase plan:"
 _TARGET_SUBPHASE_LABEL = "Target subphase_id:"
 _TARGET_OUTLINE_LABEL = "Target subphase outline:"
 
@@ -535,14 +653,13 @@ def _find_outline(phase_plan: PhasePlan, subphase_id: SubphaseId) -> SubphaseOut
     return None
 
 
-def _build_subphase_contract_prompt(
-    master_plan: MasterPlan,
-    phase_plan: PhasePlan,
+def _build_subphase_contract_request(
     target_outline: SubphaseOutline,
     phase_id: PhaseId,
     subphase_id: SubphaseId,
     correction: ContractCorrection | None = None,
 ) -> str:
+    """The Contract request that follows its ContextPack (which carries both plans)."""
     correction_text = ""
     if correction is not None:
         correction_text = (
@@ -556,11 +673,6 @@ def _build_subphase_contract_prompt(
             "\n"
         )
     return (
-        f"{_MASTER_PLAN_LABEL}\n"
-        f"{_canonical_json(master_plan)}\n"
-        "\n"
-        f"{_PHASE_PLAN_LABEL}\n"
-        f"{_canonical_json(phase_plan)}\n"
         "\n"
         f"{_TARGET_PHASE_LABEL}\n"
         f"{phase_id.root}\n"
@@ -635,18 +747,35 @@ def create_subphase_contract_candidate(
             "requested subphase is not present in the current phase plan"
         )
 
-    prompt = _build_subphase_contract_prompt(
-        master_plan, phase_plan, target_outline, phase_id, subphase_id, correction
+    context = _planning_context(
+        runtime,
+        master_plan,
+        SubphaseContractPlanningError,
+        build_contract_planning_context_pack,
+        phase_plan=phase_plan,
+        target_subphase_id=subphase_id,
     )
+    prompt = compose_context_prompt(
+        "",
+        context.pack,
+        trailer=_build_subphase_contract_request(target_outline, phase_id, subphase_id, correction),
+    ).text
 
     result = invoke_planner_artifact(
-        runtime,
+        context.runtime,
         kind=PlanningArtifactKind.SUBPHASE_CONTRACT,
         prompt=prompt,
         timeout_seconds=timeout_seconds,
         max_output_bytes=max_output_bytes,
         termination_grace_seconds=termination_grace_seconds,
+        planning_identity=PlanningInvocationIdentity.issue(
+            project_id=master_plan.project_id,
+            phase_id=phase_id,
+            target_subphase_id=subphase_id,
+            stage=PlanningStage.CONTRACT_PLANNING,
+        ),
     )
+    _require_unmoved(context, SubphaseContractPlanningError)
 
     if result.kind is not PlanningArtifactKind.SUBPHASE_CONTRACT or not isinstance(
         result.artifact, SubphaseContract

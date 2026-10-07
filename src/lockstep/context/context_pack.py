@@ -110,13 +110,23 @@ class ContextPackError(HandoffError):
 
 
 class ContextOperation(StrEnum):
-    """The role invocation a pack is assembled for."""
+    """The role invocation a pack is assembled for.
+
+    The last three are project-level Planner operations (12.10-R1), each named for what it
+    produces: ``contract_planning`` the next frozen-requirement candidate,
+    ``phase_planning`` a provisional Phase outline, and ``gate_remediation`` the bounded
+    remediation plan after a failed Phase gate. ``jit_replan`` keeps its meaning: revising
+    only the unfinished suffix of an existing outline.
+    """
 
     TEST_AUTHORING = "test_authoring"
     IMPLEMENTATION = "implementation"
     REWORK = "rework"
     REVIEW = "review"
     JIT_REPLAN = "jit_replan"
+    CONTRACT_PLANNING = "contract_planning"
+    PHASE_PLANNING = "phase_planning"
+    GATE_REMEDIATION = "gate_remediation"
 
 
 class ContextSourceKind(StrEnum):
@@ -238,6 +248,20 @@ _OPERATION_ROLE: MappingProxyType[ContextOperation, AgentRole] = MappingProxyTyp
         ContextOperation.REWORK: AgentRole.IMPLEMENTER,
         ContextOperation.REVIEW: AgentRole.REVIEWER,
         ContextOperation.JIT_REPLAN: AgentRole.PLANNER,
+        ContextOperation.CONTRACT_PLANNING: AgentRole.PLANNER,
+        ContextOperation.PHASE_PLANNING: AgentRole.PLANNER,
+        ContextOperation.GATE_REMEDIATION: AgentRole.PLANNER,
+    }
+)
+
+# Project-level Planner operations: they run between transactions, so their identity never
+# names a run or an attempt. Whether they name a target Sub-phase is fixed per operation.
+_PLANNING_TARGETS_SUBPHASE: MappingProxyType[ContextOperation, bool] = MappingProxyType(
+    {
+        ContextOperation.JIT_REPLAN: False,
+        ContextOperation.PHASE_PLANNING: False,
+        ContextOperation.CONTRACT_PLANNING: True,
+        ContextOperation.GATE_REMEDIATION: True,
     }
 )
 
@@ -264,6 +288,19 @@ _MANDATORY: MappingProxyType[ContextOperation, frozenset[ContextSourceKind]] = M
         ContextOperation.JIT_REPLAN: frozenset(
             {_K.MASTER_PLAN, _K.COMPLETED_HISTORY, _K.PROVISIONAL_OUTLINE, _K.REPOSITORY_STATE}
         ),
+        # Completed history and the accepted basis exist only once something was accepted;
+        # the builders require them exactly then, so they cannot be mandatory here.
+        ContextOperation.CONTRACT_PLANNING: frozenset({_K.MASTER_PLAN, _K.PROVISIONAL_OUTLINE}),
+        ContextOperation.PHASE_PLANNING: frozenset({_K.MASTER_PLAN}),
+        ContextOperation.GATE_REMEDIATION: frozenset(
+            {
+                _K.MASTER_PLAN,
+                _K.COMPLETED_HISTORY,
+                _K.REPOSITORY_STATE,
+                _K.REVIEW_FINDINGS,
+                _K.VERIFICATION_REPORT,
+            }
+        ),
     }
 )
 _OPTIONAL: MappingProxyType[ContextOperation, frozenset[ContextSourceKind]] = MappingProxyType(
@@ -273,6 +310,9 @@ _OPTIONAL: MappingProxyType[ContextOperation, frozenset[ContextSourceKind]] = Ma
         ContextOperation.REWORK: _GUIDANCE | {_K.REVIEW_FINDINGS, _K.VERIFICATION_REPORT},
         ContextOperation.REVIEW: _GUIDANCE,
         ContextOperation.JIT_REPLAN: _GUIDANCE,
+        ContextOperation.CONTRACT_PLANNING: _GUIDANCE | {_K.COMPLETED_HISTORY, _K.REPOSITORY_STATE},
+        ContextOperation.PHASE_PLANNING: _GUIDANCE | {_K.COMPLETED_HISTORY, _K.REPOSITORY_STATE},
+        ContextOperation.GATE_REMEDIATION: _GUIDANCE,
     }
 )
 
@@ -284,8 +324,9 @@ class _PackModel(BaseModel):
 class ContextIdentity(_PackModel):
     """The host-bound identity of the invocation a pack is for.
 
-    Transaction roles carry the run, Sub-phase and attempt; a JIT Planner works on a
-    Phase between Sub-phases and carries none of them.
+    Transaction roles carry the run, Sub-phase and attempt. A project-level Planner works
+    on a Phase between transactions and carries no run or attempt; a Contract or remediation
+    Planner names the target Sub-phase it plans, a JIT or Phase-outline Planner names none.
     """
 
     project_id: ProjectId
@@ -363,12 +404,23 @@ class ContextPack(_PackModel):
     def _sources_fit_the_operation(self) -> Self:
         if self.identity.role is not _OPERATION_ROLE[self.operation]:
             raise ValueError(f"{self.operation.value} is not a {self.identity.role.value} pack")
-        if self.operation is not ContextOperation.JIT_REPLAN and (
-            self.identity.subphase_id is None
-            or self.identity.run_id is None
-            or self.identity.attempt is None
-        ):
-            raise ValueError("a transaction role pack must name its run, sub-phase and attempt")
+        targets = _PLANNING_TARGETS_SUBPHASE.get(self.operation)
+        if targets is None:
+            if (
+                self.identity.subphase_id is None
+                or self.identity.run_id is None
+                or self.identity.attempt is None
+            ):
+                raise ValueError("a transaction role pack must name its run, sub-phase and attempt")
+        else:
+            if self.identity.run_id is not None or self.identity.attempt is not None:
+                raise ValueError("a planning pack names no run and no attempt")
+            if (self.identity.subphase_id is not None) is not targets:
+                raise ValueError(
+                    f"a {self.operation.value} pack "
+                    + ("must" if targets else "must not")
+                    + " name a target sub-phase"
+                )
         kinds = [section.kind for section in self.sections]
         missing = _MANDATORY[self.operation] - set(kinds)
         if missing:
