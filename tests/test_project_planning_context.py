@@ -594,7 +594,8 @@ def test_the_stable_prefix_is_shared_and_names_no_invocation(
 
     assert first == second
     assert "## MASTER PLAN [frozen_requirement]" in first
-    for volatile in ('"subphase_id":"02"', "run-01-01", accepted_run.tip_01, "inv-", "T00:"):
+    # The invocation identity and the operation live only in the volatile manifest.
+    for volatile in ('"identity":', '"operation":', "run-01-01", accepted_run.tip_01, "inv-"):
         assert volatile not in first
 
 
@@ -629,10 +630,11 @@ def test_contract_planning_invocations_are_journaled_with_host_identity(
         assert event["identity"]["project_id"] == "lockstep"
         assert event["identity"]["phase_id"] == "01"
         assert event["identity"]["role"] == "planner"
+        # The adapter's configured routing, the same source InvocationUsage records.
         assert (event["provider"], event["configured_model"], event["configured_effort"]) == (
             "claude",
-            "unused-model",
-            "unused-effort",
+            "role-model",
+            "high",
         )
     assert [e["sequence"] for e in events] == list(range(1, len(events) + 1))
 
@@ -888,7 +890,7 @@ def test_reported_usage_is_preserved_on_returned(tmp_path: Path) -> None:
     }
     assert (returned["usage"]["provider"], returned["usage"]["configured_model"]) == (
         "claude",
-        "unused-model",
+        "role-model",
     )
 
 
@@ -1285,7 +1287,9 @@ def test_successor_phase_contract_planning_uses_the_finalized_basis_and_history(
     [call] = [
         c
         for c in _observed(project.bins["planner"])
-        if '"operation":"contract_planning"' in c["stdin"] and '"phase_id":"02"' in c["stdin"]
+        if CONTEXT_PACK_HEADER in c["stdin"]
+        and _manifest(c["stdin"])["operation"] == "contract_planning"
+        and _manifest(c["stdin"])["identity"]["phase_id"] == "02"
     ]
     prompt = call["stdin"]
 

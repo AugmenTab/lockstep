@@ -628,9 +628,13 @@ def test_only_the_host_loader_reads_the_selection_file() -> None:
     )
 
     assert readers == ["context/context_selection_store.py"]
+    # 12.10-R1: project-level Contract/Phase planning and gate remediation load the durable
+    # selection through the same production loader.
     assert callers == [
         "jit_replan.py",
         "phase_context_finalization.py",
+        "phase_gate_cycle.py",
+        "planning_workflow.py",
         "transaction_factory.py",
     ]
     for module in ("agents", "agent_turn.py", "implementer_turn.py", "reviewer_turn.py"):

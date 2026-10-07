@@ -98,6 +98,7 @@ from lockstep.phase_gate_cycle import (
     run_phase_gate_cycle,
 )
 from lockstep.planning_store import load_frozen_master_plan, load_phase_plan
+from lockstep.planning_workflow import SubphaseContractPlanningError
 from lockstep.project_cursor import PhaseGateStatus, ProjectCursor, master_plan_digest
 from lockstep.project_cursor_store import load_project_cursor
 from lockstep.project_orchestrator import ProjectRunDisposition, step_project_run
@@ -1275,6 +1276,18 @@ def test_a_tampered_previous_finalization_stops_the_next_completion(
 ) -> None:
     project = _phase_one_complete_then_ready(tmp_path)
     tamper(_final_path(project, "01"))
+    if tamper is _garbage:
+        # 12.10-R1: Phase-02 Contract planning reconstructs its completed history from the
+        # verified finalizations, so a non-canonical one already refuses there, before any
+        # Planner launch and without moving the cursor.
+        before, counts = _cursor_bytes(project), project.counts()
+        with pytest.raises(SubphaseContractPlanningError) as raised:
+            project.run_phase()
+        assert "phase finalization is not canonical" in raised.value.reason
+        assert project.counts() == counts
+        assert _phase_context_names(project) == ["01.json"]
+        assert _cursor_bytes(project) == before
+        return
     _ready(project)
     before = _cursor_bytes(project)
 
