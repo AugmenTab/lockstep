@@ -35,6 +35,11 @@ Since Phase 12.2 the fresh Planner's prompt is a rendered
 the frozen Master Plan, the immutable completed history, the provisional suffix and
 the accepted basis) followed by the replan instructions. :func:`build_jit_replan_prompt`
 remains the accepted pure label-based projection of the same durable inputs.
+
+Since 12.10-R1 every fresh replan inference carries a host-issued
+:class:`~lockstep.planning_invocation.PlanningInvocationIdentity` (stage ``jit_replan``, no
+target Sub-phase) and leaves STARTED / RETURNED evidence in the project planning journal,
+whether or not its candidate is accepted. Basis, ContextPack, prompt and receipt are unchanged.
 """
 
 from __future__ import annotations
@@ -72,6 +77,7 @@ from lockstep.domain import (
 )
 from lockstep.git import GitCommandError, inspect_repository
 from lockstep.planning import validate_master_plan
+from lockstep.planning_invocation import PlanningInvocationIdentity, PlanningStage
 from lockstep.planning_store import (
     load_active_subphase_contract,
     load_frozen_master_plan,
@@ -547,6 +553,12 @@ def _accept_new_replan(
         timeout_seconds=timeout_seconds,
         max_output_bytes=max_output_bytes,
         termination_grace_seconds=termination_grace_seconds,
+        planning_identity=PlanningInvocationIdentity.issue(
+            project_id=cursor.project_id,
+            phase_id=last.phase_id,
+            target_subphase_id=None,
+            stage=PlanningStage.JIT_REPLAN,
+        ),
     )
     if result.kind is not PlanningArtifactKind.PHASE_PLAN or not isinstance(
         result.artifact, PhasePlan
