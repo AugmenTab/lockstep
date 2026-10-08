@@ -46,6 +46,7 @@ def test_the_project_execution_configuration_is_not_rewritten_by_a_run_policy() 
         "max_output_bytes",
         "termination_grace_seconds",
         "phase_gate_commands",
+        "verification_prefix_argv",
     ]
 
 

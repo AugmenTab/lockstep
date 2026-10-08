@@ -1322,6 +1322,7 @@ def test_t_running_evals_leaves_the_canonical_production_surfaces_untouched(mini
                 "baseline_argv",
                 "planner_quality_argv",
                 "phase_gate_commands",
+                "verification_prefix_argv",
                 "agent_timeout_seconds",
                 "command_timeout_seconds",
                 "max_output_bytes",

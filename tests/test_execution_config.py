@@ -209,3 +209,85 @@ def test_execution_errors_never_echo_configured_values() -> None:
         _parse('\n[execution]\nbaseline_argv = ["SENTINEL-VALUE", 1]\n')
 
     assert "SENTINEL-VALUE" not in caught.value.reason
+
+
+# ---------------------------------------------------------------------------
+# Optional verification execution prefix (dogfood feedback 01)
+# ---------------------------------------------------------------------------
+
+_DOCKER_PREFIX = ("docker", "compose", "run", "--rm", "dev")
+_PREFIX_EXECUTION = (
+    _FULL_EXECUTION + 'verification_prefix_argv = ["docker", "compose", "run", "--rm", "dev"]\n'
+)
+
+
+def test_the_verification_prefix_defaults_to_empty() -> None:
+    assert ExecutionConfig().verification_prefix_argv == ()
+    assert _parse(_FULL_EXECUTION).execution.verification_prefix_argv == ()
+
+
+def test_a_non_empty_verification_prefix_parses_to_structured_argv() -> None:
+    execution = _parse(_PREFIX_EXECUTION).execution
+
+    assert execution.verification_prefix_argv == _DOCKER_PREFIX
+    assert execution.baseline_argv == ("./scripts/test",)
+    assert execution.planner_quality_argv == ("./scripts/test-quality", "--strict")
+
+
+def test_a_configured_verification_prefix_round_trips_through_rendered_toml() -> None:
+    config = _parse(_PREFIX_EXECUTION)
+
+    text = render_project_config(config)
+
+    assert 'verification_prefix_argv = ["docker", "compose", "run", "--rm", "dev"]' in text
+    reparsed = parse_project_config(text)
+    assert reparsed == config
+    assert render_project_config(reparsed) == text
+
+
+def test_a_prefix_alone_renders_an_execution_table_that_round_trips() -> None:
+    config = _parse('\n[execution]\nverification_prefix_argv = ["env-enter"]\n')
+
+    text = render_project_config(config)
+
+    assert "[execution]" in text
+    assert parse_project_config(text) == config
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'verification_prefix_argv = "docker compose run --rm dev"',
+        "verification_prefix_argv = []",
+        'verification_prefix_argv = ["docker", 1]',
+        'verification_prefix_argv = ["docker", ""]',
+        'verification_prefix_argv = ["docker", "   "]',
+        'verification_prefix_argv = ["docker", "a\\u0000b"]',
+        'verification_prefix_argv = [["docker"]]',
+    ],
+)
+def test_a_malformed_verification_prefix_is_rejected(line: str) -> None:
+    with pytest.raises(ProjectConfigError):
+        _parse(f"\n[execution]\n{line}\n")
+
+
+@pytest.mark.parametrize("shell", ["sh", "bash", "zsh", "dash", "ksh", "fish", "/bin/bash"])
+def test_a_verification_prefix_must_not_launch_a_shell(shell: str) -> None:
+    with pytest.raises(ProjectConfigError):
+        _parse(f'\n[execution]\nverification_prefix_argv = ["{shell}", "-c"]\n')
+
+
+def test_a_verification_prefix_is_optional_for_autonomous_execution() -> None:
+    require_autonomous_execution(_parse(_FULL_EXECUTION).execution)
+    require_autonomous_execution(_parse(_PREFIX_EXECUTION).execution)
+
+    only_prefix = _parse('\n[execution]\nverification_prefix_argv = ["env-enter"]\n').execution
+    with pytest.raises(ExecutionConfigError):
+        require_autonomous_execution(only_prefix)
+
+
+def test_verification_prefix_errors_never_echo_configured_values() -> None:
+    with pytest.raises(ProjectConfigError) as caught:
+        _parse('\n[execution]\nverification_prefix_argv = ["SENTINEL-VALUE", 1]\n')
+
+    assert "SENTINEL-VALUE" not in caught.value.reason

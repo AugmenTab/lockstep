@@ -25,6 +25,14 @@ arrays that audit a completed Phase as a whole. It is neither a Contract's
 never stands in for them; it has no default, and
 :func:`require_phase_gate_execution` refuses a project that has not configured it.
 
+``verification_prefix_argv`` is an optional argv prefix that establishes *where*
+a Contract's ``verification_commands`` run (for example a container entry such as
+``docker compose run --rm dev``). The Planner chooses *what* to verify; this
+tracked policy owns the environment boundary. It is prepended to every Contract
+verification command and to nothing else: not ``baseline_argv``,
+``planner_quality_argv``, ``phase_gate_commands`` or agent invocations. Empty (the
+default) runs Contract verification commands directly, and it is never required.
+
 Pure: no filesystem, environment, process or clock access.
 """
 
@@ -41,13 +49,14 @@ _DEFAULT_TERMINATION_GRACE_SECONDS = 0.25
 
 _COMMAND_KEYS: tuple[str, ...] = ("baseline_argv", "planner_quality_argv")
 _STACK_KEY = "phase_gate_commands"
+_PREFIX_KEY = "verification_prefix_argv"
 _LIMIT_KEYS: tuple[str, ...] = (
     "agent_timeout_seconds",
     "command_timeout_seconds",
     "max_output_bytes",
     "termination_grace_seconds",
 )
-_EXECUTION_KEYS: frozenset[str] = frozenset((*_COMMAND_KEYS, _STACK_KEY, *_LIMIT_KEYS))
+_EXECUTION_KEYS: frozenset[str] = frozenset((*_COMMAND_KEYS, _STACK_KEY, _PREFIX_KEY, *_LIMIT_KEYS))
 
 # A command whose executable is a shell would reintroduce shell semantics
 # (``sh -c "a && b"``) that structured argv exists to rule out.
@@ -79,6 +88,7 @@ class ExecutionConfig:
     max_output_bytes: int = _DEFAULT_MAX_OUTPUT_BYTES
     termination_grace_seconds: float = _DEFAULT_TERMINATION_GRACE_SECONDS
     phase_gate_commands: tuple[tuple[str, ...], ...] = ()
+    verification_prefix_argv: tuple[str, ...] = ()
 
 
 def require_autonomous_execution(config: ExecutionConfig) -> None:
@@ -198,6 +208,11 @@ def parse_execution_table(raw: object) -> ExecutionConfig:
         phase_gate_commands=(
             _parse_stack(raw[_STACK_KEY]) if _STACK_KEY in raw else defaults.phase_gate_commands
         ),
+        verification_prefix_argv=(
+            _parse_argv(raw[_PREFIX_KEY], key=_PREFIX_KEY)
+            if _PREFIX_KEY in raw
+            else defaults.verification_prefix_argv
+        ),
     )
 
 
@@ -218,6 +233,9 @@ def render_execution_lines(config: ExecutionConfig, quote: Callable[[str], str])
             f"[{', '.join(quote(entry) for entry in argv)}]" for argv in config.phase_gate_commands
         )
         body.append(f"{_STACK_KEY} = [{rendered}]")
+    if config.verification_prefix_argv:
+        rendered = ", ".join(quote(entry) for entry in config.verification_prefix_argv)
+        body.append(f"{_PREFIX_KEY} = [{rendered}]")
     for key in _LIMIT_KEYS:
         value = getattr(config, key)
         if value != getattr(defaults, key):

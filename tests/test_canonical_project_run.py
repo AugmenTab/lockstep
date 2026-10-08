@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import json
 import shlex
+import shutil
 import stat
 import sys
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -916,6 +917,157 @@ def test_shell_syntax_in_a_contract_verification_command_fails_closed(tmp_path: 
             _contract(verification_commands=["pytest tests/a.py && ruff check"]),
             _placement(project),
         )
+
+
+# ---------------------------------------------------------------------------
+# execution.verification_prefix_argv: tracked policy says where verification runs
+# ---------------------------------------------------------------------------
+
+_DOCKER_PREFIX = ("docker", "compose", "run", "--rm", "dev")
+
+
+def test_without_a_prefix_contract_verification_argv_is_unchanged(tmp_path: Path) -> None:
+    project = _make_canonical(tmp_path, sids=("01",))
+    factory = canonical_transaction_request_factory(project.runtime)
+
+    request = factory(
+        _contract(verification_commands=["npm run build", "npm test"]), _placement(project)
+    )
+
+    assert request.verification_commands == (("npm", "run", "build"), ("npm", "test"))
+    assert request.verification_argv == ("npm", "run", "build")
+
+
+def test_a_configured_prefix_is_prepended_to_every_verification_command_in_order(
+    tmp_path: Path,
+) -> None:
+    execution = replace(
+        _EXECUTION,
+        verification_prefix_argv=_DOCKER_PREFIX,
+        phase_gate_commands=(("./scripts/test",),),
+    )
+    project = _make_canonical(tmp_path, sids=("01",), execution=execution)
+    factory = canonical_transaction_request_factory(project.runtime)
+    commands = [
+        "npm run build",
+        "node --test dist/test/a.test.js dist/test/b.test.js",
+        "npm test",
+    ]
+    contract = _contract(verification_commands=commands)
+    before = contract.model_dump()
+
+    request = factory(contract, _placement(project))
+
+    assert request.verification_commands == (
+        (*_DOCKER_PREFIX, "npm", "run", "build"),
+        (*_DOCKER_PREFIX, "node", "--test", "dist/test/a.test.js", "dist/test/b.test.js"),
+        (*_DOCKER_PREFIX, "npm", "test"),
+    )
+    assert request.verification_argv == (*_DOCKER_PREFIX, "npm", "run", "build")
+    # The Contract is authority and is never rewritten by environment policy.
+    assert request.contract == contract
+    assert contract.model_dump() == before
+    assert tuple(contract.verification_commands) == tuple(commands)
+    assert tuple(request.contract.verification_commands) == tuple(commands)
+    # The prefix belongs to Contract verification only.
+    assert request.baseline_argv == (*_PYTEST, "tests/test_feature_01.py")
+    assert request.planner_quality_argv == (
+        sys.executable,
+        "-m",
+        "py_compile",
+        "tests/test_feature_01.py",
+    )
+    assert project.runtime.config.execution.phase_gate_commands == (("./scripts/test",),)
+
+
+def test_a_prefix_does_not_relax_shell_free_contract_verification_parsing(
+    tmp_path: Path,
+) -> None:
+    execution = replace(_EXECUTION, verification_prefix_argv=_DOCKER_PREFIX)
+    project = _make_canonical(tmp_path, sids=("01",), execution=execution)
+    factory = canonical_transaction_request_factory(project.runtime)
+
+    with pytest.raises(TransactionFactoryError):
+        factory(_contract(verification_commands=["npm run build && npm test"]), _placement(project))
+
+
+_ENTER_ENV_SCRIPT = """\
+import json
+import os
+import sys
+from pathlib import Path
+
+kit = Path(__file__).resolve().parent
+with (kit / "entered.jsonl").open("a", encoding="utf-8") as fh:
+    fh.write(json.dumps(sys.argv[1:]) + "\\n")
+os.environ["PATH"] = str(kit / "inner") + os.pathsep + os.environ.get("PATH", "")
+os.execvp(sys.argv[1], sys.argv[1:])
+"""
+
+_ONLY_IN_ENV_SCRIPT = """\
+import sys
+
+print("inside env:" + " ".join(sys.argv[1:]))
+"""
+
+
+def _write_executable(path: Path, body: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"#!{sys.executable}\n" + body, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return path
+
+
+def test_verification_launches_through_the_prefix_into_an_environment_the_host_lacks(
+    tmp_path: Path,
+) -> None:
+    # Regression for the black-demo dogfood defect: the Contract names a tool that exists only
+    # inside the project's verification environment. Without a prefix it was launched directly
+    # on the host and failed; with the tracked prefix it runs through the environment entry.
+    kit = tmp_path / "envkit"
+    enter_env = _write_executable(kit / "enter-env", _ENTER_ENV_SCRIPT)
+    _write_executable(kit / "inner" / "only-in-env", _ONLY_IN_ENV_SCRIPT)
+    host_path = _parent_env(tmp_path / "probe")["PATH"]
+    assert shutil.which("only-in-env", path=host_path) is None
+
+    execution = replace(_EXECUTION, verification_prefix_argv=(str(enter_env),))
+    project = _make_canonical(
+        tmp_path,
+        sids=("01",),
+        planner=[
+            _contract_response(
+                "01", verification_commands=[_verify_command("01"), "only-in-env build"]
+            ),
+            _tests_response("01"),
+        ],
+        execution=execution,
+    )
+
+    result = project.run()
+
+    assert result.disposition is ProjectRunDisposition.PHASE_GATE_READY
+    entered = [
+        json.loads(line)
+        for line in (kit / "entered.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    # Only Contract verification entered the environment, once per command, in order;
+    # the baseline and Planner-quality commands ran directly.
+    assert entered == [[*_PYTEST, "tests/test_feature_01.py"], ["only-in-env", "build"]]
+    phase_id, subphase_id = _ids("01")
+    evidence = load_verification_evidence(
+        project.txn_dir("01"),
+        run_id=project.run_id("01"),
+        phase_id=phase_id,
+        subphase_id=subphase_id,
+        attempt=AttemptNumber.model_validate(1),
+    )
+    assert evidence is not None
+    assert [c.argv for c in evidence.commands] == [
+        (str(enter_env), *_PYTEST, "tests/test_feature_01.py"),
+        (str(enter_env), "only-in-env", "build"),
+    ]
+    assert [c.exit_code for c in evidence.commands] == [0, 0]
+    assert evidence.commands[1].stdout.strip() == "inside env:build"
 
 
 def test_a_wildcard_contract_fails_before_test_authoring_or_any_implementer_launch(
