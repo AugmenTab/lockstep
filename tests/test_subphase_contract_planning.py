@@ -1058,6 +1058,12 @@ def test_prompt_contains_required_planning_instructions(tmp_path: Path) -> None:
     assert "opaque scope declarations" in prompt
     assert "verification_commands" in prompt
     assert "deterministic evidence" in prompt
+    assert "configured verification execution environment" in prompt
+    assert "not how that environment is entered" in prompt
+    assert "docker compose run" in prompt
+    assert "whose sole purpose is to enter that same configured environment" in prompt
+    assert "owns the environment boundary" in prompt
+    assert "do not execute them" in prompt
     assert "safe to land independently" in prompt
     assert "read-only" in prompt
     assert "Do not modify files" in prompt

@@ -7,10 +7,11 @@ canonical sources only::
 
     identity        frozen Master Plan (project id), the Contract, the placement
     routing         ProjectConfig.routing        (billing mode; adapters stay in the runtime)
-    execution       ProjectConfig.execution      (baseline/quality prefixes, limits)
+    execution       ProjectConfig.execution      (baseline/quality/verification prefixes, limits)
     test scope      Contract.tests[*].path
     impl. scope     Contract.allowed_paths
-    verification    every Contract.verification_commands entry, as shell-free argv
+    verification    every Contract.verification_commands entry, as shell-free argv, behind
+                    the optional execution.verification_prefix_argv environment entry
     role semantics  typed handoffs (:mod:`lockstep.handoff`) wrapped in ContextPacks
                     (:mod:`lockstep.context.context_pack_builder`)
     context         the Project Digest when frozen, and explicitly selected documents
@@ -205,9 +206,17 @@ def canonical_transaction_request_factory(
                 "the Contract has no red or green_characterization test for the Planner to author"
             )
         try:
-            verification = parse_verification_stack(contract.verification_commands)
+            parsed_verification = parse_verification_stack(contract.verification_commands)
         except VerificationCommandError as exc:
             raise TransactionFactoryError(f"verification commands: {exc.reason}") from exc
+        # The Contract says what to verify; tracked execution policy says where it runs.
+        # The Contract itself is never rewritten.
+        prefix = execution.verification_prefix_argv
+        verification = (
+            tuple((*prefix, *argv) for argv in parsed_verification)
+            if prefix
+            else parsed_verification
+        )
 
         if context_selection is not None:
             selection = context_selection
