@@ -9,6 +9,17 @@ transaction's own runtime directory::
     <runtime_dir>/artifacts/attempt-<N>/verification-report.json
     <runtime_dir>/artifacts/attempt-<N>/verification-evidence.json
 
+A transaction attempt whose Planner test candidates were rejected before the tests
+froze also keeps one write-once record per rejected candidate, addressed by the
+candidate ordinal (never an ``AttemptNumber``), so a later candidate can never
+overwrite an earlier one's evidence::
+
+    <runtime_dir>/artifacts/attempt-<N>/planner-candidates/candidate-<K>-rejection.json
+
+The canonical ``baseline-evidence.json`` keeps its meaning: the baseline of the
+candidate the transaction finally accepted (or, when every candidate was rejected,
+of the last one).
+
 The implementation report and verification report are the existing domain
 artifacts; the evidence record is the bounded process-evidence sidecar from
 :mod:`lockstep.verification_stack`. All three are evidence. None confers
@@ -40,6 +51,7 @@ from lockstep.domain import (
     SubphaseId,
     VerificationReport,
 )
+from lockstep.planner_test_candidates import PlannerCandidateRejection
 from lockstep.verification_stack import VerificationEvidenceRecord
 
 _ARTIFACTS_DIR_NAME = "artifacts"
@@ -47,6 +59,7 @@ _IMPLEMENTATION_REPORT_NAME = "implementation-report.json"
 _VERIFICATION_REPORT_NAME = "verification-report.json"
 _VERIFICATION_EVIDENCE_NAME = "verification-evidence.json"
 _BASELINE_EVIDENCE_NAME = "baseline-evidence.json"
+_PLANNER_CANDIDATES_DIR_NAME = "planner-candidates"
 
 
 class EvidenceStoreError(Exception):
@@ -80,6 +93,19 @@ def verification_evidence_path(runtime_dir: Path, attempt: AttemptNumber) -> Pat
 
 def baseline_evidence_path(runtime_dir: Path, attempt: AttemptNumber) -> Path:
     return attempt_artifact_dir(runtime_dir, attempt) / _BASELINE_EVIDENCE_NAME
+
+
+def planner_candidate_rejection_path(
+    runtime_dir: Path, attempt: AttemptNumber, candidate: int
+) -> Path:
+    """Where the rejection evidence of Planner test candidate *candidate* is recorded."""
+    if candidate < 1:
+        raise EvidenceStoreError("a planner candidate ordinal must be positive")
+    return (
+        attempt_artifact_dir(runtime_dir, attempt)
+        / _PLANNER_CANDIDATES_DIR_NAME
+        / f"candidate-{candidate}-rejection.json"
+    )
 
 
 def _canonical_bytes(model: BaseModel) -> bytes:
@@ -243,6 +269,43 @@ def write_baseline_evidence(runtime_dir: Path, record: BaselineEvidenceRecord) -
     )
 
 
+def write_planner_candidate_rejection(
+    runtime_dir: Path, rejection: PlannerCandidateRejection
+) -> Path:
+    """Record one rejected Planner test candidate's evidence; never overwrites another's."""
+    return _write_once(
+        planner_candidate_rejection_path(runtime_dir, rejection.attempt, rejection.candidate),
+        _canonical_bytes(rejection),
+        name="planner candidate rejection",
+    )
+
+
+def load_planner_candidate_rejection(
+    runtime_dir: Path,
+    *,
+    run_id: RunId,
+    phase_id: PhaseId,
+    subphase_id: SubphaseId,
+    attempt: AttemptNumber,
+    candidate: int,
+) -> PlannerCandidateRejection | None:
+    """Load one rejected candidate's evidence, or ``None`` if none was recorded."""
+    rejection = _load(
+        planner_candidate_rejection_path(runtime_dir, attempt, candidate),
+        PlannerCandidateRejection,
+        name="planner candidate rejection",
+    )
+    if rejection is not None and (
+        rejection.run_id,
+        rejection.phase_id,
+        rejection.subphase_id,
+        rejection.attempt,
+        rejection.candidate,
+    ) != (run_id, phase_id, subphase_id, attempt, candidate):
+        raise EvidenceStoreError("the recorded planner candidate rejection belongs elsewhere")
+    return rejection
+
+
 def load_verification_evidence(
     runtime_dir: Path,
     *,
@@ -276,12 +339,15 @@ __all__ = [
     "baseline_evidence_path",
     "implementation_report_path",
     "load_implementation_report",
+    "load_planner_candidate_rejection",
     "load_verification_evidence",
     "load_verification_report",
+    "planner_candidate_rejection_path",
     "verification_evidence_path",
     "verification_report_path",
     "write_baseline_evidence",
     "write_implementation_report",
+    "write_planner_candidate_rejection",
     "write_verification_evidence",
     "write_verification_report",
 ]

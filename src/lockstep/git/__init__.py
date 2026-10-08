@@ -23,6 +23,11 @@ from lockstep.git.repository import (
     inspect_repository,
     require_clean_repository,
 )
+from lockstep.git.restore import (
+    GitRestorePolicyError,
+    GitRestoreResult,
+    restore_exact_paths,
+)
 from lockstep.git.worktree import (
     RegisteredWorktree,
     WorktreeCreationError,
@@ -38,6 +43,8 @@ __all__ = [
     "GitCommitPolicyError",
     "GitCommitResult",
     "GitRepositorySnapshot",
+    "GitRestorePolicyError",
+    "GitRestoreResult",
     "RegisteredWorktree",
     "RepositoryChange",
     "WorktreeCreationError",
@@ -50,4 +57,5 @@ __all__ = [
     "registered_worktrees",
     "remove_linked_worktree",
     "require_clean_repository",
+    "restore_exact_paths",
 ]

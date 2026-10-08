@@ -37,6 +37,7 @@ EXPECTED_TRANSITIONS = {
     WorkflowState.TEST_BASELINE_VERIFY: frozenset(
         {
             WorkflowState.TEST_COMMIT,
+            WorkflowState.TEST_AUTHORING,
             WorkflowState.SUBPHASE_PLANNING,
             WorkflowState.HALTED,
         }

@@ -53,6 +53,7 @@ from lockstep.context.context_selection_store import (
 from lockstep.domain import SubphaseContract, TestExpectation
 from lockstep.execution_config import require_autonomous_execution
 from lockstep.handoff import build_planner_test_handoff
+from lockstep.planner_test_candidates import PLANNER_QUALITY_INVARIANT
 from lockstep.planning_store import load_frozen_master_plan
 from lockstep.project_orchestrator import (
     ProjectOrchestrationError,
@@ -75,7 +76,8 @@ _PLANNER_INSTRUCTIONS = (
     "unchanged (do not rewrite it); it must already pass.\n"
     "- green_characterization: author or change this exact file to characterize required "
     "behavior that already exists; it must pass now.\n"
-    "Do not modify any other file. You may not change or reinterpret the Contract."
+    "Do not modify any other file. You may not change or reinterpret the Contract.\n"
+    + PLANNER_QUALITY_INVARIANT
 )
 # Stable, provider-neutral Implementer role policy (Phase 12.4). It is part of the role
 # instructions, so it leads the stable prefix of every canonical initial and rework

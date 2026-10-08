@@ -185,25 +185,31 @@ def _validate_paths(root: Path, paths: Sequence[str]) -> tuple[str, ...]:
                 root=root,
                 reason=f"approved path {entry!r} is duplicated",
             )
-        parts = entry.split("/")
-        if any(part == "" for part in parts):
-            raise GitCommitPolicyError(
-                root=root,
-                reason=f"approved path {entry!r} is not repository-relative",
-            )
-        if any(part in (".", "..") for part in parts):
-            raise GitCommitPolicyError(
-                root=root,
-                reason=f"approved path {entry!r} contains '.' or '..' traversal",
-            )
-        if parts[0] == ".git":
-            raise GitCommitPolicyError(
-                root=root,
-                reason=f"approved path {entry!r} is inside .git",
-            )
+        violation = _path_violation(entry)
+        if violation is not None:
+            raise GitCommitPolicyError(root=root, reason=violation)
         seen.add(entry)
 
     return tuple(sorted(seen))
+
+
+def _path_violation(entry: str) -> str | None:
+    """Why *entry* is not an exact, safe repository-relative path, or ``None``.
+
+    Shared by every Supervisor primitive that acts on caller-supplied literal paths.
+    """
+    if entry == "":
+        return "approved path is an empty string"
+    if "\x00" in entry:
+        return f"approved path {entry!r} contains NUL character"
+    parts = entry.split("/")
+    if any(part == "" for part in parts):
+        return f"approved path {entry!r} is not repository-relative"
+    if any(part in (".", "..") for part in parts):
+        return f"approved path {entry!r} contains '.' or '..' traversal"
+    if parts[0] == ".git":
+        return f"approved path {entry!r} is inside .git"
+    return None
 
 
 def _validate_message(root: Path, message: str) -> None:

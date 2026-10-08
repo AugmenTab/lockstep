@@ -56,6 +56,7 @@ from lockstep.domain import (
     TestExpectation,
 )
 from lockstep.git import inspect_repository
+from lockstep.planner_test_candidates import PLANNER_QUALITY_INVARIANT
 from lockstep.planning_store import (
     load_active_subphase_contract,
     load_frozen_master_plan,
@@ -101,6 +102,8 @@ _AUTHORING_INSTRUCTIONS = (
     "Make each authored test clearly traceable to the acceptance-criterion "
     "ids listed for its TestSpecification.\n"
     "When complete, leave the authored test files in the working tree.\n"
+    + PLANNER_QUALITY_INVARIANT
+    + "\n"
 )
 
 
