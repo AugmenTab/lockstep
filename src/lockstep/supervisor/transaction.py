@@ -107,6 +107,9 @@ from lockstep.agents import (
     invoke_agent,
 )
 from lockstep.baseline_expectations import (
+    AuthoringScopeSubreason,
+    BaselineOutcome,
+    BaselineSubreason,
     authoring_scope_violation,
     expectation_specs,
     required_changed_paths,
@@ -137,6 +140,7 @@ from lockstep.domain import (
     StopReason,
     SubphaseContract,
     SubphaseId,
+    TestExpectation,
 )
 from lockstep.escalation import EscalationProtocolError, EscalationRequest
 from lockstep.escalation_decision import PlannerDecisionKind
@@ -144,6 +148,7 @@ from lockstep.evidence_store import (
     EvidenceStoreError,
     write_baseline_evidence,
     write_implementation_report,
+    write_planner_candidate_rejection,
     write_verification_evidence,
     write_verification_report,
 )
@@ -158,6 +163,7 @@ from lockstep.git import (
     commit_exact_paths,
     create_run_worktree,
     inspect_repository,
+    restore_exact_paths,
 )
 from lockstep.git.commit import commit_exact_subset_paths
 from lockstep.handoff import (
@@ -181,6 +187,13 @@ from lockstep.persistence import (
     record_execution_event,
     replay_events,
     write_state,
+)
+from lockstep.planner_test_candidates import (
+    CandidateRejectionStage,
+    PlannerCandidateRejection,
+    baseline_rejection,
+    quality_rejection,
+    render_planner_correction_prompt,
 )
 from lockstep.process import (
     build_process_environment,
@@ -943,7 +956,24 @@ def _author_tests(
     *,
     parent_env: Mapping[str, str],
     planner_adapter: AgentAdapter,
+    planner_test_candidate_limit: int,
 ) -> GitCommitResult:
+    """Author, validate and freeze the Planner's tests (pre-freeze candidate correction).
+
+    Up to *planner_test_candidate_limit* Planner test candidates are authored within this
+    one transaction attempt. A candidate rejected by the Planner quality gate or by its
+    baseline expectations -- and only those two stages -- is recorded as durable evidence
+    (:mod:`lockstep.planner_test_candidates`), removed by restoring its exact Contract test
+    paths to the pristine pre-Planner worktree, and replaced by a fresh Planner invocation
+    whose prompt is the original one plus the deterministic findings. The candidate ordinal
+    is never a transaction ``AttemptNumber`` and no retry checkpoint is created. A Planner
+    process failure, a scope violation, or any Git authority change stays a hard failure.
+    The last allowed candidate's rejection raises exactly as before, leaving that candidate
+    in the worktree for diagnosis; nothing is frozen and the Implementer never runs.
+    """
+    if planner_test_candidate_limit < 1:
+        raise ValueError("planner_test_candidate_limit must be at least 1")
+
     for source_state, target_state in (
         (WorkflowState.READY, WorkflowState.PHASE_PLANNING),
         (WorkflowState.PHASE_PLANNING, WorkflowState.SUBPHASE_PLANNING),
@@ -958,11 +988,103 @@ def _author_tests(
             state_path=ctx.state_path,
         )
 
+    specs = expectation_specs(request.test_paths, request.contract)
+    candidate_paths = required_changed_paths(specs)
+    rejections: list[PlannerCandidateRejection] = []
+
+    for candidate in range(1, planner_test_candidate_limit + 1):
+        final_candidate = candidate == planner_test_candidate_limit
+        rejection = _author_candidate(
+            request,
+            ctx,
+            specs,
+            parent_env=parent_env,
+            planner_adapter=planner_adapter,
+            candidate=candidate,
+            final_candidate=final_candidate,
+            prior_rejections=tuple(rejections),
+        )
+        if rejection is None:
+            break
+        # Rejected, recorded and correctable (never the final candidate: that one raised).
+        _discard_rejected_candidate(request, ctx, candidate_paths)
+        if rejection.stage is CandidateRejectionStage.BASELINE:
+            _persist_transition(
+                run_id=request.run_id,
+                source=WorkflowState.TEST_BASELINE_VERIFY,
+                target=WorkflowState.TEST_AUTHORING,
+                sequence=_next_sequence(ctx.journal_path),
+                journal_path=ctx.journal_path,
+                state_path=ctx.state_path,
+            )
+        rejections.append(rejection)
+
+    _persist_transition(
+        run_id=request.run_id,
+        source=WorkflowState.TEST_BASELINE_VERIFY,
+        target=WorkflowState.TEST_COMMIT,
+        sequence=_next_sequence(ctx.journal_path),
+        journal_path=ctx.journal_path,
+        state_path=ctx.state_path,
+    )
+
+    test_commit = commit_exact_paths(
+        ctx.worktree_root,
+        expected_branch=request.branch,
+        expected_head_sha=ctx.source_head_sha,
+        # Only what the Planner authored; an unchanged GREEN_REGRESSION file is still
+        # protected (request.test_paths) but is not part of the commit.
+        paths=candidate_paths,
+        message=request.test_commit_message,
+    )
+    _emit(
+        request,
+        ExecutionEventKind.TESTS_FROZEN,
+        outcome=ExecutionOutcome.SUCCESS,
+        detail=test_commit.commit_sha,
+    )
+
+    _persist_transition(
+        run_id=request.run_id,
+        source=WorkflowState.TEST_COMMIT,
+        target=WorkflowState.IMPLEMENTING,
+        sequence=_next_sequence(ctx.journal_path),
+        journal_path=ctx.journal_path,
+        state_path=ctx.state_path,
+    )
+
+    return test_commit
+
+
+def _author_candidate(
+    request: SingleSubphaseTransactionRequest,
+    ctx: _PreparedTransaction,
+    specs: Sequence[tuple[str, TestExpectation]],
+    *,
+    parent_env: Mapping[str, str],
+    planner_adapter: AgentAdapter,
+    candidate: int,
+    final_candidate: bool,
+    prior_rejections: tuple[PlannerCandidateRejection, ...],
+) -> PlannerCandidateRejection | None:
+    """Author and judge one Planner test candidate, starting in ``TEST_AUTHORING``.
+
+    Returns ``None`` once the candidate passed quality and baseline (state is then
+    ``TEST_BASELINE_VERIFY`` and the canonical baseline evidence is recorded), or the
+    already-recorded rejection of a correctable candidate. Raises for every non-correctable
+    failure and for the rejection of the *final_candidate*, exactly as a single-candidate
+    transaction does, after recording that rejection too.
+    """
+    prompt = (
+        request.planner_prompt
+        if not prior_rejections
+        else render_planner_correction_prompt(request.planner_prompt, prior_rejections)
+    )
     planner_result = invoke_agent(
         planner_adapter,
         _agent_request(
             role=AgentRole.PLANNER,
-            prompt=request.planner_prompt,
+            prompt=prompt,
             request=request,
             cwd=ctx.worktree_root,
             stage=InvocationStage.TEST_AUTHORING,
@@ -977,7 +1099,6 @@ def _author_tests(
             reason=(f"planner process exited with returncode {planner_result.process.returncode}"),
         )
 
-    specs = expectation_specs(request.test_paths, request.contract)
     post_planner_snapshot = inspect_repository(ctx.worktree_root)
     scope_violation = authoring_scope_violation(
         specs, post_planner_snapshot.dirty_paths, ctx.worktree_root
@@ -998,6 +1119,7 @@ def _author_tests(
             ),
         )
 
+    candidate_paths = required_changed_paths(specs)
     quality_result = run_process(
         request.planner_quality_argv,
         cwd=ctx.worktree_root,
@@ -1007,6 +1129,25 @@ def _author_tests(
         termination_grace_seconds=request.termination_grace_seconds,
     )
     if quality_result.returncode != 0:
+        rejection = quality_rejection(
+            run_id=request.run_id,
+            phase_id=request.phase_id,
+            subphase_id=request.subphase_id,
+            attempt=_TRANSACTION_ATTEMPT,
+            candidate=candidate,
+            test_paths=candidate_paths,
+            argv=quality_result.argv,
+            exit_code=quality_result.returncode,
+            stdout=quality_result.stdout,
+            stderr=quality_result.stderr,
+            stdout_truncated=quality_result.stdout_truncated,
+            stderr_truncated=quality_result.stderr_truncated,
+            elapsed_seconds=quality_result.elapsed_seconds,
+            max_output_bytes=request.max_output_bytes,
+        )
+        write_planner_candidate_rejection(request.runtime_dir, rejection)
+        if not final_candidate:
+            return rejection
         raise SupervisorTransactionError(
             stage="test_quality",
             reason=(
@@ -1023,8 +1164,8 @@ def _author_tests(
         state_path=ctx.state_path,
     )
 
-    # One logical baseline stage (one BASELINE_VERIFIED event) that judges each
-    # specification by its own expectation, so an intended RED failure can never
+    # One logical baseline stage (one BASELINE_VERIFIED event) per candidate that judges
+    # each specification by its own expectation, so an intended RED failure can never
     # hide an unexpected GREEN failure. The evidence is persisted before it is acted on.
     baseline = run_baseline_expectations(
         specs,
@@ -1040,8 +1181,16 @@ def _author_tests(
         termination_grace_seconds=request.termination_grace_seconds,
         runner=run_process,
     )
-    write_baseline_evidence(request.runtime_dir, baseline.record)
     if not baseline.satisfied:
+        rejection = baseline_rejection(
+            candidate=candidate, test_paths=candidate_paths, record=baseline.record
+        )
+        terminal = final_candidate or not _baseline_failure_correctable(baseline)
+        # The canonical baseline artifact belongs to the candidate the transaction ends
+        # with; a corrected-away candidate's baseline lives only in its rejection record.
+        if terminal:
+            write_baseline_evidence(request.runtime_dir, baseline.record)
+        write_planner_candidate_rejection(request.runtime_dir, rejection)
         _emit(
             request,
             ExecutionEventKind.BASELINE_VERIFIED,
@@ -1049,52 +1198,84 @@ def _author_tests(
             cause=baseline.cause,
             detail=baseline.detail,
         )
-        raise SupervisorTransactionError(
-            stage="baseline",
-            reason=f"baseline expectation violated: {baseline.detail}",
-        )
+        if terminal:
+            raise SupervisorTransactionError(
+                stage="baseline",
+                reason=f"baseline expectation violated: {baseline.detail}",
+            )
+        return rejection
+
+    write_baseline_evidence(request.runtime_dir, baseline.record)
     _emit(
         request,
         ExecutionEventKind.BASELINE_VERIFIED,
         outcome=ExecutionOutcome.SUCCESS,
         detail="baseline_expectations_satisfied",
     )
+    return None
 
-    _persist_transition(
-        run_id=request.run_id,
-        source=WorkflowState.TEST_BASELINE_VERIFY,
-        target=WorkflowState.TEST_COMMIT,
-        sequence=_next_sequence(ctx.journal_path),
-        journal_path=ctx.journal_path,
-        state_path=ctx.state_path,
-    )
 
-    test_commit = commit_exact_paths(
+# Baseline violations a replacement candidate can resolve within its authority: an
+# authored red/green_characterization file that did not behave as its expectation says.
+# A failing green_regression file is pre-existing and must stay unchanged, and a timeout
+# or launch failure is infrastructure; neither is corrected by asking the Planner again.
+_CORRECTABLE_BASELINE_SUBREASONS = frozenset(
+    {
+        BaselineSubreason.RED_UNEXPECTEDLY_PASSED,
+        BaselineSubreason.GREEN_CHARACTERIZATION_FAILED,
+    }
+)
+
+
+def _baseline_failure_correctable(baseline: BaselineOutcome) -> bool:
+    return baseline.subreason in _CORRECTABLE_BASELINE_SUBREASONS
+
+
+def _discard_rejected_candidate(
+    request: SingleSubphaseTransactionRequest,
+    ctx: _PreparedTransaction,
+    candidate_paths: tuple[str, ...],
+) -> None:
+    """Restore the pristine pre-Planner worktree, refusing any authority change.
+
+    The paths come from the frozen Contract's expectations, never from Planner output.
+    A moved HEAD or branch, any staged change, or any dirty path beyond the candidate's
+    authorized test paths is not cleaned up: it terminates the transaction.
+    """
+    snapshot = inspect_repository(ctx.worktree_root)
+    if (
+        snapshot.head_sha != ctx.source_head_sha
+        or snapshot.branch != request.branch
+        or snapshot.staged_paths
+    ):
+        _emit_abort(
+            request,
+            stage="test_authority",
+            cause=FailureCause.AUTHORITY_VIOLATION,
+            stop_reason=StopReason.PROTECTED_ARTIFACT_CHANGED,
+        )
+        raise SupervisorTransactionError(
+            stage="test_authority",
+            reason="planner changed git history, the branch or the git index",
+        )
+    if set(snapshot.dirty_paths) - set(candidate_paths):
+        _emit_abort(
+            request,
+            stage="test_scope",
+            cause=FailureCause.SCOPE_VIOLATION,
+            stop_reason=StopReason.OUT_OF_SCOPE_CHANGE,
+            subreason=AuthoringScopeSubreason.UNEXPECTED_PATH.value,
+        )
+        raise SupervisorTransactionError(
+            stage="test_scope",
+            reason="rejected planner test candidate left changes outside its test paths",
+        )
+    restore_exact_paths(
         ctx.worktree_root,
         expected_branch=request.branch,
         expected_head_sha=ctx.source_head_sha,
-        # Only what the Planner authored; an unchanged GREEN_REGRESSION file is still
-        # protected (request.test_paths) but is not part of the commit.
-        paths=required_changed_paths(specs),
-        message=request.test_commit_message,
+        paths=candidate_paths,
     )
-    _emit(
-        request,
-        ExecutionEventKind.TESTS_FROZEN,
-        outcome=ExecutionOutcome.SUCCESS,
-        detail=test_commit.commit_sha,
-    )
-
-    _persist_transition(
-        run_id=request.run_id,
-        source=WorkflowState.TEST_COMMIT,
-        target=WorkflowState.IMPLEMENTING,
-        sequence=_next_sequence(ctx.journal_path),
-        journal_path=ctx.journal_path,
-        state_path=ctx.state_path,
-    )
-
-    return test_commit
 
 
 def _verify_after_implementer(
@@ -1518,6 +1699,7 @@ def run_single_subphase_transaction(
         ctx,
         parent_env=parent_env,
         planner_adapter=planner_adapter,
+        planner_test_candidate_limit=1,
     )
 
     implementer_result = invoke_agent(
@@ -1567,6 +1749,7 @@ def _run_blocker_capable_transaction(
     *,
     agent_turn_runtime: AgentRuntime,
     capture_rework: bool,
+    planner_test_candidate_limit: int,
 ) -> (
     SingleSubphaseTransactionResult
     | ImplementerBlockedTransactionResult
@@ -1587,7 +1770,10 @@ def _run_blocker_capable_transaction(
     :class:`SupervisorTransactionError` for a ``REWORK`` verdict;
     ``True`` (Sub-phase 9.10 only) routes a ``COMPLETED`` + ``REWORK``
     composite Reviewer report through :func:`_capture_review_rework`
-    instead, returning a :class:`ReviewReworkTransactionResult`. Requires
+    instead, returning a :class:`ReviewReworkTransactionResult`.
+    *planner_test_candidate_limit* is the explicit pre-freeze Planner test
+    candidate bound (see :func:`_author_tests`); each caller states its own so
+    no entrypoint inherits a correction policy it never requested. Requires
     *request* and *agent_turn_runtime* to share the same ``runtime_dir``
     before any agent inference occurs.
     """
@@ -1600,6 +1786,7 @@ def _run_blocker_capable_transaction(
         ctx,
         parent_env=agent_turn_runtime.transaction_parent_env,
         planner_adapter=agent_turn_runtime.adapters.planner,
+        planner_test_candidate_limit=planner_test_candidate_limit,
     )
 
     try:
@@ -1725,6 +1912,7 @@ def run_single_subphase_transaction_with_blockers(
         request,
         agent_turn_runtime=agent_turn_runtime,
         capture_rework=False,
+        planner_test_candidate_limit=1,
     )
     assert not isinstance(result, ReviewReworkTransactionResult)
     return result
@@ -1893,14 +2081,26 @@ def run_single_subphase_transaction_with_retry_checkpoint(
     after that freeze succeeds is a :class:`RetryCheckpointedTransactionResult`
     returned; a freeze failure (:class:`~lockstep.retry_checkpoint.RetryCheckpointStoreError`)
     propagates unchanged, leaving the run ``HALTED`` with no checkpoint.
-    Still runs only the initial transaction attempt: no agent is ever
-    invoked a second time, and no checkpoint is ever consumed, claimed,
-    or deleted.
+    Still runs only the initial transaction attempt: neither the Implementer
+    nor the Reviewer is ever invoked a second time, and no checkpoint is ever
+    consumed, claimed, or deleted.
+
+    Before the tests freeze, up to ``retry_budget.max_attempts`` Planner test
+    candidates may be authored (see :func:`_author_tests`): a candidate rejected
+    by the Planner quality gate or by its baseline expectations is recorded,
+    discarded and replaced by a fresh Planner invocation. The same numeric
+    ceiling is reused independently -- the candidate ordinal is not an
+    ``AttemptNumber``, and candidate correction neither creates a retry
+    checkpoint nor reduces the downstream retry budget.
     """
     result = _run_blocker_capable_transaction(
         request,
         agent_turn_runtime=agent_turn_runtime,
         capture_rework=True,
+        # v0.1 reuses the retry budget's numeric ceiling as the pre-freeze Planner test
+        # candidate bound. Candidates are not attempts: correcting one never changes the
+        # transaction AttemptNumber, creates no checkpoint and consumes no retry budget.
+        planner_test_candidate_limit=retry_budget.max_attempts.root,
     )
 
     if isinstance(result, SingleSubphaseTransactionResult):

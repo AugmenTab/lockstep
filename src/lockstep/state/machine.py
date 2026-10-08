@@ -8,6 +8,11 @@ subprocess, no agent behavior. The state machine decides which
 transitions are legal; callers do not improvise workflow transitions.
 Later orchestration layers associate semantic causes (e.g. REWORK vs.
 APPROVE) with legal edges, but that mapping lives outside this module.
+
+``TEST_BASELINE_VERIFY -> TEST_AUTHORING`` is the controlled pre-freeze
+correction edge: a Planner test candidate that violated its baseline
+expectations is discarded and a fresh candidate is authored within the same
+transaction attempt, before anything is frozen.
 """
 
 from collections.abc import Mapping
@@ -72,6 +77,7 @@ _TRANSITIONS: Mapping[WorkflowState, frozenset[WorkflowState]] = {
     WorkflowState.TEST_BASELINE_VERIFY: frozenset(
         {
             WorkflowState.TEST_COMMIT,
+            WorkflowState.TEST_AUTHORING,
             WorkflowState.SUBPHASE_PLANNING,
             WorkflowState.HALTED,
         }
