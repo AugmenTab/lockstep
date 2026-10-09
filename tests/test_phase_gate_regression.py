@@ -49,7 +49,13 @@ _V1_CURSOR = {
 
 
 def test_the_child_transaction_event_vocabulary_is_exactly_the_phase_10_set() -> None:
+    # Dogfood-04 deliberately adds the four human-escalation lifecycle kinds; the Phase-10
+    # kinds are unchanged.
     assert {kind.value for kind in ExecutionEventKind} == {
+        "human_request_recorded",
+        "human_resolution_recorded",
+        "human_continuation_started",
+        "human_continuation_settled",
         "invocation_started",
         "invocation_returned",
         "baseline_verified",

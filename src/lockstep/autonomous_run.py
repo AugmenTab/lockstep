@@ -63,6 +63,7 @@ from lockstep.autonomous_run_control import (
     reserve_subphase,
 )
 from lockstep.domain import FailureCause, PhaseId, QuotaStatus, StopReason
+from lockstep.human_escalation import HumanRequestReference
 from lockstep.jit_replan import JitReplanState, jit_replan_state
 from lockstep.persistence import ExecutionEvent, read_events
 from lockstep.phase_gate import (
@@ -139,6 +140,9 @@ class AutonomousRunResult:
     ``completed_subphases`` / ``completed_phases`` are what *this call* recorded. The child
     fields carry the underlying authoritative reason when a child stopped the run.
     ``remediation_required`` says a Phase gate failed and its repair could not start.
+    ``human_request`` names the durable request a ``HUMAN_REQUIRED`` stop waits on; answering
+    it (``lockstep.human_escalation.record_human_resolution``) and resuming this same run
+    under the same policy continues the transaction.
     """
 
     disposition: AutonomousRunDisposition
@@ -153,6 +157,7 @@ class AutonomousRunResult:
     stop_reason: StopReason | None = None
     remediation_required: bool = False
     detail: str | None = None
+    human_request: HumanRequestReference | None = None
 
 
 # --- Authoritative usage exhaustion ----------------------------------------------------------
@@ -288,6 +293,7 @@ class _Driver:
             stop_reason=stop_reason,
             remediation_required=remediation_required,
             detail=text or None,
+            human_request=child.human_request if child is not None else None,
         )
 
     def stop_for_failure(

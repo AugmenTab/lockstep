@@ -86,12 +86,22 @@ the same handoff plus the Project Digest and explicitly selected documents. Sinc
 the pack's stable sources form a prefix that precedes every volatile byte. A pack that
 cannot be built fails closed exactly like a drifted handoff. Requests without ``context``
 keep the accepted 11.4 prompts byte for byte.
+
+Dogfood-04 makes a ``HUMAN_REQUIRED`` blocker durable and answerable. Wherever a blocked
+Implementer or Reviewer is dispatched (the initial attempt, a retry resume, or a human
+continuation), a human-routed request is recorded through :mod:`lockstep.human_escalation`
+before ``ESCALATION_DISPATCHED`` and before the ``HALTED`` transition. Once an operator records a
+bound resolution, :func:`continue_human_escalation` re-enters the blocked role at most once, at
+the same attempt and under the attempt's own retry authority and budget, through the same
+re-entry path a retry resume uses (``_Reentry``); the role is handed the original request and the
+answer as labelled evidence. :func:`recover_interrupted_human_halt` finishes the one crash window
+the request-before-halt order opens. Retry resume behavior is unchanged.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -143,7 +153,7 @@ from lockstep.domain import (
     TestExpectation,
 )
 from lockstep.escalation import EscalationProtocolError, EscalationRequest
-from lockstep.escalation_decision import PlannerDecisionKind
+from lockstep.escalation_decision import PlannerDecisionKind, escalation_request_digest
 from lockstep.evidence_store import (
     EvidenceStoreError,
     write_baseline_evidence,
@@ -158,6 +168,7 @@ from lockstep.failure import (
     stop_reason_for_escalation,
 )
 from lockstep.git import (
+    GitCommandError,
     GitCommitResult,
     GitRepositorySnapshot,
     commit_exact_paths,
@@ -173,12 +184,14 @@ from lockstep.handoff import (
     build_implementer_handoff,
     build_reviewer_handoff,
     build_rework_handoff,
+    frozen_test_commit,
     render_implementer_handoff,
     render_reviewer_handoff,
     render_rework_handoff,
 )
 from lockstep.implementer_turn import ImplementerTurnResult, invoke_implementer_turn
 from lockstep.persistence import (
+    ExecutionEvent,
     RunCreatedEvent,
     StateTransitionedEvent,
     append_event,
@@ -204,6 +217,11 @@ from lockstep.state import RunStateSnapshot, WorkflowState
 from lockstep.verification_stack import run_verification_stack
 
 if TYPE_CHECKING:
+    from lockstep.human_escalation import (
+        HumanContinuation,
+        HumanEscalationRecord,
+        PendingHumanRequest,
+    )
     from lockstep.resume import ResumeClaim
     from lockstep.resume_settlement import ResumeSettlement, ResumeSettlementOutcome
     from lockstep.retry import AttemptState, RetryBudget
@@ -656,6 +674,71 @@ def _record_escalation_dispatched(
         role=result.request.source_role,
         cause=cause_for_escalation(result.request.category),
         detail=result.disposition.value,
+    )
+
+
+def _human_request_marker(ordinal: int) -> str:
+    return f"request-{ordinal}"
+
+
+def _persist_human_request(
+    request: SingleSubphaseTransactionRequest,
+    result: SupervisorEscalationResult,
+    *,
+    worktree: Path,
+    retry_budget: RetryBudget | None,
+    retry_checkpoint: RetryCheckpoint | None,
+) -> None:
+    """Make a human-routed blocker durable and answerable before anything records the halt.
+
+    A no-op for every disposition but ``HUMAN_REQUIRED``. Records the exact validated
+    :class:`~lockstep.escalation.EscalationRequest` (plus the Planner's ``HALT_FOR_HUMAN``
+    decision when the Planner routed it here) with the host-observed basis -- the frozen test
+    commit, the worktree HEAD and dirty paths -- and the retry authority and budget the attempt
+    already runs under, then journals its identity. Never the provider's output. Called before
+    ``ESCALATION_DISPATCHED`` and before the ``HALTED`` transition, so a durable human halt
+    always has its request. A failure here is a :class:`SupervisorTransactionError` at stage
+    ``human_request``: the caller halts on it explicitly, never as ``HUMAN_REQUIRED``.
+    """
+    from lockstep.human_escalation import (
+        HumanEscalationError,
+        HumanEscalationRecord,
+        next_human_request_ordinal,
+        record_human_request,
+    )
+    from lockstep.supervisor.escalation import SupervisorEscalationDisposition
+
+    if result.disposition is not SupervisorEscalationDisposition.HUMAN_REQUIRED:
+        return
+    escalation = result.request
+    try:
+        snapshot = inspect_repository(worktree)
+        record = HumanEscalationRecord(
+            schema_version=1,
+            run_id=request.run_id,
+            ordinal=next_human_request_ordinal(request.runtime_dir, escalation.attempt),
+            request=escalation,
+            request_digest=escalation_request_digest(escalation),
+            planner_decision=(
+                result.planner_turn.decision if result.planner_turn is not None else None
+            ),
+            frozen_test_commit=frozen_test_commit(request.runtime_dir),
+            worktree_head=snapshot.head_sha,
+            dirty_paths=tuple(sorted(set(snapshot.dirty_paths))),
+            retry_budget=retry_budget,
+            retry_checkpoint=retry_checkpoint,
+        )
+        record_human_request(request.runtime_dir, record)
+    except (HumanEscalationError, HandoffError, GitCommandError, ValidationError) as exc:
+        raise SupervisorTransactionError(
+            stage="human_request", reason="the human request could not be durably recorded"
+        ) from exc
+    _emit(
+        request,
+        ExecutionEventKind.HUMAN_REQUEST_RECORDED,
+        attempt=escalation.attempt,
+        role=escalation.source_role,
+        detail=_human_request_marker(record.ordinal),
     )
 
 
@@ -1561,6 +1644,7 @@ def _complete_after_implementer_success_with_reviewer_turn(
     *,
     agent_turn_runtime: AgentRuntime,
     capture_rework: bool = False,
+    retry_budget: RetryBudget | None = None,
 ) -> (
     SingleSubphaseTransactionResult
     | ReviewerBlockedTransactionResult
@@ -1648,6 +1732,17 @@ def _complete_after_implementer_success_with_reviewer_turn(
         )
     except (PlannerDecisionTransportError, EscalationProtocolError):
         _halt_after_agent_failure(request, ctx.journal_path, ctx.state_path, stage="escalation")
+        raise
+    try:
+        _persist_human_request(
+            request,
+            escalation_result,
+            worktree=ctx.worktree_root,
+            retry_budget=retry_budget,
+            retry_checkpoint=None,
+        )
+    except SupervisorTransactionError:
+        _halt_after_agent_failure(request, ctx.journal_path, ctx.state_path, stage="human_request")
         raise
     _record_escalation_dispatched(request, escalation_result)
 
@@ -1750,6 +1845,7 @@ def _run_blocker_capable_transaction(
     agent_turn_runtime: AgentRuntime,
     capture_rework: bool,
     planner_test_candidate_limit: int,
+    retry_budget: RetryBudget | None,
 ) -> (
     SingleSubphaseTransactionResult
     | ImplementerBlockedTransactionResult
@@ -1775,7 +1871,9 @@ def _run_blocker_capable_transaction(
     candidate bound (see :func:`_author_tests`); each caller states its own so
     no entrypoint inherits a correction policy it never requested. Requires
     *request* and *agent_turn_runtime* to share the same ``runtime_dir``
-    before any agent inference occurs.
+    before any agent inference occurs. *retry_budget* is recorded with a
+    human request (``None`` for an entrypoint that has none), so a later
+    human continuation runs under the budget the transaction already had.
     """
     _require_agent_turn_runtime_matches_request(request, agent_turn_runtime)
 
@@ -1824,6 +1922,7 @@ def _run_blocker_capable_transaction(
             implementer_turn,
             agent_turn_runtime=agent_turn_runtime,
             capture_rework=capture_rework,
+            retry_budget=retry_budget,
         )
 
     assert implementer_turn.escalation_request is not None
@@ -1848,6 +1947,17 @@ def _run_blocker_capable_transaction(
         )
     except (PlannerDecisionTransportError, EscalationProtocolError):
         _halt_after_agent_failure(request, ctx.journal_path, ctx.state_path, stage="escalation")
+        raise
+    try:
+        _persist_human_request(
+            request,
+            escalation_result,
+            worktree=ctx.worktree_root,
+            retry_budget=retry_budget,
+            retry_checkpoint=None,
+        )
+    except SupervisorTransactionError:
+        _halt_after_agent_failure(request, ctx.journal_path, ctx.state_path, stage="human_request")
         raise
     _record_escalation_dispatched(request, escalation_result)
 
@@ -1913,6 +2023,7 @@ def run_single_subphase_transaction_with_blockers(
         agent_turn_runtime=agent_turn_runtime,
         capture_rework=False,
         planner_test_candidate_limit=1,
+        retry_budget=None,
     )
     assert not isinstance(result, ReviewReworkTransactionResult)
     return result
@@ -2101,6 +2212,7 @@ def run_single_subphase_transaction_with_retry_checkpoint(
         # candidate bound. Candidates are not attempts: correcting one never changes the
         # transaction AttemptNumber, creates no checkpoint and consumes no retry budget.
         planner_test_candidate_limit=retry_budget.max_attempts.root,
+        retry_budget=retry_budget,
     )
 
     if isinstance(result, SingleSubphaseTransactionResult):
@@ -2250,10 +2362,14 @@ def _require_workflow_state_halted(request: SingleSubphaseTransactionRequest) ->
         )
 
 
-def _frozen_correction_authorized_paths(claim: ResumeClaim) -> tuple[str, ...] | None:
+def _frozen_correction_authorized_paths(
+    checkpoint: RetryCheckpoint | None,
+) -> tuple[str, ...] | None:
     from lockstep.retry_checkpoint import RetryAuthorityKind
 
-    authority = claim.checkpoint.authority
+    if checkpoint is None:
+        return None
+    authority = checkpoint.authority
     if authority.kind != RetryAuthorityKind.ESCALATION_RESUME:
         return None
     decision = authority.planner_decision
@@ -2263,10 +2379,14 @@ def _frozen_correction_authorized_paths(claim: ResumeClaim) -> tuple[str, ...] |
     return decision.authorized_paths
 
 
-def _bounded_change_authorized_paths(claim: ResumeClaim) -> tuple[str, ...] | None:
+def _bounded_change_authorized_paths(
+    checkpoint: RetryCheckpoint | None,
+) -> tuple[str, ...] | None:
     from lockstep.retry_checkpoint import RetryAuthorityKind
 
-    authority = claim.checkpoint.authority
+    if checkpoint is None:
+        return None
+    authority = checkpoint.authority
     if authority.kind != RetryAuthorityKind.ESCALATION_RESUME:
         return None
     decision = authority.planner_decision
@@ -2319,13 +2439,13 @@ def _deterministic_json(payload: object) -> str:
 
 
 def _escalation_resume_prompt_suffix(
-    claim: ResumeClaim,
+    checkpoint: RetryCheckpoint,
     executed_attempt_number: AttemptNumber,
     target_role: AgentRole,
 ) -> str:
     from lockstep.retry_checkpoint import RetryAuthorityKind
 
-    authority = claim.checkpoint.authority
+    authority = checkpoint.authority
     assert authority.kind == RetryAuthorityKind.ESCALATION_RESUME
     escalation_request = authority.escalation_request
     decision = authority.planner_decision
@@ -2356,13 +2476,13 @@ def _escalation_resume_prompt_suffix(
 
 
 def _review_rework_prompt_suffix(
-    claim: ResumeClaim,
+    checkpoint: RetryCheckpoint,
     executed_attempt_number: AttemptNumber,
     target_role: AgentRole,
 ) -> str:
     from lockstep.retry_checkpoint import RetryAuthorityKind
 
-    authority = claim.checkpoint.authority
+    authority = checkpoint.authority
     assert authority.kind == RetryAuthorityKind.REVIEW_REWORK
     review_decision = authority.review_decision
     assert review_decision is not None
@@ -2394,36 +2514,79 @@ def _review_rework_prompt_suffix(
     )
 
 
-def _resume_prompt_suffix(
-    claim: ResumeClaim,
+def _checkpoint_prompt_suffix(
+    checkpoint: RetryCheckpoint,
     executed_attempt_number: AttemptNumber,
     target_role: AgentRole,
 ) -> str:
     from lockstep.retry_checkpoint import RetryAuthorityKind
 
-    authority = claim.checkpoint.authority
-    if authority.kind == RetryAuthorityKind.REVIEW_REWORK:
-        return _review_rework_prompt_suffix(claim, executed_attempt_number, target_role)
-    return _escalation_resume_prompt_suffix(claim, executed_attempt_number, target_role)
+    if checkpoint.authority.kind == RetryAuthorityKind.REVIEW_REWORK:
+        return _review_rework_prompt_suffix(checkpoint, executed_attempt_number, target_role)
+    return _escalation_resume_prompt_suffix(checkpoint, executed_attempt_number, target_role)
 
 
-def _prior_review_decisions(claim: ResumeClaim) -> tuple[ReviewDecision, ...]:
+def _resume_prompt_suffix(
+    claim: ResumeClaim,
+    executed_attempt_number: AttemptNumber,
+    target_role: AgentRole,
+) -> str:
+    return _checkpoint_prompt_suffix(claim.checkpoint, executed_attempt_number, target_role)
+
+
+def _prior_review_decisions(checkpoint: RetryCheckpoint | None) -> tuple[ReviewDecision, ...]:
     """The Review Decision that caused this retry, as history for the next Reviewer."""
     from lockstep.retry_checkpoint import RetryAuthorityKind
 
-    authority = claim.checkpoint.authority
+    if checkpoint is None:
+        return ()
+    authority = checkpoint.authority
     if authority.kind == RetryAuthorityKind.REVIEW_REWORK:
         assert authority.review_decision is not None
         return (authority.review_decision,)
     return ()
 
 
+# --- Shared re-entry -----------------------------------------------------------------------
+#
+# A retry resume (9.13) and a human-authorized continuation (dogfood-04) both re-enter one
+# role at one exact attempt under authority that is already durable. They share every launch
+# site, scope rule, verification step and verdict suffix below; they differ only in what the
+# attempt runs under, what evidence the role is handed, and how the known result is settled.
+
+
+@dataclass(frozen=True, slots=True)
+class _Reentry:
+    """One durably authorized re-entry of a role at an exact attempt.
+
+    ``checkpoint`` is the retry authority the attempt runs under -- ``None`` only for a human
+    continuation of the transaction's initial attempt. ``budget`` is what any follow-on retry
+    is evaluated against (``None`` only where the transaction had none). ``human_suffix`` is a
+    human's answer, handed over as labelled evidence. ``expected_head_sha`` pins the basis a
+    human continuation must still stand on. ``settle`` durably records the known result once
+    the workflow state it describes is durable.
+    """
+
+    executed: AttemptState
+    target_role: AgentRole
+    checkpoint: RetryCheckpoint | None
+    budget: RetryBudget | None
+    settle: Callable[[ResumeSettlementOutcome, RetryCheckpoint | None], None] = field(repr=False)
+    human_suffix: str = field(default="", repr=False)
+    expected_head_sha: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ReentryOutcome:
+    outcome: ResumeSettlementOutcome
+    final_state: RunStateSnapshot | None = None
+
+
 def _resume_implementer_prompt(
     request: SingleSubphaseTransactionRequest,
-    claim: ResumeClaim,
-    executed_attempt: AttemptState,
+    reentry: _Reentry,
 ) -> str:
-    """The fresh Implementer's prompt for a resumed attempt.
+    """The fresh Implementer's prompt for a re-entered attempt.
 
     A legacy request keeps its base prompt plus the deterministic suffix. A request
     that carries its Contract gets the canonical rework handoff: the original frozen
@@ -2431,15 +2594,21 @@ def _resume_implementer_prompt(
     prior verification as repair evidence. A Planner-authorized escalation resume also
     keeps its existing deterministic suffix, since that decision is genuine control
     authority; a Review ``REWORK`` has no suffix because its findings are only evidence.
+    The initial attempt (re-entered only by a human continuation) gets its original
+    Implementer prompt. A human's answer always comes last, as labelled evidence.
     """
     from lockstep.retry_checkpoint import RetryAuthorityKind
 
-    attempt = executed_attempt.current_attempt
-    suffix = _resume_prompt_suffix(claim, attempt, AgentRole.IMPLEMENTER)
-    if request.contract is None:
-        return request.implementer_prompt + suffix
+    attempt = reentry.executed.current_attempt
+    checkpoint = reentry.checkpoint
+    if checkpoint is None:
+        return _initial_implementer_prompt(request, request.worktree_path) + reentry.human_suffix
 
-    authority = claim.checkpoint.authority
+    suffix = _checkpoint_prompt_suffix(checkpoint, attempt, AgentRole.IMPLEMENTER)
+    if request.contract is None:
+        return request.implementer_prompt + suffix + reentry.human_suffix
+
+    authority = checkpoint.authority
     if authority.kind == RetryAuthorityKind.REVIEW_REWORK:
         retry = RetryControl(kind="review_rework", attempt=attempt)
         review_decision = authority.review_decision
@@ -2455,6 +2624,7 @@ def _resume_implementer_prompt(
         )
         review_decision = None
         tail = suffix
+    tail += reentry.human_suffix
 
     handoff = build_rework_handoff(
         runtime_dir=request.runtime_dir,
@@ -2491,9 +2661,31 @@ def _record_resume_settled(
     )
 
 
+def _retry_settler(
+    request: SingleSubphaseTransactionRequest, started_claim: ResumeClaim
+) -> Callable[[ResumeSettlementOutcome, RetryCheckpoint | None], None]:
+    """Settle a 9.13 resume: the 9.12 settlement, then its audit events."""
+
+    def settle(outcome: ResumeSettlementOutcome, next_checkpoint: RetryCheckpoint | None) -> None:
+        from lockstep.resume_settlement import ResumeSettlement, finalize_resume_settlement
+
+        settlement = ResumeSettlement(
+            schema_version=1,
+            claim=started_claim,
+            outcome=outcome,
+            next_checkpoint=next_checkpoint,
+        )
+        finalize_resume_settlement(request.runtime_dir, settlement)
+        if next_checkpoint is not None:
+            _record_retry_decision(request, next_checkpoint)
+        _record_resume_settled(request, started_claim, outcome)
+
+    return settle
+
+
 def _settle_and_transition_to_halted(
     request: SingleSubphaseTransactionRequest,
-    started_claim: ResumeClaim,
+    reentry: _Reentry,
     outcome: ResumeSettlementOutcome,
     journal_path: Path,
     state_path: Path,
@@ -2502,9 +2694,7 @@ def _settle_and_transition_to_halted(
     cause: FailureCause | None = None,
     stop_reason: StopReason | None = None,
     next_checkpoint: RetryCheckpoint | None = None,
-) -> ResumeExecutionResult:
-    from lockstep.resume_settlement import ResumeSettlement, finalize_resume_settlement
-
+) -> _ReentryOutcome:
     current = load_verified_state(state_path, journal_path)
     assert current is not None
 
@@ -2516,38 +2706,22 @@ def _settle_and_transition_to_halted(
         journal_path=journal_path,
         state_path=state_path,
     )
-    executed = started_claim.checkpoint.next_attempt_state
-    assert executed is not None
     _emit(
         request,
         ExecutionEventKind.TRANSACTION_HALTED,
-        attempt=executed.current_attempt,
+        attempt=reentry.executed.current_attempt,
         stop_reason=stop_reason,
         cause=cause,
         detail=halt_detail,
     )
 
-    settlement = ResumeSettlement(
-        schema_version=1,
-        claim=started_claim,
-        outcome=outcome,
-        next_checkpoint=next_checkpoint,
-    )
-    finalized = finalize_resume_settlement(request.runtime_dir, settlement)
-    if next_checkpoint is not None:
-        _record_retry_decision(request, next_checkpoint)
-    _record_resume_settled(request, started_claim, outcome)
-
-    return ResumeExecutionResult(
-        disposition=ResumeExecutionDisposition.SETTLED,
-        claim=finalized.claim,
-        settlement=finalized,
-    )
+    reentry.settle(outcome, next_checkpoint)
+    return _ReentryOutcome(outcome=outcome)
 
 
 def _settle_execution_failed(
     request: SingleSubphaseTransactionRequest,
-    started_claim: ResumeClaim,
+    reentry: _Reentry,
     journal_path: Path,
     state_path: Path,
 ) -> None:
@@ -2555,7 +2729,7 @@ def _settle_execution_failed(
 
     _settle_and_transition_to_halted(
         request,
-        started_claim,
+        reentry,
         ResumeSettlementOutcome.EXECUTION_FAILED,
         journal_path,
         state_path,
@@ -2607,12 +2781,11 @@ def _partition_frozen_correction_dirty_paths(
 def _handle_resumed_blocked(
     request: SingleSubphaseTransactionRequest,
     agent_turn_runtime: AgentRuntime,
-    started_claim: ResumeClaim,
-    executed_attempt: AttemptState,
+    reentry: _Reentry,
     escalation_request: EscalationRequest,
     journal_path: Path,
     state_path: Path,
-) -> ResumeExecutionResult:
+) -> _ReentryOutcome:
     from lockstep.escalation_transport import PlannerDecisionTransportError
     from lockstep.resume_settlement import ResumeSettlementOutcome
     from lockstep.retry_checkpoint import create_retry_checkpoint_from_escalation
@@ -2628,14 +2801,29 @@ def _handle_resumed_blocked(
             run_id=request.run_id,
         )
     except (PlannerDecisionTransportError, EscalationProtocolError):
-        _settle_execution_failed(request, started_claim, journal_path, state_path)
+        _settle_execution_failed(request, reentry, journal_path, state_path)
+        raise
+    try:
+        _persist_human_request(
+            request,
+            escalation_result,
+            worktree=request.worktree_path,
+            retry_budget=reentry.budget,
+            retry_checkpoint=reentry.checkpoint,
+        )
+    except SupervisorTransactionError:
+        _settle_execution_failed(request, reentry, journal_path, state_path)
         raise
     _record_escalation_dispatched(request, escalation_result)
 
-    checkpoint = create_retry_checkpoint_from_escalation(
-        attempt_state=executed_attempt,
-        budget=started_claim.checkpoint.budget,
-        result=escalation_result,
+    checkpoint = (
+        None
+        if reentry.budget is None
+        else create_retry_checkpoint_from_escalation(
+            attempt_state=reentry.executed,
+            budget=reentry.budget,
+            result=escalation_result,
+        )
     )
 
     category = escalation_request.category.value
@@ -2644,7 +2832,7 @@ def _handle_resumed_blocked(
     if checkpoint is None:
         return _settle_and_transition_to_halted(
             request,
-            started_claim,
+            reentry,
             ResumeSettlementOutcome.HALTED,
             journal_path,
             state_path,
@@ -2655,7 +2843,7 @@ def _handle_resumed_blocked(
 
     return _settle_and_transition_to_halted(
         request,
-        started_claim,
+        reentry,
         ResumeSettlementOutcome.NEXT_RETRY,
         journal_path,
         state_path,
@@ -2684,16 +2872,12 @@ def _require_review_matches_resume(
 
 def _resume_approve(
     request: SingleSubphaseTransactionRequest,
-    started_claim: ResumeClaim,
+    reentry: _Reentry,
     allowed_impl_paths: tuple[str, ...],
     journal_path: Path,
     state_path: Path,
-) -> ResumeExecutionResult:
-    from lockstep.resume_settlement import (
-        ResumeSettlement,
-        ResumeSettlementOutcome,
-        finalize_resume_settlement,
-    )
+) -> _ReentryOutcome:
+    from lockstep.resume_settlement import ResumeSettlementOutcome
 
     pre_commit_snapshot = inspect_repository(request.worktree_path)
     if _implementer_scope_breached(request, pre_commit_snapshot, allowed_impl_paths):
@@ -2736,41 +2920,43 @@ def _resume_approve(
             reason="final journal replay does not reach SUBPHASE_COMPLETE",
         )
 
-    settlement = ResumeSettlement(
-        schema_version=1, claim=started_claim, outcome=ResumeSettlementOutcome.COMPLETED
-    )
-    finalized = finalize_resume_settlement(request.runtime_dir, settlement)
-    _record_resume_settled(request, started_claim, ResumeSettlementOutcome.COMPLETED)
-
-    return ResumeExecutionResult(
-        disposition=ResumeExecutionDisposition.SETTLED,
-        claim=finalized.claim,
-        settlement=finalized,
-        final_state=final_state,
-    )
+    reentry.settle(ResumeSettlementOutcome.COMPLETED, None)
+    return _ReentryOutcome(outcome=ResumeSettlementOutcome.COMPLETED, final_state=final_state)
 
 
 def _resume_rework(
     request: SingleSubphaseTransactionRequest,
-    started_claim: ResumeClaim,
-    executed_attempt: AttemptState,
+    reentry: _Reentry,
     review: ReviewDecision,
     journal_path: Path,
     state_path: Path,
-) -> ResumeExecutionResult:
+) -> _ReentryOutcome:
     from lockstep.resume_settlement import ResumeSettlementOutcome
     from lockstep.retry_checkpoint import create_retry_checkpoint_from_review
 
+    if reentry.budget is None:
+        # Only a human continuation of an entrypoint without a retry budget reaches here: no
+        # retry authority can follow it, so the REWORK is a plain halt.
+        return _settle_and_transition_to_halted(
+            request,
+            reentry,
+            ResumeSettlementOutcome.HALTED,
+            journal_path,
+            state_path,
+            halt_detail="review_rework",
+            cause=cause_for_review_verdict(review.verdict),
+        )
+
     checkpoint = create_retry_checkpoint_from_review(
-        attempt_state=executed_attempt,
-        budget=started_claim.checkpoint.budget,
+        attempt_state=reentry.executed,
+        budget=reentry.budget,
         decision=review,
     )
     assert checkpoint is not None
 
     return _settle_and_transition_to_halted(
         request,
-        started_claim,
+        reentry,
         ResumeSettlementOutcome.NEXT_RETRY,
         journal_path,
         state_path,
@@ -2783,16 +2969,16 @@ def _resume_rework(
 def _invoke_and_handle_resumed_reviewer(
     request: SingleSubphaseTransactionRequest,
     agent_turn_runtime: AgentRuntime,
-    started_claim: ResumeClaim,
-    executed_attempt: AttemptState,
+    reentry: _Reentry,
     prompt: str,
     allowed_impl_paths: tuple[str, ...],
     journal_path: Path,
     state_path: Path,
     prior_decisions: tuple[ReviewDecision, ...] = (),
-) -> ResumeExecutionResult:
+) -> _ReentryOutcome:
     from lockstep.resume_settlement import ResumeSettlementOutcome
 
+    executed_attempt = reentry.executed
     # *prompt* is the base reviewer instruction text; the evidence is composed here,
     # at the Reviewer stage, from durable state. A drifted handoff is never launched.
     try:
@@ -2804,7 +2990,7 @@ def _invoke_and_handle_resumed_reviewer(
             prior_decisions=prior_decisions,
         )
     except (HandoffError, EvidenceStoreError):
-        _settle_execution_failed(request, started_claim, journal_path, state_path)
+        _settle_execution_failed(request, reentry, journal_path, state_path)
         raise
 
     try:
@@ -2821,7 +3007,7 @@ def _invoke_and_handle_resumed_reviewer(
             run_id=request.run_id,
         )
     except ReviewerTurnError:
-        _settle_execution_failed(request, started_claim, journal_path, state_path)
+        _settle_execution_failed(request, reentry, journal_path, state_path)
         raise
 
     if reviewer_turn.report.status is AgentTurnStatus.BLOCKED:
@@ -2829,8 +3015,7 @@ def _invoke_and_handle_resumed_reviewer(
         return _handle_resumed_blocked(
             request,
             agent_turn_runtime,
-            started_claim,
-            executed_attempt,
+            reentry,
             reviewer_turn.escalation_request,
             journal_path,
             state_path,
@@ -2852,22 +3037,18 @@ def _invoke_and_handle_resumed_reviewer(
 
     if review.verdict is ReviewVerdict.APPROVE:
         try:
-            return _resume_approve(
-                request, started_claim, allowed_impl_paths, journal_path, state_path
-            )
+            return _resume_approve(request, reentry, allowed_impl_paths, journal_path, state_path)
         except SupervisorTransactionError:
-            _settle_execution_failed(request, started_claim, journal_path, state_path)
+            _settle_execution_failed(request, reentry, journal_path, state_path)
             raise
 
     if review.verdict is ReviewVerdict.REWORK:
-        return _resume_rework(
-            request, started_claim, executed_attempt, review, journal_path, state_path
-        )
+        return _resume_rework(request, reentry, review, journal_path, state_path)
 
     assert review.verdict is ReviewVerdict.HALT
     return _settle_and_transition_to_halted(
         request,
-        started_claim,
+        reentry,
         ResumeSettlementOutcome.HALTED,
         journal_path,
         state_path,
@@ -2882,15 +3063,23 @@ def _resume_run_verification(
     allowed_impl_paths: tuple[str, ...],
     journal_path: Path,
     state_path: Path,
+    *,
+    expected_head_sha: str | None = None,
 ) -> None:
     post_implementer_snapshot = inspect_repository(request.worktree_path)
-    if _implementer_scope_breached(request, post_implementer_snapshot, allowed_impl_paths):
-        # The resumed attempt's start HEAD is not carried here, so only the
-        # dirty-path evidence (protected vs unapproved path) is attributable.
+    if _implementer_scope_breached(
+        request,
+        post_implementer_snapshot,
+        allowed_impl_paths,
+        expected_head_sha=expected_head_sha,
+    ):
+        # A retry resume does not carry its attempt's start HEAD, so only the dirty-path
+        # evidence (protected vs unapproved path) is attributable there; a human
+        # continuation pins its basis HEAD, so moving it is attributable too.
         cause, stop_reason = _attribute_scope_breach(
             request,
             post_implementer_snapshot,
-            post_implementer_snapshot.head_sha,
+            expected_head_sha or post_implementer_snapshot.head_sha,
             allowed_impl_paths,
         )
         _emit_abort(
@@ -2937,15 +3126,15 @@ def _resume_run_verification(
 def _resume_implementer(
     request: SingleSubphaseTransactionRequest,
     agent_turn_runtime: AgentRuntime,
-    started_claim: ResumeClaim,
-    executed_attempt: AttemptState,
+    reentry: _Reentry,
     journal_path: Path,
     state_path: Path,
-) -> ResumeExecutionResult:
+) -> _ReentryOutcome:
+    executed_attempt = reentry.executed
     try:
-        prompt = _resume_implementer_prompt(request, started_claim, executed_attempt)
+        prompt = _resume_implementer_prompt(request, reentry)
     except (HandoffError, EvidenceStoreError):
-        _settle_execution_failed(request, started_claim, journal_path, state_path)
+        _settle_execution_failed(request, reentry, journal_path, state_path)
         raise
 
     try:
@@ -2962,7 +3151,7 @@ def _resume_implementer(
             run_id=request.run_id,
         )
     except AgentTurnError:
-        _settle_execution_failed(request, started_claim, journal_path, state_path)
+        _settle_execution_failed(request, reentry, journal_path, state_path)
         raise
 
     if implementer_turn.report.status is AgentTurnStatus.BLOCKED:
@@ -2970,8 +3159,7 @@ def _resume_implementer(
         return _handle_resumed_blocked(
             request,
             agent_turn_runtime,
-            started_claim,
-            executed_attempt,
+            reentry,
             implementer_turn.escalation_request,
             journal_path,
             state_path,
@@ -2980,8 +3168,8 @@ def _resume_implementer(
     assert implementer_turn.escalation_request is None
     _record_implementation_report(request, implementer_turn, executed_attempt.current_attempt)
 
-    frozen_paths = _frozen_correction_authorized_paths(started_claim)
-    bounded_extra_paths = _bounded_change_authorized_paths(started_claim)
+    frozen_paths = _frozen_correction_authorized_paths(reentry.checkpoint)
+    bounded_extra_paths = _bounded_change_authorized_paths(reentry.checkpoint)
 
     try:
         if frozen_paths is not None:
@@ -3011,45 +3199,92 @@ def _resume_implementer(
             allowed_impl_paths,
             journal_path,
             state_path,
+            # A frozen correction legitimately moves HEAD (the host commits it above).
+            expected_head_sha=reentry.expected_head_sha if frozen_paths is None else None,
         )
     except SupervisorTransactionError:
-        _settle_execution_failed(request, started_claim, journal_path, state_path)
+        _settle_execution_failed(request, reentry, journal_path, state_path)
         raise
 
     return _invoke_and_handle_resumed_reviewer(
         request,
         agent_turn_runtime,
-        started_claim,
-        executed_attempt,
+        reentry,
         request.reviewer_prompt,
         allowed_impl_paths,
         journal_path,
         state_path,
-        prior_decisions=_prior_review_decisions(started_claim),
+        prior_decisions=_prior_review_decisions(reentry.checkpoint),
     )
 
 
 def _resume_reviewer(
     request: SingleSubphaseTransactionRequest,
     agent_turn_runtime: AgentRuntime,
-    started_claim: ResumeClaim,
-    executed_attempt: AttemptState,
+    reentry: _Reentry,
     journal_path: Path,
     state_path: Path,
-) -> ResumeExecutionResult:
-    prompt = request.reviewer_prompt + _resume_prompt_suffix(
-        started_claim, executed_attempt.current_attempt, AgentRole.REVIEWER
-    )
+) -> _ReentryOutcome:
+    """Re-enter the Reviewer.
+
+    A retry whose authority targets the Reviewer keeps its resume suffix and the plain
+    production scope. A human continuation of a Reviewer that followed its attempt's
+    Implementer re-enters that same review: the attempt's production scope and prior review
+    history, with the human's answer last.
+    """
+    checkpoint = reentry.checkpoint
+    attempt = reentry.executed.current_attempt
+    if checkpoint is not None and checkpoint.retry_request.target_role is AgentRole.REVIEWER:
+        prompt = (
+            request.reviewer_prompt
+            + _checkpoint_prompt_suffix(checkpoint, attempt, AgentRole.REVIEWER)
+            + reentry.human_suffix
+        )
+        allowed_impl_paths = _sorted_implementation_paths(request)
+        prior_decisions: tuple[ReviewDecision, ...] = ()
+    else:
+        prompt = request.reviewer_prompt + reentry.human_suffix
+        bounded = _bounded_change_authorized_paths(checkpoint) or ()
+        allowed_impl_paths = tuple(sorted(set(request.implementation_paths) | set(bounded)))
+        prior_decisions = _prior_review_decisions(checkpoint)
     return _invoke_and_handle_resumed_reviewer(
         request,
         agent_turn_runtime,
-        started_claim,
-        executed_attempt,
+        reentry,
         prompt,
-        _sorted_implementation_paths(request),
+        allowed_impl_paths,
         journal_path,
         state_path,
+        prior_decisions=prior_decisions,
     )
+
+
+def _enter(
+    request: SingleSubphaseTransactionRequest,
+    agent_turn_runtime: AgentRuntime,
+    reentry: _Reentry,
+) -> _ReentryOutcome:
+    """Make the role active, then launch it. Called only after the durable start boundary."""
+    journal_path = request.runtime_dir / "events.jsonl"
+    state_path = request.runtime_dir / "state.json"
+    active_state = (
+        WorkflowState.IMPLEMENTING
+        if reentry.target_role == AgentRole.IMPLEMENTER
+        else WorkflowState.REVIEWING
+    )
+
+    _persist_transition(
+        run_id=request.run_id,
+        source=WorkflowState.HALTED,
+        target=active_state,
+        sequence=_next_sequence(journal_path),
+        journal_path=journal_path,
+        state_path=state_path,
+    )
+
+    if reentry.target_role == AgentRole.IMPLEMENTER:
+        return _resume_implementer(request, agent_turn_runtime, reentry, journal_path, state_path)
+    return _resume_reviewer(request, agent_turn_runtime, reentry, journal_path, state_path)
 
 
 def _launch_claimed_resume(
@@ -3058,6 +3293,7 @@ def _launch_claimed_resume(
     claim: ResumeClaim,
 ) -> ResumeExecutionResult:
     from lockstep.resume import mark_resume_started
+    from lockstep.resume_settlement import load_resume_settlement
 
     _require_resume_identity_matches_claim(request, claim)
     _require_workflow_state_halted(request)
@@ -3086,29 +3322,24 @@ def _launch_claimed_resume(
         role=target_role,
     )
 
-    journal_path = request.runtime_dir / "events.jsonl"
-    state_path = request.runtime_dir / "state.json"
-    active_state = (
-        WorkflowState.IMPLEMENTING
-        if target_role == AgentRole.IMPLEMENTER
-        else WorkflowState.REVIEWING
+    entered = _enter(
+        request,
+        agent_turn_runtime,
+        _Reentry(
+            executed=executed_attempt,
+            target_role=target_role,
+            checkpoint=started_claim.checkpoint,
+            budget=started_claim.checkpoint.budget,
+            settle=_retry_settler(request, started_claim),
+        ),
     )
-
-    _persist_transition(
-        run_id=request.run_id,
-        source=WorkflowState.HALTED,
-        target=active_state,
-        sequence=_next_sequence(journal_path),
-        journal_path=journal_path,
-        state_path=state_path,
-    )
-
-    if target_role == AgentRole.IMPLEMENTER:
-        return _resume_implementer(
-            request, agent_turn_runtime, started_claim, executed_attempt, journal_path, state_path
-        )
-    return _resume_reviewer(
-        request, agent_turn_runtime, started_claim, executed_attempt, journal_path, state_path
+    settlement = load_resume_settlement(request.runtime_dir, started_claim)
+    assert settlement is not None and settlement.outcome is entered.outcome
+    return ResumeExecutionResult(
+        disposition=ResumeExecutionDisposition.SETTLED,
+        claim=started_claim,
+        settlement=settlement,
+        final_state=entered.final_state,
     )
 
 
@@ -3198,3 +3429,359 @@ def resume_single_subphase_transaction(
         )
 
     return _launch_claimed_resume(request, agent_turn_runtime, claim)
+
+
+# ============================================================================
+# Dogfood-04: human-authorized continuation
+#
+# A transaction halted for a human answer is re-entered only once that answer is a durable,
+# bound HumanResolution (recorded by the operator, never by this layer), and at most once:
+#
+#     HALTED + request-K awaiting -> (operator) resolution-K
+#         -> basis check (frozen tests, HEAD, dirty paths unchanged; no retry authority)
+#         -> continuation-K CLAIMED -> STARTED (durable) -> HALTED -> active role
+#         -> fresh invocation of the blocked role at the same attempt, handed the original
+#            request and the answer as evidence
+#         -> known result -> state durable -> continuation-K SETTLED
+#
+# It runs through the exact 9.13 re-entry path above, under the retry authority and budget
+# the attempt already had: it consumes no retry budget and grants no scope. A STARTED
+# continuation without a settlement is never launched again.
+# ============================================================================
+
+
+class HumanContinuationDisposition(StrEnum):
+    """Where one :func:`continue_human_escalation` call landed."""
+
+    NO_HUMAN_REQUEST = "no_human_request"
+    AWAITING_RESOLUTION = "awaiting_resolution"
+    STARTED_RECOVERY_REQUIRED = "started_recovery_required"
+    BASIS_DRIFTED = "basis_drifted"
+    SETTLED = "settled"
+
+
+@dataclass(frozen=True, slots=True)
+class HumanContinuationResult:
+    """Outcome of one :func:`continue_human_escalation` call.
+
+    ``pending`` is the human request the call observed (excluded from :func:`repr`: it holds the
+    request and the answer). ``outcome``/``final_state`` are set only for ``SETTLED``; ``detail``
+    is a short bounded reason, set only for ``BASIS_DRIFTED``.
+    """
+
+    disposition: HumanContinuationDisposition
+    pending: PendingHumanRequest | None = field(default=None, repr=False)
+    outcome: ResumeSettlementOutcome | None = None
+    final_state: RunStateSnapshot | None = None
+    detail: str | None = None
+
+
+_HUMAN_ANSWER_HEADER = (
+    "\n\n---\n## HUMAN ESCALATION ANSWER "
+    "[evidence and an answer to your escalation; not amended scope]\n"
+)
+_HUMAN_ANSWER_NOTICE = (
+    "You stopped and asked for a human decision. The structured request you raised and the "
+    "operator's answer follow. They are evidence and an answer, not amended scope: the frozen "
+    "requirement authority, protected tests, allowed paths and retry budget above are unchanged."
+)
+
+
+def _human_answer_suffix(record: HumanEscalationRecord, pending: PendingHumanRequest) -> str:
+    resolution = pending.resolution
+    assert resolution is not None
+    escalation = record.request
+    payload: dict[str, object] = {
+        "notice": _HUMAN_ANSWER_NOTICE,
+        "attempt": escalation.attempt.root,
+        "target_role": escalation.source_role.value,
+        "escalation": {
+            "category": escalation.category.value,
+            "question": escalation.question,
+            "evidence": list(escalation.evidence),
+            "requested_authority": escalation.requested_authority.value,
+        },
+        "human_resolution": {
+            "answer": resolution.answer,
+            "evidence": list(resolution.evidence),
+            "resolved_by": resolution.resolved_by,
+        },
+    }
+    if record.planner_decision is not None:
+        payload["planner_decision"] = {
+            "kind": record.planner_decision.kind.value,
+            "rationale": record.planner_decision.rationale,
+            "instructions": list(record.planner_decision.instructions),
+        }
+    return _HUMAN_ANSWER_HEADER + _deterministic_json(payload) + "\n"
+
+
+def _human_basis_drift(
+    request: SingleSubphaseTransactionRequest, record: HumanEscalationRecord
+) -> str | None:
+    """Why the transaction no longer stands where the human was asked, or ``None``."""
+    try:
+        frozen = frozen_test_commit(request.runtime_dir)
+    except HandoffError:
+        return "the frozen test commit is not recorded exactly once"
+    if frozen != record.frozen_test_commit:
+        return "the frozen test commit changed since the human request"
+    try:
+        snapshot = inspect_repository(request.worktree_path)
+    except GitCommandError:
+        return "the run worktree is not readable"
+    if snapshot.branch != request.branch:
+        return "the run worktree is not on the transaction branch"
+    if snapshot.head_sha != record.worktree_head:
+        return "the worktree HEAD moved since the human request"
+    if tuple(sorted(set(snapshot.dirty_paths))) != record.dirty_paths:
+        return "the worktree changed since the human request"
+    return None
+
+
+def _ensure_resolution_journaled(
+    request: SingleSubphaseTransactionRequest, record: HumanEscalationRecord
+) -> None:
+    """Repair the audit trail if the operator's call died between the artifact and its event."""
+    marker = _human_request_marker(record.ordinal)
+    for event in read_events(request.runtime_dir / "events.jsonl"):
+        if (
+            isinstance(event, ExecutionEvent)
+            and event.kind is ExecutionEventKind.HUMAN_RESOLUTION_RECORDED
+            and event.attempt == record.request.attempt
+            and event.detail == marker
+        ):
+            return
+    _emit(
+        request,
+        ExecutionEventKind.HUMAN_RESOLUTION_RECORDED,
+        attempt=record.request.attempt,
+        role=record.request.source_role,
+        detail=marker,
+    )
+
+
+def _human_settler(
+    request: SingleSubphaseTransactionRequest, started: HumanContinuation
+) -> Callable[[ResumeSettlementOutcome, RetryCheckpoint | None], None]:
+    """Settle a human continuation: any follow-on retry authority first, then the boundary."""
+
+    def settle(outcome: ResumeSettlementOutcome, next_checkpoint: RetryCheckpoint | None) -> None:
+        from lockstep.human_escalation import settle_human_continuation
+
+        if next_checkpoint is not None:
+            _freeze_and_record_retry(request, next_checkpoint)
+        settle_human_continuation(request.runtime_dir, started, outcome)
+        _emit(
+            request,
+            ExecutionEventKind.HUMAN_CONTINUATION_SETTLED,
+            attempt=started.attempt,
+            role=started.target_role,
+            detail=f"{_human_request_marker(started.ordinal)}:{outcome.value}",
+        )
+
+    return settle
+
+
+def continue_human_escalation(
+    request: SingleSubphaseTransactionRequest,
+    *,
+    agent_turn_runtime: AgentRuntime,
+) -> HumanContinuationResult:
+    """Re-enter the blocked role once a durable human resolution exists; at most once.
+
+    Reads everything from durable state: the latest human request, its operator resolution and
+    any continuation already recorded. Nothing launches unless the request is resolved, the
+    transaction is durably ``HALTED``, no retry authority is pending, and the basis is exactly
+    the one the human was asked on (``BASIS_DRIFTED`` otherwise -- the resolution stays unspent).
+    The continuation is then claimed, durably ``STARTED``, and the blocked role is invoked fresh
+    -- no provider session is reused -- at the same attempt, under the attempt's own retry
+    authority and budget, with the original request and the answer appended as labelled
+    evidence. A ``STARTED`` continuation without a settlement is never relaunched.
+    """
+    from lockstep.human_escalation import (
+        HumanRequestStatus,
+        claim_human_continuation,
+        inspect_human_escalation,
+        mark_human_continuation_started,
+    )
+    from lockstep.resume import ResumeDisposition, inspect_resume
+    from lockstep.retry import AttemptState
+
+    _require_agent_turn_runtime_matches_request(request, agent_turn_runtime)
+
+    pending = inspect_human_escalation(request.runtime_dir)
+    if pending is None or pending.status is HumanRequestStatus.SETTLED:
+        return HumanContinuationResult(
+            disposition=HumanContinuationDisposition.NO_HUMAN_REQUEST, pending=pending
+        )
+    if pending.status is HumanRequestStatus.AWAITING_RESOLUTION:
+        return HumanContinuationResult(
+            disposition=HumanContinuationDisposition.AWAITING_RESOLUTION, pending=pending
+        )
+    if pending.status is HumanRequestStatus.CONTINUATION_STARTED:
+        return HumanContinuationResult(
+            disposition=HumanContinuationDisposition.STARTED_RECOVERY_REQUIRED, pending=pending
+        )
+
+    record = pending.record
+    escalation = record.request
+    if (record.run_id, escalation.phase_id, escalation.subphase_id) != (
+        request.run_id,
+        request.phase_id,
+        request.subphase_id,
+    ):
+        raise ResumeExecutionError(
+            stage="human_identity",
+            reason="transaction request does not match the human request",
+        )
+    _require_workflow_state_halted(request)
+    if inspect_resume(request.runtime_dir).disposition is not ResumeDisposition.NO_CHECKPOINT:
+        raise ResumeExecutionError(
+            stage="human_continuation",
+            reason="retry authority is pending beside a human continuation",
+        )
+    drift = _human_basis_drift(request, record)
+    if drift is not None:
+        return HumanContinuationResult(
+            disposition=HumanContinuationDisposition.BASIS_DRIFTED, pending=pending, detail=drift
+        )
+
+    suffix = _human_answer_suffix(record, pending)
+    _ensure_resolution_journaled(request, record)
+    claimed = claim_human_continuation(request.runtime_dir, pending)
+    started = mark_human_continuation_started(request.runtime_dir, claimed)
+    _emit(
+        request,
+        ExecutionEventKind.HUMAN_CONTINUATION_STARTED,
+        attempt=escalation.attempt,
+        role=escalation.source_role,
+        detail=_human_request_marker(record.ordinal),
+    )
+
+    entered = _enter(
+        request,
+        agent_turn_runtime,
+        _Reentry(
+            executed=AttemptState(
+                phase_id=escalation.phase_id,
+                subphase_id=escalation.subphase_id,
+                current_attempt=escalation.attempt,
+            ),
+            target_role=escalation.source_role,
+            checkpoint=record.retry_checkpoint,
+            budget=record.retry_budget,
+            settle=_human_settler(request, started),
+            human_suffix=suffix,
+            expected_head_sha=record.worktree_head,
+        ),
+    )
+    return HumanContinuationResult(
+        disposition=HumanContinuationDisposition.SETTLED,
+        pending=pending,
+        outcome=entered.outcome,
+        final_state=entered.final_state,
+    )
+
+
+def recover_interrupted_human_halt(request: SingleSubphaseTransactionRequest) -> bool:
+    """Finish a human halt whose request is durable but whose ``HALTED`` state is not.
+
+    The one crash window the request-before-halt ordering opens: the request was recorded (so
+    the blocked turn returned and the human route was decided), but the process died before the
+    transaction was durably halted. Only that exact shape is completed -- the blocked role's
+    active state, the latest request awaiting an answer, and no retry claim or checkpoint (a
+    retry resume that halted keeps its own fail-closed recovery). Re-journals what is missing,
+    halts with the request's attribution, and settles a continuation that was in flight. No
+    agent is launched. Returns whether it completed a halt.
+    """
+    from lockstep.human_escalation import (
+        HumanContinuationStatus,
+        HumanRequestStatus,
+        inspect_human_escalation,
+        load_human_continuation,
+    )
+    from lockstep.resume import ResumeDisposition, inspect_resume
+    from lockstep.resume_settlement import ResumeSettlementOutcome
+    from lockstep.supervisor.escalation import SupervisorEscalationDisposition
+
+    journal_path = request.runtime_dir / "events.jsonl"
+    state_path = request.runtime_dir / "state.json"
+    current = load_verified_state(state_path, journal_path)
+    if current is None or current.workflow_state not in (
+        WorkflowState.IMPLEMENTING,
+        WorkflowState.REVIEWING,
+    ):
+        return False
+    pending = inspect_human_escalation(request.runtime_dir)
+    if pending is None or pending.status is not HumanRequestStatus.AWAITING_RESOLUTION:
+        return False
+    record = pending.record
+    escalation = record.request
+    blocked_state = (
+        WorkflowState.IMPLEMENTING
+        if escalation.source_role is AgentRole.IMPLEMENTER
+        else WorkflowState.REVIEWING
+    )
+    if current.workflow_state is not blocked_state or record.run_id != request.run_id:
+        return False
+    if inspect_resume(request.runtime_dir).disposition is not ResumeDisposition.NO_CHECKPOINT:
+        return False
+
+    marker = _human_request_marker(record.ordinal)
+    events = [e for e in read_events(journal_path) if isinstance(e, ExecutionEvent)]
+    recorded_at = next(
+        (
+            index
+            for index, event in enumerate(events)
+            if event.kind is ExecutionEventKind.HUMAN_REQUEST_RECORDED
+            and event.attempt == escalation.attempt
+            and event.detail == marker
+        ),
+        None,
+    )
+    if recorded_at is None:
+        _emit(
+            request,
+            ExecutionEventKind.HUMAN_REQUEST_RECORDED,
+            attempt=escalation.attempt,
+            role=escalation.source_role,
+            detail=marker,
+        )
+    dispatched = recorded_at is not None and any(
+        event.kind is ExecutionEventKind.ESCALATION_DISPATCHED
+        for event in events[recorded_at + 1 :]
+    )
+    if not dispatched:
+        _emit(
+            request,
+            ExecutionEventKind.ESCALATION_DISPATCHED,
+            attempt=escalation.attempt,
+            role=escalation.source_role,
+            cause=cause_for_escalation(escalation.category),
+            detail=SupervisorEscalationDisposition.HUMAN_REQUIRED.value,
+        )
+    _persist_transition(
+        run_id=request.run_id,
+        source=current.workflow_state,
+        target=WorkflowState.HALTED,
+        sequence=_next_sequence(journal_path),
+        journal_path=journal_path,
+        state_path=state_path,
+    )
+    _emit(
+        request,
+        ExecutionEventKind.TRANSACTION_HALTED,
+        attempt=escalation.attempt,
+        stop_reason=stop_reason_for_escalation(escalation.category),
+        cause=cause_for_escalation(escalation.category),
+        detail=escalation.category.value,
+    )
+
+    if record.ordinal > 1:
+        previous = load_human_continuation(
+            request.runtime_dir, escalation.attempt, record.ordinal - 1
+        )
+        if previous is not None and previous.status is HumanContinuationStatus.STARTED:
+            _human_settler(request, previous)(ResumeSettlementOutcome.HALTED, None)
+    return True
