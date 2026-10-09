@@ -55,6 +55,7 @@ from pydantic import (
     ConfigDict,
     Field,
     RootModel,
+    StrictBool,
     StringConstraints,
     ValidationError,
     field_validator,
@@ -189,6 +190,8 @@ class AutonomousRunPolicy(BaseModel):
     wall-clock budget leaves no time to launch anything. ``retry_budget`` is the accepted
     Phase-9 budget, passed unchanged to ordinary child execution; ``until_phase`` is an
     inclusive stop boundary (complete that Phase, then stop before its successor).
+    ``jit_replan`` selects JIT replanning of the unfinished outline between accepted
+    Sub-phases (the default); ``False`` runs the published outline as frozen.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -198,6 +201,7 @@ class AutonomousRunPolicy(BaseModel):
     retry_budget: RetryBudget
     max_gate_remediations: _NonNegativeStrictInt
     until_phase: PhaseId | None = None
+    jit_replan: StrictBool = True
 
 
 def require_finite_policy(policy: AutonomousRunPolicy) -> None:
@@ -224,13 +228,21 @@ def require_finite_policy(policy: AutonomousRunPolicy) -> None:
     until = getattr(policy, "until_phase", None)
     if until is not None and not isinstance(until, PhaseId):
         raise AutonomousRunPolicyError("until_phase must be a phase id")
+    if not isinstance(getattr(policy, "jit_replan", None), bool):
+        raise AutonomousRunPolicyError("jit_replan must be a boolean")
 
 
 def policy_digest(policy: AutonomousRunPolicy) -> str:
-    """The canonical lowercase SHA-256 digest binding a run to exactly this policy."""
-    text = json.dumps(
-        policy.model_dump(mode="json"), ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
+    """The canonical lowercase SHA-256 digest binding a run to exactly this policy.
+
+    ``jit_replan=True`` is the meaning of a policy recorded before the field existed, so it is
+    left out of the digest payload: such a record keeps its digest, and only ``False`` (a
+    different authority) yields a different one.
+    """
+    payload = policy.model_dump(mode="json")
+    if payload.get("jit_replan") is True:
+        del payload["jit_replan"]
+    text = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 

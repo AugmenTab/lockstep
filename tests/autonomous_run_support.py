@@ -131,6 +131,7 @@ def make_policy(
     retry_attempts: int = 3,
     max_gate_remediations: int = 1,
     until_phase: str | None = None,
+    jit_replan: bool = True,
 ) -> Any:
     """A finite policy; the production types are imported lazily (see the module docstring)."""
     from lockstep.autonomous_run_control import AutonomousRunPolicy
@@ -142,6 +143,7 @@ def make_policy(
         retry_budget=RetryBudget(max_attempts=AttemptNumber.model_validate(retry_attempts)),
         max_gate_remediations=max_gate_remediations,
         until_phase=PhaseId.model_validate(until_phase) if until_phase is not None else None,
+        jit_replan=jit_replan,
     )
 
 
