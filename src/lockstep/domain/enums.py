@@ -48,6 +48,12 @@ class ExecutionEventKind(StrEnum):
     RESUME_SETTLED = "resume_settled"
     TRANSACTION_HALTED = "transaction_halted"
     TRANSACTION_ABORTED = "transaction_aborted"
+    # Dogfood-04: the human escalation lifecycle. Identity/status only; the request and the
+    # operator's answer live in their typed artifacts (lockstep.human_escalation).
+    HUMAN_REQUEST_RECORDED = "human_request_recorded"
+    HUMAN_RESOLUTION_RECORDED = "human_resolution_recorded"
+    HUMAN_CONTINUATION_STARTED = "human_continuation_started"
+    HUMAN_CONTINUATION_SETTLED = "human_continuation_settled"
 
 
 class ExecutionOutcome(StrEnum):

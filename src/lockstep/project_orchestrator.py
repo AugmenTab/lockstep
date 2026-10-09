@@ -72,6 +72,12 @@ from lockstep.domain import ExecutionEventKind, PhaseId, RunId, SubphaseContract
 from lockstep.escalation import EscalationProtocolError
 from lockstep.escalation_transport import PlannerDecisionTransportError
 from lockstep.handoff import HandoffError
+from lockstep.human_escalation import (
+    HumanRequestReference,
+    HumanRequestStatus,
+    PendingHumanRequest,
+    inspect_human_escalation,
+)
 from lockstep.jit_replan import JitReplanError, JitReplanState, jit_replan_state, run_jit_replan
 from lockstep.persistence import ExecutionEvent, load_verified_state, read_events
 from lockstep.planning import PlanningValidationError
@@ -105,9 +111,12 @@ from lockstep.runtime import AgentRuntime
 from lockstep.state import RunStateSnapshot
 from lockstep.supervisor.escalation import SupervisorEscalationDisposition
 from lockstep.supervisor.transaction import (
+    HumanContinuationDisposition,
     ResumeExecutionDisposition,
     SingleSubphaseTransactionRequest,
     SupervisorTransactionError,
+    continue_human_escalation,
+    recover_interrupted_human_halt,
     resume_single_subphase_transaction,
     run_single_subphase_transaction_with_retry_checkpoint,
 )
@@ -210,7 +219,10 @@ class ProjectRunResult:
     ``cursor`` is the durable cursor at the moment of stopping. ``completed``
     lists the Sub-phases this :func:`run_project_phase` call recorded.
     ``escalation_disposition`` and ``resume_disposition`` carry the durable
-    control facts that explain a stop, when there are any.
+    control facts that explain a stop, when there are any. ``human_request``
+    names the durable human request a ``HUMAN_REQUIRED`` stop is waiting on (and
+    the one a human-continuation recovery stop concerns); ``detail`` then
+    describes it in one bounded line -- identity and status, never its text.
     """
 
     disposition: ProjectRunDisposition
@@ -220,6 +232,7 @@ class ProjectRunResult:
     escalation_disposition: SupervisorEscalationDisposition | None = None
     resume_disposition: ResumeExecutionDisposition | None = None
     detail: str | None = None
+    human_request: HumanRequestReference | None = None
 
 
 # --- Identity and layout ---------------------------------------------------------
@@ -591,6 +604,7 @@ def _stop(
     escalation: SupervisorEscalationDisposition | None = None,
     resume: ResumeExecutionDisposition | None = None,
     detail: str | None = None,
+    human_request: HumanRequestReference | None = None,
 ) -> ProjectRunResult:
     cursor = load_project_cursor(runtime.project_root, runtime.runtime_dir)
     assert cursor is not None
@@ -601,6 +615,7 @@ def _stop(
         escalation_disposition=escalation,
         resume_disposition=resume,
         detail=detail,
+        human_request=human_request,
     )
 
 
@@ -618,6 +633,12 @@ def _record_completion(runtime: AgentRuntime, journal_path: Path, state_path: Pa
     )
 
 
+_LEGACY_HUMAN_HALT = (
+    "the transaction halted for a human decision but has no durable human request; "
+    "it predates durable human escalation and cannot be answered or resumed"
+)
+
+
 def _halted_result(
     runtime: AgentRuntime,
     run_id: RunId,
@@ -626,14 +647,92 @@ def _halted_result(
     resume: ResumeExecutionDisposition,
 ) -> ProjectRunResult:
     escalation = _durable_escalation_disposition(journal_path)
-    human = escalation is SupervisorEscalationDisposition.HUMAN_REQUIRED
+    if escalation is SupervisorEscalationDisposition.HUMAN_REQUIRED:
+        # Every human halt records its request before it halts, so one with nothing awaiting
+        # an answer is a legacy halt: its question is gone. Fail closed; never reconstruct it.
+        return _stop(
+            runtime,
+            ProjectRunDisposition.RECOVERY_REQUIRED,
+            run_id,
+            escalation=escalation,
+            resume=resume,
+            detail=_LEGACY_HUMAN_HALT,
+        )
+    return _stop(
+        runtime, ProjectRunDisposition.HALTED, run_id, escalation=escalation, resume=resume
+    )
+
+
+def _human_required(
+    runtime: AgentRuntime, run_id: RunId, journal_path: Path, pending: PendingHumanRequest
+) -> ProjectRunResult:
+    reference = pending.reference
     return _stop(
         runtime,
-        ProjectRunDisposition.HUMAN_REQUIRED if human else ProjectRunDisposition.HALTED,
+        ProjectRunDisposition.HUMAN_REQUIRED,
         run_id,
-        escalation=escalation,
-        resume=resume,
+        escalation=_durable_escalation_disposition(journal_path)
+        or SupervisorEscalationDisposition.HUMAN_REQUIRED,
+        resume=ResumeExecutionDisposition.NO_CHECKPOINT,
+        detail=reference.describe(),
+        human_request=reference,
     )
+
+
+def _human_step(
+    runtime: AgentRuntime,
+    txn_runtime: AgentRuntime,
+    request: SingleSubphaseTransactionRequest,
+    journal_path: Path,
+) -> ProjectRunResult | None:
+    """Act on a halted transaction that holds no retry authority.
+
+    ``None`` means a human-authorized continuation ran and settled, so the caller re-derives
+    the transaction's condition. A request awaiting an answer stops ``HUMAN_REQUIRED``; a
+    continuation that started without a recorded result, or whose basis drifted, stops
+    ``RECOVERY_REQUIRED``. With no human interaction in flight this is the ordinary halt.
+    """
+    run_id = request.run_id
+    pending = inspect_human_escalation(request.runtime_dir)
+    status = pending.status if pending is not None else None
+    if pending is None or status is HumanRequestStatus.SETTLED:
+        return _halted_result(
+            runtime, run_id, journal_path, resume=ResumeExecutionDisposition.NO_CHECKPOINT
+        )
+    if status is HumanRequestStatus.AWAITING_RESOLUTION:
+        return _human_required(runtime, run_id, journal_path, pending)
+    if status is HumanRequestStatus.CONTINUATION_STARTED:
+        return _stop(
+            runtime,
+            ProjectRunDisposition.RECOVERY_REQUIRED,
+            run_id,
+            resume=ResumeExecutionDisposition.NO_CHECKPOINT,
+            detail="a human-authorized continuation started without a recorded result; "
+            "it is never relaunched",
+            human_request=pending.reference,
+        )
+    try:
+        continued = continue_human_escalation(request, agent_turn_runtime=txn_runtime)
+    except _KNOWN_TRANSACTION_FAILURES as exc:
+        stage = exc.stage if isinstance(exc, SupervisorTransactionError) else type(exc).__name__
+        return _stop(
+            runtime,
+            ProjectRunDisposition.EXECUTION_FAILED,
+            run_id,
+            detail=f"human continuation: {stage}",
+        )
+    if continued.disposition is HumanContinuationDisposition.BASIS_DRIFTED:
+        return _stop(
+            runtime,
+            ProjectRunDisposition.RECOVERY_REQUIRED,
+            run_id,
+            resume=ResumeExecutionDisposition.NO_CHECKPOINT,
+            detail=f"human continuation basis drifted: {continued.detail}",
+            human_request=pending.reference,
+        )
+    if continued.disposition is not HumanContinuationDisposition.SETTLED:
+        raise ProjectOrchestrationError("a resolved human request did not reach a continuation")
+    return None
 
 
 def _resume_until_terminal(
@@ -646,9 +745,13 @@ def _resume_until_terminal(
     *,
     attempts: int,
 ) -> ProjectRunResult | None:
-    """Consume durable retry authority until the halted transaction completes or must stop."""
+    """Consume durable retry -- and resolved human -- authority until the transaction stops.
+
+    A human continuation needs an operator resolution recorded between calls, so at most one
+    runs per call; the bound allows for it beside the retry budget.
+    """
     run_id = request.run_id
-    for _ in range(attempts + 2):
+    for _ in range(attempts + 3):
         outcome = resume_single_subphase_transaction(request, agent_turn_runtime=txn_runtime)
         disposition = outcome.disposition
 
@@ -656,8 +759,12 @@ def _resume_until_terminal(
             return _stop(
                 runtime, ProjectRunDisposition.RECOVERY_REQUIRED, run_id, resume=disposition
             )
-        if disposition is not ResumeExecutionDisposition.SETTLED:
-            # No checkpoint, an exhausted budget, or authority that is not executable.
+        if disposition is ResumeExecutionDisposition.NO_CHECKPOINT:
+            stopped = _human_step(runtime, txn_runtime, request, journal_path)
+            if stopped is not None:
+                return stopped
+        elif disposition is not ResumeExecutionDisposition.SETTLED:
+            # An exhausted budget, or authority that is not executable.
             return _halted_result(runtime, run_id, journal_path, resume=disposition)
 
         condition = _transaction_condition(cursor, journal_path, state_path)
@@ -710,6 +817,10 @@ def _drive_bound_transaction(
             failure = (
                 exc.stage if isinstance(exc, SupervisorTransactionError) else type(exc).__name__
             )
+    else:
+        # A crash between recording a human request and halting leaves the request durable
+        # and the transaction looking active; finish that halt (no agent is launched).
+        recover_interrupted_human_halt(request)
 
     condition = _transaction_condition(cursor, journal_path, state_path)
     if condition is PlanningEligibilityReason.COMPLETION_NOT_RECORDED:

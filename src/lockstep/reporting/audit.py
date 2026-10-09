@@ -499,6 +499,19 @@ class RetryAudit(_Model):
     executed: bool
 
 
+class HumanEscalationAudit(_Model):
+    """The human escalation lifecycle of one transaction, counted from its journal.
+
+    Requests recorded, operator resolutions recorded, and human-authorized continuations
+    started and settled. Identity only: the request and answer live in their artifacts.
+    """
+
+    requested: int = 0
+    resolved: int = 0
+    continuations_started: int = 0
+    continuations_settled: int = 0
+
+
 class HaltAudit(_Model):
     kind: HaltKind
     attempt: int | None
@@ -578,6 +591,7 @@ class SubphaseAudit(_Model):
     stop_reasons: dict[StopReason, int]
     halts: tuple[HaltAudit, ...]
     human_intervention_events: int
+    human_escalation: HumanEscalationAudit
     elapsed: SubphaseElapsed
     usage: UsageSummary
     tests: TestAudit
@@ -1495,6 +1509,12 @@ def _subphase_audit(
             if e.cause is FailureCause.HUMAN_REQUIRED_DECISION
             or e.stop_reason in _HUMAN_STOP_REASONS
         ),
+        human_escalation=HumanEscalationAudit(
+            requested=sum(1 for e in events if e.kind is K.HUMAN_REQUEST_RECORDED),
+            resolved=sum(1 for e in events if e.kind is K.HUMAN_RESOLUTION_RECORDED),
+            continuations_started=sum(1 for e in events if e.kind is K.HUMAN_CONTINUATION_STARTED),
+            continuations_settled=sum(1 for e in events if e.kind is K.HUMAN_CONTINUATION_SETTLED),
+        ),
         elapsed=SubphaseElapsed(
             wall_clock_seconds=metrics.wall_clock_seconds if metrics is not None else None,
             journal_span_seconds=_seconds(min(times), max(times)) if times else None,
@@ -2140,6 +2160,7 @@ __all__ = [
     "GateAttemptAudit",
     "HaltAudit",
     "HaltKind",
+    "HumanEscalationAudit",
     "InvocationFamily",
     "InvocationGroup",
     "InvocationSummary",
