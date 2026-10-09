@@ -47,7 +47,9 @@ from phase_gate_support import (
     fail_once_command,
     failing_command,
     file_bytes,
+    master_plan,
     remediation_plan_response,
+    replan_response,
     review_response,
     subjects,
     unit_script,
@@ -154,7 +156,8 @@ def test_the_driver_has_explicit_keyword_policy_and_no_replan_switch() -> None:
     assert parameters["project_run_id"].default is None
     assert parameters["request_factory"].default is None
     assert parameters["clock"].kind is inspect.Parameter.KEYWORD_ONLY
-    # JIT replanning stays the default whenever continuation is authorized.
+    # JIT replanning is immutable host policy (``AutonomousRunPolicy.jit_replan``), never a
+    # per-call switch.
     assert "jit_replan" not in parameters
 
     start = inspect.signature(start_project_run).parameters
@@ -532,6 +535,150 @@ def test_a_zero_sub_phase_budget_launches_nothing(tmp_path: Path) -> None:
 
 
 # ===========================================================================
+# Fixed outline: the host policy can run the published outline without JIT replanning
+# ===========================================================================
+
+
+def _spy_ordinary_jit(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    """Record the ``jit_replan`` every Sub-phase-step call of the driver passes."""
+    seen: list[bool] = []
+    original = autonomous_run.step_project_run
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        if "jit_replan" in kwargs:
+            seen.append(kwargs["jit_replan"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(autonomous_run, "step_project_run", spy)
+    return seen
+
+
+def _spy_replans(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    calls: list[object] = []
+    original = project_orchestrator.run_jit_replan
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(project_orchestrator, "run_jit_replan", spy)
+    return calls
+
+
+def test_default_policy_passes_jit_replanning_into_ordinary_orchestration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = autonomous_project(tmp_path, phases=_THREE_UNITS)
+    seen = _spy_ordinary_jit(monkeypatch)
+    replans = _spy_replans(monkeypatch)
+
+    result = run_autonomous(project, make_policy(), clock=FakeClock())
+
+    assert result.disposition is _D.PROJECT_COMPLETE
+    assert seen and all(value is True for value in seen)
+    assert len(replans) == 2  # between 01->02 and 02->03, exactly as before
+    assert project.counts() == (8, 3, 3)
+
+
+def test_a_fixed_outline_policy_runs_the_frozen_outline_without_any_jit_replan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = autonomous_project(tmp_path, phases=_THREE_UNITS, jit=False)
+    seen = _spy_ordinary_jit(monkeypatch)
+    replans = _spy_replans(monkeypatch)
+
+    result = run_autonomous(project, make_policy(jit_replan=False), clock=FakeClock())
+
+    assert result.disposition is _D.PROJECT_COMPLETE
+    assert seen and all(value is False for value in seen)
+    assert replans == []
+    assert [e.subphase_id.root for e in project.cursor().completed_subphases] == [
+        "01",
+        "02",
+        "03",
+    ]
+    assert project.counts() == (6, 3, 3)  # Contract + tests per unit, no replan
+    assert _reserved(project, result) == [("01", "01"), ("01", "02"), ("01", "03")]
+    assert not (project.runtime_dir / "planning" / "replans").exists()
+
+
+def test_a_fixed_outline_spends_no_planner_call_on_a_unit_it_cannot_execute(
+    tmp_path: Path,
+) -> None:
+    project = autonomous_project(tmp_path, phases=_TWO_UNITS, jit=False)
+
+    result = run_autonomous(
+        project, make_policy(max_subphases=1, jit_replan=False), clock=FakeClock()
+    )
+
+    assert result.disposition is _D.MAX_SUBPHASES_REACHED
+    assert project.counts() == (2, 1, 1)
+    assert project.cursor().active_contract is None
+    assert _reserved(project, result) == [("01", "01")]
+
+
+def test_a_fixed_outline_run_continues_the_published_outline_after_an_unreplanned_unit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An earlier replanning run stopped before its replan: no receipt exists, so the published
+    # outline is untouched and a fixed-outline run executes it as published.
+    project = autonomous_project(tmp_path, phases=_TWO_UNITS, jit=False)
+    first = run_autonomous(project, make_policy(max_subphases=1), clock=FakeClock())
+    assert first.disposition is _D.MAX_SUBPHASES_REACHED
+    assert jit_replan_state(project.project_root, project.runtime_dir) is (
+        JitReplanState.REPLAN_REQUIRED
+    )
+    replans = _spy_replans(monkeypatch)
+
+    later = run_autonomous(project, make_policy(jit_replan=False), clock=FakeClock())
+
+    assert later.disposition is _D.PROJECT_COMPLETE
+    assert replans == []
+    assert project.counts() == (4, 2, 2)
+
+
+def test_a_fixed_outline_run_stops_at_an_accepted_but_unapplied_replan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import lockstep.jit_replan as jit_replan_module
+
+    # A revised (retitled) successor, so the accepted receipt differs from the published outline.
+    plan = master_plan(_TWO_UNITS).phases[0]
+    successor = plan.subphases[1].model_copy(update={"title": "revised successor"})
+    revised = plan.model_copy(update={"subphases": (plan.subphases[0], successor)})
+    project = autonomous_project(
+        tmp_path,
+        phases=_TWO_UNITS,
+        planner=[*unit_script("01", "01"), replan_response(revised), *unit_script("01", "02")],
+    )
+    crash_once(monkeypatch, jit_replan_module, "_apply_receipt")
+    with pytest.raises(CrashError):
+        run_autonomous(project, make_policy(), clock=FakeClock())
+    assert jit_replan_state(project.project_root, project.runtime_dir) is (
+        JitReplanState.REPLAN_ACCEPTED
+    )
+    counts = project.counts()
+    cursor = _cursor_bytes(project)
+
+    fixed = run_autonomous(project, make_policy(jit_replan=False), clock=FakeClock())
+
+    assert fixed.disposition is _D.RECOVERY_REQUIRED
+    assert fixed.detail is not None and "accepted jit replan" in fixed.detail
+    assert fixed.reserved_subphases == 0
+    assert project.counts() == counts
+    assert _cursor_bytes(project) == cursor
+    assert jit_replan_state(project.project_root, project.runtime_dir) is (
+        JitReplanState.REPLAN_ACCEPTED
+    )
+
+    # A replanning run settles the accepted receipt (no new Planner call for it) and finishes.
+    settled = run_autonomous(project, make_policy(), clock=FakeClock())
+
+    assert settled.disposition is _D.PROJECT_COMPLETE
+    assert project.counts() == (5, 2, 2)
+
+
+# ===========================================================================
 # Scenario D: a retry is more work in one unit, never another unit
 # ===========================================================================
 
@@ -583,8 +730,9 @@ def test_an_exhausted_retry_budget_stops_the_run_and_later_work_never_starts(
 # ===========================================================================
 
 
+@pytest.mark.parametrize("jit_replan", [True, False])
 def test_a_gate_remediation_consumes_one_budget_slot_and_the_gate_attempt_none(
-    tmp_path: Path,
+    tmp_path: Path, jit_replan: bool
 ) -> None:
     project = autonomous_project(
         tmp_path,
@@ -600,7 +748,9 @@ def test_a_gate_remediation_consumes_one_budget_slot_and_the_gate_attempt_none(
     )
 
     result = run_autonomous(
-        project, make_policy(max_subphases=2, max_gate_remediations=1), clock=FakeClock()
+        project,
+        make_policy(max_subphases=2, max_gate_remediations=1, jit_replan=jit_replan),
+        clock=FakeClock(),
     )
 
     assert result.disposition is _D.PROJECT_COMPLETE
@@ -1012,6 +1162,7 @@ def test_an_already_complete_project_returns_immediately_with_zero_external_work
         {"retry_budget": RetryBudget(max_attempts=AttemptNumber.model_validate(4))},
         {"max_gate_remediations": 2},
         {"until_phase": _P2},
+        {"jit_replan": False},
     ],
 )
 def test_a_run_cannot_silently_gain_authority_by_resuming_under_another_policy(

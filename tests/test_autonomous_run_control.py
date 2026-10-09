@@ -202,6 +202,7 @@ def test_a_tampered_policy_record_is_detected_by_its_digest(tmp_path: Path) -> N
         {"retry_budget": RetryBudget(max_attempts=AttemptNumber.model_validate(4))},
         {"max_gate_remediations": 2},
         {"until_phase": PhaseId.model_validate("02")},
+        {"jit_replan": False},
     ],
 )
 def test_resuming_under_any_other_policy_is_refused(
@@ -214,6 +215,47 @@ def test_resuming_under_any_other_policy_is_refused(
         require_same_policy(run, make_policy().model_copy(update=changes))
 
     assert isinstance(refused.value, AutonomousRunError)
+
+
+def test_a_fixed_outline_run_cannot_be_resumed_with_replanning(tmp_path: Path) -> None:
+    run = _create(tmp_path, FakeClock(), jit_replan=False)
+
+    require_same_policy(run, make_policy(jit_replan=False))
+    with pytest.raises(AutonomousRunPolicyMismatchError):
+        require_same_policy(run, make_policy())
+
+
+@pytest.mark.parametrize("jit_replan", [True, False])
+def test_the_jit_replan_choice_round_trips_through_the_record(
+    tmp_path: Path, jit_replan: bool
+) -> None:
+    run = _create(tmp_path, FakeClock(), jit_replan=jit_replan)
+    reloaded = load_project_run(tmp_path / "runtime", run.project_run_id)
+
+    assert reloaded == run
+    assert reloaded is not None and reloaded.policy.jit_replan is jit_replan
+
+
+def test_a_record_written_before_jit_replan_existed_loads_and_means_replanning(
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock()
+    run = _create(tmp_path, clock)
+    path = project_run_dir(tmp_path / "runtime", run.project_run_id) / "policy.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    del record["policy"]["jit_replan"]
+    # The pre-dogfood-03 digest of make_policy(), recorded by an older Lockstep.
+    record["policy_digest"] = "ba5490b9a9f36ca4c1f7104f2429e9bec7d1ddac152c04d8593cdd752f7a8a88"
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    legacy = load_project_run(tmp_path / "runtime", run.project_run_id)
+
+    assert legacy is not None
+    assert legacy.policy.jit_replan is True
+    assert legacy.policy_digest == run.policy_digest
+    require_same_policy(legacy, make_policy())
+    with pytest.raises(AutonomousRunPolicyMismatchError):
+        require_same_policy(legacy, make_policy(jit_replan=False))
 
 
 def test_a_sub_phase_is_reserved_once_and_a_repeat_costs_nothing(tmp_path: Path) -> None:

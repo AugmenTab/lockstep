@@ -392,15 +392,24 @@ class _Driver:
             # work is newly authorized, so no budget is spent.
             if condition is PlanningEligibilityReason.COMPLETION_NOT_RECORDED:
                 needs_reservation = False
-        elif not remediation and jit_replan_state(runtime.project_root, runtime.runtime_dir) in (
-            JitReplanState.REPLAN_REQUIRED,
-            JitReplanState.REPLAN_ACCEPTED,
-        ):
-            # The next unit's replan only makes sense if the next unit may execute. Stopping here
-            # delays the replan to a later run; it never skips it.
-            if self.subphase_capacity() <= 0:
-                return self.stop(AutonomousRunDisposition.MAX_SUBPHASES_REACHED)
-            needs_reservation = False
+        elif not remediation:
+            jit = jit_replan_state(runtime.project_root, runtime.runtime_dir)
+            if not self.policy.jit_replan:
+                # Fixed outline. With no receipt the published outline is untouched, so it runs
+                # as published. An accepted receipt not yet applied is planning state only a
+                # replanning run can settle: stop for it rather than plan past (and so drop) it.
+                if jit is JitReplanState.REPLAN_ACCEPTED:
+                    return self.stop(
+                        AutonomousRunDisposition.RECOVERY_REQUIRED,
+                        detail="an accepted jit replan is not yet applied; "
+                        "a fixed-outline run cannot continue past it",
+                    )
+            elif jit in (JitReplanState.REPLAN_REQUIRED, JitReplanState.REPLAN_ACCEPTED):
+                # The next unit's replan only makes sense if the next unit may execute. Stopping
+                # here delays the replan to a later run; it never skips it.
+                if self.subphase_capacity() <= 0:
+                    return self.stop(AutonomousRunDisposition.MAX_SUBPHASES_REACHED)
+                needs_reservation = False
 
         if needs_reservation:
             assert cursor.current_phase is not None and cursor.current_subphase is not None
@@ -424,9 +433,9 @@ class _Driver:
             planning_timeout_seconds=self.planning_timeout_seconds,
             max_output_bytes=self.max_output_bytes,
             termination_grace_seconds=self.termination_grace_seconds,
-            # JIT replanning stays the default; only an accepted gate remediation is the fixed
-            # outline case it always was.
-            jit_replan=not remediation,
+            # JIT replanning follows the host policy (on by default); an accepted gate
+            # remediation is the fixed-outline case it always was.
+            jit_replan=self.policy.jit_replan and not remediation,
         )
         return None if result is None else self.child_stop(result)
 
@@ -536,9 +545,9 @@ def run_autonomous_project(
 
     *request_factory* is a controlled injection seam; omitted, the host's canonical factory is
     used. *planning_timeout_seconds* defaults to the project's agent timeout; every launch is
-    additionally capped to the run's remaining wall-clock time. JIT replanning is on whenever
-    continuation is authorized. An unclassified internal failure is recorded as a terminal stop
-    and re-raised, never continued past.
+    additionally capped to the run's remaining wall-clock time. JIT replanning between ordinary
+    Sub-phases follows the policy's ``jit_replan`` (on by default). An unclassified internal
+    failure is recorded as a terminal stop and re-raised, never continued past.
     """
     require_finite_policy(policy)
     if project_run_id is None:

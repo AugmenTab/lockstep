@@ -10,6 +10,8 @@ does not exist).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from typing import Any
 
@@ -36,6 +38,7 @@ def test_the_policy_carries_exactly_the_finite_controls() -> None:
         "retry_budget",
         "max_gate_remediations",
         "until_phase",
+        "jit_replan",
     }
 
 
@@ -107,6 +110,10 @@ def test_an_integer_wall_clock_is_accepted_as_a_number_of_seconds() -> None:
         {"max_gate_remediations": math.inf},
         {"max_gate_remediations": -1},
         {"retry_budget": None},
+        {"jit_replan": None},
+        {"jit_replan": 0},
+        {"jit_replan": 1},
+        {"jit_replan": "false"},
     ],
 )
 def test_a_policy_that_bypassed_validation_is_still_refused_as_unbounded(
@@ -141,9 +148,10 @@ def test_the_policy_digest_is_stable_and_sensitive_to_every_control() -> None:
         make_policy(retry_attempts=4),
         make_policy(max_gate_remediations=2),
         make_policy(until_phase="01"),
+        make_policy(jit_replan=False),
     ]
     digests = {policy_digest(base), *(policy_digest(v) for v in variants)}
-    assert len(digests) == 6
+    assert len(digests) == 7
 
 
 def test_the_digest_does_not_depend_on_the_attempt_type_instance() -> None:
@@ -157,6 +165,48 @@ def test_the_digest_does_not_depend_on_the_attempt_type_instance() -> None:
     )
 
     assert policy_digest(first) == policy_digest(second)
+
+
+def test_jit_replan_defaults_to_true_and_false_is_a_valid_fixed_outline_choice() -> None:
+    implicit = AutonomousRunPolicy(
+        max_subphases=1,
+        max_unattended_wall_clock_seconds=10.0,
+        retry_budget=RetryBudget(max_attempts=AttemptNumber.model_validate(1)),
+        max_gate_remediations=0,
+    )
+
+    assert implicit.jit_replan is True
+    assert make_policy(jit_replan=False).jit_replan is False
+    require_finite_policy(make_policy(jit_replan=False))
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "true", "false", 1.0])
+def test_jit_replan_must_be_a_strict_boolean(value: Any) -> None:
+    with pytest.raises(ValidationError):
+        make_policy(jit_replan=value)
+
+
+# The pre-jit_replan digest of make_policy(): a policy recorded before the field existed.
+_LEGACY_DEFAULT_DIGEST = "ba5490b9a9f36ca4c1f7104f2429e9bec7d1ddac152c04d8593cdd752f7a8a88"
+
+
+def test_a_true_jit_replan_keeps_the_legacy_digest_and_false_changes_it() -> None:
+    legacy_payload = {
+        key: value
+        for key, value in make_policy().model_dump(mode="json").items()
+        if key != "jit_replan"
+    }
+    legacy_text = json.dumps(
+        legacy_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    legacy = hashlib.sha256(legacy_text.encode("utf-8")).hexdigest()
+    absent = AutonomousRunPolicy.model_validate(legacy_payload)
+
+    assert legacy == _LEGACY_DEFAULT_DIGEST
+    assert policy_digest(absent) == _LEGACY_DEFAULT_DIGEST
+    assert policy_digest(make_policy()) == _LEGACY_DEFAULT_DIGEST
+    assert policy_digest(make_policy(jit_replan=True)) == _LEGACY_DEFAULT_DIGEST
+    assert policy_digest(make_policy(jit_replan=False)) != _LEGACY_DEFAULT_DIGEST
 
 
 def test_until_phase_is_a_phase_id() -> None:
