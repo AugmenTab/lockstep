@@ -173,3 +173,70 @@ additively only (E13).
 | `test/integration/Lockstep/MigrationDbTest.hs` | `e6a829b53c049e89f36eddff5f3353806b5954714b6cf44f3048df9bdac7fec5` |
 | `test/integration/Lockstep/ServiceDbTest.hs` | `28d7762992ae177ea0fcd24eff6d72cec3f6404cacc2584a74249e05085a3edd` |
 | `scripts/lib/check-db-backup-restore` | `e4e649665016ae3392c10f0f01403c99d20a2812b247ed3faf60affe2803b4cf` |
+
+## 9. Amendment C-P1.2-R1 — derive the `ServiceDbTest` revision from the migration list
+
+- Status: **AUTHORIZED** by the human owner, 2026-10-17. Recorded in
+  `.local/plans/phase-01-recovery.md` §7 (plan text in §1 of that file;
+  execution handoff `.local/plans/phase-01-recovery-handoff.md` §2).
+- Approver's words (§7.1): "C-P1.2-R1: **APPROVED**, using `foldl' max 0` instead
+  of `maximum`. Exact scope and freeze-amendment procedure preserved."
+- Defect: three assertions in the frozen `test/integration/Lockstep/ServiceDbTest.hs`
+  hard-coded schema revision `1`, so any later migration (P1.3's `0002`) would
+  break them although behaviour is correct. `MigrationDbTest` already derives the
+  same values from `migrations`.
+- Objective: remove that dependency without changing what the assertions check at
+  the current one-migration list.
+- Allowed path: `test/integration/Lockstep/ServiceDbTest.hs` only, plus this section.
+- Exact change, and nothing else:
+  - imports added: `Text.Show (show)`,
+    `Lockstep.Persistence.Migration (migrationId, migrationIdInt)`,
+    `Lockstep.Persistence.Migrations (migrations)`;
+  - one top-level helper:
+    ```haskell
+    expectedRevision :: String
+    expectedRevision = show (L.foldl' max 0 (fmap (migrationIdInt . migrationId) migrations))
+    ```
+  - `contains "revision 1" out3` → `contains ("revision " <> expectedRevision) out3`;
+  - `readiness1 @?= (503, "not_ready schema_behind 1")` →
+    `readiness1 @?= (503, "not_ready schema_behind " <> show (L.length migrations))`;
+  - `readiness2 @?= (200, "ready 1")` → `readiness2 @?= (200, "ready " <> expectedRevision)`.
+- Line numbers: the recovery plan cites lines 35, 49 and 57. At `ed4d712` the
+  `schema_behind` literal is on line 47 (line 49 is `contains "not ready"`, which
+  is unchanged). The literal text is unambiguous; only the three literals changed.
+- Pre-commit check (dev image `lockstep-dev:p1`): `fourmolu --mode check` clean;
+  `hlint` no hints; `stack build --pedantic --test --no-run-tests` (`-Werror`,
+  Henforcer with `henforcer-tests.toml` for the suites) succeeded; boundary
+  fixtures still rejected.
+
+### 9.1 Re-freeze record
+
+| File | SHA-256 |
+|---|---|
+| `test/integration/Lockstep/ServiceDbTest.hs` | `d42fff9994219ac9977fcfd18801f4b5886d42bc2f6654dbc1d494efcd702e0f` |
+
+This entry supersedes the §8 digest of `ServiceDbTest.hs` only. Every other §8
+digest is unchanged. Verify: `shasum -a 256 -c` against §8 (all rows except
+`ServiceDbTest.hs`) and this table.
+
+### 9.2 Ratified amendments
+
+Ratified by the human owner, 2026-10-17 (recovery plan §7.2): "Deviations:
+**APPROVED WITH ONE EXCEPTION.** Ratified: additive runner changes (future
+additions must be covered by their Contracts); `henforcer-tests.toml` (production
+boundaries and config-consistency check retained); `recordServiceStart` signature.
+**Not ratified:** the blanket `test/` exclusion from the forbidden-facility check;
+narrow it to the minimum necessary files and keep the remaining enforcement."
+
+- **A1 — `henforcer-tests.toml`** is an allowed path of this Contract. The test
+  suites compile with it (no layering rules); the library and the boundary
+  fixtures compile with `henforcer.toml`. `scripts/lib/check-henforcer-configs`
+  guards that the two differ only in the `treeDependencies` block.
+- **A2 — `recordServiceStart :: DatabaseRuntime -> IO (Either NotReadyReason ())`**
+  replaces the §4 signature `DatabaseRuntime -> IO ()`.
+- **A3 — E13 runner additions** to `test/unit/Main.hs` and
+  `test/integration/Main.hs` (additive imports and list entries only) are
+  ratified. Future additions must be named in advance in the Contract that makes
+  them.
+- **Not ratified:** the `^test/` exclusion in `scripts/lib/check-forbidden-facilities`.
+  It is narrowed by commit `chore(p1.2-r1): narrow forbidden-facility test exclusion (manual)`.

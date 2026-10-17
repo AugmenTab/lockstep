@@ -11,7 +11,10 @@ import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Files (setFileMode)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, testCase, (@?=))
+import Text.Show (show)
 
+import Lockstep.Persistence.Migration (migrationId, migrationIdInt)
+import Lockstep.Persistence.Migrations (migrations)
 import Lockstep.Support.Postgres
   ( AdminSettings (..)
   , requireAdmin
@@ -32,7 +35,7 @@ tests =
           code2 @?= ExitSuccess
           (code3, out3, err3) <- runLockstep env ["db", "status"]
           code3 @?= ExitSuccess
-          contains "revision 1" out3
+          contains ("revision " <> expectedRevision) out3
           contains "pending 0" out3
           noSecret admin [out1, err1, out2, err2, out3, err3]
     , testCase "serve reports schema_behind truthfully, then ready after migrate; starts persist across restarts" $
@@ -44,7 +47,7 @@ tests =
               h <- httpGet port "/api/health_check"
               p <- httpGet port "/"
               pure (r, h, p)
-          readiness1 @?= (503, "not_ready schema_behind 1")
+          readiness1 @?= (503, "not_ready schema_behind " <> show (L.length migrations))
           fst health1 @?= 204
           contains "not ready" (lower (snd page1))
           (migrateCode, migrateOut, migrateErr) <- runLockstep env ["db", "migrate"]
@@ -54,7 +57,7 @@ tests =
               r <- httpGet port "/api/readiness"
               p <- httpGet port "/"
               pure (r, p)
-          readiness2 @?= (200, "ready 1")
+          readiness2 @?= (200, "ready " <> expectedRevision)
           contains "database is ready" (lower (snd page2))
           contains "service starts recorded: 1" (lower (snd page2))
           ((page3, _), log3) <-
@@ -90,6 +93,9 @@ tests =
         (code, _, _) <- runLockstep [("LOCKSTEP_CONFIG", "/nonexistent/lockstep.json")] ["serve", "--port", "1"]
         code @?= ExitFailure 66
     ]
+
+expectedRevision :: String
+expectedRevision = show (L.foldl' max 0 (fmap (migrationIdInt . migrationId) migrations))
 
 withConfig :: (AdminSettings -> [(String, String)] -> IO a) -> IO a
 withConfig action = do
