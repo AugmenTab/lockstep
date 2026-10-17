@@ -1,0 +1,13 @@
+b3a37233e2077de6a196112a2ef46780b71a30bb
+Application
+Foundation
+Persistence
+Web
+format PASSED
+lint PASSED
+build PASSED
+unit PASSED
+integration PASSED
+All 90 tests passed (0.01s)
+All 29 tests passed (7.19s)
+exit=0

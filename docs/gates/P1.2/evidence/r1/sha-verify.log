@@ -1,0 +1,22 @@
+== shasum -a 256 -c (C-P1.1 §8 minus runners; C-P1.2 §8 minus ServiceDbTest; C-P1.2 §9.1) at b3a37233e2077de6a196112a2ef46780b71a30bb
+test/unit/Lockstep/Foundation/CliTest.hs: OK
+test/unit/Lockstep/Web/ServerTest.hs: OK
+test/unit/Lockstep/Web/ApplicationTest.hs: OK
+test/integration/Lockstep/ProcessTest.hs: OK
+test/fixtures/lint/PartialFunctions.hs: OK
+test/fixtures/boundary/violation/Lockstep/Foundation/BoundaryViolation.hs: OK
+test/fixtures/boundary/control/Lockstep/Web/BoundaryControl.hs: OK
+test/unit/Main.hs: OK
+test/unit/Lockstep/Foundation/SystemConfigTest.hs: OK
+test/unit/Lockstep/Foundation/CliDbTest.hs: OK
+test/unit/Lockstep/Persistence/MigrationTest.hs: OK
+test/unit/Lockstep/Application/ReadinessTest.hs: OK
+test/unit/Lockstep/Web/LivenessPageTest.hs: OK
+test/unit/Lockstep/Web/ReadinessRouteTest.hs: OK
+test/integration/Main.hs: OK
+test/integration/Lockstep/Support/Postgres.hs: OK
+test/integration/Lockstep/Support/Process.hs: OK
+test/integration/Lockstep/MigrationDbTest.hs: OK
+scripts/lib/check-db-backup-restore: OK
+test/integration/Lockstep/ServiceDbTest.hs: OK
+exit=0

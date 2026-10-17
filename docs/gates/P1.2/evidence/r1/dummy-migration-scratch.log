@@ -1,0 +1,64 @@
+== A: commit-3 ServiceDbTest + dummy migration 0002 (expect green)
+checkout HEAD b3a37233e2077de6a196112a2ef46780b71a30bb; status:
+ M src/Lockstep/Persistence/Migrations.hs
+lockstep> test (suite: lockstep-integration, args: -p "lockstep process with PostgreSQL")
+
+lockstep-integration
+  lockstep process with PostgreSQL
+    db migrate installs a fresh database, then is a no-op; db status reports it:                      OK (0.13s)
+    serve reports schema_behind truthfully, then ready after migrate; starts persist across restarts: OK (1.42s)
+    an invalid configuration file stops serve with exit 66:                                           OK (0.01s)
+    a leftover rollbar block stops serve with exit 66 and names the key:                              OK
+    a configuration readable by others stops serve with exit 66:                                      OK
+    a missing configuration file stops serve with exit 66:                                            OK
+
+All 6 tests passed (1.58s)
+
+
+
+lockstep> Test suite lockstep-integration passed
+exit=0
+
+== B: 75599b0 ServiceDbTest + dummy migration 0002 (expect failure on the literals)
+checkout HEAD b3a37233e2077de6a196112a2ef46780b71a30bb; status:
+ M src/Lockstep/Persistence/Migrations.hs
+ M test/integration/Lockstep/ServiceDbTest.hs
+lockstep> test (suite: lockstep-integration, args: -p "lockstep process with PostgreSQL")
+
+lockstep-integration
+  lockstep process with PostgreSQL
+    db migrate installs a fresh database, then is a no-op; db status reports it:                      FAIL (0.14s)
+      test/integration/Lockstep/ServiceDbTest.hs:113:
+      expected output to contain revision 1 in:
+      readiness ready 2
+      revision 2
+      pending 0
+      
+      Use -p '/lockstep process with PostgreSQL/&&/db migrate installs a fresh database, then is a no-op; db status reports it/' to rerun this test only.
+    serve reports schema_behind truthfully, then ready after migrate; starts persist across restarts: FAIL (0.52s)
+      test/integration/Lockstep/ServiceDbTest.hs:47:
+      expected: (503,"not_ready schema_behind 1")
+       but got: (503,"not_ready schema_behind 2")
+      Use -p '/lockstep process with PostgreSQL/&&/serve reports schema_behind truthfully, then ready after migrate; starts persist across restarts/' to rerun this test only.
+    an invalid configuration file stops serve with exit 66:                                           OK
+    a leftover rollbar block stops serve with exit 66 and names the key:                              OK
+    a configuration readable by others stops serve with exit 66:                                      OK
+    a missing configuration file stops serve with exit 66:                                            OK
+
+2 out of 6 tests failed (0.69s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       
+exit=1
