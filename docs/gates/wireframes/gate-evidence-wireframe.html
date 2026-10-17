@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ILLUSTRATION — Gate Evidence Wireframe</title>
+<!--
+  ILLUSTRATION — NOT EVIDENCE
+  Source: docs/gates/wireframes/gate-evidence-wireframe.html (branch v2)
+  Illustrates: docs/VISUAL_EVIDENCE_CONTRACT.md rev 0.1 (P0.4)
+  Data: invented SAMPLE rows for a hypothetical Gate A (scenario A1). No test was run.
+  No external resources; no JavaScript required.
+-->
+<style>
+  :root {
+    --bg: #f7f8fa; --surface: #ffffff; --text: #16202b; --muted: #55606e;
+    --border: #d5dbe3; --focus: #1f5fbf;
+    --passed-bg: #e3f4e8; --passed-fg: #0f5a2a;
+    --failed-bg: #fbe4e4; --failed-fg: #8a1c1c;
+    --inconclusive-bg: #fdf1d8; --inconclusive-fg: #6b4a00;
+    --blocked-bg: #ece6fa; --blocked-fg: #4a2a8a;
+    --notrun-bg: #eef0f3; --notrun-fg: #3d4652;
+    --banner-bg: #fff4c2; --banner-fg: #4d3b00;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f141a; --surface: #161d25; --text: #e6ebf1; --muted: #9aa6b4;
+      --border: #2c3744; --focus: #7fb0ff;
+      --passed-bg: #10331d; --passed-fg: #8fe0a9;
+      --failed-bg: #3a1414; --failed-fg: #ffb3b3;
+      --inconclusive-bg: #3a2c08; --inconclusive-fg: #ffd77a;
+      --blocked-bg: #2a1f45; --blocked-fg: #cdb8ff;
+      --notrun-bg: #222a33; --notrun-fg: #c3ccd6;
+      --banner-bg: #3a3108; --banner-fg: #ffe58a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 var(--sans); }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  .banner { background: var(--banner-bg); color: var(--banner-fg); border: 2px dashed currentColor;
+            padding: 10px 14px; font-weight: 700; letter-spacing: .02em; }
+  .banner small { display: block; font-weight: 400; letter-spacing: 0; }
+  h1 { font-size: 1.4rem; margin: 20px 0 4px; }
+  h2 { font-size: 1.05rem; margin: 28px 0 8px; }
+  .muted { color: var(--muted); }
+  code, .mono { font-family: var(--mono); font-size: .86em; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; }
+  dl.meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+  dl.meta dt { color: var(--muted); }
+  dl.meta dd { margin: 0; overflow-wrap: anywhere; }
+  .summary { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: 700;
+           font-family: var(--mono); font-size: .8rem; border: 1px solid transparent; white-space: nowrap; }
+  .PASSED { background: var(--passed-bg); color: var(--passed-fg); }
+  .FAILED { background: var(--failed-bg); color: var(--failed-fg); }
+  .INCONCLUSIVE { background: var(--inconclusive-bg); color: var(--inconclusive-fg); }
+  .BLOCKED { background: var(--blocked-bg); color: var(--blocked-fg); }
+  .NOT_RUN { background: var(--notrun-bg); color: var(--notrun-fg); border: 1px dashed currentColor; }
+  .badge::before { margin-right: 4px; }
+  .badge.PASSED::before { content: "✓" / ""; } .badge.FAILED::before { content: "✕" / ""; }
+  .badge.INCONCLUSIVE::before { content: "?" / ""; } .badge.BLOCKED::before { content: "■" / ""; }
+  .badge.NOT_RUN::before { content: "○" / ""; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); }
+  caption { text-align: left; padding: 6px 0; color: var(--muted); }
+  th, td { border: 1px solid var(--border); padding: 8px; vertical-align: top; text-align: left; }
+  thead th { background: var(--bg); font-size: .85rem; }
+  details > summary { cursor: pointer; }
+  details[open] > summary { margin-bottom: 6px; }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  pre { background: var(--bg); border: 1px solid var(--border); padding: 8px; overflow-x: auto; margin: 4px 0; }
+  .decision fieldset { border: 1px solid var(--border); border-radius: 6px; }
+  .decision label { display: block; margin: 4px 0; }
+  .decision button { font: inherit; padding: 6px 14px; }
+  .stale { font-size: .75rem; font-weight: 700; color: var(--inconclusive-fg); }
+  @media (max-width: 640px) { dl.meta { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <p class="banner" role="note">ILLUSTRATION — NOT EVIDENCE · SAMPLE DATA
+    <small>This wireframe shows the layout required by VISUAL_EVIDENCE_CONTRACT.md rev 0.1. Every row, hash and commit below is invented. Nothing was tested.</small></p>
+
+  <h1>Gate A — Foundation (scenario A1) <span class="muted">(sample)</span></h1>
+  <p class="muted">Machine summary is <strong>not</strong> acceptance. Only the human decision below accepts a gate.</p>
+
+  <section class="card" aria-labelledby="hdr">
+    <h2 id="hdr" style="margin-top:0">Tested basis</h2>
+    <dl class="meta">
+      <dt>Repository / branch</dt><dd><code>AugmenTab/lockstep</code> · <code>v2</code></dd>
+      <dt>Tested commit</dt><dd><code>0000000000000000000000000000000000sample</code> · clean</dd>
+      <dt>Gate declared revision</dt><dd><code>0000000000000000000000000000000000sample</code></dd>
+      <dt>Schema revision</dt><dd><code>sample-0001</code></dd>
+      <dt>Policy identity</dt><dd><code>manual — no v2 Supervisor</code></dd>
+      <dt>Judged against</dt><dd>Bible v2.1 <code>sample…</code> · PRD v0.2 <code>sample…</code> · Plan v0.2 <code>sample…</code> <span class="muted">(real digests live in SOURCE_REGISTER)</span></dd>
+      <dt>Report</dt><dd><code>docs/gates/A/gate-report.md</code> rev 3 · sha256 <code>sample…</code></dd>
+    </dl>
+  </section>
+
+  <h2 id="sum">Machine summary (required rows)</h2>
+  <ul class="summary" aria-labelledby="sum">
+    <li><span class="badge PASSED">PASSED</span> 2</li>
+    <li><span class="badge FAILED">FAILED</span> 1</li>
+    <li><span class="badge INCONCLUSIVE">INCONCLUSIVE</span> 2</li>
+    <li><span class="badge BLOCKED">BLOCKED</span> 1</li>
+    <li><span class="badge NOT_RUN">NOT_RUN</span> 1</li>
+    <li>Worst required disposition: <span class="badge FAILED">FAILED</span></li>
+  </ul>
+
+  <h2 id="matrix-h">Criterion → method → expected / actual → disposition → evidence</h2>
+  <div class="table-wrap">
+  <table>
+    <caption>Deterministic verification rows. Semantic findings are listed separately below.</caption>
+    <thead>
+      <tr>
+        <th scope="col">Criterion</th>
+        <th scope="col">Method</th>
+        <th scope="col">Expected</th>
+        <th scope="col">Actual</th>
+        <th scope="col">Disposition</th>
+        <th scope="col">Evidence</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row"><code>AC-A1-01@v1</code><br>Clean build from fresh checkout<br><span class="muted">FR-APP-01, NFR-07</span></th>
+        <td>automated_test<br><code>scripts/check</code></td>
+        <td>exit 0; no warnings</td>
+        <td>exit 0 in 412 s</td>
+        <td><span class="badge PASSED">PASSED</span></td>
+        <td><details><summary>check.log · sha256 9f2c…</summary>
+          <pre>argv: ["scripts/check"]  cwd: /work  commit: 0000…sample (clean)
+env names: PATH, LANG, STACK_ROOT
+exit: 0   stdout sha256: 9f2c…   stderr sha256: e3b0…</pre>
+          <p><code>local:.local/evidence/A/check.log</code></p>
+          <p class="muted">executed_at 2026-01-01T00:00Z · executed_by ci (sample) · env: linux/amd64, GHC 9.10.3, PostgreSQL 15.8, adapter: scripted</p></details></td>
+      </tr>
+      <tr>
+        <th scope="row"><code>AC-A1-02@v1</code><br>Server binds loopback by default<br><span class="muted">FR-APP-05</span></th>
+        <td>automated_test<br><code>lockstep-integration/Web/Bind/default-loopback</code></td>
+        <td>listener on 127.0.0.1 only</td>
+        <td>listener on 127.0.0.1:8470</td>
+        <td><span class="badge PASSED">PASSED</span></td>
+        <td><details><summary>test report · sha256 41aa…</summary>
+          <p><code>repo:docs/gates/A/evidence/bind.txt@0000…sample</code></p>
+          <p class="muted">executed_at 2026-01-01T00:00Z · executed_by ci (sample) · env: linux/amd64, GHC 9.10.3, PostgreSQL 15.8, adapter: scripted</p></details></td>
+      </tr>
+      <tr>
+        <th scope="row"><code>AC-A1-03@v1</code><br>Cross-origin POST refused<br><span class="muted">FR-APP-05</span></th>
+        <td>automated_test<br><code>…/Web/Csrf/foreign-origin</code></td>
+        <td>HTTP 403; durable refusal record</td>
+        <td>HTTP 403; <strong>no</strong> refusal record written</td>
+        <td><span class="badge FAILED">FAILED</span></td>
+        <td><details><summary>failure output · sha256 c01d…</summary>
+          <pre>expected: 1 row in command_refusal
+actual:   0 rows</pre>
+          <p><code>local:.local/evidence/A/csrf-foreign-origin.log</code></p>
+          <p class="muted">executed_at 2026-01-01T00:00Z · executed_by ci (sample) · env: linux/amd64, GHC 9.10.3, PostgreSQL 15.8, adapter: scripted</p></details></td>
+      </tr>
+      <tr>
+        <th scope="row"><code>AC-A1-04@v2</code><br>Missing DB fails visibly<br><span class="muted">FR-APP-03</span></th>
+        <td>scenario<br><code>SCN-APP-03-no-db</code></td>
+        <td>non-zero exit; readable error naming the DB</td>
+        <td>exit 1; message present; evidence file digest mismatch on re-check</td>
+        <td><span class="badge INCONCLUSIVE">INCONCLUSIVE</span><br><span class="stale">evidence changed</span></td>
+        <td><details><summary>why inconclusive</summary>
+          <p>Recorded sha256 <code>77ab…</code> ≠ current <code>5e10…</code>. Re-run required.</p>
+          <p class="muted">executed_at 2026-01-01T00:00Z · executed_by ci (sample) · env: linux/amd64, GHC 9.10.3, PostgreSQL 15.8, adapter: scripted</p></details></td>
+      </tr>
+      <tr>
+        <th scope="row"><code>AC-A1-05@v1</code><br>Backup / restore round-trip<br><span class="muted">FR-APP-03</span></th>
+        <td>scenario<br><code>SCN-APP-03-backup</code></td>
+        <td>restored DB equals source</td>
+        <td><span class="muted">— not executed —</span></td>
+        <td><span class="badge BLOCKED">BLOCKED</span></td>
+        <td><details><summary>blocker</summary>
+          <p>DG-02 (backup strategy) not ACCEPTED. Unblocked by: human owner.</p></details></td>
+      </tr>
+      <tr>
+        <th scope="row"><code>AC-A1-07@v1</code><br>Health route responds<br><span class="muted">FR-APP-02</span></th>
+        <td>automated_test<br><code>…/Web/Health/liveness</code></td>
+        <td>HTTP 204</td>
+        <td>HTTP 204, but at commit <code>1111…sample</code>, not the gate's declared revision</td>
+        <td><span class="badge INCONCLUSIVE">INCONCLUSIVE</span><br><span class="stale">stale revision</span></td>
+        <td><details><summary>why not PASSED</summary>
+          <p>Recorded PASSED against an older commit. Per contract §4 rule 4 it renders and counts as INCONCLUSIVE until re-run.</p></details></td>
+      </tr>
+      <tr>
+        <th scope="row"><code>AC-A1-06@v1</code><br>CI makes zero live-model calls<br><span class="muted">NFR-13</span></th>
+        <td>static_check, automated_test<br><code>scripts/check</code> step 5</td>
+        <td>sentinel log empty</td>
+        <td><span class="muted">— not executed —</span></td>
+        <td><span class="badge NOT_RUN">NOT_RUN</span></td>
+        <td><details><summary>reason</summary><p>Guard step not yet built (P1.7).</p></details></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2 id="sem">Semantic challenge findings (separate from tests)</h2>
+  <p class="muted">None at Gate A. From Gate C, rows here use CONFIRMED / DISPROVED / NEEDS_HUMAN / INCONCLUSIVE.</p>
+
+  <h2 id="dev">Accepted deviations</h2>
+  <p class="muted">None. A deviation never changes a row's disposition.</p>
+
+  <section class="card decision" aria-labelledby="dec">
+    <h2 id="dec" style="margin-top:0">Human gate decision</h2>
+    <p>Binds to report rev 3 · sha256 <code>sample…</code>. Submitting against an older revision is refused.</p>
+    <form onsubmit="return false" aria-describedby="dec-note">
+      <fieldset disabled>
+        <legend>Decision (disabled in wireframe)</legend>
+        <label><input type="radio" name="d" value="ACCEPTED"> Accept gate</label>
+        <label><input type="radio" name="d" value="REJECTED"> Reject gate</label>
+        <label><input type="radio" name="d" value="DEFERRED"> Defer</label>
+        <label>Notes <br><textarea rows="2" cols="40"></textarea></label>
+        <button type="submit">Record decision</button>
+      </fieldset>
+    </form>
+    <p id="dec-note" class="muted">In the product this posts a typed, CSRF-protected command. No agent or CI path can submit it.</p>
+  </section>
+
+  <h2>Legend</h2>
+  <ul class="summary">
+    <li><span class="badge PASSED">PASSED</span> executed, matched, evidence verified</li>
+    <li><span class="badge FAILED">FAILED</span> executed, contradicted</li>
+    <li><span class="badge INCONCLUSIVE">INCONCLUSIVE</span> executed, undetermined</li>
+    <li><span class="badge BLOCKED">BLOCKED</span> prerequisite missing</li>
+    <li><span class="badge NOT_RUN">NOT_RUN</span> not executed (default)</li>
+  </ul>
+</main>
+</body>
+</html>
