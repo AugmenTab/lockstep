@@ -49,7 +49,7 @@ import Lockstep.Application.Database
   , revisionNumber
   , schemaStatus
   )
-import Lockstep.Application.Dispatcher (Job (..), findJob, findJobForReceipt, jobStateCode, startDispatcher, stopDispatcher)
+import Lockstep.Application.Dispatcher (Job (..), findJob, findJobForReceipt, jobStateCode, requestStop, startDispatcher, stopDispatcher)
 import Lockstep.Application.OperatorTrust (issueSignIn, revokeAllSessions, signInUrl)
 import Lockstep.Foundation.Cli (BackupPolicy, Command (..), QueueArgs (..), RenameArgs (..), parseArgs, renderCliError, usage)
 import Lockstep.Foundation.Config (Port, ServeConfig (..), bindHostAddress, portNumber)
@@ -60,7 +60,7 @@ import Lockstep.Foundation.SystemConfig
   )
 import Lockstep.Persistence.Migrations (migrations)
 import Lockstep.Web.Application (applicationWith)
-import Lockstep.Web.Server (serverSettings)
+import Lockstep.Web.Server (serverSettingsWith)
 
 main :: IO ()
 main = do
@@ -152,7 +152,7 @@ serve serveConfig = do
     settings =
       Warp.setOnException onException
         . Warp.setBeforeMainLoop (logLine ("Listening on " <> address))
-        $ serverSettings serveConfig
+        $ serverSettingsWith (traverse_ requestStop dispatcher) serveConfig
   Warp.runSettings settings (applicationWith serveConfig mbRuntime appLogger)
     `finally` (traverse_ stopDispatcher dispatcher >> traverse_ closeDatabase mbRuntime >> finishLogger)
 
