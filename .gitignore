@@ -1,0 +1,22 @@
+# Local, never-committed records (plans, retros, run evidence, source PDFs/archives)
+.local/
+.local-archive/
+
+# Haskell build output
+.stack-work/
+dist-newstyle/
+*.hi
+*.o
+
+# Leftovers from the Python v0.1 checkout on branch main (regenerable)
+__pycache__/
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# OS / editor
+.DS_Store
+
+# Agent content
+.claude/
