@@ -1,6 +1,6 @@
 # ADR-0002 — PostgreSQL provisioning, migrations, backup and recovery (DG-02)
 
-- Status: **PROPOSED** — awaiting the human owner's decision. Blocks the P1.2 Contract freeze.
+- Status: **ACCEPTED** (2026-10-17) as proposed, Q1–Q8.
 - Gate: DG-02 (DB boot / backup / migration / deployment packaging)
 - Affects: FR-APP-03, NFR-07, NFR-08, TESTING_STRATEGY §5
 - Evidence: Launchpad `11886bf` (`src/Launchpad/REPL.hs`, `Database/Schema.hs`,
@@ -44,7 +44,7 @@
 
 | Field | Value |
 |---|---|
-| Decision | _pending_ |
-| Approver | _human owner_ |
-| Date | _pending_ |
-| Amendments | _none yet_ |
+| Decision | **Accept as proposed** (Q1–Q8 recommendations) |
+| Approver | Human owner (operator), Phase 1 session answer: "Accept as proposed (Recommended)" |
+| Date | 2026-10-17 |
+| Amendments | none |
