@@ -27,4 +27,14 @@ if ! grep -q "Lockstep.Web" <<<"$violation" || ! grep -qi "depend" <<<"$violatio
   exit 1
 fi
 
-echo "boundary check: Foundation -> Web rejected by Henforcer; control compiled"
+if web_persistence=$(compile test/fixtures/boundary/violation-web-persistence/Lockstep/Web/PersistenceViolation.hs 2>&1); then
+  echo "boundary check: Henforcer ACCEPTED a Web -> Persistence import" >&2
+  exit 1
+fi
+if ! grep -q "HEN-" <<<"$web_persistence" || ! grep -q "Lockstep.Persistence" <<<"$web_persistence"; then
+  echo "boundary check: Web -> Persistence violation failed for an unexpected reason" >&2
+  echo "$web_persistence" >&2
+  exit 1
+fi
+
+echo "boundary check: Foundation -> Web and Web -> Persistence rejected by Henforcer; control compiled"

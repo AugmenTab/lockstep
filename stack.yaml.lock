@@ -117,6 +117,19 @@ packages:
   original:
     hackage: pollock-0.1.0.3
 - completed:
+    commit: 2f493550c882c6d21cfd08cace99f434a21b016f
+    git: https://github.com/flipstone/orville.git
+    name: orville-postgresql
+    pantry-tree:
+      sha256: 8a843ed1a7393dd6daf1071975b47130426f4c876b2e9a40371a4b589645ee3d
+      size: 18103
+    subdir: orville-postgresql
+    version: 1.1.1.0.0
+  original:
+    commit: 2f493550c882c6d21cfd08cace99f434a21b016f
+    git: https://github.com/flipstone/orville.git
+    subdir: orville-postgresql
+- completed:
     commit: 611084e6f6c49928e61d71b9ba8035ab37bd6cc4
     git: https://github.com/flipstone/orb
     name: orb

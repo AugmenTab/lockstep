@@ -16,11 +16,40 @@ Docker only. GHC 9.10.3, Stack, fourmolu and hlint live in the dev container
 
 ```sh
 scripts/check                 # format, lint + static checks, build, unit tests
-scripts/check --integration   # also the real-process/HTTP integration suite
+scripts/check --integration   # also real PostgreSQL + process/HTTP integration and backup/restore
+scripts/format                # format Haskell sources (host-side, via the dev image)
+scripts/licenses              # dependency license inventory and policy check
 ```
 
 The first run builds the dev image and fills the `lockstep-stack-root` Docker
 volume with dependencies, which takes a while. Later runs reuse both.
+
+## Database (ADR-0002)
+
+PostgreSQL 17.11 runs in its own container, managed by `scripts/db`:
+
+```sh
+scripts/db up          # create/start lockstep-postgres (network lockstep-net, 127.0.0.1:5433)
+scripts/db status
+scripts/db backup      # .local/backups/<UTC>-r<revision>-<pid>.dump + .sha256
+scripts/db restore F   # verifies F.sha256 first; stop lockstep serve before restoring
+scripts/db down        # stops the container; data stays in volume lockstep-pgdata
+```
+
+The first `scripts/db up` writes `.local/config/lockstep.json` and
+`.local/config/pg-password` (mode 0600, gitignored). Point `LOCKSTEP_CONFIG` at
+the JSON file. Migrations are applied only explicitly:
+
+```sh
+lockstep db status
+lockstep db migrate                 # empty database: applies everything
+lockstep db migrate --backup FILE   # once migrations exist: needs a fresh backup
+lockstep db migrate --no-backup     # or an explicit, recorded opt-out
+```
+
+`lockstep serve` never migrates. Without `LOCKSTEP_CONFIG` it runs with database
+readiness "not checked"; with it, `GET /api/readiness` answers 200 `ready N` only
+at the binary's schema revision, otherwise 503 `not_ready <reason>`.
 
 ## Run
 
@@ -36,8 +65,9 @@ from the host are documented in P1.7.
 
 | Route | Meaning |
 |---|---|
-| `GET /` | Liveness page. It does **not** check the database (readiness arrives in P1.2). |
+| `GET /` | Status page: liveness, database readiness, recorded service starts. |
 | `GET /api/health_check` | 204 while the process is up (liveness only). |
+| `GET /api/readiness` | 200 `ready N`, or 503 `not_ready <reason>`. |
 
 ## Licensing
 

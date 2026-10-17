@@ -18,10 +18,10 @@ import Flipstone.Prelude
 import Orb qualified
 import Shrubbery qualified
 
-import Lockstep.Foundation.Types (Lockstep)
 import Lockstep.Web.Common (apiRootPath)
 import Lockstep.Web.Handler.NoPermissionError (NoPermissionError)
 import Lockstep.Web.Handler.NoUser (NoUser (NoUser))
+import Lockstep.Web.Types (Lockstep)
 
 getHealthCheck :: R.Router r => R.Builder r route HealthCheck
 getHealthCheck =

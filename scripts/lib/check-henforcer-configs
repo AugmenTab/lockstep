@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Static check: henforcer-tests.toml (test suites) must equal henforcer.toml
+# (production code) except that it has no treeDependencies (layering) block.
+set -euo pipefail
+
+strip() {
+  # Drop comments, blank lines and the treeDependencies block.
+  awk '
+    /^treeDependencies = \[/ { skip = 1; next }
+    skip && /^\]/ { skip = 0; next }
+    skip { next }
+    /^#/ || /^$/ { next }
+    { print }
+  ' "$1"
+}
+
+if ! diff <(strip henforcer.toml) <(strip henforcer-tests.toml) >/dev/null; then
+  echo "henforcer configs differ beyond the treeDependencies block:" >&2
+  diff <(strip henforcer.toml) <(strip henforcer-tests.toml) >&2 || true
+  exit 1
+fi
+if grep -q '^treeDependencies' henforcer-tests.toml; then
+  echo "henforcer-tests.toml must not declare treeDependencies" >&2
+  exit 1
+fi
+echo "henforcer configs: test config equals production config minus layering rules"

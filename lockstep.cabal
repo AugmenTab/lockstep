@@ -16,6 +16,8 @@ license:        NONE
 build-type:     Simple
 extra-source-files:
     LICENSE-LAUNCHPAD
+    henforcer.toml
+    henforcer-tests.toml
     THIRD_PARTY_LICENSES.md
     static/lockstep.css
 
@@ -25,9 +27,15 @@ source-repository head
 
 library
   exposed-modules:
+      Lockstep.Application.Database
       Lockstep.Foundation.Cli
       Lockstep.Foundation.Config
-      Lockstep.Foundation.Types
+      Lockstep.Foundation.SystemConfig
+      Lockstep.Persistence.Connection
+      Lockstep.Persistence.Migrate
+      Lockstep.Persistence.Migration
+      Lockstep.Persistence.Migrations
+      Lockstep.Persistence.Queries
       Lockstep.Web.Application
       Lockstep.Web.Common
       Lockstep.Web.Components.Page
@@ -36,9 +44,11 @@ library
       Lockstep.Web.Handler.NoUser
       Lockstep.Web.Health
       Lockstep.Web.Liveness
+      Lockstep.Web.Readiness
       Lockstep.Web.Routes
       Lockstep.Web.Server
       Lockstep.Web.Static
+      Lockstep.Web.Types
   other-modules:
       Paths_lockstep
   autogen-modules:
@@ -53,18 +63,26 @@ library
     , beeline-routing
     , brigid
     , bytestring
+    , containers
+    , crypton
+    , directory
     , fast-logger
     , file-embed
     , flipstone-prelude
     , henforcer
     , http-types
+    , json-fleece-aeson
+    , json-fleece-core
     , mtl
     , ogma
     , orb
+    , orville-postgresql
+    , postgresql-libpq
     , safe-exceptions
     , shrubbery
     , string-interpolate
     , text
+    , time
     , unix
     , unliftio
     , wai
@@ -85,6 +103,7 @@ executable lockstep
     , henforcer
     , lockstep
     , safe-exceptions
+    , text
     , warp
   default-language: GHC2021
 
@@ -92,41 +111,59 @@ test-suite lockstep-integration
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
+      Lockstep.MigrationDbTest
       Lockstep.ProcessTest
+      Lockstep.ServiceDbTest
+      Lockstep.Support.Postgres
+      Lockstep.Support.Process
   hs-source-dirs:
       test/integration
   default-extensions:
       NoImplicitPrelude
-  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T
+  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T -fplugin-opt=Henforcer:--config=henforcer-tests.toml
   build-tool-depends:
       lockstep:lockstep
   build-depends:
       base
     , bytestring
+    , directory
     , flipstone-prelude
     , henforcer
     , http-client
     , http-types
+    , lockstep
     , network
+    , orville-postgresql
     , process
     , tasty
     , tasty-hunit
+    , temporary
+    , text
+    , time
+    , unix
   default-language: GHC2021
 
 test-suite lockstep-unit
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
+      Lockstep.Application.ReadinessTest
+      Lockstep.Foundation.CliDbTest
       Lockstep.Foundation.CliTest
+      Lockstep.Foundation.SystemConfigTest
+      Lockstep.Persistence.MigrationTest
       Lockstep.Web.ApplicationTest
+      Lockstep.Web.LivenessPageTest
+      Lockstep.Web.ReadinessRouteTest
       Lockstep.Web.ServerTest
   hs-source-dirs:
       test/unit
   default-extensions:
       NoImplicitPrelude
-  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T
+  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T -fplugin-opt=Henforcer:--config=henforcer-tests.toml
   build-depends:
       base
+    , brigid
     , bytestring
     , flipstone-prelude
     , henforcer
@@ -134,6 +171,8 @@ test-suite lockstep-unit
     , lockstep
     , tasty
     , tasty-hunit
+    , text
+    , time
     , wai
     , wai-extra
     , warp

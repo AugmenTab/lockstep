@@ -22,6 +22,7 @@ case "${1:-}" in
     scripts/lib/check-partial-lint-fixture
     scripts/lib/check-forbidden-facilities
     scripts/lib/check-source-paths
+    scripts/lib/check-henforcer-configs
     ;;
 
   build)

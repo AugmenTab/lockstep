@@ -30,6 +30,7 @@ run_step() {
   shift
   docker run --rm \
     --network "$network" \
+    ${extra_env[@]+"${extra_env[@]}"} \
     --volume "$PWD:/work" \
     --volume "$stack_root_volume:/stack-root" \
     --workdir /work \
@@ -43,9 +44,10 @@ declare -a names=(
   "3 build"
   "4 unit tests"
   "5 no-live-model guard"
-  "6 integration tests"
+  "6 integration + backup/restore"
 )
 declare -a results=(NOT_RUN NOT_RUN NOT_RUN NOT_RUN NOT_RUN NOT_RUN)
+declare -a extra_env=()
 failed=false
 
 step() {
@@ -67,8 +69,53 @@ step 1 none lint
 step 2 bridge build
 step 3 none unit
 # results[4] stays NOT_RUN: the sentinel/no-live-model guard is P1.7 work.
-if [ "$integration" = true ]; then
-  step 5 bridge integration
+if [ "$integration" = true ] && [ "$failed" = false ]; then
+  # A disposable PostgreSQL (ADR-0002 Q8, C-P1.2 E11) on a private network,
+  # removed on exit whatever happens.
+  run_id="$$-$RANDOM"
+  test_network="lockstep-test-$run_id"
+  test_pg="lockstep-test-pg-$run_id"
+  test_password=$(head -c 24 /dev/urandom | base64 | tr -d '/+=\n')
+  cleanup() {
+    docker rm -f "$test_pg" >/dev/null 2>&1 || true
+    docker network rm "$test_network" >/dev/null 2>&1 || true
+  }
+  trap cleanup EXIT
+  echo "== disposable PostgreSQL $(cat scripts/lib/postgres-image)"
+  docker network create "$test_network" >/dev/null
+  docker run -d --name "$test_pg" --network "$test_network" \
+    --env POSTGRES_PASSWORD="$test_password" \
+    "$(cat scripts/lib/postgres-image)" >/dev/null
+  ready=false
+  for _ in $(seq 1 60); do
+    if docker exec "$test_pg" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null; then
+      ready=true
+      break
+    fi
+    sleep 1
+  done
+  if [ "$ready" = true ]; then
+    extra_env=(
+      --env LOCKSTEP_TEST_PG_HOST="$test_pg"
+      --env LOCKSTEP_TEST_PG_PORT=5432
+      --env LOCKSTEP_TEST_PG_USER=postgres
+      --env LOCKSTEP_TEST_PG_PASSWORD="$test_password"
+    )
+    step 5 "$test_network" integration
+    extra_env=()
+    if [ "$failed" = false ]; then
+      echo "== backup/restore check"
+      docker exec "$test_pg" createdb -U postgres backupcheck
+      if ! scripts/lib/check-db-backup-restore "$test_pg" postgres backupcheck; then
+        results[5]=FAILED
+        failed=true
+      fi
+    fi
+  else
+    echo "disposable PostgreSQL did not become ready" >&2
+    results[5]=FAILED
+    failed=true
+  fi
 fi
 
 echo

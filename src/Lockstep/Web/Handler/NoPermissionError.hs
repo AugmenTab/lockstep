@@ -10,7 +10,7 @@ module Lockstep.Web.Handler.NoPermissionError
 import Data.Void qualified as Void
 import Orb qualified
 
-import Lockstep.Foundation.Types (Lockstep)
+import Lockstep.Web.Types (Lockstep)
 
 newtype NoPermissionError
   = NoPermissionError Void.Void

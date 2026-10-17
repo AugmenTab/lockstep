@@ -5,11 +5,14 @@ moduleHeaderDescriptionMustExistNonEmpty = false
 moduleHeaderLicenseMustExistNonEmpty = false
 moduleHeaderMaintainerMustExistNonEmpty = false
 encapsulatedTrees = []
-# ARCHITECTURE §2. Declaring that Web depends on Foundation forbids Foundation
-# from importing Web. Rows for Kernel/Persistence/Effects/Application are added
-# when those trees first exist (they are NOT_RUN until then).
+# ARCHITECTURE §2. "A depends on B" forbids B from importing A. "Web must not
+# import Persistence" is encoded as a mutual declaration (C-P1.2 E10): each of
+# the two forbids the other. Kernel/Effects rows are added when those trees
+# first exist (NOT_RUN until then).
 treeDependencies = [
-  { moduleTree = "Lockstep.Web", dependencies = ["Lockstep.Foundation"], note = "Foundation is a leaf layer (ARCHITECTURE §2); it must not import Web." },
+  { moduleTree = "Lockstep.Web", dependencies = ["Lockstep.Application", "Lockstep.Foundation", "Lockstep.Persistence"], note = "Foundation is a leaf; Application must not import Web; Persistence must not import Web (ARCHITECTURE §2)." },
+  { moduleTree = "Lockstep.Application", dependencies = ["Lockstep.Persistence", "Lockstep.Foundation"], note = "Persistence and Foundation must not import Application (ARCHITECTURE §2)." },
+  { moduleTree = "Lockstep.Persistence", dependencies = ["Lockstep.Foundation", "Lockstep.Web"], note = "Foundation must not import Persistence; Web must not import Persistence, only Application (ARCHITECTURE §2)." },
 ]
 
 [[forAnyModule.allowedQualifications]]
