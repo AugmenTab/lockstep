@@ -16,6 +16,7 @@ module Lockstep.Application.Dispatcher
   , Dispatcher
   , startDispatcher
   , stopDispatcher
+  , requestStop
   ) where
 
 import Control.Concurrent (forkIO)
@@ -121,6 +122,11 @@ startDispatcher runtime logLine = do
     dispatcher = Dispatcher stop done
   _ <- forkIO (loop dispatcher runtime logLine owner >> putMVar done ())
   pure dispatcher
+
+-- | Signals the thread to stop between steps without waiting.
+requestStop :: Dispatcher -> IO ()
+requestStop dispatcher =
+  void (tryPutMVar (stopSignal dispatcher) ())
 
 -- | Signals the thread to stop between steps and waits for it (at most 10 s).
 stopDispatcher :: Dispatcher -> IO ()
