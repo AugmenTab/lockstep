@@ -105,15 +105,82 @@ addressed by §5 of this report.
 | Human decision points | Freeze of the tests above; port default; final P1.1 acceptance |
 | Rollback | Revert the P1.1 commits on `v2`; `main` is unaffected |
 
-## 6. Human gate decision
+## 6. Final approval packet
 
-Please decide each item. An agent cannot set any of these.
+### 6.1 Already resolved (not reopened)
 
-1. Accept, or amend, **Bible v2.1, PRD v0.2, Plan v0.2** as governing (AC-P0-02).
-2. Inspect the wireframe (`docs/gates/wireframes/gate-evidence-wireframe.html`) (AC-P0-17).
-3. Approve **TESTING_STRATEGY.md**, **VISUAL_EVIDENCE_CONTRACT.md** and **ARCHITECTURE.md** as design contracts (not as implementations).
-4. Accept the §2 deviation (AC-P0-05/08 deferred into P1.1).
-5. **Gate P0: ACCEPTED / REJECTED / DEFERRED**, bound to this report revision.
+DG-01a (Launchpad `11886bf` adopted under BSD-3; `_hyperscript` and pandoc
+removed), DG-01b (orphan `v2` branch), the one-directory layout, and
+private-for-now distribution (ADR-0001, REPOSITORY_STRATEGY).
+
+### 6.2 Governing specifications under decision
+
+| Document | Revision / date | Self-declared status | SHA-256 |
+|---|---|---|---|
+| Project Bible | v2.1, 2026-10-16 | Draft for human review | `62196658858675c450f1e13e561724900f27827db7b41ea774ad16ac4ba640ff` |
+| Implementation PRD (LS-V2-PRD) | v0.2, 2026-10-16 | Proposed for human review | `bbd407fd57285ac6d8da6deee3995a5771c9c111a5c0b62e2df81730ebc17dfe` |
+| Dependency-aware plan (LS-V2-PLAN) | v0.2, 2026-10-16 | Proposed; entirely provisional | `ae85b482d17d43e2fec106e1a857ef2f68f7d1b0c1eb7d0021ecfc64dbfe6345` |
+
+The three documents are mutually consistent (SOURCE_REGISTER §2). Two
+presentation issues are recorded, neither of which changes a requirement: the
+Bible has no Markdown source, and its PDF layout is broken across pp. 15–46.
+
+### 6.3 Design contracts under decision (consequential choices)
+
+**[ARCHITECTURE.md](../../architecture/ARCHITECTURE.md)**
+- One package and one executable: the CLI and `serve` share the same operations.
+- Only one place may construct a live model provider: the composition root
+  `app/lockstep/Main.hs`, plus the separate smoke executable. A static check
+  enforces this.
+- The kernel is pure, with a closed dependency list. Henforcer enforces the
+  import rules once the first kernel module lands (P2.1).
+- `scripts/check` is the single verification entry point.
+- Dependencies are pinned, `allow-newer` is off, and there is a permissive
+  license allowlist. GHC's LGPL libgmp linkage must be decided before any
+  distribution.
+
+**[TESTING_STRATEGY.md](../../TESTING_STRATEGY.md)**
+- Scripted adapters return the same typed outcome as live ones. A model call no
+  fixture covers fails the test; nothing falls back to a live model.
+- Fixtures can inject operator, human, external and clock inputs. Their writes
+  are confined to a per-test sandbox.
+- PostgreSQL, Git and processes are real in integration tests. Named fault points
+  kill the actual process, and the release build refuses fault plans.
+- No live model calls, by construction: stub provider CLIs on every host, no
+  credentials, no network for unit tests, and a construction gate on the live
+  adapter. Live smoke tests need an expiring, budgeted authorization file.
+
+**[VISUAL_EVIDENCE_CONTRACT.md](../../VISUAL_EVIDENCE_CONTRACT.md)**
+- Five statuses, NOT_RUN by default, no coercion to PASSED.
+- Outdated, changed or missing evidence shows INCONCLUSIVE. An empty required
+  set shows NOT_RUN. Changing the `required` flag bumps the version and needs a
+  deviation record. There is no "waived" status.
+- Only a human records the gate decision, bound to the report digest.
+- WCAG AA contrast and text statuses are required.
+
+### 6.4 Wireframe for inspection
+
+[gate-evidence-wireframe.html](../wireframes/gate-evidence-wireframe.html). Open
+it from the repo root with `open docs/gates/wireframes/gate-evidence-wireframe.html`.
+It uses sample data only and shows all five statuses, a stale pass rendered as
+INCONCLUSIVE, the evidence drill-downs and a disabled decision form. Every color
+pair meets WCAG AA (minimum contrast 6.02:1).
+
+### 6.5 Consequences of deferring AC-P0-05 and AC-P0-08 to P1.1
+
+Both rows stay NOT_RUN here. Each becomes a P1.1 acceptance condition (§5 (d)).
+Neither blocks P1.1 work from starting; both block P1.1 from being accepted.
+
+| Row | Unproven until then | P1.1 must | If it fails |
+|---|---|---|---|
+| AC-P0-05: archive equals private commit `11886bf` | That the audited archive bytes (`696147a4…`) are exactly that commit. The only evidence is GitHub's archive comment. | Clone `11886bf` with authentication and diff its tree against the archive | P1.1 stops. Re-audit the real tree; ADR-0001 is revisited only if the license or source findings change. |
+| AC-P0-08: transitive license inventory | Licenses of the Stackage dependencies, and how GMP is linked | Run `stack ls dependencies --license`; record GMP linkage and `THIRD_PARTY_LICENSES.md` | Copyleft in the shipped executable stops P1.1 and needs an ADR. There is no distribution exposure while v2 is private. |
+
+### 6.6 Open item: one human decision
+
+The only blocker is a **single Phase 0 gate decision** covering 6.2–6.5:
+adopting the three specifications, approving the three design contracts,
+inspecting the wireframe (AC-P0-17) and accepting the deferral in 6.5.
 
 | Field | Value |
 |---|---|
