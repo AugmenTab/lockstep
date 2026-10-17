@@ -66,3 +66,19 @@ may accept its own work."). The text above is kept unchanged as history.
 |---|---|
 | P1.1 | `VERIFIED — awaiting human acceptance` |
 | Recorded by | manual agent session (writing agent), 2026-10-17. Not an acceptance. |
+
+## Human acceptance (2026-10-17)
+
+The human owner accepted P1.1 at the R1 tested commit. Owner's words, verbatim:
+"**Human decisions:** 1. **P1.1 ACCEPTED** at tested commit `b3a37233e2077de6a196112a2ef46780b71a30bb`. 2. **P1.2 ACCEPTED** at the same tested commit. 3. The documented R1 remediation and previously authorized deviations remain accepted within their exact recorded scope. 4. The Phase 1 recovery halt is lifted. Resume at P1.3 under the existing full-phase handoff and recorded human-approved authentication design."
+The owner re-confirmed in the same session, when asked, that these are their decisions ("Yes, they're my decisions").
+
+| Field | Value |
+|---|---|
+| P1.1 | **ACCEPTED** |
+| Tested commit | `b3a37233e2077de6a196112a2ef46780b71a30bb` (evidence: `docs/gates/P1.2/r1-acceptance-packet.md`, `docs/gates/P1.2/evidence/r1/SHA256SUMS`) |
+| Decided by | the human owner (operator), 2026-10-17 |
+| Scope | the R1 remediation (C-P1.2-R1, `4c38ab5`) and the ratified deviations, within their exact recorded scope (Correction section above; C-P1.2 §9) |
+| Recorded by | manual agent session (writing agent / Implementer), at the owner's instruction. Not the agent's own acceptance. |
+
+The earlier Decision and Correction sections above are kept unchanged as history.
