@@ -1,9 +1,10 @@
 # Gate P0 — Governing Decisions and Source Acquisition: Gate Packet
 
-- Report revision: 1, 2026-10-16
+- Report revision: 2, 2026-10-16 (rev 1 → 2: retro convention and wireframe provenance corrections, deferral accepted with amendment)
 - Human gate decision: **PENDING.** Only the human owner can set it (§6).
-- Tested basis: `AugmenTab/lockstep`, branch `v2`, commit
-  `2486641258c204c81f2f5dbd8caa957e7c76f66d` (clean). Branch `main` and tag
+- Tested basis: `AugmenTab/lockstep`, branch `v2`. Contracts first committed in
+  `2486641258c204c81f2f5dbd8caa957e7c76f66d`; this revision's corrected artifacts
+  are identified by the SHA-256 digests in §1 and are committed together with it. Branch `main` and tag
   `python-v0.1-final` are at `8b045edb4100c4a8e8fe2275f7a7b597a1e944cb`.
 - Policy identity: `manual — no v2 Supervisor` (Phase 0 handoff `.local/plans/phase-00.md`, sha256 `23265ae4…5ac0`)
 - Judged against: Bible v2.1 `62196658…40ff`, PRD v0.2 `bbd407fd…7dfe`,
@@ -31,10 +32,10 @@ Python 3 (doc checks). No GHC, Stack or PostgreSQL on the host.
 | `AC-P0-10@v1` v2 repository strategy decided and executed | human_review + `git` | ACCEPTED decision; tag and branch exist | Orphan `v2`, one directory; `python-v0.1-final` → `8b045edb` | PASSED | `docs/governance/REPOSITORY_STRATEGY.md` execution record |
 | `AC-P0-11@v1` Python remains a faithful, unmodified reference | `git rev-parse main`; `git merge-base main v2` | main = `8b045edb`; no common ancestor | main = `8b045edb…944cb`; merge-base exit 1 (none); nothing pushed | PASSED | §3 command log below |
 | `AC-P0-12@v1` Regression lessons cover the six required classes | inspection | baseline, future imports, fixed outline, Planner escalation, durable human requests, recovery | PY-REG-01…11 cover all six plus three more | PASSED | `docs/governance/PYTHON_REGRESSION_LESSONS.md` |
-| `AC-P0-13@v1` Module/dependency boundaries and build-command contract documented | inspection + independent review | layers, import rules, Launchpad mapping, `scripts/check`, dependency policy | Present; review findings F3/F11/F12 fixed | PASSED | `docs/architecture/ARCHITECTURE.md` sha256 `a635ad4d…46ec` |
+| `AC-P0-13@v1` Module/dependency boundaries and build-command contract documented | inspection + independent review | layers, import rules, Launchpad mapping, `scripts/check`, dependency policy | Present; review findings F3/F11/F12 fixed | PASSED | `docs/architecture/ARCHITECTURE.md` sha256 `7d42f876…2c59` |
 | `AC-P0-14@v1` TESTING_STRATEGY covers every handoff-required topic and was independently reviewed | inspection + independent review | all 10 topics; review findings dispositioned | 10/10; findings F1, F2, F6–F10, F13 fixed | PASSED | `docs/TESTING_STRATEGY.md` sha256 `dd84cb98…b453`; §4 |
 | `AC-P0-15@v1` VISUAL_EVIDENCE_CONTRACT covers every handoff-required topic and was independently reviewed | inspection + independent review | all 8 topics; no path to a false PASSED | 8/8; findings F4, F5, F14 fixed | PASSED | `docs/VISUAL_EVIDENCE_CONTRACT.md` sha256 `8cf49d27…96b2`; §4 |
-| `AC-P0-16@v1` Gate-evidence wireframe is inspectable, labeled as illustration, shows all five dispositions, AA contrast | static_check (scratchpad script) + contrast computation | balanced HTML, no external resources, five badges, banner, contrast ≥ 4.5 | All checks ok; minimum contrast 6.02:1 (light and dark) | PASSED | `docs/gates/wireframes/gate-evidence-wireframe.html` sha256 `a927d3c2…5d89`; §3 |
+| `AC-P0-16@v1` Gate-evidence wireframe is inspectable, labeled as illustration, shows all five dispositions, AA contrast | static_check (scratchpad script) + contrast computation | balanced HTML, no external resources, five badges, banner, contrast ≥ 4.5 | All checks ok; minimum contrast 6.02:1 (light and dark) | PASSED | `docs/gates/wireframes/gate-evidence-wireframe.html` sha256 `7961e02b…3bba`; §3 |
 | `AC-P0-17@v1` Human inspected the wireframe in a browser | human_review | human opens the file and comments | Not yet | **NOT_RUN** | — |
 | `AC-P0-18@v1` Scaffolding compiles cleanly | build | n/a: no Haskell source exists on `v2` | No scaffolding was changed | NOT_RUN (not applicable; `required: false`) | `git ls-files` on `v2` has no `*.hs` |
 | `AC-P0-19@v1` P1.1 bootstrap Contract specifiable against actual source and approved policy | inspection | bounded Contract citing the audited source | Proposal in §5 | PASSED | §5 |
@@ -47,7 +48,7 @@ explicit C4 checks). The summary is not acceptance.
 
 | Row | Request |
 |---|---|
-| `AC-P0-05`, `AC-P0-08` | Accept Gate P0 with these two checks **deferred to P1.1**, where both are **mandatory acceptance conditions** (ADR-0001 C4). Human amendment (2026-10-16): AC-P0-05 must pass **before any Launchpad source is imported** into Lockstep. The AC-P0-08 license audit is not relaxed. Both remain NOT_RUN here. |
+| `AC-P0-05`, `AC-P0-08` | Accept Gate P0 with these two checks **deferred to P1.1**, where both are **mandatory acceptance conditions** (ADR-0001 C4). Human amendment (2026-10-16): AC-P0-05 must pass **before any Launchpad source is imported** into Lockstep. The AC-P0-08 license audit is not relaxed. Both remain NOT_RUN here. **Deviation ACCEPTED by the human owner, 2026-10-16, with this amendment.** |
 
 ## 3. Command log (reproducible)
 
@@ -189,5 +190,5 @@ inspecting the wireframe (AC-P0-17) and accepting the deferral in 6.5.
 | Decision | _pending_ |
 | Decided by | _pending_ |
 | Decided at | _pending_ |
-| Report revision / sha256 | 1 / _computed at decision time_ |
+| Report revision / sha256 | 2 / _recorded with the decision_ |
 | Notes | _pending_ |

@@ -156,5 +156,5 @@ and P1.2.
 | Gate reports | `docs/gates/<GATE>/gate-report.md` | Schema in VISUAL_EVIDENCE_CONTRACT; human disposition recorded in the report |
 | Raw gate evidence | Small text (≤ 1 MiB): `docs/gates/<GATE>/evidence/`. Larger or sensitive: `.local/evidence/<GATE>/`, with SHA-256 in the report | Never edit evidence after capture |
 | Wireframes / illustrations | `docs/gates/wireframes/` | Banner "ILLUSTRATION — NOT EVIDENCE" |
-| Retrospectives | `.local/retros/retro-<PP>_<SS>.md` (local, gitignored, per Phase 0 handoff) | One per executed sub-phase |
+| Retrospectives | `.local/retros/retro-<PP>.md` (local, gitignored) | One whole-phase retrospective per phase, written after the phase gate decision. No per-sub-phase retrospectives. |
 | Commits | Conventional prefix with sub-phase, e.g. `docs(p0.4): …`, `feat(p1.1): …` | Until the v2 Supervisor exists, commits are **manual** and say so; they are never described as Supervisor-owned |
