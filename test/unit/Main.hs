@@ -6,8 +6,10 @@ import Flipstone.Prelude
 import Test.Tasty (defaultMain, testGroup)
 
 import Lockstep.Application.CommandTest qualified as CommandTest
+import Lockstep.Application.NoopCommandTest qualified as NoopCommandTest
 import Lockstep.Application.ReadinessTest qualified as ReadinessTest
 import Lockstep.Foundation.CliDbTest qualified as CliDbTest
+import Lockstep.Foundation.CliJobTest qualified as CliJobTest
 import Lockstep.Foundation.CliOperatorTest qualified as CliOperatorTest
 import Lockstep.Foundation.CliTest qualified as CliTest
 import Lockstep.Foundation.CliWorkspaceTest qualified as CliWorkspaceTest
@@ -43,4 +45,6 @@ main =
       , CommandTest.tests
       , CliWorkspaceTest.tests
       , CommandRoutesTest.tests
+      , NoopCommandTest.tests
+      , CliJobTest.tests
       ]

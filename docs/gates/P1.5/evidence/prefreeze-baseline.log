@@ -1,0 +1,126 @@
+All test running disabled by --no-run-tests flag. To mute this message in future, set
+notify-if-no-run-tests: false in Stack's configuration.
+lockstep> configure (lib + exe + test)
+Configuring lockstep-0.2.0.0...
+lockstep> build (lib + exe + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+[ 1 of 30] Compiling Lockstep.Foundation.Config
+[ 2 of 30] Compiling Lockstep.Foundation.Cli
+[ 3 of 30] Compiling Lockstep.Foundation.OperatorToken
+[ 4 of 30] Compiling Lockstep.Foundation.SystemConfig
+[ 5 of 30] Compiling Lockstep.Persistence.Commands
+[ 6 of 30] Compiling Lockstep.Persistence.Connection
+[ 7 of 30] Compiling Lockstep.Persistence.Migration
+[ 8 of 30] Compiling Lockstep.Persistence.Migrate
+[ 9 of 30] Compiling Lockstep.Persistence.Migrations
+[10 of 30] Compiling Lockstep.Persistence.OperatorSessions
+[11 of 30] Compiling Lockstep.Persistence.Queries
+[12 of 30] Compiling Lockstep.Application.Database
+[13 of 30] Compiling Lockstep.Application.OperatorTrust
+[14 of 30] Compiling Lockstep.Application.Command
+[15 of 30] Compiling Lockstep.Web.Common
+[16 of 30] Compiling Lockstep.Web.Handler.NoUser
+[17 of 30] Compiling Lockstep.Web.RequestGuard
+[18 of 30] Compiling Lockstep.Web.Server
+[19 of 30] Compiling Lockstep.Web.Static
+[20 of 30] Compiling Lockstep.Web.Components.Page
+[21 of 30] Compiling Lockstep.Web.Operator
+[22 of 30] Compiling Lockstep.Web.Components.Page404
+[23 of 30] Compiling Lockstep.Web.Types
+[24 of 30] Compiling Lockstep.Web.Handler.NoPermissionError
+[25 of 30] Compiling Lockstep.Web.Readiness
+[26 of 30] Compiling Lockstep.Web.Liveness
+[27 of 30] Compiling Lockstep.Web.Health
+[28 of 30] Compiling Lockstep.Web.Routes
+[29 of 30] Compiling Lockstep.Web.Application
+[30 of 30] Compiling Paths_lockstep
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+[1 of 1] Compiling Main
+[2 of 2] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep/lockstep
+Preprocessing test suite 'lockstep-unit' for lockstep-0.2.0.0...
+Building test suite 'lockstep-unit' for lockstep-0.2.0.0...
+[ 1 of 19] Compiling Lockstep.Application.CommandTest
+[ 2 of 19] Compiling Lockstep.Application.NoopCommandTest
+[ 3 of 19] Compiling Lockstep.Application.ReadinessTest
+[ 4 of 19] Compiling Lockstep.Foundation.CliDbTest
+[ 5 of 19] Compiling Lockstep.Foundation.CliJobTest
+[ 6 of 19] Compiling Lockstep.Foundation.CliOperatorTest
+[ 7 of 19] Compiling Lockstep.Foundation.CliTest
+[ 8 of 19] Compiling Lockstep.Foundation.CliWorkspaceTest
+[ 9 of 19] Compiling Lockstep.Foundation.OperatorTokenTest
+[10 of 19] Compiling Lockstep.Foundation.SystemConfigTest
+[11 of 19] Compiling Lockstep.Persistence.MigrationTest
+[12 of 19] Compiling Lockstep.Web.ApplicationTest
+[13 of 19] Compiling Lockstep.Web.CommandRoutesTest
+[14 of 19] Compiling Lockstep.Web.LivenessPageTest
+[15 of 19] Compiling Lockstep.Web.OperatorRoutesTest
+[16 of 19] Compiling Lockstep.Web.ReadinessRouteTest
+[17 of 19] Compiling Lockstep.Web.RequestGuardTest
+[18 of 19] Compiling Lockstep.Web.ServerTest
+/work/test/unit/Lockstep/Application/NoopCommandTest.hs:19:5: error: [GHC-61689]
+    Module ‘Lockstep.Application.Command’ does not export ‘NoopSpec(..)’.
+   |
+19 |   , NoopSpec (..)
+   |     ^^^^^^^^^^^^^
+
+/work/test/unit/Lockstep/Application/NoopCommandTest.hs:26:5: error: [GHC-61689]
+    Module ‘Lockstep.Application.Command’ does not export ‘mkNoopSpec’.
+   |
+26 |   , mkNoopSpec
+   |     ^^^^^^^^^^
+
+/work/test/unit/Lockstep/Foundation/CliJobTest.hs:9:62: error: [GHC-61689]
+    Module ‘Lockstep.Foundation.Cli’ does not export ‘QueueArgs(..)’.
+  |
+9 | import Lockstep.Foundation.Cli (CliError (..), Command (..), QueueArgs (..), RenameArgs (..), parseArgs)
+  |                                                              ^^^^^^^^^^^^^^
+
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       [S-7011]
+       While building package lockstep-0.2.0.0 (scroll up to its section to see the error) using:
+       /stack-root/setup-exe-cache/aarch64-linux/Cabal-simple_w2MFVN35_3.12.1.0_ghc-9.10.3 --verbose=1 --builddir=.stack-work/dist/aarch64-linux/ghc-9.10.3 build lib:lockstep exe:lockstep test:lockstep-integration test:lockstep-unit --ghc-options ""
+       Process exited with code: ExitFailure 1 
+All test running disabled by --no-run-tests flag. To mute this message in future, set
+notify-if-no-run-tests: false in Stack's configuration.
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+Preprocessing test suite 'lockstep-unit' for lockstep-0.2.0.0...
+Building test suite 'lockstep-unit' for lockstep-0.2.0.0...
+[ 2 of 19] Compiling Lockstep.Application.NoopCommandTest
+/work/test/unit/Lockstep/Application/NoopCommandTest.hs:19:5: error: [GHC-61689]
+    Module ‘Lockstep.Application.Command’ does not export ‘NoopSpec(..)’.
+   |
+19 |   , NoopSpec (..)
+   |     ^^^^^^^^^^^^^
+
+/work/test/unit/Lockstep/Application/NoopCommandTest.hs:26:5: error: [GHC-61689]
+    Module ‘Lockstep.Application.Command’ does not export ‘mkNoopSpec’.
+   |
+26 |   , mkNoopSpec
+   |     ^^^^^^^^^^
+
+[ 5 of 19] Compiling Lockstep.Foundation.CliJobTest
+/work/test/unit/Lockstep/Foundation/CliJobTest.hs:9:62: error: [GHC-61689]
+    Module ‘Lockstep.Foundation.Cli’ does not export ‘QueueArgs(..)’.
+  |
+9 | import Lockstep.Foundation.Cli (CliError (..), Command (..), QueueArgs (..), RenameArgs (..), parseArgs)
+  |                                                              ^^^^^^^^^^^^^^
+
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       [S-7011]
+       While building package lockstep-0.2.0.0 (scroll up to its section to see the error) using:
+       /stack-root/setup-exe-cache/aarch64-linux/Cabal-simple_w2MFVN35_3.12.1.0_ghc-9.10.3 --verbose=1 --builddir=.stack-work/dist/aarch64-linux/ghc-9.10.3 build lib:lockstep test:lockstep-unit --ghc-options ""
+       Process exited with code: ExitFailure 1 
