@@ -47,7 +47,7 @@ explicit C4 checks). The summary is not acceptance.
 
 | Row | Request |
 |---|---|
-| `AC-P0-05`, `AC-P0-08` | Accept Gate P0 with these two checks **deferred to P1.1 acceptance** (ADR-0001 C4). Rationale: both need a Haskell toolchain/clone that P1.1 brings anyway. They remain NOT_RUN here. |
+| `AC-P0-05`, `AC-P0-08` | Accept Gate P0 with these two checks **deferred to P1.1**, where both are **mandatory acceptance conditions** (ADR-0001 C4). Human amendment (2026-10-16): AC-P0-05 must pass **before any Launchpad source is imported** into Lockstep. The AC-P0-08 license audit is not relaxed. Both remain NOT_RUN here. |
 
 ## 3. Command log (reproducible)
 
@@ -99,7 +99,8 @@ addressed by §5 of this report.
 | Allowed paths | `package.yaml`, `stack.yaml`, `stack.yaml.lock`, `app/lockstep/**`, `src/Lockstep/{Foundation,Web}/**`, `static/**`, `test/unit/**`, `scripts/check`, `Dockerfile`, `henforcer.toml`, `.hlint.yaml`, `fourmolu.yaml`, `LICENSE-LAUNCHPAD` (BSD-3 text), `THIRD_PARTY_LICENSES.md`, `README.md`, `docs/gates/P1.1/**` |
 | Out of scope | DB connection/migrations (P1.2, DG-02); auth/CSRF (P1.3); commands (P1.4); dispatcher (P1.5); any Kernel module; any provider adapter |
 | Tests first (Planner-authored, frozen before implementation) | `test/unit`: (1) the config parser defaults host to `127.0.0.1` and rejects a missing port with a typed error; (2) the Rollbar config block is **absent**, and a config containing it is rejected; (3) the rendered liveness page contains no Pico class and no `_hyperscript` reference; (4) the route table contains only health/liveness routes (no signup/admin/account/mobile/swagger) |
-| Acceptance | (a) `scripts/check` steps 1–4 exit 0 from a clean clone in the dev container. (b) `lockstep serve` returns 204 on `/api/health_check` and the liveness page on 127.0.0.1, and is unreachable on a non-loopback interface by default. (c) No `pico*`, `_hyperscript`, rollbar, pandoc, nginx or ssh-mount remains (`git grep` check). (d) ADR-0001 C4: `stack ls dependencies --license` has no copyleft in the `lockstep` exe (GMP linkage recorded), `THIRD_PARTY_LICENSES.md` and the Launchpad BSD-3 text are present, and an authenticated clone of `11886bf` is tree-diffed against the archive. (e) Henforcer configured; a deliberately violating fixture fails compilation. (f) Gate evidence recorded per VISUAL_EVIDENCE_CONTRACT. |
+| Precondition (before any import) | **AC-P0-05:** an authenticated clone of Launchpad `11886bf` is tree-diffed against `.local/launchpad-main.zip` (sha256 `696147a4…`). Only identical trees allow import. A mismatch stops P1.1 before any Launchpad file enters `v2`. |
+| Acceptance | (a) `scripts/check` steps 1–4 exit 0 from a clean clone in the dev container. (b) `lockstep serve` returns 204 on `/api/health_check` and the liveness page on 127.0.0.1, and is unreachable on a non-loopback interface by default. (c) No `pico*`, `_hyperscript`, rollbar, pandoc, nginx or ssh-mount remains (`git grep` check). (d) ADR-0001 C4, all mandatory: the AC-P0-05 precondition evidence is recorded; AC-P0-08 `stack ls dependencies --license` covers every transitive dependency and shows no copyleft in the `lockstep` exe (GMP linkage recorded; any copyleft requires an ADR before acceptance); `THIRD_PARTY_LICENSES.md` and the Launchpad BSD-3 text are present. (e) Henforcer configured; a deliberately violating fixture fails compilation. (f) Gate evidence recorded per VISUAL_EVIDENCE_CONTRACT. |
 | Verification commands | `docker build …` (dev image); `scripts/check`; `stack ls dependencies --license`; `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/api/health_check` |
 | Budget / stop | Max 3 implementation attempts; stop and ask the human if the container build fails for reasons outside allowed paths, or if any C4 check finds copyleft or a tree mismatch |
 | Human decision points | Freeze of the tests above; port default; final P1.1 acceptance |
@@ -168,12 +169,13 @@ pair meets WCAG AA (minimum contrast 6.02:1).
 
 ### 6.5 Consequences of deferring AC-P0-05 and AC-P0-08 to P1.1
 
-Both rows stay NOT_RUN here. Each becomes a P1.1 acceptance condition (§5 (d)).
-Neither blocks P1.1 work from starting; both block P1.1 from being accepted.
+Both rows stay NOT_RUN here and are **mandatory** P1.1 acceptance conditions
+(§5). AC-P0-05 is also a **precondition of importing** Launchpad source (human
+amendment, 2026-10-16). The AC-P0-08 license audit is not relaxed.
 
 | Row | Unproven until then | P1.1 must | If it fails |
 |---|---|---|---|
-| AC-P0-05: archive equals private commit `11886bf` | That the audited archive bytes (`696147a4…`) are exactly that commit. The only evidence is GitHub's archive comment. | Clone `11886bf` with authentication and diff its tree against the archive | P1.1 stops. Re-audit the real tree; ADR-0001 is revisited only if the license or source findings change. |
+| AC-P0-05: archive equals private commit `11886bf` | That the audited archive bytes (`696147a4…`) are exactly that commit. The only evidence is GitHub's archive comment. | **Before importing any Launchpad source** (human amendment): clone `11886bf` with authentication and diff its tree against the archive | P1.1 stops before any import. Re-audit the real tree; ADR-0001 is revisited only if the license or source findings change. |
 | AC-P0-08: transitive license inventory | Licenses of the Stackage dependencies, and how GMP is linked | Run `stack ls dependencies --license`; record GMP linkage and `THIRD_PARTY_LICENSES.md` | Copyleft in the shipped executable stops P1.1 and needs an ADR. There is no distribution exposure while v2 is private. |
 
 ### 6.6 Open item: one human decision
