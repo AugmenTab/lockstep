@@ -28,13 +28,16 @@ source-repository head
 library
   exposed-modules:
       Lockstep.Application.Database
+      Lockstep.Application.OperatorTrust
       Lockstep.Foundation.Cli
       Lockstep.Foundation.Config
+      Lockstep.Foundation.OperatorToken
       Lockstep.Foundation.SystemConfig
       Lockstep.Persistence.Connection
       Lockstep.Persistence.Migrate
       Lockstep.Persistence.Migration
       Lockstep.Persistence.Migrations
+      Lockstep.Persistence.OperatorSessions
       Lockstep.Persistence.Queries
       Lockstep.Web.Application
       Lockstep.Web.Common
@@ -44,7 +47,9 @@ library
       Lockstep.Web.Handler.NoUser
       Lockstep.Web.Health
       Lockstep.Web.Liveness
+      Lockstep.Web.Operator
       Lockstep.Web.Readiness
+      Lockstep.Web.RequestGuard
       Lockstep.Web.Routes
       Lockstep.Web.Server
       Lockstep.Web.Static
@@ -64,6 +69,7 @@ library
     , brigid
     , bytestring
     , containers
+    , cookie
     , crypton
     , directory
     , fast-logger
@@ -73,6 +79,7 @@ library
     , http-types
     , json-fleece-aeson
     , json-fleece-core
+    , memory
     , mtl
     , ogma
     , orb
@@ -112,8 +119,10 @@ test-suite lockstep-integration
   main-is: Main.hs
   other-modules:
       Lockstep.MigrationDbTest
+      Lockstep.OperatorTrustTest
       Lockstep.ProcessTest
       Lockstep.ServiceDbTest
+      Lockstep.Support.Http
       Lockstep.Support.Postgres
       Lockstep.Support.Process
   hs-source-dirs:
@@ -149,12 +158,16 @@ test-suite lockstep-unit
   other-modules:
       Lockstep.Application.ReadinessTest
       Lockstep.Foundation.CliDbTest
+      Lockstep.Foundation.CliOperatorTest
       Lockstep.Foundation.CliTest
+      Lockstep.Foundation.OperatorTokenTest
       Lockstep.Foundation.SystemConfigTest
       Lockstep.Persistence.MigrationTest
       Lockstep.Web.ApplicationTest
       Lockstep.Web.LivenessPageTest
+      Lockstep.Web.OperatorRoutesTest
       Lockstep.Web.ReadinessRouteTest
+      Lockstep.Web.RequestGuardTest
       Lockstep.Web.ServerTest
   hs-source-dirs:
       test/unit

@@ -7,10 +7,12 @@ module Lockstep.Foundation.Config
   , defaultPort
   , ServeConfig (..)
   , defaultServeConfig
+  , loopbackAuthority
+  , loopbackOrigin
   ) where
 
 import Flipstone.Prelude
-import Text.Show (Show)
+import Text.Show (Show, show)
 
 {- | The interface `lockstep serve` binds. There is deliberately only one
 constructor: a public bind is unrepresentable (contract C-P1.1 D1).
@@ -57,3 +59,18 @@ defaultServeConfig =
     { serveHost = Loopback
     , servePort = defaultPort
     }
+
+{- | The exact @Host@ a browser sends for the loopback service on this port:
+@127.0.0.1:N@, or @127.0.0.1@ for the default HTTP port 80 (contract C-P1.3
+E7, decision D-1a).
+-}
+loopbackAuthority :: Port -> String
+loopbackAuthority (Port n) =
+  if n == 80
+    then bindHostAddress Loopback
+    else bindHostAddress Loopback <> ":" <> show n
+
+-- | The exact @Origin@ a browser sends for pages of the loopback service.
+loopbackOrigin :: Port -> String
+loopbackOrigin port =
+  "http://" <> loopbackAuthority port

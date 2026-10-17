@@ -19,6 +19,7 @@ import Text.Show (show)
 import Lockstep.Application.Database
   ( DatabaseRuntime
   , MigrateError (..)
+  , NotReadyReason
   , Readiness (..)
   , SchemaStatus (..)
   , checkReadiness
@@ -31,8 +32,9 @@ import Lockstep.Application.Database
   , revisionNumber
   , schemaStatus
   )
+import Lockstep.Application.OperatorTrust (issueSignIn, revokeAllSessions, signInUrl)
 import Lockstep.Foundation.Cli (BackupPolicy, Command (..), parseArgs, renderCliError, usage)
-import Lockstep.Foundation.Config (ServeConfig (..), bindHostAddress, portNumber)
+import Lockstep.Foundation.Config (Port, ServeConfig (..), bindHostAddress, portNumber)
 import Lockstep.Foundation.SystemConfig
   ( SystemConfig (..)
   , loadSystemConfig
@@ -56,6 +58,10 @@ main = do
       withRequiredDatabase (dbMigrate policy)
     Right DbStatus ->
       withRequiredDatabase dbStatus
+    Right (OperatorSignIn port) ->
+      withRequiredDatabase (operatorSignIn port)
+    Right OperatorSignOutAll ->
+      withRequiredDatabase operatorSignOutAll
 
 configVariable :: String
 configVariable =
@@ -109,10 +115,15 @@ serve serveConfig = do
       bindHostAddress (serveHost serveConfig)
         <> ":"
         <> show (portNumber (servePort serveConfig))
+    -- C-P1.3 E11: Warp's default handler can print a malformed request line
+    -- (and so a query string); log a fixed line instead.
+    onException _ err =
+      when (Warp.defaultShouldDisplayException err) $
+        logLine "EXCEPTION warp: a request failed in the HTTP layer"
     settings =
-      Warp.setBeforeMainLoop
-        (logLine ("Listening on " <> address))
-        (serverSettings serveConfig)
+      Warp.setOnException onException
+        . Warp.setBeforeMainLoop (logLine ("Listening on " <> address))
+        $ serverSettings serveConfig
   Warp.runSettings settings (applicationWith serveConfig mbRuntime appLogger)
     `finally` (traverse_ closeDatabase mbRuntime >> finishLogger)
 
@@ -150,3 +161,28 @@ dbStatus runtime = do
     Right (SchemaStatus applied pending) -> do
       putStrLn ("revision " <> maybe "none" (show . revisionNumber) applied)
       putStrLn ("pending " <> show pending)
+
+-- | C-P1.3 E2: prints exactly one line, the sign-in URL. Not ready: exit 69.
+operatorSignIn :: Port -> DatabaseRuntime -> IO ()
+operatorSignIn port runtime = do
+  result <- issueSignIn runtime
+  case result of
+    Left reason ->
+      notReady reason
+    Right token ->
+      putStrLn (T.unpack (signInUrl port token))
+
+-- | C-P1.3 E9.
+operatorSignOutAll :: DatabaseRuntime -> IO ()
+operatorSignOutAll runtime = do
+  result <- revokeAllSessions runtime
+  case result of
+    Left reason ->
+      notReady reason
+    Right n ->
+      putStrLn ("revoked sessions: " <> show n)
+
+notReady :: NotReadyReason -> IO ()
+notReady reason = do
+  hPutStrLn stderr ("lockstep: " <> T.unpack (readinessCode (NotReady reason)))
+  exitWith (ExitFailure 69)

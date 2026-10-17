@@ -23,4 +23,21 @@ CREATE TABLE lockstep_service_starts (
 );
 |]
       )
+    ,
+      ( [Interpolate.i|operator sign-in tokens and sessions|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_operator_sign_in_tokens (
+  digest bytea PRIMARY KEY CHECK (octet_length(digest) = 32),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL,
+  consumed_at timestamptz
+);
+CREATE TABLE lockstep_operator_sessions (
+  digest bytea PRIMARY KEY CHECK (octet_length(digest) = 32),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL,
+  revoked_at timestamptz
+);
+|]
+      )
     ]

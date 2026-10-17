@@ -53,6 +53,7 @@ library:
     - brigid
     - bytestring
     - containers
+    - cookie
     - crypton
     - directory
     - fast-logger
@@ -60,6 +61,7 @@ library:
     - http-types
     - json-fleece-aeson
     - json-fleece-core
+    - memory
     - mtl
     - ogma
     - orb
