@@ -68,6 +68,20 @@ from the host are documented in P1.7.
 | `GET /` | Status page: liveness, database readiness, recorded service starts. |
 | `GET /api/health_check` | 204 while the process is up (liveness only). |
 | `GET /api/readiness` | 200 `ready N`, or 503 `not_ready <reason>`. |
+| `GET /operator` | Operator session page (needs a session). |
+
+## Operator sign-in (C-P1.3)
+
+```sh
+lockstep operator sign-in [--port N]  # prints a one-time link, valid 5 minutes
+lockstep operator sign-out-all        # revokes every browser session
+```
+
+Whoever can run `lockstep` with the `LOCKSTEP_CONFIG` file is the operator. Open
+the printed link in a browser on the same machine and confirm: the browser gets
+a 12-hour session cookie. Both commands need a ready database (exit 69 if not).
+Every request must be addressed to `127.0.0.1:<port>` exactly (not
+`localhost`), and every form submission must come from a page of the service.
 
 ## Licensing
 

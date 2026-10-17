@@ -15,6 +15,7 @@ module Lockstep.Application.Database
   , readinessCode
   , revisionNumber
   , checkReadiness
+  , withDatabase
   , SchemaStatus (..)
   , schemaStatus
   , MigrateError (..)

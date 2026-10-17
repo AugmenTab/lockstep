@@ -28,6 +28,8 @@ data Command
   = Serve ServeConfig
   | DbMigrate BackupPolicy
   | DbStatus
+  | OperatorSignIn Port
+  | OperatorSignOutAll
   deriving (Eq, Show)
 
 {- | What @db migrate@ requires before applying migrations to a database that
@@ -59,7 +61,17 @@ parseArgs args =
     [] -> Left NoCommand
     "serve" : options -> fmap Serve (parseServeOptions options)
     "db" : rest -> parseDbCommand rest
+    "operator" : rest -> parseOperatorCommand rest
     command : _ -> Left (UnknownCommand command)
+
+-- | Contract C-P1.3 E2, E9. There is deliberately no option that takes a token.
+parseOperatorCommand :: [String] -> Either CliError Command
+parseOperatorCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "operator")
+    "sign-in" : options -> fmap OperatorSignIn (parsePortOptions options)
+    "sign-out-all" : rest -> OperatorSignOutAll <$ noMoreArguments rest
+    command : _ -> Left (UnknownCommand ("operator " <> command))
 
 parseDbCommand :: [String] -> Either CliError Command
 parseDbCommand args =
@@ -129,14 +141,20 @@ portOption =
   "--port"
 
 parseServeOptions :: [String] -> Either CliError ServeConfig
-parseServeOptions =
+parseServeOptions options = do
+  port <- parsePortOptions options
+  pure
+    ServeConfig
+      { serveHost = Loopback
+      , servePort = port
+      }
+
+-- | An optional @--port N@ / @--port=N@ and nothing else; default 8000.
+parsePortOptions :: [String] -> Either CliError Port
+parsePortOptions =
   let
     finish mbPort =
-      Right
-        ServeConfig
-          { serveHost = Loopback
-          , servePort = fromMaybe defaultPort mbPort
-          }
+      Right (fromMaybe defaultPort mbPort)
 
     withPort mbPort value rest =
       case mbPort of
@@ -191,11 +209,16 @@ usage =
     [ "usage: lockstep serve [--port N]"
     , "       lockstep db migrate [--backup FILE | --no-backup]"
     , "       lockstep db status"
+    , "       lockstep operator sign-in [--port N]"
+    , "       lockstep operator sign-out-all"
     , ""
     , "  serve        run the local service on 127.0.0.1 (default port 8000)"
     , "  --port N     listen on port N (1-65535)"
     , "  db migrate   apply pending database migrations (needs a backup once any are applied)"
     , "  db status    show the database schema revision and pending migrations"
+    , "  operator sign-in      print a one-time browser sign-in link (valid 5 minutes)"
+    , "                        for the service on port N (default 8000)"
+    , "  operator sign-out-all revoke every operator browser session"
     , ""
     , "The database is configured by the file named in LOCKSTEP_CONFIG."
     ]
