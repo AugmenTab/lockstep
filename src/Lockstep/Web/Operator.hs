@@ -43,6 +43,7 @@ import Lockstep.Application.Command
   , Receipt (..)
   , WorkspaceState (..)
   , actorCode
+  , buildQueue
   , buildRename
   , findReceipt
   , generateIdempotencyKey
@@ -53,6 +54,7 @@ import Lockstep.Application.Command
   , submitCommand
   )
 import Lockstep.Application.Database (DatabaseRuntime)
+import Lockstep.Application.Dispatcher (Job (..), findJobForReceipt, jobStateCode)
 import Lockstep.Application.OperatorTrust
   ( Session (..)
   , SignInRefusal (..)
@@ -71,6 +73,8 @@ data OperatorRoute
   | SignOut
   | RenameCommand
   | ReceiptView T.Text
+  | QueueCommand
+  | QueueForm
   deriving (Eq, Show)
 
 matchOperatorRoute :: HTTP.Method -> [T.Text] -> Maybe OperatorRoute
@@ -82,6 +86,8 @@ matchOperatorRoute method path =
     (["operator", "sign-out"], _, True) -> Just SignOut
     (["operator", "commands", "rename-workspace"], _, True) -> Just RenameCommand
     (["operator", "receipts", receipt], True, _) -> Just (ReceiptView receipt)
+    (["operator", "commands", "queue-noop"], _, True) -> Just QueueCommand
+    (["operator", "jobs", "new"], True, _) -> Just QueueForm
     _ -> Nothing
 
 handleOperator :: Maybe DatabaseRuntime -> OperatorRoute -> Wai.Request -> IO Wai.Response
@@ -130,7 +136,29 @@ handleOperator db route request =
           Nothing -> pure notFoundPage
           Just receiptId -> do
             found <- findReceipt runtime receiptId
-            pure (maybe notFoundPage (operatorResponse HTTP.status200 noReferrer . receiptPage) found)
+            case found of
+              Nothing -> pure notFoundPage
+              Just receipt -> do
+                job <- findJobForReceipt runtime receiptId
+                pure (operatorResponse HTTP.status200 noReferrer (receiptPage receipt job))
+    QueueCommand ->
+      withSession db request $ \runtime token _ ->
+        withForm request $ \form ->
+          case singleValue (formValues "csrf" form) of
+            Just csrf | csrfMatches token (TE.decodeLatin1 csrf) ->
+              case queueFields form of
+                Nothing -> pure (refusal HTTP.status400 invalidCommandPage)
+                Just (key, expected, steps, millis, failAt) ->
+                  case buildQueue ActorBrowserSession key expected steps millis failAt of
+                    Left _ -> pure (refusal HTTP.status400 invalidCommandPage)
+                    Right envelope -> commandResponse <$> submitCommand runtime envelope
+            _ ->
+              pure (refusal HTTP.status403 csrfPage)
+    QueueForm ->
+      withSession db request $ \runtime token _ -> do
+        workspace <- readWorkspace runtime
+        operatorResponse HTTP.status200 noReferrer . queuePage token (either (const Nothing) Just workspace)
+          <$> generateIdempotencyKey
     SignOut ->
       withSession db request $ \runtime token _ ->
         withForm request $ \form ->
@@ -220,10 +248,10 @@ commandResponse :: Either CommandRefusal Receipt -> Wai.Response
 commandResponse result =
   case result of
     Right receipt
-      | receiptOutcome receipt == Applied ->
-          redirect (TE.encodeUtf8 (receiptPath receipt)) []
+      | receiptOutcome receipt == RefusedStale ->
+          refusal HTTP.status409 (receiptPage receipt Nothing)
       | otherwise ->
-          refusal HTTP.status409 (receiptPage receipt)
+          redirect (TE.encodeUtf8 (receiptPath receipt)) []
     Left CommandKeyConflict -> refusal HTTP.status409 keyConflictPage
     Left (CommandInvalid _) -> refusal HTTP.status400 invalidCommandPage
     Left (CommandNotReady _) -> refusal HTTP.status503 notReadyPage
@@ -247,6 +275,19 @@ renameFields form = do
  where
   utf8 =
     either (const Nothing) Just . TE.decodeUtf8'
+
+queueFields :: [(BS.ByteString, BS.ByteString)] -> Maybe (T.Text, Integer, Integer, Integer, Maybe Integer)
+queueFields form = do
+  key <- singleValue (formValues "idempotency_key" form) >>= either (const Nothing) Just . TE.decodeUtf8'
+  expected <- singleValue (formValues "expected_revision" form) >>= decimal
+  steps <- singleValue (formValues "steps" form) >>= decimal
+  millis <- singleValue (formValues "step_ms" form) >>= decimal
+  failAt <-
+    case singleValue (formValues "fail_at_step" form) of
+      Just "" -> Just Nothing
+      Just value -> Just <$> decimal value
+      Nothing -> Nothing
+  pure (key, expected, steps, millis, failAt)
 
 decimal :: BS.ByteString -> Maybe Integer
 decimal bytes =
@@ -384,8 +425,46 @@ operatorPage token session workspace key =
             ]
         , E.h2 [] [E.text [Interpolate.i|Workspace|]]
         , workspaceSection token workspace key
+        , E.h2 [] [E.text [Interpolate.i|Background jobs|]]
+        , E.p [] [E.a [A.href (B.mkRawURL [Interpolate.i|/operator/jobs/new|])] [E.text [Interpolate.i|Queue a no-op job|]]]
         ]
     ]
+
+-- | C-P1.5 E7: the queue form (its own page; see the P1.5 acceptance record).
+queuePage :: RawToken -> Maybe WorkspaceState -> IdempotencyKey -> E.HTML
+queuePage token workspace key =
+  page
+    [Interpolate.i|Lockstep: queue a job|]
+    [ E.main
+        []
+        [ E.h1 [] [E.text [Interpolate.i|Queue a no-op job|]]
+        , E.p [] [E.text [Interpolate.i|The job does nothing but advance through its steps; the running service executes it in the background.|]]
+        , case workspace of
+            Nothing ->
+              E.p [] [E.text [Interpolate.i|Unavailable: the database is not ready.|]]
+            Just current ->
+              E.form
+                [A.method B.FormPOST, A.action (B.mkRawURL [Interpolate.i|/operator/commands/queue-noop|])]
+                [ numberField (T.pack "Steps (1-20) ") (T.pack "steps") (T.pack "3")
+                , numberField (T.pack "Milliseconds per step (0-5000) ") (T.pack "step_ms") (T.pack "100")
+                , numberField (T.pack "Fail at step (empty for none) ") (T.pack "fail_at_step") T.empty
+                , hiddenField (T.pack "expected_revision") (T.pack (show (revisionInt (workspaceRevision current))))
+                , hiddenField (T.pack "idempotency_key") (idempotencyKeyText key)
+                , hiddenField (T.pack "csrf") (csrfFor token)
+                , E.button [] [E.text [Interpolate.i|Queue|]]
+                ]
+        , E.p [] [E.a [A.href (B.mkRawURL [Interpolate.i|/operator|])] [E.text [Interpolate.i|Back to the operator page|]]]
+        ]
+    ]
+ where
+  numberField label name value =
+    E.label
+      []
+      [ E.text label
+      , E.input [A.type_ HTML.InputText, A.customAttribute [Interpolate.i|name|] name, A.value value]
+      ]
+  hiddenField name value =
+    E.input [A.type_ HTML.InputHidden, A.customAttribute [Interpolate.i|name|] name, A.value value]
 
 workspaceSection :: RawToken -> Maybe WorkspaceState -> IdempotencyKey -> E.ChildHTML E.Main grandparent
 workspaceSection token workspace key =
@@ -430,8 +509,8 @@ workspaceSection token workspace key =
         , E.button [] [E.text [Interpolate.i|Rename|]]
         ]
 
-receiptPage :: Receipt -> E.HTML
-receiptPage receipt =
+receiptPage :: Receipt -> Maybe Job -> E.HTML
+receiptPage receipt job =
   let
     fact label value =
       [E.dt [] [E.text label], E.dd [] [E.code [] [E.text value]]]
@@ -450,10 +529,23 @@ receiptPage receipt =
                   <> fact "Actor" (actorCode (receiptActor receipt))
                   <> fact "Accepted" (T.pack (Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S UTC" (receiptAcceptedAt receipt)))
                   <> fact "Idempotency key" (receiptKey receipt)
+                  <> foldMap jobFacts job
               )
           , E.p [] [E.a [A.href (B.mkRawURL [Interpolate.i|/operator|])] [E.text [Interpolate.i|Back to the operator page|]]]
           ]
       ]
+ where
+  jobFacts j =
+    [ E.dt [] [E.text [Interpolate.i|Job|]]
+    , E.dd [] [E.code [] [E.text (T.pack (show (jobId j)))]]
+    , E.dt [] [E.text [Interpolate.i|Job state|]]
+    , E.dd [] [E.code [] [E.text (jobStateCode (jobState j))]]
+    , E.dt [] [E.text [Interpolate.i|Steps|]]
+    , E.dd [] [E.code [] [E.text (T.pack (show (jobStepsDone j) <> "/" <> show (jobStepsTotal j)))]]
+    , E.dt [] [E.text [Interpolate.i|Attempts|]]
+    , E.dd [] [E.code [] [E.text (T.pack (show (jobAttempts j)))]]
+    ]
+      <> foldMap (\err -> [E.dt [] [E.text [Interpolate.i|Error|]], E.dd [] [E.text err]]) (jobError j)
 
 messagePage :: T.Text -> T.Text -> E.HTML
 messagePage title message =
