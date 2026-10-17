@@ -58,8 +58,8 @@
 
 | Field | Value |
 |---|---|
-| P1.1 | |
-| P1.2 | |
-| Decided by | |
-| Date | |
-| Notes | |
+| P1.1 | **ACCEPTED** at `b3a37233e2077de6a196112a2ef46780b71a30bb` |
+| P1.2 | **ACCEPTED** at `b3a37233e2077de6a196112a2ef46780b71a30bb` |
+| Decided by | the human owner (operator) |
+| Date | 2026-10-17 |
+| Notes | Owner's words, verbatim: "**Human decisions:** 1. **P1.1 ACCEPTED** at tested commit `b3a37233e2077de6a196112a2ef46780b71a30bb`. 2. **P1.2 ACCEPTED** at the same tested commit. 3. The documented R1 remediation and previously authorized deviations remain accepted within their exact recorded scope. 4. The Phase 1 recovery halt is lifted. Resume at P1.3 under the existing full-phase handoff and recorded human-approved authentication design." The owner re-confirmed in the same session, when asked, that these are their decisions ("Yes, they're my decisions"). Recorded by the writing agent (Implementer) at the owner's instruction; this is the owner's acceptance, not the agent's. The tested commit, the digests above and the R1 correction history are unchanged. |
