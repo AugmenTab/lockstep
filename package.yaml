@@ -10,6 +10,8 @@ copyright:           "2026 Tyler Baum; Launchpad-derived portions 2023 Tyler Bau
 
 extra-source-files:
 - LICENSE-LAUNCHPAD
+- henforcer.toml
+- henforcer-tests.toml
 - THIRD_PARTY_LICENSES.md
 - static/*
 
@@ -50,16 +52,24 @@ library:
     - beeline-routing
     - brigid
     - bytestring
+    - containers
+    - crypton
+    - directory
     - fast-logger
     - file-embed
     - http-types
+    - json-fleece-aeson
+    - json-fleece-core
     - mtl
     - ogma
     - orb
+    - orville-postgresql
+    - postgresql-libpq
     - safe-exceptions
     - shrubbery
     - string-interpolate
     - text
+    - time
     - unix
     - unliftio
     - wai
@@ -73,6 +83,7 @@ executables:
       - lockstep
       - fast-logger
       - safe-exceptions
+      - text
       - warp
     ghc-options:
       - -threaded
@@ -88,10 +99,13 @@ tests:
     source-dirs: test/unit
     dependencies:
       - lockstep
+      - brigid
       - bytestring
       - http-types
       - tasty
       - tasty-hunit
+      - text
+      - time
       - wai
       - wai-extra
       - warp
@@ -99,6 +113,7 @@ tests:
       - -threaded
       - -rtsopts
       - -with-rtsopts=-T
+      - -fplugin-opt=Henforcer:--config=henforcer-tests.toml
     when:
       - condition: false
         other-modules: Paths_lockstep
@@ -108,17 +123,25 @@ tests:
     build-tools:
       - lockstep:lockstep
     dependencies:
+      - lockstep
       - bytestring
+      - directory
       - http-client
       - http-types
       - network
+      - orville-postgresql
       - process
       - tasty
       - tasty-hunit
+      - temporary
+      - text
+      - time
+      - unix
     ghc-options:
       - -threaded
       - -rtsopts
       - -with-rtsopts=-T
+      - -fplugin-opt=Henforcer:--config=henforcer-tests.toml
     when:
       - condition: false
         other-modules: Paths_lockstep

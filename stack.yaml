@@ -39,6 +39,11 @@ extra-deps:
 - github: flipstone/henforcer
   commit: 71c6c3047b01b3cfc2b5f4aead63982c6553cb8e
 - pollock-0.1.0.3
+# Orville
+- git: https://github.com/flipstone/orville.git
+  commit: 2f493550c882c6d21cfd08cace99f434a21b016f
+  subdirs:
+    - orville-postgresql
 # Orb
 - git: https://github.com/flipstone/orb
   commit: 611084e6f6c49928e61d71b9ba8035ab37bd6cc4

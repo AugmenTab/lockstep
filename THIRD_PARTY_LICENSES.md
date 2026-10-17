@@ -1,6 +1,6 @@
 # Third-party components in Lockstep v2
 
-- Generated for P1.1 from `scripts/licenses` (evidence: `docs/gates/P1.1/evidence/licenses.txt`)
+- Generated from `scripts/licenses` (evidence: `docs/gates/P1.2/evidence/licenses.txt`)
 - Scope: the `lockstep` library and executable (test suites excluded), built in the
   dev container (Debian 12, GHC 9.10.3, Stackage lts-24.12)
 - Lockstep v2 is private and not distributed. This file records notices; it does
@@ -13,31 +13,49 @@ Copyright (c) 2023 Tyler Baum. Full text: `LICENSE-LAUNCHPAD`.
 
 ## Shipped browser assets
 
-None from third parties in P1.1. `static/lockstep.css` is Lockstep's own.
-(htmx and icons arrive later and will be listed here when they ship.)
+None from third parties yet. `static/lockstep.css` is Lockstep's own.
+
+## PostgreSQL server (separate process, not linked)
+
+`postgres:17.11-bookworm` (PostgreSQL License) runs in its own container via `scripts/db`.
 
 ## Native libraries linked dynamically by the `lockstep` executable
+
+All are Debian 12 system libraries, loaded dynamically. The LGPL entries are in the
+category ADR-0003 records (dynamic system libraries); they must be reviewed again
+before any distribution decision, together with GMP.
 
 | Library | Debian package | License | Note |
 |---|---|---|---|
 | glibc (`libc`, `libm`, loader) | libc6 2.36-9+deb12u14 | LGPL-2.1-or-later | system C library |
 | `libgcc_s` | libgcc-s1 12.2.0-14+deb12u1 | GPL-3.0 with GCC Runtime Library Exception | compiler runtime |
-| `libstdc++` | libstdc++6 12.2.0-14+deb12u1 | GPL-3.0 with GCC Runtime Library Exception | needed by libphonenumber |
-| GMP | libgmp10 2:6.2.1+dfsg1-1.1 | LGPL-3.0-or-later / GPL-2.0-or-later (dual) | GHC `ghc-bignum` backend; **dynamic** (ARCHITECTURE §5.2) |
+| `libstdc++` | libstdc++6 12.2.0-14+deb12u1 | GPL-3.0 with GCC Runtime Library Exception | via libphonenumber |
+| GMP | libgmp10 2:6.2.1+dfsg1-1.1 | LGPL-3.0-or-later / GPL-2.0-or-later | GHC `ghc-bignum` backend (ARCHITECTURE §5.2) |
+| libpq | libpq5 15.19-0+deb12u1 | PostgreSQL License | PostgreSQL client (P1.2) |
+| OpenSSL | libssl3 3.0.22-1~deb12u1 | Apache-2.0 | via libpq |
+| MIT Kerberos (`krb5`, `k5crypto`, `gssapi_krb5`, `krb5support`, `com_err`) | libkrb5-3 / libk5crypto3 / libgssapi-krb5-2 / libkrb5support0 1.20.1-2+deb12u5; libcom-err2 1.47.0-2+b2 | MIT | via libpq |
+| OpenLDAP `libldap` | libldap-2.5-0 2.5.13+dfsg-5 | OpenLDAP Public License 2.8 | via libpq |
+| Cyrus SASL | libsasl2-2 2.1.28+dfsg-10 | BSD-4-Clause-like (CMU) | via libldap |
+| GnuTLS | libgnutls30 3.7.9-2+deb12u7 | LGPL-2.1-or-later | via libldap |
+| Nettle / Hogweed | libnettle8 / libhogweed6 3.8.1-2 | LGPL-3.0-or-later / GPL-2.0-or-later | via GnuTLS |
+| libidn2 | libidn2-0 2.3.3-1+b1 | LGPL-3.0-or-later / GPL-2.0-or-later | via GnuTLS |
+| libunistring | libunistring2 1.0-2 | LGPL-3.0-or-later / GPL-2.0-or-later | via libidn2 |
+| libtasn1 | libtasn1-6 4.19.0-2+deb12u1 | LGPL-2.1-or-later | via GnuTLS |
+| p11-kit | libp11-kit0 0.24.1-2 | BSD-3-Clause | via GnuTLS |
+| keyutils | libkeyutils1 1.6.3-2 | LGPL-2.1-or-later | via Kerberos |
+| libffi | libffi8 3.4.4-1 | MIT | via p11-kit |
 | libphonenumber | libphonenumber8 8.12.57+ds-3 | Apache-2.0 | required by Brigid |
 | Protocol Buffers | libprotobuf32 3.21.12-3+deb12u1 | BSD-3-Clause | via libphonenumber |
 | Abseil | libabsl20220623 20220623.1-1+deb12u2 | Apache-2.0 | via libphonenumber |
 | ICU | libicu72 72.1-3+deb12u1 | Unicode License (ICU) | via libphonenumber |
-| zlib | zlib1g 1:1.2.13.dfsg-1 | Zlib | |
+| zlib | zlib1g 1:1.2.13.dfsg-1 | Zlib |  |
 
 ## Haskell packages (transitive closure, statically linked unless noted)
 
-254 packages. Licenses are as declared by each package (`stack ls dependencies --license`).
+261 packages. Licenses are as declared by each package (`stack ls dependencies --license`).
 
 | Package | Version | License | Note |
 |---|---|---|---|
-| Specified | file | "THIRD_PARTY_LICENSES.md" for extra-source-files does not exist |  |
-| Specified | file | "THIRD_PARTY_LICENSES.md" for extra-source-files does not exist |  |
 | Cabal | 3.12.1.0 | BSD-3 |  |
 | Cabal-syntax | 3.12.1.0 | BSD-3 |  |
 | HUnit | 1.6.2.0 | BSD3 |  |
@@ -99,6 +117,8 @@ None from third parties in P1.1. `static/lockstep.css` is Lockstep's own.
 | containers | 0.7 | BSD-3 |  |
 | contravariant | 1.5.5 | BSD3 |  |
 | cookie | 0.5.1 | MIT |  |
+| cryptohash-md5 | 0.11.101.0 | BSD3 |  |
+| cryptohash-sha1 | 0.11.101.0 | BSD3 |  |
 | crypton | 1.0.4 | BSD3 |  |
 | crypton-connection | 0.4.5 | BSD3 |  |
 | crypton-socks | 0.6.2 | BSD3 |  |
@@ -115,6 +135,7 @@ None from third parties in P1.1. `static/lockstep.css` is Lockstep's own.
 | dlist | 1.0 | BSD3 |  |
 | easy-file | 0.2.5 | BSD3 |  |
 | either | 5.0.3 | BSD3 |  |
+| entropy | 0.4.1.11 | BSD3 |  |
 | erf | 2.0.0.0 | BSD3 |  |
 | exceptions | 0.10.9 | BSD-3 |  |
 | extra | 1.8 | BSD3 |  |
@@ -145,7 +166,7 @@ None from third parties in P1.1. `static/lockstep.css` is Lockstep's own.
 | haskell-src-exts | 1.23.1 | BSD3 |  |
 | haskell-src-meta | 0.8.15 | BSD3 |  |
 | hedgehog | 1.5 | BSD3 |  |
-| henforcer | 1.0.0.0 | BSD3 | GHC plugin, compile time only; **not linked** (0 symbols) |
+| henforcer | 1.0.0.0 | BSD3 | GHC plugin, compile time only; **not linked** |
 | hourglass | 0.2.12 | BSD3 |  |
 | hpc | 0.7.0.2 | BSD-3 |  |
 | html-email-validate | 0.2.0.0 | BSD3 |  |
@@ -167,7 +188,7 @@ None from third parties in P1.1. `static/lockstep.css` is Lockstep's own.
 | integer-types | 0.1.4.1 | Apache-2.0 |  |
 | invariant | 0.6.4 | BSD2 |  |
 | iproute | 1.7.15 | BSD3 |  |
-| iso3166-country-codes | 0.20140203.8 | LGPL | **LGPL-3.0, statically linked** (via Brigid). See ADR-0003 (PROPOSED). |
+| iso3166-country-codes | 0.20140203.8 | LGPL | **LGPL-3.0, statically linked** (via Brigid). Accepted while private: ADR-0003. |
 | json-fleece-aeson | 0.5.0.0 | MIT |  |
 | json-fleece-core | 0.10.0.0 | MIT |  |
 | kan-extensions | 5.2.7 | BSD3 |  |
@@ -187,6 +208,7 @@ None from third parties in P1.1. `static/lockstep.css` is Lockstep's own.
 | network | 3.2.8.0 | BSD3 |  |
 | network-byte-order | 0.1.7 | BSD3 |  |
 | network-control | 0.1.7 | BSD3 |  |
+| network-info | 0.2.1 | BSD3 |  |
 | network-uri | 2.6.4.2 | BSD3 |  |
 | non-empty-text | 0.2.1 | MIT |  |
 | ogma | 0.1.0.1 | BSD3 |  |
@@ -198,12 +220,15 @@ None from third parties in P1.1. `static/lockstep.css` is Lockstep's own.
 | optics-th | 0.4.1 | BSD3 |  |
 | optparse-applicative | 0.18.1.0 | BSD3 |  |
 | orb | 0.7.0.0 | MIT |  |
+| orville-postgresql | 1.1.1.0.0 | MIT |  |
 | os-string | 2.0.7 | BSD-3 |  |
 | parallel | 3.2.2.0 | BSD3 |  |
 | parsec | 3.1.18.0 | BSD-2 |  |
 | parser-combinators | 1.3.0 | BSD3 |  |
 | pem | 0.2.4 | BSD3 |  |
 | pollock | 0.1.0.3 | MIT |  |
+| postgresql-libpq | 0.11.0.0 | BSD3 |  |
+| postgresql-libpq-configure | 0.11 | BSD3 |  |
 | pretty | 1.1.3.6 | BSD-3 |  |
 | pretty-show | 1.10 | MIT |  |
 | prettyprinter | 1.7.1 | BSD2 |  |
@@ -217,6 +242,7 @@ None from third parties in P1.1. `static/lockstep.css` is Lockstep's own.
 | random | 1.2.1.3 | BSD3 |  |
 | recv | 0.1.1 | BSD3 |  |
 | reflection | 2.1.9 | BSD3 |  |
+| resource-pool | 0.4.0.0 | BSD3 |  |
 | resourcet | 1.3.0 | BSD3 |  |
 | rts | 1.0.2 | BSD-3 |  |
 | safe | 0.3.21 | BSD3 |  |
@@ -274,6 +300,7 @@ None from third parties in P1.1. `static/lockstep.css` is Lockstep's own.
 | unliftio-core | 0.2.1.0 | MIT |  |
 | unordered-containers | 0.2.20 | BSD3 |  |
 | utf8-string | 1.0.2 | BSD3 |  |
+| uuid | 1.3.16 | BSD3 |  |
 | uuid-types | 1.0.6 | BSD3 |  |
 | validation | 1.1.3 | BSD3 |  |
 | validation-selective | 0.2.0.0 | MPL-2.0 | Henforcer plugin dependency; **not linked** (0 symbols) |

@@ -6,6 +6,7 @@ maintenance mode and external error reporting removed (C-P1.1 D8) and
 -}
 module Lockstep.Web.Application
   ( application
+  , applicationWith
   ) where
 
 import Beeline.Routing qualified as R
@@ -20,18 +21,29 @@ import System.Log.FastLogger qualified as FL
 import Text.Show (show)
 import UnliftIO qualified
 
+import Lockstep.Application.Database (DatabaseRuntime)
 import Lockstep.Foundation.Config (ServeConfig)
-import Lockstep.Foundation.Types (AppContext (..), Lockstep, log, runLockstep)
 import Lockstep.Web.Components.Page404 (page404)
 import Lockstep.Web.Routes (dispatch, routes)
 import Lockstep.Web.Static (StaticAsset (..), lookupAsset, staticRootPath)
+import Lockstep.Web.Types (AppContext (..), Lockstep, log, runLockstep)
 
+-- | The application with no database configured (readiness: not checked).
 application :: ServeConfig -> (FL.LogStr -> IO ()) -> Wai.Application
-application serveConfig appLogger request respond =
+application serveConfig =
+  applicationWith serveConfig Nothing
+
+applicationWith ::
+  ServeConfig ->
+  Maybe DatabaseRuntime ->
+  (FL.LogStr -> IO ()) ->
+  Wai.Application
+applicationWith serveConfig db appLogger request respond =
   let
     ctx =
       AppContext
         { config = serveConfig
+        , database = db
         , request = request
         , respond = respond
         , logger = appLogger

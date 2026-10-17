@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Static check: removed Launchpad facilities must not reappear in build, source,
-# configuration or asset files. Documentation is excluded (it records removals).
+# configuration or asset files. Documentation and tests are excluded: they name
+# the removed facilities in order to prove their absence.
 set -euo pipefail
 
 # The ogma library is a Brigid dependency (and gives the page lang tag); Launchpad's i18n config key is not allowed.
@@ -8,7 +9,7 @@ pattern='pico|hyperscript|rollbar|pandoc|nginx|supported_languages|\.ssh/|ssh_ke
 
 files=$(git ls-files --cached --others --exclude-standard -- \
   package.yaml stack.yaml Dockerfile .dockerignore app src static test scripts \
-  | grep -v -e '^scripts/lib/check-forbidden-facilities$' -e '^test/fixtures/' -e '^test/unit/' || true)
+  | grep -v -e '^scripts/lib/check-forbidden-facilities$' -e '^test/' || true)
 
 if matches=$(grep -n -i -E "$pattern" $files); then
   echo "forbidden facilities found:" >&2

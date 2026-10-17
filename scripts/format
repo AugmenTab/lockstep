@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Formats Haskell sources with the dev container's fourmolu.
+#
+#   scripts/format [FILE...]    default: tracked and new src/ app/ test/ sources
+#
+# Each file is piped from the host through fourmolu's stdin and replaced only
+# when the output is non-empty and different. (Formatting in place through the
+# Docker Desktop bind mount truncated two files right after host-side edits.)
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+image=lockstep-dev:p1
+docker build --quiet --tag "$image" . >/dev/null
+
+if [ "$#" -gt 0 ]; then
+  files=("$@")
+else
+  files=()
+  while IFS= read -r file; do
+    files+=("$file")
+  done < <(git ls-files --cached --others --exclude-standard -- 'src/*.hs' 'app/*.hs' 'test/*.hs' | grep -v '^test/fixtures/')
+fi
+
+changed=0
+for file in "${files[@]}"; do
+  formatted=$(mktemp)
+  if ! docker run --rm -i --volume "$PWD:/work:ro" --workdir /work "$image" \
+      fourmolu -q --stdin-input-file "$file" < "$file" > "$formatted"; then
+    rm -f "$formatted"
+    echo "scripts/format: fourmolu failed on $file" >&2
+    exit 1
+  fi
+  if [ ! -s "$formatted" ]; then
+    rm -f "$formatted"
+    echo "scripts/format: empty output for $file; left unchanged" >&2
+    exit 1
+  fi
+  if cmp -s "$file" "$formatted"; then
+    rm -f "$formatted"
+  else
+    cat "$formatted" > "$file"
+    rm -f "$formatted"
+    echo "formatted $file"
+    changed=$((changed + 1))
+  fi
+done
+echo "scripts/format: $changed file(s) changed"

@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# Local PostgreSQL for Lockstep (ADR-0002, contract C-P1.2 E1/E3/E12).
+#
+#   scripts/db up             create or start the container; writes .local/config on first run
+#   scripts/db down           stop the container (data stays in the volume)
+#   scripts/db status         container state, readiness of the server, schema revision
+#   scripts/db backup         pg_dump -Fc into .local/backups with a .sha256 digest; prints the path
+#   scripts/db restore FILE   verify FILE.sha256, then restore (stop lockstep serve first)
+#   scripts/db psql [ARGS]    psql inside the container
+#
+# Overrides (used by scripts/check): LOCKSTEP_DB_CONTAINER, LOCKSTEP_DB_USER,
+# LOCKSTEP_DB_NAME, LOCKSTEP_BACKUP_DIR, LOCKSTEP_DB_HOST_PORT.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+image=$(cat scripts/lib/postgres-image)
+container=${LOCKSTEP_DB_CONTAINER:-lockstep-postgres}
+user=${LOCKSTEP_DB_USER:-lockstep}
+database=${LOCKSTEP_DB_NAME:-lockstep}
+backup_dir=${LOCKSTEP_BACKUP_DIR:-.local/backups}
+host_port=${LOCKSTEP_DB_HOST_PORT:-5433}
+network=lockstep-net
+volume=lockstep-pgdata
+config_dir=.local/config
+
+die() {
+  echo "scripts/db: $*" >&2
+  exit 1
+}
+
+exists() {
+  docker container inspect "$container" >/dev/null 2>&1
+}
+
+running() {
+  [ "$(docker container inspect -f '{{.State.Running}}' "$container" 2>/dev/null)" = true ]
+}
+
+wait_ready() {
+  for _ in $(seq 1 60); do
+    if docker exec "$container" pg_isready -q -h 127.0.0.1 -U "$user" -d "$database" 2>/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  die "PostgreSQL in $container did not become ready within 60 s"
+}
+
+psql_value() {
+  docker exec "$container" psql -X -q -t -A -U "$user" -d "$database" -c "$1"
+}
+
+revision() {
+  if [ "$(psql_value "SELECT to_regclass('public.lockstep_schema_migrations') IS NOT NULL")" = t ]; then
+    psql_value "SELECT COALESCE(max(id), 0) FROM lockstep_schema_migrations"
+  else
+    echo 0
+  fi
+}
+
+write_config() {
+  mkdir -p "$config_dir"
+  chmod 700 "$config_dir"
+  if [ ! -f "$config_dir/pg-password" ]; then
+    (umask 077 && head -c 32 /dev/urandom | base64 | tr -d '/+=\n' | head -c 32 > "$config_dir/pg-password")
+  fi
+  if [ ! -f "$config_dir/lockstep.json" ]; then
+    (
+      umask 077
+      printf '{"database":{"host":"%s","port":5432,"name":"%s","username":"%s","password":"%s"}}\n' \
+        "$container" "$database" "$user" "$(cat "$config_dir/pg-password")" > "$config_dir/lockstep.json"
+    )
+    echo "wrote $config_dir/lockstep.json (mode 0600); use LOCKSTEP_CONFIG=$config_dir/lockstep.json on network $network"
+  fi
+}
+
+cmd_up() {
+  write_config
+  docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
+  if exists; then
+    running || docker start "$container" >/dev/null
+  else
+    docker run -d \
+      --name "$container" \
+      --network "$network" \
+      --publish "127.0.0.1:$host_port:5432" \
+      --volume "$volume:/var/lib/postgresql/data" \
+      --volume "$PWD/$config_dir/pg-password:/run/secrets/pg-password:ro" \
+      --env POSTGRES_USER="$user" \
+      --env POSTGRES_DB="$database" \
+      --env POSTGRES_PASSWORD_FILE=/run/secrets/pg-password \
+      "$image" >/dev/null
+  fi
+  wait_ready
+  echo "PostgreSQL ready: container $container, network $network, 127.0.0.1:$host_port, schema revision $(revision)"
+}
+
+cmd_down() {
+  if running; then
+    docker stop "$container" >/dev/null
+  fi
+  echo "stopped $container (volume $volume kept)"
+}
+
+cmd_status() {
+  if ! exists; then
+    echo "container $container: absent (run scripts/db up)"
+    exit 3
+  fi
+  if ! running; then
+    echo "container $container: stopped"
+    exit 3
+  fi
+  wait_ready
+  echo "container $container: running, image $(docker container inspect -f '{{.Config.Image}}' "$container")"
+  echo "schema revision $(revision)"
+}
+
+cmd_backup() {
+  running || die "container $container is not running"
+  mkdir -p "$backup_dir"
+  local stamp file
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  file="$backup_dir/$stamp-r$(revision)-$$.dump"
+  docker exec "$container" pg_dump -U "$user" -d "$database" --format=custom > "$file.partial"
+  mv "$file.partial" "$file"
+  (cd "$(dirname "$file")" && shasum -a 256 "$(basename "$file")" > "$(basename "$file").sha256")
+  echo "$file"
+}
+
+cmd_restore() {
+  local file=${1:-}
+  [ -n "$file" ] || die "usage: scripts/db restore FILE"
+  [ -s "$file" ] || die "no such backup: $file"
+  [ -f "$file.sha256" ] || die "missing digest file: $file.sha256"
+  (cd "$(dirname "$file")" && shasum -a 256 -c "$(basename "$file").sha256" >/dev/null 2>&1) \
+    || die "digest mismatch for $file: refusing to restore"
+  running || die "container $container is not running"
+  echo "restoring $file into $database (stop lockstep serve first)" >&2
+  docker exec -i "$container" pg_restore -U "$user" -d "$database" --clean --if-exists --single-transaction < "$file"
+  echo "restored $file; schema revision $(revision)"
+}
+
+case "${1:-}" in
+  up) cmd_up ;;
+  down) cmd_down ;;
+  status) cmd_status ;;
+  backup) cmd_backup ;;
+  restore) shift; cmd_restore "$@" ;;
+  psql) shift; docker exec -it "$container" psql -U "$user" -d "$database" "$@" ;;
+  *) sed -n '2,13p' "$0" >&2; exit 64 ;;
+esac

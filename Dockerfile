@@ -57,6 +57,14 @@ RUN apt-get update \
       && apt-get clean \
       && rm -rf /var/lib/apt/lists/*
 
+# libpq for Orville / postgresql-libpq (P1.2). The server runs in its own
+# pinned PostgreSQL container; no PostgreSQL server or client tools here.
+RUN apt-get update \
+      && apt-get install -y --no-install-recommends \
+           libpq-dev \
+      && apt-get clean \
+      && rm -rf /var/lib/apt/lists/*
+
 # The project stack.yaml sets system-ghc/install-ghc so Stack uses this GHC.
 ENV STACK_ROOT=/stack-root
 WORKDIR /work

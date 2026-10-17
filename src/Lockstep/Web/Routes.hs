@@ -16,13 +16,15 @@ import Network.Wai qualified as Wai
 import Orb qualified
 import Shrubbery qualified
 
-import Lockstep.Foundation.Types (Lockstep)
 import Lockstep.Web.Health (HealthCheck, getHealthCheck)
 import Lockstep.Web.Liveness (Liveness, getLiveness)
+import Lockstep.Web.Readiness (ReadinessCheck, getReadiness)
+import Lockstep.Web.Types (Lockstep)
 
 type Routes =
   Shrubbery.Union
     [ HealthCheck
+    , ReadinessCheck
     , Liveness
     ]
 
@@ -34,5 +36,6 @@ routes :: Orb.ServerRouter r => r Routes
 routes =
   R.routeList $
     Orb.get getHealthCheck
+      /: Orb.get getReadiness
       /: Orb.get getLiveness
       /: R.emptyRoutes

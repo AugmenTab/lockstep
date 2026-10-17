@@ -2,13 +2,16 @@
 {-# LANGUAGE RoleAnnotations #-}
 
 {- | The request-handling monad. Derived from Launchpad.Types (11886bf), with
-the removals listed in ARCHITECTURE §3 and contract C-P1.1 D7/D8.
+the removals listed in ARCHITECTURE §3 and contract C-P1.1 D7/D8. It lives in
+Web (contract C-P1.2 E10) because it carries the WAI request and an
+Application database handle.
 -}
-module Lockstep.Foundation.Types
+module Lockstep.Web.Types
   ( Lockstep
   , runLockstep
   , AppContext (..)
   , getConfig
+  , getDatabase
   , log
   ) where
 
@@ -22,6 +25,7 @@ import System.Log.FastLogger qualified as FL
 import Text.Show (show)
 import UnliftIO (MonadUnliftIO)
 
+import Lockstep.Application.Database (DatabaseRuntime)
 import Lockstep.Foundation.Config (ServeConfig)
 
 type role Lockstep nominal
@@ -58,6 +62,7 @@ runLockstep ctx action =
 data AppContext
   = AppContext
   { config :: ServeConfig
+  , database :: Maybe DatabaseRuntime
   , request :: Wai.Request
   , respond :: Wai.Response -> IO Wai.ResponseReceived
   , logger :: FL.LogStr -> IO ()
@@ -66,6 +71,10 @@ data AppContext
 getConfig :: (ServeConfig -> a) -> Lockstep a
 getConfig getter =
   asks (getter . config)
+
+getDatabase :: Lockstep (Maybe DatabaseRuntime)
+getDatabase =
+  asks database
 
 log :: FL.ToLogStr msg => msg -> Lockstep ()
 log msg = do

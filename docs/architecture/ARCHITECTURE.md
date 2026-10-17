@@ -85,9 +85,9 @@ As accepted in ADR-0001. Mapping to v2 locations:
 
 | Launchpad | v2 | When |
 |---|---|---|
-| `Launchpad.Types`, `Launchpad.REPL`, `Launchpad.Config` | `Lockstep.Foundation.*`: loopback bind, configurable port, no Rollbar, `Operation` mode reused by CLI subcommands | P1.1 |
+| `Launchpad.Types`, `Launchpad.REPL`, `Launchpad.Config` | `Lockstep.Foundation.*`: loopback bind, configurable port, no Rollbar, `Operation` mode reused by CLI subcommands. *P1.2 note (C-P1.2 E10): the request monad (`Launchpad.Types`) moved to `Lockstep.Web.Types`, because it carries the WAI request and an Application handle and Foundation is a leaf.* | P1.1 |
 | `Launchpad.Routes` (Beeline/Shrubbery/Orb dispatch), Orb handler pattern, `Handler/PermissionActions` | `Lockstep.Web.Routes` | P1.1 |
-| `Routes/API/HealthCheck` | `Lockstep.Web.Health` (P1.1 static liveness; P1.2 adds DB readiness) | P1.1/P1.2 |
+| `Routes/API/HealthCheck` | `Lockstep.Web.Health` (liveness only, always); DB readiness is a separate route, `Lockstep.Web.Readiness` (`/api/readiness`, ADR-0002 Q4) | P1.1/P1.2 |
 | `Launchpad.Components.*` (Brigid) | `Lockstep.Web.Components.*`, Pico classes removed | P1.1/P1.6 |
 | `Database.Entity`, `Database.Schema`, `Util.Orville*` | `Lockstep.Persistence.*`; auto-migration replaced per DG-02 | P1.2 |
 | `Data/Authentication/*`, cookie + token-digest | Operator trust/session primitives | P1.3 |
