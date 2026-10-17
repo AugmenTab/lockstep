@@ -1,0 +1,124 @@
+name:                lockstep
+version:             0.2.0.0
+github:              "AugmenTab/lockstep"
+# Lockstep v2 is private and has no chosen license (ADR-0001 C2). Portions
+# derived from Launchpad 11886bf are BSD-3-Clause; see LICENSE-LAUNCHPAD.
+license:             NONE
+author:              "Tyler Baum"
+maintainer:          "Tyler Baum"
+copyright:           "2026 Tyler Baum; Launchpad-derived portions 2023 Tyler Baum"
+
+extra-source-files:
+- LICENSE-LAUNCHPAD
+- THIRD_PARTY_LICENSES.md
+- static/*
+
+description: Lockstep v2 local application (private).
+
+dependencies:
+  - base
+  - flipstone-prelude
+  - henforcer
+
+language: GHC2021
+
+default-extensions:
+  - NoImplicitPrelude
+
+ghc-options:
+  - -j
+  - -Weverything
+  - -Werror
+  - -Wno-missing-import-lists
+  - -Wno-missing-local-signatures
+  - -Wno-monomorphism-restriction
+  - -Wno-missing-kind-signatures
+  - -Wno-prepositive-qualified-module
+  - -Wno-implicit-prelude
+  - -Wno-safe
+  - -Wno-unsafe
+  - -Wno-missing-safe-haskell-mode
+  - -Wno-missing-deriving-strategies
+  - -Wno-all-missed-specialisations
+  - -Wno-missed-specialisations
+  - -Wno-unticked-promoted-constructors
+  - -fplugin Henforcer
+
+library:
+  source-dirs: src
+  dependencies:
+    - beeline-routing
+    - brigid
+    - bytestring
+    - fast-logger
+    - file-embed
+    - http-types
+    - mtl
+    - ogma
+    - orb
+    - safe-exceptions
+    - shrubbery
+    - string-interpolate
+    - text
+    - unix
+    - unliftio
+    - wai
+    - warp
+
+executables:
+  lockstep:
+    main:        Main.hs
+    source-dirs: app/lockstep
+    dependencies:
+      - lockstep
+      - fast-logger
+      - safe-exceptions
+      - warp
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-T
+    when:
+      - condition: false
+        other-modules: Paths_lockstep
+
+tests:
+  lockstep-unit:
+    main:        Main.hs
+    source-dirs: test/unit
+    dependencies:
+      - lockstep
+      - bytestring
+      - http-types
+      - tasty
+      - tasty-hunit
+      - wai
+      - wai-extra
+      - warp
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-T
+    when:
+      - condition: false
+        other-modules: Paths_lockstep
+  lockstep-integration:
+    main:        Main.hs
+    source-dirs: test/integration
+    build-tools:
+      - lockstep:lockstep
+    dependencies:
+      - bytestring
+      - http-client
+      - http-types
+      - network
+      - process
+      - tasty
+      - tasty-hunit
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-T
+    when:
+      - condition: false
+        other-modules: Paths_lockstep

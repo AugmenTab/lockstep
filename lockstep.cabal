@@ -1,0 +1,140 @@
+cabal-version: 2.2
+
+-- This file has been generated from package.yaml by hpack version 0.38.1.
+--
+-- see: https://github.com/sol/hpack
+
+name:           lockstep
+version:        0.2.0.0
+description:    Lockstep v2 local application (private).
+homepage:       https://github.com/AugmenTab/lockstep#readme
+bug-reports:    https://github.com/AugmenTab/lockstep/issues
+author:         Tyler Baum
+maintainer:     Tyler Baum
+copyright:      2026 Tyler Baum; Launchpad-derived portions 2023 Tyler Baum
+license:        NONE
+build-type:     Simple
+extra-source-files:
+    LICENSE-LAUNCHPAD
+    THIRD_PARTY_LICENSES.md
+    static/lockstep.css
+
+source-repository head
+  type: git
+  location: https://github.com/AugmenTab/lockstep
+
+library
+  exposed-modules:
+      Lockstep.Foundation.Cli
+      Lockstep.Foundation.Config
+      Lockstep.Foundation.Types
+      Lockstep.Web.Application
+      Lockstep.Web.Common
+      Lockstep.Web.Components.Page
+      Lockstep.Web.Components.Page404
+      Lockstep.Web.Handler.NoPermissionError
+      Lockstep.Web.Handler.NoUser
+      Lockstep.Web.Health
+      Lockstep.Web.Liveness
+      Lockstep.Web.Routes
+      Lockstep.Web.Server
+      Lockstep.Web.Static
+  other-modules:
+      Paths_lockstep
+  autogen-modules:
+      Paths_lockstep
+  hs-source-dirs:
+      src
+  default-extensions:
+      NoImplicitPrelude
+  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer
+  build-depends:
+      base
+    , beeline-routing
+    , brigid
+    , bytestring
+    , fast-logger
+    , file-embed
+    , flipstone-prelude
+    , henforcer
+    , http-types
+    , mtl
+    , ogma
+    , orb
+    , safe-exceptions
+    , shrubbery
+    , string-interpolate
+    , text
+    , unix
+    , unliftio
+    , wai
+    , warp
+  default-language: GHC2021
+
+executable lockstep
+  main-is: Main.hs
+  hs-source-dirs:
+      app/lockstep
+  default-extensions:
+      NoImplicitPrelude
+  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T
+  build-depends:
+      base
+    , fast-logger
+    , flipstone-prelude
+    , henforcer
+    , lockstep
+    , safe-exceptions
+    , warp
+  default-language: GHC2021
+
+test-suite lockstep-integration
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Lockstep.ProcessTest
+  hs-source-dirs:
+      test/integration
+  default-extensions:
+      NoImplicitPrelude
+  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T
+  build-tool-depends:
+      lockstep:lockstep
+  build-depends:
+      base
+    , bytestring
+    , flipstone-prelude
+    , henforcer
+    , http-client
+    , http-types
+    , network
+    , process
+    , tasty
+    , tasty-hunit
+  default-language: GHC2021
+
+test-suite lockstep-unit
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Lockstep.Foundation.CliTest
+      Lockstep.Web.ApplicationTest
+      Lockstep.Web.ServerTest
+  hs-source-dirs:
+      test/unit
+  default-extensions:
+      NoImplicitPrelude
+  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T
+  build-depends:
+      base
+    , bytestring
+    , flipstone-prelude
+    , henforcer
+    , http-types
+    , lockstep
+    , tasty
+    , tasty-hunit
+    , wai
+    , wai-extra
+    , warp
+  default-language: GHC2021

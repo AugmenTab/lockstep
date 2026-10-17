@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Static check: Haskell sources sit at case-exact module paths. On a
+# case-insensitive host filesystem a stray lowercase directory (for example the
+# Python checkout's src/lockstep/) can silently capture src/Lockstep/ files;
+# a Linux clone would then fail to find the modules.
+set -euo pipefail
+
+bad=$(git ls-files --cached --others --exclude-standard -- '*.hs' \
+  | grep -v -E '^(src/Lockstep/|app/lockstep/Main\.hs$|test/(unit|integration)/(Main\.hs$|Lockstep/)|test/fixtures/)' || true)
+
+if [ -n "$bad" ]; then
+  echo "Haskell sources outside the expected case-exact paths:" >&2
+  echo "$bad" >&2
+  exit 1
+fi
+
+echo "source paths: all Haskell sources at case-exact module paths"

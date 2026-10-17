@@ -1,0 +1,93 @@
+# To avoid errors from quasiquoted strings
+- arguments: [-XNoCPP]
+
+- ignore: {name: Use record patterns}
+- ignore: {name: Use lambda-case}
+- ignore: {name: Use tuple-section}
+- ignore: {name: Use first}
+
+# Use camelCase would be nice but we have too many abbreviations and such that need underscores
+- ignore: {name: Use camelCase}
+
+# The `Use any` warning resulted in some weird code suggestions that didn't improve readability
+- ignore: {name: Use any}
+
+# Use for_ suggests replacing case statements on Maybe with for_ in cases where
+# we would rather have the case statement
+- ignore: {name: Use for_}
+
+# Use unless suggests using unless rather than 'when not', but 'when not' is
+# much easier to understand logically
+- ignore: {name: Use unless}
+
+- ignore: {name: Use section}
+- ignore: {name: Use ++}
+- ignore: {name: Use void}
+- ignore: {name: Use join}
+
+- warn: {lhs: a ++ b, rhs: a <> b}
+
+- warn:
+    lhs: a .== Nothing
+    rhs: fieldIsNull a
+    note: "Converts to SQL `= null` which always returns false, probably not intended"
+
+- package:
+    name: orville
+    modules:
+      - import Orville.PostgreSQL.Plan as Plan
+
+- group:
+    name: orville
+    enabled: true
+    imports:
+      - package orville
+    rules:
+      # Use focusParam instead of fmap + chain
+      - error:
+          lhs: "Plan.chain (f <$> Plan.askParam) x"
+          rhs: "Plan.focusParam f x"
+      - error:
+          lhs: "Plan.chain (fmap f Plan.askParam) x"
+          rhs: "Plan.focusParam f x"
+
+# Lockstep: partial functions are banned everywhere (phase-01 handoff rule 7).
+# Names are module-qualified so that unrelated identifiers such as Brigid's
+# E.head (the HTML <head> element) are not caught; hlint resolves them through
+# imports. Enforced by scripts/lib/check-partial-lint-fixture. This list covers
+# common partial functions in base; it does not cover all of them.
+- functions:
+  - name: ["Prelude.undefined", "Flipstone.Prelude.undefined", "GHC.Err.undefined"]
+    within: []
+  - name: ["Prelude.error", "Flipstone.Prelude.error", "GHC.Err.error"]
+    within: []
+  - name: ["Prelude.errorWithoutStackTrace", "Flipstone.Prelude.errorWithoutStackTrace", "GHC.Err.errorWithoutStackTrace"]
+    within: []
+  - name: ["Prelude.head", "Flipstone.Prelude.head", "Data.List.head", "GHC.List.head"]
+    within: []
+  - name: ["Prelude.tail", "Flipstone.Prelude.tail", "Data.List.tail", "GHC.List.tail"]
+    within: []
+  - name: ["Prelude.init", "Flipstone.Prelude.init", "Data.List.init", "GHC.List.init"]
+    within: []
+  - name: ["Prelude.last", "Flipstone.Prelude.last", "Data.List.last", "GHC.List.last"]
+    within: []
+  - name: ["Prelude.!!", "Flipstone.Prelude.!!", "Data.List.!!", "GHC.List.!!"]
+    within: []
+  - name: ["Prelude.read", "Flipstone.Prelude.read", "Text.Read.read"]
+    within: []
+  - name: ["Prelude.maximum", "Flipstone.Prelude.maximum", "Data.List.maximum", "GHC.List.maximum", "Data.Foldable.maximum"]
+    within: []
+  - name: ["Prelude.minimum", "Flipstone.Prelude.minimum", "Data.List.minimum", "GHC.List.minimum", "Data.Foldable.minimum"]
+    within: []
+  - name: ["Prelude.foldr1", "Flipstone.Prelude.foldr1", "Data.List.foldr1", "GHC.List.foldr1", "Data.Foldable.foldr1"]
+    within: []
+  - name: ["Prelude.foldl1", "Flipstone.Prelude.foldl1", "Data.List.foldl1", "GHC.List.foldl1", "Data.Foldable.foldl1"]
+    within: []
+  - name: ["Prelude.toEnum", "Flipstone.Prelude.toEnum", "GHC.Enum.toEnum"]
+    within: []
+  - name: ["Prelude.succ", "Flipstone.Prelude.succ", "GHC.Enum.succ"]
+    within: []
+  - name: ["Prelude.pred", "Flipstone.Prelude.pred", "GHC.Enum.pred"]
+    within: []
+  - name: ["Data.Maybe.fromJust"]
+    within: []

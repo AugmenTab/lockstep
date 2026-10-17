@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Static check: removed Launchpad facilities must not reappear in build, source,
+# configuration or asset files. Documentation is excluded (it records removals).
+set -euo pipefail
+
+# The ogma library is a Brigid dependency (and gives the page lang tag); Launchpad's i18n config key is not allowed.
+pattern='pico|hyperscript|rollbar|pandoc|nginx|supported_languages|\.ssh/|ssh_key'
+
+files=$(git ls-files --cached --others --exclude-standard -- \
+  package.yaml stack.yaml Dockerfile .dockerignore app src static test scripts \
+  | grep -v -e '^scripts/lib/check-forbidden-facilities$' -e '^test/fixtures/' -e '^test/unit/' || true)
+
+if matches=$(grep -n -i -E "$pattern" $files); then
+  echo "forbidden facilities found:" >&2
+  echo "$matches" >&2
+  exit 1
+fi
+
+# allow-newer must stay scoped to exactly the approved packages (C-P1.1 D9).
+scoped=$(awk '/^allow-newer-deps:/ { on = 1; next } on && /^- / { print $2; next } on { on = 0 }' stack.yaml | sort | tr '\n' ' ')
+if grep -q '^allow-newer: *true' stack.yaml && [ "$scoped" != "integer-types libphonenumber " ]; then
+  echo "allow-newer is not scoped to the approved packages (found: ${scoped:-none})" >&2
+  exit 1
+fi
+if grep -n -i 'allow-newer' package.yaml Dockerfile scripts/check scripts/lib/check-step; then
+  echo "allow-newer set outside stack.yaml" >&2
+  exit 1
+fi
+
+echo "forbidden facilities: none in $(wc -w <<<"$files") files"

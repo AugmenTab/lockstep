@@ -1,0 +1,54 @@
+[forAnyModule]
+allowedOpenUnaliasedImports = 1
+moduleHeaderCopyrightMustExistNonEmpty = false
+moduleHeaderDescriptionMustExistNonEmpty = false
+moduleHeaderLicenseMustExistNonEmpty = false
+moduleHeaderMaintainerMustExistNonEmpty = false
+encapsulatedTrees = []
+# ARCHITECTURE §2. Declaring that Web depends on Foundation forbids Foundation
+# from importing Web. Rows for Kernel/Persistence/Effects/Application are added
+# when those trees first exist (they are NOT_RUN until then).
+treeDependencies = [
+  { moduleTree = "Lockstep.Web", dependencies = ["Lockstep.Foundation"], note = "Foundation is a leaf layer (ARCHITECTURE §2); it must not import Web." },
+]
+
+[[forAnyModule.allowedQualifications]]
+module = "Flipstone.Prelude"
+[[forAnyModule.allowedQualifications.importScheme]]
+qualified = { unqualified = true }
+
+[[forAnyModule.allowedQualifications]]
+module = "Data.ByteString"
+[[forAnyModule.allowedQualifications.importScheme]]
+qualified = { qualifiedPost = true }
+alias = "BS"
+
+[[forAnyModule.allowedQualifications]]
+module = "Data.ByteString.Lazy"
+[[forAnyModule.allowedQualifications.importScheme]]
+qualified = { qualifiedPost = true }
+alias = "LBS"
+
+[[forAnyModule.allowedQualifications]]
+module = "Data.Text"
+[[forAnyModule.allowedQualifications.importScheme]]
+qualified = { qualifiedPost = true }
+alias = "T"
+
+[[forAnyModule.allowedQualifications]]
+module = "Orb"
+[[forAnyModule.allowedQualifications.importScheme]]
+qualified = { qualifiedPost = true }
+
+[[forAnyModule.allowedQualifications]]
+module = "Orville.PostgreSQL"
+[[forAnyModule.allowedQualifications.importScheme]]
+qualified = { qualifiedPost = true }
+alias = "O"
+
+[[forAnyModule.allowedQualifications]]
+module = "Data.Vector"
+[[forAnyModule.allowedQualifications.importScheme]]
+qualified = { qualifiedPost = true }
+alias = "V"
+

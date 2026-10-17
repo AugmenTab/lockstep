@@ -1,0 +1,114 @@
+/* Lockstep stylesheet. Custom tokens only (Bible §3.6.1). */
+
+:root {
+  color-scheme: light dark;
+  --ls-bg: #f7f7f5;
+  --ls-surface: #ffffff;
+  --ls-text: #1c1d1f;
+  --ls-text-muted: #4a4d52;
+  --ls-border: #c9ccd1;
+  --ls-accent: #1f4f8f;
+  --ls-focus: #1f4f8f;
+  --ls-radius: 6px;
+  --ls-space-1: 0.25rem;
+  --ls-space-2: 0.5rem;
+  --ls-space-3: 1rem;
+  --ls-space-4: 1.5rem;
+  --ls-space-5: 2.5rem;
+  --ls-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --ls-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ls-bg: #141518;
+    --ls-surface: #1d1f23;
+    --ls-text: #ececec;
+    --ls-text-muted: #b4b8be;
+    --ls-border: #3b3f46;
+    --ls-accent: #8fb6ff;
+    --ls-focus: #8fb6ff;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+}
+
+body {
+  background: var(--ls-bg);
+  color: var(--ls-text);
+  font-family: var(--ls-font);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+main {
+  max-width: 48rem;
+  margin-inline: auto;
+  padding: var(--ls-space-5) var(--ls-space-3);
+}
+
+h1 {
+  font-size: 1.75rem;
+  line-height: 1.25;
+  margin: 0 0 var(--ls-space-3);
+}
+
+p {
+  margin: 0 0 var(--ls-space-3);
+}
+
+a {
+  color: var(--ls-accent);
+}
+
+:focus-visible {
+  outline: 3px solid var(--ls-focus);
+  outline-offset: 2px;
+}
+
+code {
+  font-family: var(--ls-mono);
+  font-size: 0.95em;
+}
+
+.ls-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--ls-space-2) var(--ls-space-4);
+  margin: 0;
+  padding: var(--ls-space-3) var(--ls-space-4);
+  background: var(--ls-surface);
+  border: 1px solid var(--ls-border);
+  border-radius: var(--ls-radius);
+}
+
+.ls-facts dt {
+  font-weight: 600;
+}
+
+.ls-facts dd {
+  margin: 0;
+}
+
+.ls-muted {
+  color: var(--ls-text-muted);
+}
+
+@media (max-width: 30rem) {
+  .ls-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .ls-facts dd {
+    margin-bottom: var(--ls-space-2);
+  }
+}

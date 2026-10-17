@@ -1,0 +1,55 @@
+# Derived from Launchpad 11886bf. Changes: Launchpad's blanket allow-newer is
+# replaced by a relaxation scoped to exactly two packages (contract C-P1.1 D9,
+# human-approved 2026-10-17); extra-deps reduced to what lockstep needs.
+resolver: lts-24.12
+system-ghc: true
+install-ghc: false
+# Stack applies allow-newer only to the packages listed in allow-newer-deps.
+# Both are Brigid dependencies whose latest releases cap base below 4.20.
+allow-newer: true
+allow-newer-deps:
+- integer-types
+- libphonenumber
+
+packages:
+- .
+
+extra-deps:
+# Beeline
+- github: flipstone/beeline
+  commit: 04bd46a1148e5e12471bac9604a6c05d56f95e2b
+  subdirs:
+    - beeline-http-client
+    - beeline-params
+    - beeline-routing
+# Brigid and its dependencies
+- github: AugmenTab/brigid
+  commit: 331dcc0144919bfe021834310f6908c48331350a
+- integer-types-0.1.4.1@sha256:4b56a906d054c41ac64578f46435947e11a69314b831c74543384da8e7061502,2254
+# Fleece (used by Orb)
+- git: https://github.com/flipstone/json-fleece.git
+  commit: 5ac847504c6c7ece612187ccb7c2bc524c1dd295
+  subdirs:
+    - json-fleece-aeson
+    - json-fleece-core
+# Flipstone Prelude
+- github: flipstone/flipstone-prelude
+  commit: 4ae274c78cb78367064ec17c3e507f16cbf69312
+# Henforcer and its dependencies
+- github: flipstone/henforcer
+  commit: 71c6c3047b01b3cfc2b5f4aead63982c6553cb8e
+- pollock-0.1.0.3
+# Orb
+- git: https://github.com/flipstone/orb
+  commit: 611084e6f6c49928e61d71b9ba8035ab37bd6cc4
+# libphonenumber and Ogma: not used by Lockstep directly; required by Brigid
+- git: https://github.com/typeable/libphonenumber.git
+  commit: 5e03e45e2ef02b17a9d0ec3b1e951ef7214cba4a
+- github: AugmenTab/ogma
+  commit: 55ed9161f679d6b9ddddf1f86ba36b1ad7572c75
+# Shrubbery
+- github: flipstone/shrubbery
+  commit: 1847db5c280357ff341b5909250981b8c303f444
+
+# The dev container runs as root over a bind-mounted checkout.
+allow-different-user: true
