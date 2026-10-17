@@ -1,0 +1,90 @@
+$ scripts/db up
+wrote .local/config/lockstep.json (mode 0600); use LOCKSTEP_CONFIG=.local/config/lockstep.json on network lockstep-net
+PostgreSQL ready: container lockstep-postgres, network lockstep-net, 127.0.0.1:5433, schema revision 0
+[exit 0]
+$ scripts/db status
+container lockstep-postgres: running, image postgres:17.11-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826
+schema revision 0
+[exit 0]
+$ lockstep db status
+readiness not_ready schema_behind 1
+revision none
+pending 1
+$ lockstep db migrate
+NOTICE:  relation "lockstep_schema_migrations" already exists, skipping
+applied migrations: 1
+$ lockstep db status
+readiness ready 1
+revision 1
+pending 0
+$ lockstep db migrate (again)
+nothing to apply: the database is at this binary's schema revision
+$ scripts/db backup
+.local/backups/20261017T144401Z-r1-24341.dump
+[exit 0]
+$ serve (1st start)
+health: 204
+readiness: ready 1 [200]
+Ready: the database is ready at schema revision 1. 
+Service starts recorded: 1 (latest 2026-10-17 14:44:22 UTC).
+serve exit: 0
+Database readiness: ready 1
+Service start recorded
+Listening on 127.0.0.1:8000
+$ serve (2nd start = restart)
+health: 204
+readiness: ready 1 [200]
+Ready: the database is ready at schema revision 1. 
+Service starts recorded: 2 (latest 2026-10-17 14:44:23 UTC).
+serve exit: 0
+Database readiness: ready 1
+Service start recorded
+Listening on 127.0.0.1:8000
+$ scripts/db down && scripts/db up (database restart)
+stopped lockstep-postgres (volume lockstep-pgdata kept)
+PostgreSQL ready: container lockstep-postgres, network lockstep-net, 127.0.0.1:5433, schema revision 1
+$ serve (after database restart)
+health: 204
+readiness: ready 1 [200]
+Ready: the database is ready at schema revision 1. 
+Service starts recorded: 3 (latest 2026-10-17 14:44:24 UTC).
+serve exit: 0
+Database readiness: ready 1
+Service start recorded
+Listening on 127.0.0.1:8000
+--- rebuilt binary (notice fix) ---
+$ serve (4th start)
+health: 204
+readiness: ready 1 [200]
+Ready: the database is ready at schema revision 1. 
+Service starts recorded: 4 (latest 2026-10-17 14:45:22 UTC).
+serve exit: 0
+Database readiness: ready 1
+Service start recorded
+Listening on 127.0.0.1:8000
+$ scripts/db restore .local/backups/20261017T144401Z-r1-24341.dump
+restoring .local/backups/20261017T144401Z-r1-24341.dump into lockstep (stop lockstep serve first)
+restored .local/backups/20261017T144401Z-r1-24341.dump; schema revision 1
+[exit 0]
+$ serve (after restore)
+health: 204
+readiness: ready 1 [200]
+Ready: the database is ready at schema revision 1. 
+Service starts recorded: 1 (latest 2026-10-17 14:45:23 UTC).
+serve exit: 0
+Database readiness: ready 1
+Service start recorded
+Listening on 127.0.0.1:8000
+$ lockstep db migrate (after restore)
+nothing to apply: the database is at this binary's schema revision
+$ scripts/db down
+stopped lockstep-postgres (volume lockstep-pgdata kept)
+$ serve (database stopped)
+health: 204
+readiness: not_ready database_unreachable [503]
+Not ready: the database server cannot be reached. 
+serve exit: 0
+Database readiness: not_ready database_unreachable
+Listening on 127.0.0.1:8000
+$ scripts/db up
+PostgreSQL ready: container lockstep-postgres, network lockstep-net, 127.0.0.1:5433, schema revision 1
