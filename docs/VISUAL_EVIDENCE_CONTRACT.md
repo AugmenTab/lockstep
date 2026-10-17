@@ -1,7 +1,7 @@
 # Lockstep v2 — Visual Evidence Contract (design contract)
 
 - Document: LS-V2-VISUAL-EVIDENCE
-- Status: **PROPOSED** design contract (P0.4). It is approved at Gate P0 as a
+- Status: **ACCEPTED** as a design contract at Gate P0 (2026-10-16). It is approved as a
   contract only. It authorizes no UI acceptance.
 - Revision: 0.1, 2026-10-16
 - Traces: FR-APP-09, NFR-12, NFR-14; Bible §3.6.6, §13.1, §28.2; Plan §1.4, §15

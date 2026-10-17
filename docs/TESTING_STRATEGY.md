@@ -1,7 +1,7 @@
 # Lockstep v2 — Testing Strategy (design contract)
 
 - Document: LS-V2-TEST-STRATEGY
-- Status: **PROPOSED** design contract (P0.4). It is approved at Gate P0 as a
+- Status: **ACCEPTED** as a design contract at Gate P0 (2026-10-16). It is approved as a
   contract, **not** as implemented behavior. It authorizes no model calls, UI
   acceptance or code writes.
 - Revision: 0.1, 2026-10-16

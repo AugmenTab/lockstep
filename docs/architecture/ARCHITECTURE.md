@@ -1,6 +1,6 @@
 # Lockstep v2 — Initial Architecture, Boundaries and Conventions (P0.4)
 
-- Status: **PROPOSED** design contract for human approval (Gate P0)
+- Status: **ACCEPTED** as a design contract at Gate P0 (2026-10-16); describes intended structure, not existing code
 - Revision: 0.1, 2026-10-16
 - Traces: FR-APP-02/09, FR-EXE-01/12, NFR-07/13/14; Bible §36–38; ADR-0001
 - Scope: the minimum structure needed to specify P1.1 safely. Everything here is

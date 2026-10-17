@@ -1,7 +1,7 @@
 # Lockstep v2 — Governing Source Register
 
 - Register ID: LS-V2-SRC-REG
-- Revision: 0.1 — DRAFT (P0.1), not yet human-accepted
+- Revision: 0.2 — governing documents adopted at Gate P0 (2026-10-16)
 - Prepared: 2026-10-16, manual Phase 0 execution (no v2 Supervisor exists)
 - Location: `docs/governance/` on orphan branch `v2` (DG-01b accepted). The source
   PDFs themselves stay in ignored `.local/` and are identified by digest; they are
@@ -60,9 +60,9 @@ Internal consistency checks performed (all by reading the PDFs):
 
 | Document | Acceptance record found? | Disposition |
 |---|---|---|
-| Bible v2.1 | **No.** Document says "Draft for human review". | PROPOSED — awaiting human acceptance |
-| PRD v0.2 | **No.** | PROPOSED — awaiting human acceptance |
-| Plan v0.2 | **No.** Plan §17 step 1 makes acceptance the first frontier action. | PROPOSED — awaiting human acceptance |
+| Bible v2.1 | **No.** Document says "Draft for human review". | **ADOPTED as governing** at Gate P0, 2026-10-16 (`docs/gates/P0/gate-report.md` §6) |
+| PRD v0.2 | **No.** | **ADOPTED as governing** at Gate P0, 2026-10-16 (`docs/gates/P0/gate-report.md` §6) |
+| Plan v0.2 | **No.** Plan §17 step 1 makes acceptance the first frontier action. | **ADOPTED as governing** at Gate P0, 2026-10-16 (`docs/gates/P0/gate-report.md` §6) |
 
 The Bible distinguishes "accepted direction" (human-agreed decisions, e.g.
 Haskell + Launchpad + PostgreSQL, custom CSS, one Engineer per repo) from the
