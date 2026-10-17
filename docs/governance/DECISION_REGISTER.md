@@ -52,10 +52,11 @@ because PRD §11 bundles them but the plan settles them in different sub-phases
 
 The next dependency-ready implementation item is P1.1. It is blocked by:
 
-1. **Human acceptance of Bible v2.1, PRD v0.2, Plan v0.2** (Plan §17 step 1; Gate P0).
+1. ~~Human acceptance of Bible v2.1, PRD v0.2, Plan v0.2~~ adopted at Gate P0, 2026-10-16.
 2. ~~DG-01a~~ ACCEPTED 2026-10-16.
 3. ~~DG-01b~~ ACCEPTED 2026-10-16.
-4. **Phase 0 gate acceptance** (P0.4 contracts approved).
+4. ~~Phase 0 gate acceptance~~ ACCEPTED 2026-10-16.
+5. **Explicit human authorization to begin Phase 1** (separate handoff). Not yet given.
 
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.
@@ -63,8 +64,8 @@ only; they remain `OPEN` by design and must not be guessed now.
 ## Accepted human directions already on record (not gates)
 
 From Bible v2.1 §3.6, §36 and §42 item 7 (human-owner decisions through
-2026-10-14). Recorded as given; the Bible revision itself is still pending
-acceptance (see SOURCE_REGISTER §3):
+2026-10-14). Recorded as given. Bible v2.1 itself was adopted as governing at Gate P0
+(2026-10-16):
 
 - Haskell rebuild on Launchpad; WAI/Warp, Orb, Beeline, Brigid, HTMX, Orville, PostgreSQL.
 - Custom Lockstep CSS replaces Pico; targeted SortableJS permitted.

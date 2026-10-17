@@ -1,7 +1,7 @@
 # Gate P0 — Governing Decisions and Source Acquisition: Gate Packet
 
 - Report revision: 2, 2026-10-16 (rev 1 → 2: retro convention and wireframe provenance corrections, deferral accepted with amendment)
-- Human gate decision: **PENDING.** Only the human owner can set it (§6).
+- Human gate decision: **ACCEPTED** by the human owner, 2026-10-16, against report rev 2 (sha256 `da20674e…f27b`). See §6 decision record.
 - Tested basis: `AugmenTab/lockstep`, branch `v2`. Contracts first committed in
   `2486641258c204c81f2f5dbd8caa957e7c76f66d`; this revision's corrected artifacts
   are identified by the SHA-256 digests in §1 and are committed together with it. Branch `main` and tag
@@ -21,7 +21,7 @@ Python 3 (doc checks). No GHC, Stack or PostgreSQL on the host.
 | Criterion | Method | Expected | Actual | Disposition | Evidence |
 |---|---|---|---|---|---|
 | `AC-P0-01@v1` Governing Bible/PRD/Plan identified by version and digest | inspection + `shasum -a 256` | rev, date, status, SHA-256 for each | Recorded; FR count 57 and NFR count 14 cross-checked | PASSED | `docs/governance/SOURCE_REGISTER.md` §2 |
-| `AC-P0-02@v1` Human acceptance of Bible v2.1, PRD v0.2, Plan v0.2 recorded | human_review | explicit human decision | All three self-declare "proposed/draft"; no acceptance yet | **NOT_RUN** (awaiting §6 decision) | SOURCE_REGISTER §3 |
+| `AC-P0-02@v1` Human acceptance of Bible v2.1, PRD v0.2, Plan v0.2 recorded | human_review | explicit human decision | Adopted as governing by the human's Gate P0 decision (2026-10-16) | PASSED | §6 decision record; SOURCE_REGISTER §3 |
 | `AC-P0-03@v1` Decision register DG-01…13 with owners, prerequisites, status | inspection | 13 gates, all owned by the human, none guessed | 13 recorded (DG-01 split a/b); DG-02…13 OPEN | PASSED | `docs/governance/DECISION_REGISTER.md` |
 | `AC-P0-04@v1` Launchpad source available at an exact revision | `unzip -z`, `shasum -a 256` | commit SHA + archive digest | `11886bf73c2e…`, archive `696147a4…81efca` | PASSED | `docs/audits/LAUNCHPAD_AUDIT.md` §1 |
 | `AC-P0-05@v1` Archive equals the private repo's commit tree | authenticated clone + tree diff | identical trees | Not executed (no authenticated access) | NOT_RUN | Audit §7; moved to P1.1 (C4) |
@@ -36,11 +36,11 @@ Python 3 (doc checks). No GHC, Stack or PostgreSQL on the host.
 | `AC-P0-14@v1` TESTING_STRATEGY covers every handoff-required topic and was independently reviewed | inspection + independent review | all 10 topics; review findings dispositioned | 10/10; findings F1, F2, F6–F10, F13 fixed | PASSED | `docs/TESTING_STRATEGY.md` sha256 `dd84cb98…b453`; §4 |
 | `AC-P0-15@v1` VISUAL_EVIDENCE_CONTRACT covers every handoff-required topic and was independently reviewed | inspection + independent review | all 8 topics; no path to a false PASSED | 8/8; findings F4, F5, F14 fixed | PASSED | `docs/VISUAL_EVIDENCE_CONTRACT.md` sha256 `8cf49d27…96b2`; §4 |
 | `AC-P0-16@v1` Gate-evidence wireframe is inspectable, labeled as illustration, shows all five dispositions, AA contrast | static_check (scratchpad script) + contrast computation | balanced HTML, no external resources, five badges, banner, contrast ≥ 4.5 | All checks ok; minimum contrast 6.02:1 (light and dark) | PASSED | `docs/gates/wireframes/gate-evidence-wireframe.html` sha256 `7961e02b…3bba`; §3 |
-| `AC-P0-17@v1` Human inspected the wireframe in a browser | human_review | human opens the file and comments | Not yet | **NOT_RUN** | — |
+| `AC-P0-17@v1` Human inspected the wireframe in a browser | human_review | Human reviewed the wireframe and requested a provenance correction (applied in rev 2), then accepted Gate P0 | PASSED | Human review in the Phase 0 session; correction commit `34f8137` |
 | `AC-P0-18@v1` Scaffolding compiles cleanly | build | n/a: no Haskell source exists on `v2` | No scaffolding was changed | NOT_RUN (not applicable; `required: false`) | `git ls-files` on `v2` has no `*.hs` |
 | `AC-P0-19@v1` P1.1 bootstrap Contract specifiable against actual source and approved policy | inspection | bounded Contract citing the audited source | Proposal in §5 | PASSED | §5 |
 
-**Machine summary (required rows, worst effective disposition):** `NOT_RUN`
+**Machine summary at rev 1 (required rows, worst effective disposition):** `NOT_RUN`. After the human decision, the only rows still NOT_RUN are AC-P0-05/08, deferred by the accepted deviation in §2, plus non-required AC-P0-18.
 (rows 02 and 17 await the human; rows 05 and 08 are deferred into P1.1 as
 explicit C4 checks). The summary is not acceptance.
 
@@ -187,8 +187,8 @@ inspecting the wireframe (AC-P0-17) and accepting the deferral in 6.5.
 
 | Field | Value |
 |---|---|
-| Decision | _pending_ |
-| Decided by | _pending_ |
-| Decided at | _pending_ |
-| Report revision / sha256 | 2 / _recorded with the decision_ |
-| Notes | _pending_ |
+| Decision | **ACCEPTED** |
+| Decided by | Human owner (operator), Phase 0 session: "Phase 0 is accepted." |
+| Decided at | 2026-10-16 |
+| Report revision / sha256 | 2 / `da20674eeebea5021a87738bb487ae635b0d3b48106e0aa39f8cc0597603f27b` (file as committed in `34f8137`) |
+| Notes | Covers §6.6: governing specs adopted; ARCHITECTURE, TESTING_STRATEGY and VISUAL_EVIDENCE_CONTRACT approved as design contracts (not implementations); wireframe inspected; AC-P0-05/08 deferred to P1.1 as mandatory conditions, with AC-P0-05 required before any Launchpad import. Phase 1 is **not** authorized by this decision. |
