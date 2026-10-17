@@ -1,0 +1,73 @@
+# Lockstep v2 — Design Decision Register
+
+- Register ID: LS-V2-DEC-REG
+- Revision: 0.1 — DRAFT (P0.1), initialized 2026-10-16
+- Sources: PRD v0.2 §11 and §11.1; Plan v0.2 §2.3; Bible v2.1 §40
+- Owner of every decision: **the human owner (operator)**. Agents may prepare
+  evidence and recommendations; they may not resolve a gate (Bible §40, PRD §11).
+
+## Status vocabulary
+
+- `OPEN` — no recommendation prepared yet.
+- `EVIDENCE-PREPARED` — evidence and recommendation drafted; awaiting human.
+- `PROPOSED` — a specific choice is on the table for human acceptance.
+- `ACCEPTED` — the human accepted it; record carries approver, date and revision.
+- `REJECTED` / `SUPERSEDED`.
+
+A Work Unit implementing a gate-dependent subsystem may not freeze a Contract
+against a gate that is not `ACCEPTED` (PRD §11.1).
+
+## Decision record protocol (PRD §11.1)
+
+Each accepted gate gets a record with: question, alternatives, choice, affected
+FR/NFR, risks, evidence, approver, revision, effective date. Records start
+`PROPOSED` and become `ACCEPTED` only on an explicit human act. Proposed
+storage: one ADR per gate under the chosen `docs/adr/` (DG-01b decides the repo).
+
+## Register
+
+| Gate | Decision | Owner | Prerequisites | Blocks | Must settle by | Status (2026-10-16) |
+|---|---|---|---|---|---|---|
+| DG-01a | Launchpad revision, reuse and license/redistribution rights | Human owner | P0.1; Launchpad source available | All committed v2 code | P0.2 | **ACCEPTED** 2026-10-16. See `docs/adr/ADR-0001-launchpad-adoption.md` (C1 BSD-3, C2 private/undecided, C3 remove hyperscript+pandoc; C4 checks at P1.1) |
+| DG-01b | v2 repository / branch / history strategy | Human owner | DG-01a | All committed v2 code; artifact placement | P0.3 | **ACCEPTED** 2026-10-16: orphan `v2` branch, one directory, tag `python-v0.1-final`. See `docs/governance/REPOSITORY_STRATEGY.md` |
+| DG-02 | DB boot / backup / migration / deployment packaging | Human owner | P1.1 | Persistent app service | P1.2 | OPEN — input recorded: Launchpad auto-migrates (SRC-OBS-03) |
+| DG-03 | Stable ownership key for repo aliases/worktrees/remotes | Human owner | P1.7 | Engineer registration, scheduler claims | P2.1 | OPEN |
+| DG-04 | Event, claim, outbox, replay and reconciliation protocol | Human owner | P1.7, P2.2 | Provider/Git execution, safe recovery | P2.5 | OPEN |
+| DG-05 | Profile schema, precedence, exceptions, scheduling order | Human owner | P2.2 | Effective Profile binding/admission | P2.3–P2.4 | OPEN — PRD §5.1 has a proposed default ordering |
+| DG-06 | Test-candidate baseline/RED policy; source-grounded acceptance | Human owner | P3.3–P3.6 | Frozen-test implementation | P3.7 | OPEN — Python regression lessons feed it (P0.3) |
+| DG-07 | Semantic challenger independence, budget, disposition, escalation | Human owner | P3.4–P3.5 | Freeze and acceptance in Bug Profile | P3.6 | OPEN |
+| DG-08 | Plan import/creation freeze and local Phase signoff | Human owner | P3.5, P4.3 | Plan-driven engine parity | P4.4 | OPEN |
+| DG-09 | Git branch/PR granularity, protected merge, status mapping | Human owner | P5.5 | External push / PR | P6.1 | OPEN — PRD §8 proposes PR-per-Ticket first |
+| DG-10 | Shortcut field ownership, priority, blocker, Done mapping | Human owner | P6.9, P4.1 | External tracker mutation | P7.1 | OPEN |
+| DG-11 | Skill sharing trust/signature, evaluation thresholds, IP | Human owner | P8.2 | Share/export/install | P8.3 | OPEN |
+| DG-12 | Red Team target scope, isolation, finding sensitivity | Human owner | P5.5, P4.1 | Active security probes | P9.1 | OPEN |
+| DG-13 | Mercury adoption (optional) | Human owner | P2.2 | **Nothing** on default critical path | Optional after P2.2 | OPEN — default is Haskell only |
+
+DG-01 is split into DG-01a (source rights) and DG-01b (repository placement)
+because PRD §11 bundles them but the plan settles them in different sub-phases
+(P0.2 vs P0.3). This is a bookkeeping split, not a new gate; both halves must be
+`ACCEPTED` for DG-01 to be closed.
+
+## Decisions blocking immediate execution
+
+The next dependency-ready implementation item is P1.1. It is blocked by:
+
+1. **Human acceptance of Bible v2.1, PRD v0.2, Plan v0.2** (Plan §17 step 1; Gate P0).
+2. ~~DG-01a~~ ACCEPTED 2026-10-16.
+3. ~~DG-01b~~ ACCEPTED 2026-10-16.
+4. **Phase 0 gate acceptance** (P0.4 contracts approved).
+
+DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
+only; they remain `OPEN` by design and must not be guessed now.
+
+## Accepted human directions already on record (not gates)
+
+From Bible v2.1 §3.6, §36 and §42 item 7 (human-owner decisions through
+2026-10-14). Recorded as given; the Bible revision itself is still pending
+acceptance (see SOURCE_REGISTER §3):
+
+- Haskell rebuild on Launchpad; WAI/Warp, Orb, Beeline, Brigid, HTMX, Orville, PostgreSQL.
+- Custom Lockstep CSS replaces Pico; targeted SortableJS permitted.
+- Pure Haskell decision core by default; Mercury optional.
+- One Engineer per repository; no parallel production-code Implementers.
+- Python `AugmenTab/lockstep` at `8b045edb` is a read-only behavioral reference.
