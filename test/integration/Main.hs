@@ -5,6 +5,7 @@ module Main
 import Flipstone.Prelude
 import Test.Tasty (defaultMain, testGroup)
 
+import Lockstep.DispatcherTest qualified as DispatcherTest
 import Lockstep.MigrationDbTest qualified as MigrationDbTest
 import Lockstep.OperatorCommandTest qualified as OperatorCommandTest
 import Lockstep.OperatorTrustTest qualified as OperatorTrustTest
@@ -21,4 +22,5 @@ main =
       , ServiceDbTest.tests
       , OperatorTrustTest.tests
       , OperatorCommandTest.tests
+      , DispatcherTest.tests
       ]
