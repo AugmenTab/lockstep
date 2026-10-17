@@ -16,6 +16,21 @@ import System.IO (hPutStr, hPutStrLn, putStrLn, stderr)
 import System.Log.FastLogger qualified as FL
 import Text.Show (show)
 
+import Lockstep.Application.Command
+  ( Actor (ActorCli)
+  , CommandRefusal (..)
+  , Outcome (..)
+  , Receipt (..)
+  , WorkspaceState (..)
+  , buildRename
+  , generateIdempotencyKey
+  , idempotencyKeyText
+  , outcomeCode
+  , readWorkspace
+  , renderInvalidReason
+  , revisionInt
+  , submitCommand
+  )
 import Lockstep.Application.Database
   ( DatabaseRuntime
   , MigrateError (..)
@@ -33,7 +48,7 @@ import Lockstep.Application.Database
   , schemaStatus
   )
 import Lockstep.Application.OperatorTrust (issueSignIn, revokeAllSessions, signInUrl)
-import Lockstep.Foundation.Cli (BackupPolicy, Command (..), parseArgs, renderCliError, usage)
+import Lockstep.Foundation.Cli (BackupPolicy, Command (..), RenameArgs (..), parseArgs, renderCliError, usage)
 import Lockstep.Foundation.Config (Port, ServeConfig (..), bindHostAddress, portNumber)
 import Lockstep.Foundation.SystemConfig
   ( SystemConfig (..)
@@ -62,6 +77,10 @@ main = do
       withRequiredDatabase (operatorSignIn port)
     Right OperatorSignOutAll ->
       withRequiredDatabase operatorSignOutAll
+    Right WorkspaceShow ->
+      withRequiredDatabase workspaceShow
+    Right (WorkspaceRename renameArgs) ->
+      withRequiredDatabase (workspaceRename renameArgs)
 
 configVariable :: String
 configVariable =
@@ -186,3 +205,60 @@ notReady :: NotReadyReason -> IO ()
 notReady reason = do
   hPutStrLn stderr ("lockstep: " <> T.unpack (readinessCode (NotReady reason)))
   exitWith (ExitFailure 69)
+
+-- | C-P1.4 E8.
+workspaceShow :: DatabaseRuntime -> IO ()
+workspaceShow runtime = do
+  result <- readWorkspace runtime
+  case result of
+    Left reason ->
+      notReady reason
+    Right workspace -> do
+      putStrLn ("name: " <> T.unpack (workspaceName workspace))
+      putStrLn ("revision: " <> show (revisionInt (workspaceRevision workspace)))
+
+-- | C-P1.4 E8: builds the envelope and calls the shared operation.
+workspaceRename :: RenameArgs -> DatabaseRuntime -> IO ()
+workspaceRename args runtime = do
+  key <- maybe (idempotencyKeyText <$> generateIdempotencyKey) (pure . T.pack) (renameKey args)
+  case buildRename ActorCli key (renameExpected args) (T.pack (renameName args)) of
+    Left reason ->
+      refuse ("invalid command: " <> renderInvalidReason reason)
+    Right envelope -> do
+      result <- submitCommand runtime envelope
+      case result of
+        Right receipt -> do
+          putStrLn (receiptLine receipt)
+          case receiptOutcome receipt of
+            Applied -> pure ()
+            RefusedStale ->
+              refuse
+                ( "refused: stale revision (expected "
+                    <> show (renameExpected args)
+                    <> ", current "
+                    <> show (revisionInt (receiptRevision receipt))
+                    <> ")"
+                )
+        Left CommandKeyConflict ->
+          refuse "refused: this idempotency key was already used for a different command"
+        Left (CommandInvalid reason) ->
+          refuse ("invalid command: " <> renderInvalidReason reason)
+        Left (CommandNotReady reason) ->
+          notReady reason
+
+receiptLine :: Receipt -> String
+receiptLine receipt =
+  "receipt "
+    <> show (receiptId receipt)
+    <> " "
+    <> T.unpack (outcomeCode (receiptOutcome receipt))
+    <> " revision "
+    <> show (revisionInt (receiptRevision receipt))
+    <> " key "
+    <> T.unpack (receiptKey receipt)
+    <> (if receiptReplayed receipt then " (replayed)" else "")
+
+refuse :: String -> IO ()
+refuse message = do
+  hPutStrLn stderr ("lockstep: " <> message)
+  exitWith (ExitFailure 65)

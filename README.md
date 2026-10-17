@@ -83,6 +83,19 @@ a 12-hour session cookie. Both commands need a ready database (exit 69 if not).
 Every request must be addressed to `127.0.0.1:<port>` exactly (not
 `localhost`), and every form submission must come from a page of the service.
 
+## Operator commands (C-P1.4)
+
+```sh
+lockstep workspace show
+lockstep workspace rename --expected-revision N [--idempotency-key K] NAME
+```
+
+A command applies only if the workspace is still at revision `N`; otherwise it
+is recorded as `refused_stale`. Every accepted command gets a durable receipt;
+repeating a command with the same key returns the same receipt instead of
+applying it twice, and reusing a key for a different command is refused. The
+operator page (`/operator`) submits the same command through the browser.
+
 ## Licensing
 
 Lockstep v2 has no chosen license yet and is not distributed. Launchpad-derived
