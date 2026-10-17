@@ -1,6 +1,8 @@
 # P1.3 — decision request: two conflicts between the approved design and real behaviour
 
-- Prepared by: the writing agent (Implementer), 2026-10-17. **Nothing here is decided.**
+- Prepared by: the writing agent (Implementer), 2026-10-17. As prepared, nothing here was
+  decided. **Decided by the human owner on 2026-10-17: D-1a, D-2d (a new option), D-3a.**
+  See "Human decisions" at the end.
 - Basis: `v2` at `eda7d5e` (P1.1 and P1.2 ACCEPTED by the human owner at `b3a3723`).
 - Design under review: recovery plan `.local/plans/phase-01-recovery.md` §4 as amended
   by §7.4; handoff `.local/plans/phase-01-recovery-handoff.md` §3.
@@ -90,3 +92,60 @@ status page and shows no session state (its frozen tests stay as they are).
 One line is enough, e.g. "D-1a, D-2a, D-3a". Any other option, or a change to a default, is
 equally fine. I will then freeze C-P1.3 with those choices recorded as amendments in your
 words, and continue under the Phase 1 handoff.
+
+## Human decisions (2026-10-17)
+
+Decided by the human owner. Recorded by the writing agent (Implementer) at the owner's
+instruction; these are the owner's decisions, not the agent's. Owner's words, verbatim:
+
+> **D-1: APPROVE D-1a.** Preserve the existing frozen tests. A present Host must match the
+> configured loopback authority. Missing Host is tolerated only on the specified public
+> GET/HEAD routes. Protected and mutating routes remain guarded. Accept the documented
+> port-80 normalization.
+>
+> **D-2: APPROVE A NEW OPTION, D-2d.** Use `Referrer-Policy: origin` on the GET
+> `/operator/sign-in` confirmation page.
+>
+> This policy should give the confirmation form POST the actual same-origin `Origin` header
+> while limiting `Referer` to the origin alone, excluding the sign-in token, path, and query
+> string.
+>
+> Therefore:
+> - Keep strict exact-Origin validation for all mutating requests, including sign-in.
+> - Do not introduce the proposed `Origin: null` / `Sec-Fetch-Site: same-origin` exception.
+> - Keep `Cache-Control: no-store`, the restrictive CSP, single-use tokens, and atomic
+>   token consumption/session creation.
+> - Retain `Referrer-Policy: no-referrer` on other operator responses.
+> - Update E3, E7, E8 and the relevant tests in the draft Contract accordingly.
+>
+> Before freezing the Contract, extend the existing Chromium/Firefox browser probe to test
+> `Referrer-Policy: origin`. Confirm that the POST sends the exact expected Origin and that
+> neither its Referer nor subsequent redirects contain the raw token. If the browser test
+> contradicts this expectation, stop and report the result rather than weakening the guard.
+>
+> **D-3: APPROVE D-3a.** Redirect successful sign-in to `/operator`.
+>
+> Record these decisions and the revised Contract. Once the browser behavior has been
+> verified, proceed with the normal test-freeze and implementation process.
+>
+> […] No additional design review is required unless the new browser probe reveals a
+> genuine conflict.
+
+### D-2d browser verification (required before the freeze)
+
+`evidence/referrer-origin-probe.log` (sha256 `ed6e4933…54e6a2e4`; script
+`referrer-origin-probe-run.sh` `7fb4789a…`, server `referrer-origin-probe-server.py`
+`032bb365…`). The probe reproduces the C-P1.3 flow: confirm page with the policy under test
+and the E3 CSP (plus a nonce for the auto-submit script) → form POST → `303 /operator` with
+`Referrer-Policy: no-referrer` and the session cookie → `GET /operator`.
+
+| `Referrer-Policy: origin` | Chromium 155 | Firefox ESR 153.5 |
+|---|---|---|
+| POST `Origin` | `http://127.0.0.1:8411` (exact) | `http://127.0.0.1:8411` (exact) |
+| POST `Referer` | `http://127.0.0.1:8411/` (origin only) | same |
+| Redirected `GET /operator` | no Referer, session cookie sent | same |
+| Same-origin stylesheet `Referer` | `http://127.0.0.1:8411/` | same |
+| Token outside the GET sign-in request line | 0 | 0 |
+
+`no-referrer` was re-run as a control and again gave `Origin: null`. **Result: matches the
+owner's expectation; no conflict. Proceeding to the freeze.**
