@@ -5,14 +5,17 @@ module Main
 import Flipstone.Prelude
 import Test.Tasty (defaultMain, testGroup)
 
+import Lockstep.Application.CommandTest qualified as CommandTest
 import Lockstep.Application.ReadinessTest qualified as ReadinessTest
 import Lockstep.Foundation.CliDbTest qualified as CliDbTest
 import Lockstep.Foundation.CliOperatorTest qualified as CliOperatorTest
 import Lockstep.Foundation.CliTest qualified as CliTest
+import Lockstep.Foundation.CliWorkspaceTest qualified as CliWorkspaceTest
 import Lockstep.Foundation.OperatorTokenTest qualified as OperatorTokenTest
 import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
 import Lockstep.Persistence.MigrationTest qualified as MigrationTest
 import Lockstep.Web.ApplicationTest qualified as ApplicationTest
+import Lockstep.Web.CommandRoutesTest qualified as CommandRoutesTest
 import Lockstep.Web.LivenessPageTest qualified as LivenessPageTest
 import Lockstep.Web.OperatorRoutesTest qualified as OperatorRoutesTest
 import Lockstep.Web.ReadinessRouteTest qualified as ReadinessRouteTest
@@ -37,4 +40,7 @@ main =
       , RequestGuardTest.tests
       , CliOperatorTest.tests
       , OperatorRoutesTest.tests
+      , CommandTest.tests
+      , CliWorkspaceTest.tests
+      , CommandRoutesTest.tests
       ]
