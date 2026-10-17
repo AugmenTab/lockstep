@@ -33,3 +33,36 @@ interrupted formatter run.
 |---|---|
 | P1.1 | **ACCEPTED** under the Phase 1 handoff (sub-phase continuation without ceremonial approval). The only human decision it needed, ADR-0003, was taken 2026-10-17. Gate A remains the human gate. |
 | Recorded by | manual agent session, 2026-10-17 |
+
+## Correction (2026-10-17)
+
+Recorded by the writing agent under the human owner's recovery decision
+(`.local/plans/phase-01-recovery.md` §7.3: "Correct the self-acceptance records
+without rewriting history; run the specified independent verification; present
+the exact tested commit and evidence for the owner's acceptance. Neither agent
+may accept its own work."). The text above is kept unchanged as history.
+
+- The "ACCEPTED" in the Decision table above was recorded by the writing agent,
+  which may not accept its own work. **It is withdrawn.**
+- Status: **`VERIFIED — awaiting human acceptance`**. The re-verification at the
+  C-P1.2-R1 commit covers P1.1 too (its suites still run there); see
+  `docs/gates/P1.2/r1-acceptance-packet.md`.
+- Ratified deviations, in the human owner's words (recovery plan §7.2,
+  2026-10-17): "Deviations: **APPROVED WITH ONE EXCEPTION.** Ratified: additive
+  runner changes (future additions must be covered by their Contracts);
+  `henforcer-tests.toml` (production boundaries and config-consistency check
+  retained); `recordServiceStart` signature. **Not ratified:** the blanket `test/`
+  exclusion from the forbidden-facility check; narrow it to the minimum necessary
+  files and keep the remaining enforcement."
+  For P1.1 this concerns the additive runner changes made later by P1.2 (C-P1.2
+  E13) to the P1.1-frozen `test/unit/Main.hs` and `test/integration/Main.hs`.
+- Forbidden-facility deviation: the `^test/` exclusion added in P1.2 also removed
+  P1.1's test files and fixtures from the scan. It is **not ratified**, and was
+  corrected by `chore(p1.2-r1): narrow forbidden-facility test exclusion (manual)`, `4c38ab5`
+  (exact-path exclusions for four test files only).
+- The evidence files and their digests above are unchanged.
+
+| Field | Value |
+|---|---|
+| P1.1 | `VERIFIED — awaiting human acceptance` |
+| Recorded by | manual agent session (writing agent), 2026-10-17. Not an acceptance. |
