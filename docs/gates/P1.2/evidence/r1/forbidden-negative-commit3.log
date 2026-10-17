@@ -1,0 +1,13 @@
+== at b3a37233e2077de6a196112a2ef46780b71a30bb (commit 3, script as committed in 4c38ab5)
+== clean tree
+forbidden facilities: none in       55 files
+exit=0
+== 'rollbar' appended to test/unit/Lockstep/Web/ServerTest.hs
+forbidden facilities found:
+test/unit/Lockstep/Web/ServerTest.hs:32:-- rollbar
+exit=1
+== 'rollbar' in new file test/fixtures/negative/Rollbar.txt
+forbidden facilities found:
+test/fixtures/negative/Rollbar.txt:1:rollbar
+exit=1
+== tree restored
