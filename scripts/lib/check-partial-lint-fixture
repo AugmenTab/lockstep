@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Negative check: hlint must flag every banned partial function in the fixture.
+# If hlint accepts the fixture, the partial-function rules are not in force.
+set -euo pipefail
+
+fixture=test/fixtures/lint/PartialFunctions.hs
+banned=(head last '!!' fromJust read maximum minimum foldr1 foldl1 toEnum succ pred undefined error errorWithoutStackTrace tail init)
+
+if output=$(hlint --no-summary "$fixture" 2>&1); then
+  echo "partial-function lint: hlint ACCEPTED the negative fixture; rules are not in force" >&2
+  exit 1
+fi
+
+# hlint prints "Warning: Avoid restricted function" then "Found:" and the
+# offending expression on the next line.
+flagged=$(awk '/Avoid restricted function/ { hit = 1; next } hit && /^Found:/ { getline; gsub(/^ +| +$/, ""); print; hit = 0 }' <<<"$output")
+
+missing=()
+for name in "${banned[@]}"; do
+  if ! grep -qxF -- "$name" <<<"$flagged" && ! grep -qxF -- "L.$name" <<<"$flagged"; then
+    missing+=("$name")
+  fi
+done
+
+if [ "${#missing[@]}" -ne 0 ]; then
+  echo "partial-function lint: not flagged: ${missing[*]}" >&2
+  echo "$output" >&2
+  exit 1
+fi
+
+echo "partial-function lint: all ${#banned[@]} banned functions flagged in $fixture"

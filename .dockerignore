@@ -1,0 +1,2 @@
+# The dev image copies nothing from the checkout; the repository is bind-mounted.
+*

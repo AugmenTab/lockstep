@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Negative check: Henforcer must reject a Foundation module that imports Web
+# (ARCHITECTURE §2), and accept the identical module placed under Web. The
+# control proves a failure comes from the boundary rule, not a broken command.
+set -euo pipefail
+
+compile() {
+  stack exec -- ghc -fno-code -fplugin=Henforcer \
+    -package lockstep -package flipstone-prelude -package warp \
+    -XGHC2021 -XNoImplicitPrelude "$1"
+}
+
+if ! control=$(compile test/fixtures/boundary/control/Lockstep/Web/BoundaryControl.hs 2>&1); then
+  echo "boundary check: positive control failed to compile; result is INCONCLUSIVE" >&2
+  echo "$control" >&2
+  exit 1
+fi
+
+if violation=$(compile test/fixtures/boundary/violation/Lockstep/Foundation/BoundaryViolation.hs 2>&1); then
+  echo "boundary check: Henforcer ACCEPTED a Foundation -> Web import" >&2
+  exit 1
+fi
+
+if ! grep -q "Lockstep.Web" <<<"$violation" || ! grep -qi "depend" <<<"$violation"; then
+  echo "boundary check: violation failed for an unexpected reason" >&2
+  echo "$violation" >&2
+  exit 1
+fi
+
+echo "boundary check: Foundation -> Web rejected by Henforcer; control compiled"

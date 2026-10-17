@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Repository-native verification command (ARCHITECTURE §4).
+#
+#   scripts/check                 steps 1-4: format, lint (+ static checks), build, unit
+#   scripts/check --integration   additionally step 6: real process/HTTP integration
+#
+# Every step runs inside the dev container (the host needs only Docker). The
+# unit step runs with --network none. Step 5 (no-live-model guard) arrives in
+# P1.7 and is reported NOT_RUN until then; it is never reported as passed.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+integration=false
+for arg in "$@"; do
+  case "$arg" in
+    --integration) integration=true ;;
+    *) echo "scripts/check: unknown argument: $arg" >&2; exit 64 ;;
+  esac
+done
+
+image=lockstep-dev:p1
+stack_root_volume=lockstep-stack-root
+
+echo "== dev image"
+docker build --quiet --tag "$image" . >/dev/null
+
+run_step() {
+  local network=$1
+  shift
+  docker run --rm \
+    --network "$network" \
+    --volume "$PWD:/work" \
+    --volume "$stack_root_volume:/stack-root" \
+    --workdir /work \
+    "$image" \
+    scripts/lib/check-step "$@"
+}
+
+declare -a names=(
+  "1 format"
+  "2 lint and static checks"
+  "3 build"
+  "4 unit tests"
+  "5 no-live-model guard"
+  "6 integration tests"
+)
+declare -a results=(NOT_RUN NOT_RUN NOT_RUN NOT_RUN NOT_RUN NOT_RUN)
+failed=false
+
+step() {
+  local index=$1 network=$2 name=$3
+  if [ "$failed" = true ]; then
+    return
+  fi
+  echo "== step ${names[$index]}"
+  if run_step "$network" "$name"; then
+    results[$index]=PASSED
+  else
+    results[$index]=FAILED
+    failed=true
+  fi
+}
+
+step 0 none format
+step 1 none lint
+step 2 bridge build
+step 3 none unit
+# results[4] stays NOT_RUN: the sentinel/no-live-model guard is P1.7 work.
+if [ "$integration" = true ]; then
+  step 5 bridge integration
+fi
+
+echo
+dirty=""
+if [ -n "$(git status --porcelain)" ]; then
+  dirty=", DIRTY working tree"
+fi
+echo "== summary (tested revision $(git rev-parse HEAD)$dirty)"
+for i in "${!names[@]}"; do
+  printf '  %-28s %s\n' "${names[$i]}" "${results[$i]}"
+done
+
+if [ "$failed" = true ]; then
+  exit 1
+fi

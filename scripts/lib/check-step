@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# One scripts/check step, run inside the dev container (see scripts/check).
+set -euo pipefail
+
+# The checkout is bind-mounted and owned by the host user.
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=safe.directory
+export GIT_CONFIG_VALUE_0=/work
+
+# Tracked and new (not ignored) files; fixtures are checked by their own steps.
+haskell_sources() {
+  git ls-files --cached --others --exclude-standard -- '*.hs' | grep -v '^test/fixtures/' || true
+}
+
+case "${1:-}" in
+  format)
+    haskell_sources | xargs fourmolu --mode check
+    ;;
+
+  lint)
+    hlint src app test --ignore-glob='test/fixtures/**'
+    scripts/lib/check-partial-lint-fixture
+    scripts/lib/check-forbidden-facilities
+    scripts/lib/check-source-paths
+    ;;
+
+  build)
+    stack build --pedantic --test --no-run-tests
+    scripts/lib/check-boundary-fixture
+    ;;
+
+  unit)
+    stack test lockstep:lockstep-unit
+    ;;
+
+  integration)
+    address=$(ip -4 -o addr show scope global | awk '{ split($4, a, "/"); print a[1]; exit }')
+    LOCKSTEP_TEST_NONLOOPBACK_ADDR="$address" stack test lockstep:lockstep-integration
+    ;;
+
+  *)
+    echo "check-step: unknown step: ${1:-}" >&2
+    exit 64
+    ;;
+esac
