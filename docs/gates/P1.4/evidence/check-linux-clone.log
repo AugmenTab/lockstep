@@ -1,0 +1,14 @@
+# Linux clone, 2026-10-17T20:31:40Z; command: docs/gates/P1.3/evidence/linux-clone-run.sh with names lockstep-linux-p14*, commit 75cc8623e7880c83a14ffe6dff08e7466d03a3b6 (a first run with a mistyped hash stopped at 'git checkout' before any step)
+75cc8623e7880c83a14ffe6dff08e7466d03a3b6
+Application
+Foundation
+Persistence
+Web
+format PASSED
+lint PASSED
+build PASSED
+unit PASSED
+integration PASSED
+All 210 tests passed (0.02s)
+All 49 tests passed (16.83s)
+exit=0
