@@ -40,4 +40,28 @@ CREATE TABLE lockstep_operator_sessions (
 );
 |]
       )
+    ,
+      ( [Interpolate.i|workspace and command receipts|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_workspace (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 80),
+  revision bigint NOT NULL CHECK (revision >= 0),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO lockstep_workspace (name, revision) VALUES ('Lockstep', 0);
+CREATE TABLE lockstep_command_receipts (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  idempotency_key text NOT NULL UNIQUE,
+  envelope_version integer NOT NULL,
+  command_kind text NOT NULL,
+  payload_digest bytea NOT NULL CHECK (octet_length(payload_digest) = 32),
+  actor text NOT NULL,
+  expected_revision bigint NOT NULL,
+  outcome text NOT NULL CHECK (outcome IN ('applied', 'refused_stale')),
+  resulting_revision bigint NOT NULL,
+  accepted_at timestamptz NOT NULL DEFAULT now()
+);
+|]
+      )
     ]

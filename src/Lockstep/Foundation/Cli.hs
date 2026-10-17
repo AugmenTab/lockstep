@@ -2,6 +2,7 @@ module Lockstep.Foundation.Cli
   ( Command (..)
   , BackupPolicy (..)
   , CliError (..)
+  , RenameArgs (..)
   , parseArgs
   , renderCliError
   , usage
@@ -30,6 +31,16 @@ data Command
   | DbStatus
   | OperatorSignIn Port
   | OperatorSignOutAll
+  | WorkspaceShow
+  | WorkspaceRename RenameArgs
+  deriving (Eq, Show)
+
+data RenameArgs
+  = RenameArgs
+  { renameExpected :: Integer
+  , renameKey :: Maybe String
+  , renameName :: String
+  }
   deriving (Eq, Show)
 
 {- | What @db migrate@ requires before applying migrations to a database that
@@ -53,6 +64,9 @@ data CliError
   | UnexpectedArgument String
   | MissingSubcommand String
   | ConflictingOptions String String
+  | MissingOption String
+  | InvalidRevision String
+  | MissingArgument String
   deriving (Eq, Show)
 
 parseArgs :: [String] -> Either CliError Command
@@ -62,7 +76,80 @@ parseArgs args =
     "serve" : options -> fmap Serve (parseServeOptions options)
     "db" : rest -> parseDbCommand rest
     "operator" : rest -> parseOperatorCommand rest
+    "workspace" : rest -> parseWorkspaceCommand rest
     command : _ -> Left (UnknownCommand command)
+
+-- | Contract C-P1.4 E8.
+parseWorkspaceCommand :: [String] -> Either CliError Command
+parseWorkspaceCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "workspace")
+    "show" : rest -> WorkspaceShow <$ noMoreArguments rest
+    "rename" : options -> fmap WorkspaceRename (parseRenameOptions options)
+    command : _ -> Left (UnknownCommand ("workspace " <> command))
+
+expectedRevisionOption :: String
+expectedRevisionOption =
+  "--expected-revision"
+
+idempotencyKeyOption :: String
+idempotencyKeyOption =
+  "--idempotency-key"
+
+data RenameAcc
+  = RenameAcc
+  { accExpected :: Maybe Integer
+  , accKey :: Maybe String
+  , accName :: Maybe String
+  }
+
+parseRenameOptions :: [String] -> Either CliError RenameArgs
+parseRenameOptions =
+  let
+    finish acc =
+      case (accExpected acc, accName acc) of
+        (Nothing, _) -> Left (MissingOption expectedRevisionOption)
+        (_, Nothing) -> Left (MissingArgument "NAME")
+        (Just expected, Just name) -> Right (RenameArgs expected (accKey acc) name)
+
+    withValue option value acc rest
+      | option == expectedRevisionOption =
+          case accExpected acc of
+            Just _ -> Left (DuplicateOption option)
+            Nothing -> parseRevision value >>= \n -> go acc {accExpected = Just n} rest
+      | otherwise =
+          case accKey acc of
+            Just _ -> Left (DuplicateOption option)
+            Nothing -> go acc {accKey = Just value} rest
+
+    go acc options =
+      case options of
+        [] ->
+          finish acc
+        option : rest
+          | option `L.elem` [expectedRevisionOption, idempotencyKeyOption] ->
+              case rest of
+                [] -> Left (MissingOptionValue option)
+                value : rest' -> withValue option value acc rest'
+          | (name, '=' : value) <- L.break (== '=') option
+          , name `L.elem` [expectedRevisionOption, idempotencyKeyOption] ->
+              if L.null value
+                then Left (MissingOptionValue name)
+                else withValue name value acc rest
+          | "-" `L.isPrefixOf` option ->
+              Left (UnknownOption option)
+          | otherwise ->
+              case accName acc of
+                Just _ -> Left (UnexpectedArgument option)
+                Nothing -> go acc {accName = Just option} rest
+  in
+    go (RenameAcc Nothing Nothing Nothing)
+
+parseRevision :: String -> Either CliError Integer
+parseRevision value =
+  if not (L.null value) && L.length value <= 18 && L.all Char.isDigit value
+    then Right (L.foldl' (\acc c -> acc * 10 + toInteger (Char.ord c - Char.ord '0')) 0 value)
+    else Left (InvalidRevision value)
 
 -- | Contract C-P1.3 E2, E9. There is deliberately no option that takes a token.
 parseOperatorCommand :: [String] -> Either CliError Command
@@ -202,6 +289,9 @@ renderCliError err =
     UnexpectedArgument arg -> "unexpected argument: " <> arg
     MissingSubcommand command -> command <> ": a subcommand is required"
     ConflictingOptions a b -> "options " <> a <> " and " <> b <> " cannot be combined"
+    MissingOption option -> "option " <> option <> " is required"
+    InvalidRevision value -> "--expected-revision: not a revision number: " <> value
+    MissingArgument name -> "argument " <> name <> " is required"
 
 usage :: String
 usage =
@@ -211,6 +301,8 @@ usage =
     , "       lockstep db status"
     , "       lockstep operator sign-in [--port N]"
     , "       lockstep operator sign-out-all"
+    , "       lockstep workspace show"
+    , "       lockstep workspace rename --expected-revision N [--idempotency-key K] NAME"
     , ""
     , "  serve        run the local service on 127.0.0.1 (default port 8000)"
     , "  --port N     listen on port N (1-65535)"
@@ -219,6 +311,9 @@ usage =
     , "  operator sign-in      print a one-time browser sign-in link (valid 5 minutes)"
     , "                        for the service on port N (default 8000)"
     , "  operator sign-out-all revoke every operator browser session"
+    , "  workspace show        print the workspace name and revision"
+    , "  workspace rename      rename the workspace if it is still at revision N; a repeated"
+    , "                        command with the same key returns the same receipt"
     , ""
     , "The database is configured by the file named in LOCKSTEP_CONFIG."
     ]

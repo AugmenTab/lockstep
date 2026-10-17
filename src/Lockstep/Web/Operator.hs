@@ -2,7 +2,9 @@
 {-# LANGUAGE QuasiQuotes #-}
 
 {- | The operator routes (contract C-P1.3 E3–E8): the sign-in confirm page and
-exchange, the protected operator page and sign-out. Served at the WAI level,
+exchange, the protected operator page and sign-out; and the typed command
+routes of C-P1.4 E9, which only parse input and call
+"Lockstep.Application.Command". Served at the WAI level,
 after route recognition and the request guard ("Lockstep.Web.Application").
 The raw sign-in token appears only in the confirm page's hidden field.
 -}
@@ -30,9 +32,26 @@ import Data.Time qualified as Time
 import Flipstone.Prelude
 import Network.HTTP.Types qualified as HTTP
 import Network.Wai qualified as Wai
-import Text.Show (Show)
+import Text.Show (Show, show)
 import Web.Cookie qualified as Cookie
 
+import Lockstep.Application.Command
+  ( Actor (ActorBrowserSession)
+  , CommandRefusal (..)
+  , IdempotencyKey
+  , Outcome (..)
+  , Receipt (..)
+  , WorkspaceState (..)
+  , actorCode
+  , buildRename
+  , findReceipt
+  , generateIdempotencyKey
+  , idempotencyKeyText
+  , outcomeCode
+  , readWorkspace
+  , revisionInt
+  , submitCommand
+  )
 import Lockstep.Application.Database (DatabaseRuntime)
 import Lockstep.Application.OperatorTrust
   ( Session (..)
@@ -50,6 +69,8 @@ data OperatorRoute
   | SignInExchange
   | OperatorHome
   | SignOut
+  | RenameCommand
+  | ReceiptView T.Text
   deriving (Eq, Show)
 
 matchOperatorRoute :: HTTP.Method -> [T.Text] -> Maybe OperatorRoute
@@ -59,6 +80,8 @@ matchOperatorRoute method path =
     (["operator", "sign-in"], _, True) -> Just SignInExchange
     (["operator"], True, _) -> Just OperatorHome
     (["operator", "sign-out"], _, True) -> Just SignOut
+    (["operator", "commands", "rename-workspace"], _, True) -> Just RenameCommand
+    (["operator", "receipts", receipt], True, _) -> Just (ReceiptView receipt)
     _ -> Nothing
 
 handleOperator :: Maybe DatabaseRuntime -> OperatorRoute -> Wai.Request -> IO Wai.Response
@@ -84,8 +107,30 @@ handleOperator db route request =
                     Left SignInTokenRefused -> refusal HTTP.status403 refusedLinkPage
                     Left (SignInNotReady _) -> refusal HTTP.status503 notReadyPage
     OperatorHome ->
-      withSession db request $ \_ token session ->
-        pure (operatorResponse HTTP.status200 noReferrer (operatorPage token session))
+      withSession db request $ \runtime token session -> do
+        workspace <- readWorkspace runtime
+        operatorResponse HTTP.status200 noReferrer . operatorPage token session (either (const Nothing) Just workspace)
+          <$> generateIdempotencyKey
+    RenameCommand ->
+      withSession db request $ \runtime token _ ->
+        withForm request $ \form ->
+          case singleValue (formValues "csrf" form) of
+            Just csrf | csrfMatches token (TE.decodeLatin1 csrf) ->
+              case renameFields form of
+                Nothing -> pure (refusal HTTP.status400 invalidCommandPage)
+                Just (key, expected, name) ->
+                  case buildRename ActorBrowserSession key expected name of
+                    Left _ -> pure (refusal HTTP.status400 invalidCommandPage)
+                    Right envelope -> commandResponse <$> submitCommand runtime envelope
+            _ ->
+              pure (refusal HTTP.status403 csrfPage)
+    ReceiptView idText ->
+      withSession db request $ \runtime _ _ ->
+        case parseReceiptId idText of
+          Nothing -> pure notFoundPage
+          Just receiptId -> do
+            found <- findReceipt runtime receiptId
+            pure (maybe notFoundPage (operatorResponse HTTP.status200 noReferrer . receiptPage) found)
     SignOut ->
       withSession db request $ \runtime token _ ->
         withForm request $ \form ->
@@ -171,7 +216,47 @@ guardRefusalResponse reason =
       HostRefused -> [Interpolate.i|This service answers only requests addressed to its loopback address and port.|]
       OriginRefused -> [Interpolate.i|This request did not come from a page of this service.|]
 
+commandResponse :: Either CommandRefusal Receipt -> Wai.Response
+commandResponse result =
+  case result of
+    Right receipt
+      | receiptOutcome receipt == Applied ->
+          redirect (TE.encodeUtf8 (receiptPath receipt)) []
+      | otherwise ->
+          refusal HTTP.status409 (receiptPage receipt)
+    Left CommandKeyConflict -> refusal HTTP.status409 keyConflictPage
+    Left (CommandInvalid _) -> refusal HTTP.status400 invalidCommandPage
+    Left (CommandNotReady _) -> refusal HTTP.status503 notReadyPage
+
+receiptPath :: Receipt -> T.Text
+receiptPath receipt =
+  "/operator/receipts/" <> T.pack (show (receiptId receipt))
+
+notFoundPage :: Wai.Response
+notFoundPage =
+  refusal HTTP.status404 (messagePage [Interpolate.i|Not found|] [Interpolate.i|There is no such receipt.|])
+
 -- * Request parsing
+
+renameFields :: [(BS.ByteString, BS.ByteString)] -> Maybe (T.Text, Integer, T.Text)
+renameFields form = do
+  key <- singleValue (formValues "idempotency_key" form) >>= utf8
+  expected <- singleValue (formValues "expected_revision" form) >>= decimal
+  name <- singleValue (formValues "name" form) >>= utf8
+  pure (key, expected, name)
+ where
+  utf8 =
+    either (const Nothing) Just . TE.decodeUtf8'
+
+decimal :: BS.ByteString -> Maybe Integer
+decimal bytes =
+  if not (BS.null bytes) && BS.length bytes <= 18 && BS.all (\w -> w >= 48 && w <= 57) bytes
+    then Just (BS.foldl' (\acc w -> acc * 10 + toInteger (w - 48)) 0 bytes)
+    else Nothing
+
+parseReceiptId :: T.Text -> Maybe Int64
+parseReceiptId text =
+  fromInteger <$> decimal (TE.encodeUtf8 text)
 
 decodeText :: BS.ByteString -> Maybe RawToken
 decodeText bytes =
@@ -275,8 +360,8 @@ confirmPage token =
         ]
     ]
 
-operatorPage :: RawToken -> Session -> E.HTML
-operatorPage token session =
+operatorPage :: RawToken -> Session -> Maybe WorkspaceState -> IdempotencyKey -> E.HTML
+operatorPage token session workspace key =
   page
     [Interpolate.i|Lockstep operator|]
     [ E.main
@@ -297,8 +382,78 @@ operatorPage token session =
                 ]
             , E.button [] [E.text [Interpolate.i|Sign out|]]
             ]
+        , E.h2 [] [E.text [Interpolate.i|Workspace|]]
+        , workspaceSection token workspace key
         ]
     ]
+
+workspaceSection :: RawToken -> Maybe WorkspaceState -> IdempotencyKey -> E.ChildHTML E.Main grandparent
+workspaceSection token workspace key =
+  case workspace of
+    Nothing ->
+      E.p [] [E.text [Interpolate.i|The workspace is unavailable: the database is not ready.|]]
+    Just current ->
+      E.form
+        [A.method B.FormPOST, A.action (B.mkRawURL [Interpolate.i|/operator/commands/rename-workspace|])]
+        [ E.p
+            []
+            [ E.text [Interpolate.i|Name: |]
+            , E.strong [] [E.text (workspaceName current)]
+            , E.text [Interpolate.i| (revision |]
+            , E.text (T.pack (show (revisionInt (workspaceRevision current))))
+            , E.text [Interpolate.i|)|]
+            ]
+        , E.label
+            []
+            [ E.text [Interpolate.i|New name |]
+            , E.input
+                [ A.type_ HTML.InputText
+                , A.customAttribute [Interpolate.i|name|] [Interpolate.i|name|]
+                , A.value (workspaceName current)
+                ]
+            ]
+        , E.input
+            [ A.type_ HTML.InputHidden
+            , A.customAttribute [Interpolate.i|name|] [Interpolate.i|expected_revision|]
+            , A.value (T.pack (show (revisionInt (workspaceRevision current))))
+            ]
+        , E.input
+            [ A.type_ HTML.InputHidden
+            , A.customAttribute [Interpolate.i|name|] [Interpolate.i|idempotency_key|]
+            , A.value (idempotencyKeyText key)
+            ]
+        , E.input
+            [ A.type_ HTML.InputHidden
+            , A.customAttribute [Interpolate.i|name|] [Interpolate.i|csrf|]
+            , A.value (csrfFor token)
+            ]
+        , E.button [] [E.text [Interpolate.i|Rename|]]
+        ]
+
+receiptPage :: Receipt -> E.HTML
+receiptPage receipt =
+  let
+    fact label value =
+      [E.dt [] [E.text label], E.dd [] [E.code [] [E.text value]]]
+  in
+    page
+      [Interpolate.i|Lockstep receipt|]
+      [ E.main
+          []
+          [ E.h1 [] [E.text ("Receipt " <> T.pack (show (receiptId receipt)))]
+          , E.dl
+              [A.class_ (HTML.Class [Interpolate.i|ls-facts|])]
+              ( fact "Command" (receiptKind receipt)
+                  <> fact "Outcome" (outcomeCode (receiptOutcome receipt))
+                  <> fact "Expected revision" (T.pack (show (revisionInt (receiptExpected receipt))))
+                  <> fact "Revision" (T.pack (show (revisionInt (receiptRevision receipt))))
+                  <> fact "Actor" (actorCode (receiptActor receipt))
+                  <> fact "Accepted" (T.pack (Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S UTC" (receiptAcceptedAt receipt)))
+                  <> fact "Idempotency key" (receiptKey receipt)
+              )
+          , E.p [] [E.a [A.href (B.mkRawURL [Interpolate.i|/operator|])] [E.text [Interpolate.i|Back to the operator page|]]]
+          ]
+      ]
 
 messagePage :: T.Text -> T.Text -> E.HTML
 messagePage title message =
@@ -344,6 +499,18 @@ csrfPage =
   messagePage
     [Interpolate.i|Request refused|]
     [Interpolate.i|The form was stale or not from this session. Reload the operator page and try again.|]
+
+keyConflictPage :: E.HTML
+keyConflictPage =
+  messagePage
+    [Interpolate.i|Command refused|]
+    [Interpolate.i|This idempotency key was already used for a different command. Reload the operator page and try again.|]
+
+invalidCommandPage :: E.HTML
+invalidCommandPage =
+  messagePage
+    [Interpolate.i|Command refused|]
+    [Interpolate.i|The command is invalid: the name must be 1-80 characters without control characters.|]
 
 tooLargePage :: E.HTML
 tooLargePage =
