@@ -1,6 +1,6 @@
 # ADR-0003 — LGPL-3.0 `iso3166-country-codes` statically linked via Brigid
 
-- Status: **PROPOSED** — awaiting the human owner. Blocks P1.1 acceptance (AC-P0-08).
+- Status: **ACCEPTED** (2026-10-17): option A, accept while private.
 - Affects: NFR-11, FR-APP-01; ARCHITECTURE §5.2 (license allowlist); ADR-0001 C2/C4
 - Evidence: `docs/gates/P1.1/evidence/licenses.txt` (`scripts/licenses`),
   `THIRD_PARTY_LICENSES.md`, symbol search of the unstripped `lockstep` binary
@@ -54,6 +54,7 @@ shrink the native dependency set).
 
 | Field | Value |
 |---|---|
-| Decision | _pending_ |
-| Approver | _human owner_ |
-| Date | _pending_ |
+| Decision | **A — accept while private**; resolve before any distribution (B preferred then) |
+| Approver | Human owner (operator), Phase 1 session answer: "Accept while private (Recommended)" |
+| Date | 2026-10-17 |
+| Enforcement | `scripts/licenses` fails on any other linked non-allowlisted license (negative check: `docs/gates/P1.1/evidence/licenses-guard-negative.txt`) |

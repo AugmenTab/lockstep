@@ -31,3 +31,35 @@ ldd /tmp/lockstep-bin/lockstep | awk '$3 ~ /^\// { print $1 }' | while read -r l
 done | sort -u | while read -r pkg; do
   printf '%s %s\n' "$pkg" "$(dpkg-query -W -f='${Version}' "$pkg")"
 done
+
+echo
+echo "== license policy (ARCHITECTURE §5.2, ADR-0003)"
+# Linked = the package has object code in the unstripped executable.
+binary="$(stack path --dist-dir 2>/dev/null)/build/lockstep/lockstep"
+nm "$binary" | awk '{ print $NF }' > /tmp/lockstep-symbols
+# Copyleft packages accepted while v2 stays private (ADR-0003).
+accepted="iso3166-country-codes"
+allowlist='^(MIT|BSD2|BSD3|BSD-2|BSD-3|BSD-2-Clause|BSD-3-Clause|ISC|0BSD|Apache-2\.0|Apache|PostgreSQL|Zlib|PublicDomain)$'
+violations=0
+while read -r name version license; do
+  [ "$name" = lockstep ] && continue
+  if grep -qE "$allowlist" <<<"$license"; then
+    continue
+  fi
+  zname=$(sed -e 's/z/zz/g' -e 's/-/zm/g' <<<"$name")
+  if grep -q "${zname}zm[0-9]" /tmp/lockstep-symbols; then
+    if grep -qxF "$name" <<<"$accepted"; then
+      echo "accepted exception (linked): $name $version $license"
+    else
+      echo "VIOLATION (linked, not allowlisted, no ADR): $name $version $license" >&2
+      violations=$((violations + 1))
+    fi
+  else
+    echo "not linked (build-time only): $name $version $license"
+  fi
+done < <(join /tmp/deps-versions /tmp/deps-licenses)
+
+if [ "$violations" -ne 0 ]; then
+  exit 1
+fi
+echo "license policy: no unapproved linked license"

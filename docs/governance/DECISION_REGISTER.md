@@ -30,7 +30,7 @@ storage: one ADR per gate under the chosen `docs/adr/` (DG-01b decides the repo)
 |---|---|---|---|---|---|---|
 | DG-01a | Launchpad revision, reuse and license/redistribution rights | Human owner | P0.1; Launchpad source available | All committed v2 code | P0.2 | **ACCEPTED** 2026-10-16. See `docs/adr/ADR-0001-launchpad-adoption.md` (C1 BSD-3, C2 private/undecided, C3 remove hyperscript+pandoc; C4 checks at P1.1) |
 | DG-01b | v2 repository / branch / history strategy | Human owner | DG-01a | All committed v2 code; artifact placement | P0.3 | **ACCEPTED** 2026-10-16: orphan `v2` branch, one directory, tag `python-v0.1-final`. See `docs/governance/REPOSITORY_STRATEGY.md` |
-| DG-02 | DB boot / backup / migration / deployment packaging | Human owner | P1.1 | Persistent app service | P1.2 | OPEN — input recorded: Launchpad auto-migrates (SRC-OBS-03) |
+| DG-02 | DB boot / backup / migration / deployment packaging | Human owner | P1.1 | Persistent app service | P1.2 | **ACCEPTED** 2026-10-17 as proposed. See `docs/adr/ADR-0002-database-operations.md` (PG 17 container; explicit ordered forward-only migrations via `lockstep db migrate`; typed readiness; backups before migrate) |
 | DG-03 | Stable ownership key for repo aliases/worktrees/remotes | Human owner | P1.7 | Engineer registration, scheduler claims | P2.1 | OPEN |
 | DG-04 | Event, claim, outbox, replay and reconciliation protocol | Human owner | P1.7, P2.2 | Provider/Git execution, safe recovery | P2.5 | OPEN |
 | DG-05 | Profile schema, precedence, exceptions, scheduling order | Human owner | P2.2 | Effective Profile binding/admission | P2.3–P2.4 | OPEN — PRD §5.1 has a proposed default ordering |
@@ -56,7 +56,9 @@ The next dependency-ready implementation item is P1.1. It is blocked by:
 2. ~~DG-01a~~ ACCEPTED 2026-10-16.
 3. ~~DG-01b~~ ACCEPTED 2026-10-16.
 4. ~~Phase 0 gate acceptance~~ ACCEPTED 2026-10-16.
-5. **Explicit human authorization to begin Phase 1** (separate handoff). Not yet given.
+5. ~~Explicit human authorization to begin Phase 1~~ given by the Phase 1 handoff (`.local/plans/phase-01.md`).
+
+Phase 1 license exception: ADR-0003 (LGPL-3.0 `iso3166-country-codes` via Brigid) ACCEPTED 2026-10-17 while v2 is private; must be revisited before any distribution, alongside GMP.
 
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.

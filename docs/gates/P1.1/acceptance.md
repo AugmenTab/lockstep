@@ -7,7 +7,7 @@
   GHC 9.10.3, Stack 3.7.1, Cabal 3.14.2.0, fourmolu 0.18.0.0, HLint 3.10), Docker 29.4.0
   on macOS arm64
 - Executed by: manual agent session, 2026-10-17
-- **Status: NOT ACCEPTED.** Machine summary of required rows: `BLOCKED` (row 08).
+- Machine summary of required rows: `PASSED` (after the ADR-0003 decision). The summary is not acceptance; P1.1 acceptance is recorded below.
 
 | Criterion | Method | Expected | Actual | Disposition | Evidence |
 |---|---|---|---|---|---|
@@ -18,7 +18,7 @@
 | `AC-P1.1-05@v1` Forbidden template facilities absent | `scripts/lib/check-forbidden-facilities` + unit route/asset tests | no match; removed routes 404 | none in 28 files; 9 removed routes 404; Pico/hyperscript assets 404 | PASSED | same log, steps 2 and 4 |
 | `AC-P1.1-06@v1` Henforcer boundary enforced | negative fixture + positive control | violation rejected (HEN-49096), control compiles | as expected | PASSED | same log, step 3. Kernel/Persistence/Effects/Application rows: NOT_RUN (no such modules) |
 | `AC-P1.1-07@v1` Partial-function lint in force | negative fixture | 17/17 flagged | 17/17 flagged; production code: no hints | PASSED | same log, step 2 |
-| `AC-P1.1-08@v1` (AC-P0-08) Transitive licenses acceptable; GMP linkage recorded; notices present | `scripts/licenses`, symbol search | no unapproved copyleft linked | 254 packages inventoried; GMP **dynamic** (`libgmp.so.10`); **`iso3166-country-codes` LGPL-3.0 statically linked via Brigid** | **BLOCKED** — needs the ADR-0003 decision | `evidence/licenses.txt` sha256 `b306502b…504a`; `THIRD_PARTY_LICENSES.md` sha256 `d2b0861f…c8c8`; `docs/adr/ADR-0003-…` |
+| `AC-P1.1-08@v1` (AC-P0-08) Transitive licenses acceptable; GMP linkage recorded; notices present | `scripts/licenses`, symbol search | no unapproved copyleft linked | 254 packages inventoried; GMP **dynamic** (`libgmp.so.10`); **`iso3166-country-codes` LGPL-3.0 statically linked via Brigid** | PASSED — exception accepted by ADR-0003 (2026-10-17); guard fails on any other (negative check exit 1) | `evidence/licenses.txt` sha256 `35b03d1f…`; `evidence/licenses-guard-negative.txt` sha256 `e8293b1a…`; `THIRD_PARTY_LICENSES.md` sha256 `d2b0861f…c8c8`; `docs/adr/ADR-0003-…` |
 | `AC-P1.1-09@v1` `allow-newer` only as approved (D9) | static check | scoped to `integer-types`, `libphonenumber` | as expected | PASSED | `evidence/deps-resolve-allow-newer-false.log`; contract D9 |
 
 Deviations: D9 (scoped `allow-newer`, human-approved 2026-10-17). Defects found and
@@ -26,3 +26,10 @@ fixed before acceptance, none in frozen tests: case-insensitive path capture
 (`src/lockstep` vs `src/Lockstep`, now checked), the hlint `head` ban catching
 Brigid's `E.head` (rules now module-qualified), and a truncated file from an
 interrupted formatter run.
+
+## Decision
+
+| Field | Value |
+|---|---|
+| P1.1 | **ACCEPTED** under the Phase 1 handoff (sub-phase continuation without ceremonial approval). The only human decision it needed, ADR-0003, was taken 2026-10-17. Gate A remains the human gate. |
+| Recorded by | manual agent session, 2026-10-17 |
