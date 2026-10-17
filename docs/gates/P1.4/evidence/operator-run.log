@@ -1,0 +1,61 @@
+# P1.4 operator run, 2026-10-17T20:29:00Z, commit 75cc8623e7880c83a14ffe6dff08e7466d03a3b6
+# command: scripts/db backup; docker run --rm --network lockstep-net -e BACKUP=<that path> -v <repo>:/work lockstep-dev:p1 bash /work/docs/gates/P1.4/evidence/operator-run.sh
+# (the $ lines echo argv without shell quoting: NAME arguments with spaces were single arguments)
+$ lockstep db status
+readiness not_ready schema_behind 1
+revision 2
+pending 1
+[exit 0]
+$ lockstep workspace show
+lockstep: not_ready schema_behind 1
+[exit 69]
+$ lockstep db migrate
+lockstep: migrations are already applied: take a backup (scripts/db backup) and pass --backup FILE, or pass --no-backup
+[exit 75]
+$ lockstep db migrate --backup .local/backups/20261017T202846Z-r2-50971.dump
+applied migrations: 3
+[exit 0]
+$ lockstep workspace show
+name: Lockstep
+revision: 0
+[exit 0]
+$ lockstep workspace rename --expected-revision 0 --idempotency-key p14-operator-key-0001 Operator Workspace
+receipt 1 applied revision 1 key p14-operator-key-0001
+[exit 0]
+$ lockstep workspace rename --expected-revision 0 --idempotency-key p14-operator-key-0001 Operator Workspace
+receipt 1 applied revision 1 key p14-operator-key-0001 (replayed)
+[exit 0]
+$ lockstep workspace rename --expected-revision 1 --idempotency-key p14-operator-key-0001 Different
+lockstep: refused: this idempotency key was already used for a different command
+[exit 65]
+$ lockstep workspace rename --expected-revision 0 --idempotency-key p14-operator-key-0002 Stale
+lockstep: refused: stale revision (expected 0, current 1)
+receipt 2 refused_stale revision 1 key p14-operator-key-0002
+[exit 65]
+$ lockstep workspace rename --expected-revision 1 --idempotency-key p14-operator-key-0003    
+lockstep: invalid command: the workspace name is empty
+[exit 65]
+$ lockstep workspace show
+name: Operator Workspace
+revision: 1
+[exit 0]
+-- operator page: Name: <strong>Operator Workspace</strong> (revision 1); form expected_revision=1, key length 22
+-- POST rename (browser): HTTP/1.1 303 See Other Location: /operator/receipts/3
+-- POST rename (browser-again): HTTP/1.1 303 See Other Location: /operator/receipts/3
+-- POST rename (shared-cli-key): HTTP/1.1 303 See Other Location: /operator/receipts/1
+-- POST rename (stale): HTTP/1.1 409 Conflict 
+-- POST rename (conflict): HTTP/1.1 409 Conflict 
+-- POST rename (empty): HTTP/1.1 400 Bad Request 
+-- POST rename without Origin: HTTP/1.1 403 Forbidden
+-- GET /operator/receipts/3: Command=rename-workspace Outcome=applied Expected revision=1 Revision=2 Actor=browser-session Accepted=2026-10-17 20:28:52 UTC Idempotency key=j1RUl00c9gqgv54aQmFs1g 
+serve exit: 0
+$ lockstep workspace show
+name: Browser Workspace
+revision: 2
+[exit 0]
+-- server log
+Database readiness: ready 3
+Service start recorded
+Listening on 127.0.0.1:8000
+database password occurrences in all outputs: 0
+sign-in token occurrences in all outputs: 0
