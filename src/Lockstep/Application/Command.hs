@@ -18,9 +18,12 @@ module Lockstep.Application.Command
   , InvalidReason (..)
   , renderInvalidReason
   , OperatorCommand (..)
+  , NoopSpec (..)
+  , mkNoopSpec
   , CommandEnvelope (..)
   , mkEnvelope
   , buildRename
+  , buildQueue
   , payloadDigest
   , WorkspaceState (..)
   , PriorReceipt (..)
@@ -57,6 +60,7 @@ import Lockstep.Application.Database
   , withDatabase
   )
 import Lockstep.Persistence.Commands qualified as Store
+import Lockstep.Persistence.Jobs qualified as Jobs
 
 -- | Who submitted the command; authority was checked by the caller (E1).
 data Actor
@@ -86,6 +90,9 @@ data InvalidReason
   | NameHasControl
   | KeyMalformed
   | RevisionNegative
+  | StepsOutOfRange
+  | StepMillisOutOfRange
+  | FailAtOutOfRange
   deriving (Eq, Show)
 
 renderInvalidReason :: InvalidReason -> String
@@ -96,6 +103,9 @@ renderInvalidReason reason =
     NameHasControl -> "the workspace name contains a control character"
     KeyMalformed -> "the idempotency key must be 16-64 characters of A-Z a-z 0-9 - _"
     RevisionNegative -> "the expected revision is negative"
+    StepsOutOfRange -> "steps must be 1-20"
+    StepMillisOutOfRange -> "step milliseconds must be 0-5000"
+    FailAtOutOfRange -> "the failure step must be between 1 and the number of steps"
 
 -- | Trimmed, 1–80 characters, no control characters (E2).
 mkWorkspaceName :: T.Text -> Either InvalidReason WorkspaceName
@@ -148,14 +158,57 @@ revisionInt :: Revision -> Int64
 revisionInt (Revision n) =
   n
 
-newtype OperatorCommand
+data OperatorCommand
   = RenameWorkspace WorkspaceName
+  | QueueNoop NoopSpec
   deriving (Eq, Show)
+
+-- | A model-free no-op job: steps, a delay per step, an optional injected failure (C-P1.5 E1).
+data NoopSpec
+  = NoopSpec
+  { noopSteps :: Int
+  , noopStepMillis :: Int
+  , noopFailAtStep :: Maybe Int
+  }
+  deriving (Eq, Show)
+
+mkNoopSpec :: Int -> Int -> Maybe Int -> Either InvalidReason NoopSpec
+mkNoopSpec steps millis failAt
+  | steps < 1 || steps > 20 = Left StepsOutOfRange
+  | millis < 0 || millis > 5000 = Left StepMillisOutOfRange
+  | any (\k -> k < 1 || k > steps) failAt = Left FailAtOutOfRange
+  | otherwise = Right (NoopSpec steps millis failAt)
+
+noopPayload :: NoopSpec -> T.Text
+noopPayload spec =
+  T.pack
+    ( "steps="
+        <> show (noopSteps spec)
+        <> ";step_ms="
+        <> show (noopStepMillis spec)
+        <> ";fail_at="
+        <> maybe "none" show (noopFailAtStep spec)
+    )
+
+-- | Validates raw CLI/HTTP input into a queue-noop envelope.
+buildQueue :: Actor -> T.Text -> Integer -> Integer -> Integer -> Maybe Integer -> Either InvalidReason CommandEnvelope
+buildQueue actor keyText expected steps millis failAt = do
+  key <- mkIdempotencyKey keyText
+  revision <- if expected < 0 then Left RevisionNegative else Right (Revision (fromInteger expected))
+  stepsInt <- bounded StepsOutOfRange steps
+  millisInt <- bounded StepMillisOutOfRange millis
+  failInt <- traverse (bounded FailAtOutOfRange) failAt
+  spec <- mkNoopSpec stepsInt millisInt failInt
+  pure (mkEnvelope actor key revision (QueueNoop spec))
+ where
+  bounded reason n =
+    if n < 0 || n > 100000 then Left reason else Right (fromInteger n)
 
 commandKind :: OperatorCommand -> T.Text
 commandKind command =
   case command of
     RenameWorkspace _ -> T.pack "rename-workspace"
+    QueueNoop _ -> T.pack "queue-noop"
 
 data CommandEnvelope
   = CommandEnvelope
@@ -189,6 +242,7 @@ payloadDigest envelope =
     payload =
       case envelopeCommand envelope of
         RenameWorkspace name -> workspaceNameText name
+        QueueNoop spec -> noopPayload spec
     canonical =
       T.intercalate
         (T.pack "\n")
@@ -210,6 +264,7 @@ data WorkspaceState
 data Outcome
   = Applied
   | RefusedStale
+  | Queued
   deriving (Eq, Show)
 
 outcomeCode :: Outcome -> T.Text
@@ -217,11 +272,13 @@ outcomeCode outcome =
   case outcome of
     Applied -> T.pack "applied"
     RefusedStale -> T.pack "refused_stale"
+    Queued -> T.pack "queued"
 
 parseOutcome :: T.Text -> Maybe Outcome
 parseOutcome code
   | code == outcomeCode Applied = Just Applied
   | code == outcomeCode RefusedStale = Just RefusedStale
+  | code == outcomeCode Queued = Just Queued
   | otherwise = Nothing
 
 data Receipt
@@ -264,7 +321,9 @@ decide current prior envelope =
         Revision now = workspaceRevision current
       in
         if envelopeExpected envelope == workspaceRevision current
-          then Apply (Revision (now + 1))
+          then case envelopeCommand envelope of
+            RenameWorkspace _ -> Apply (Revision (now + 1))
+            QueueNoop _ -> Apply (workspaceRevision current)
           else RefuseStale (workspaceRevision current)
 
 data CommandRefusal
@@ -357,10 +416,22 @@ submitCommand runtime envelope = do
             pure (Right receipt {receiptReplayed = True})
           KeyConflict ->
             pure (Left CommandKeyConflict)
-          Apply next -> do
+          Apply next ->
             case envelopeCommand envelope of
-              RenameWorkspace newName -> Store.updateWorkspace (workspaceNameText newName) (revisionInt next)
-            record Applied next
+              RenameWorkspace newName -> do
+                Store.updateWorkspace (workspaceNameText newName) (revisionInt next)
+                record Applied next
+              QueueNoop spec -> do
+                recorded <- record Queued next
+                case recorded of
+                  Right receipt -> do
+                    Jobs.insertNoopJob
+                      (receiptId receipt)
+                      (fromIntegral (noopSteps spec))
+                      (fromIntegral (noopStepMillis spec))
+                      (fmap fromIntegral (noopFailAtStep spec))
+                    pure recorded
+                  Left _ -> pure recorded
           RefuseStale now ->
             record RefusedStale now
       _ ->

@@ -18,10 +18,12 @@ import Text.Show (show)
 
 import Lockstep.Application.Command
   ( Actor (ActorCli)
+  , CommandEnvelope
   , CommandRefusal (..)
   , Outcome (..)
   , Receipt (..)
   , WorkspaceState (..)
+  , buildQueue
   , buildRename
   , generateIdempotencyKey
   , idempotencyKeyText
@@ -47,8 +49,9 @@ import Lockstep.Application.Database
   , revisionNumber
   , schemaStatus
   )
+import Lockstep.Application.Dispatcher (Job (..), findJob, findJobForReceipt, jobStateCode, startDispatcher, stopDispatcher)
 import Lockstep.Application.OperatorTrust (issueSignIn, revokeAllSessions, signInUrl)
-import Lockstep.Foundation.Cli (BackupPolicy, Command (..), RenameArgs (..), parseArgs, renderCliError, usage)
+import Lockstep.Foundation.Cli (BackupPolicy, Command (..), QueueArgs (..), RenameArgs (..), parseArgs, renderCliError, usage)
 import Lockstep.Foundation.Config (Port, ServeConfig (..), bindHostAddress, portNumber)
 import Lockstep.Foundation.SystemConfig
   ( SystemConfig (..)
@@ -81,6 +84,10 @@ main = do
       withRequiredDatabase workspaceShow
     Right (WorkspaceRename renameArgs) ->
       withRequiredDatabase (workspaceRename renameArgs)
+    Right (JobQueue queueArgs) ->
+      withRequiredDatabase (jobQueue queueArgs)
+    Right (JobShow job) ->
+      withRequiredDatabase (jobShow job)
 
 configVariable :: String
 configVariable =
@@ -121,14 +128,17 @@ serve serveConfig = do
       appLogger (FL.toLogStr (message <> "\n"))
   readiness <- checkReadiness mbRuntime
   logLine ("Database readiness: " <> T.unpack (readinessCode readiness))
-  case (readiness, mbRuntime) of
-    (Ready _, Just runtime) -> do
-      recorded <- recordServiceStart runtime
-      case recorded of
-        Right () -> logLine "Service start recorded"
-        Left reason -> logLine ("Service start not recorded: " <> show reason)
-    _ ->
-      pure ()
+  dispatcher <-
+    case (readiness, mbRuntime) of
+      (Ready _, Just runtime) -> do
+        recorded <- recordServiceStart runtime
+        case recorded of
+          Right () -> logLine "Service start recorded"
+          Left reason -> logLine ("Service start not recorded: " <> show reason)
+        -- C-P1.5 E4: background execution of queued jobs.
+        Just <$> startDispatcher runtime logLine
+      _ ->
+        pure Nothing
   let
     address =
       bindHostAddress (serveHost serveConfig)
@@ -144,7 +154,7 @@ serve serveConfig = do
         . Warp.setBeforeMainLoop (logLine ("Listening on " <> address))
         $ serverSettings serveConfig
   Warp.runSettings settings (applicationWith serveConfig mbRuntime appLogger)
-    `finally` (traverse_ closeDatabase mbRuntime >> finishLogger)
+    `finally` (traverse_ stopDispatcher dispatcher >> traverse_ closeDatabase mbRuntime >> finishLogger)
 
 dbMigrate :: BackupPolicy -> DatabaseRuntime -> IO ()
 dbMigrate policy runtime = do
@@ -224,30 +234,71 @@ workspaceRename args runtime = do
   case buildRename ActorCli key (renameExpected args) (T.pack (renameName args)) of
     Left reason ->
       refuse ("invalid command: " <> renderInvalidReason reason)
-    Right envelope -> do
-      result <- submitCommand runtime envelope
-      case result of
-        Right receipt -> do
-          putStrLn (receiptLine receipt)
-          case receiptOutcome receipt of
-            Applied -> pure ()
-            RefusedStale ->
-              refuse
-                ( "refused: stale revision (expected "
-                    <> show (renameExpected args)
-                    <> ", current "
-                    <> show (revisionInt (receiptRevision receipt))
-                    <> ")"
-                )
-        Left CommandKeyConflict ->
-          refuse "refused: this idempotency key was already used for a different command"
-        Left (CommandInvalid reason) ->
-          refuse ("invalid command: " <> renderInvalidReason reason)
-        Left (CommandNotReady reason) ->
-          notReady reason
+    Right envelope ->
+      submitAndReport runtime envelope (renameExpected args)
 
-receiptLine :: Receipt -> String
-receiptLine receipt =
+-- | C-P1.5 E6: queues a no-op job; @lockstep serve@ runs it.
+jobQueue :: QueueArgs -> DatabaseRuntime -> IO ()
+jobQueue args runtime = do
+  key <- maybe (idempotencyKeyText <$> generateIdempotencyKey) (pure . T.pack) (queueKey args)
+  case buildQueue ActorCli key (queueExpected args) (queueSteps args) (queueStepMillis args) (queueFailAt args) of
+    Left reason ->
+      refuse ("invalid command: " <> renderInvalidReason reason)
+    Right envelope ->
+      submitAndReport runtime envelope (queueExpected args)
+
+jobShow :: Integer -> DatabaseRuntime -> IO ()
+jobShow ident runtime = do
+  found <- findJob runtime (fromInteger ident)
+  case found of
+    Nothing ->
+      refuse ("no job " <> show ident)
+    Just job -> do
+      putStrLn
+        ( "job "
+            <> show (jobId job)
+            <> " "
+            <> T.unpack (jobStateCode (jobState job))
+            <> " steps "
+            <> show (jobStepsDone job)
+            <> "/"
+            <> show (jobStepsTotal job)
+            <> " attempts "
+            <> show (jobAttempts job)
+        )
+      traverse_ (\err -> putStrLn ("error: " <> T.unpack err)) (jobError job)
+
+-- | Submits through the shared operation and prints the receipt (C-P1.4 E8).
+submitAndReport :: DatabaseRuntime -> CommandEnvelope -> Integer -> IO ()
+submitAndReport runtime envelope expected = do
+  result <- submitCommand runtime envelope
+  case result of
+    Right receipt -> do
+      suffix <-
+        case receiptOutcome receipt of
+          Queued -> maybe "" (\job -> " job " <> show (jobId job)) <$> findJobForReceipt runtime (receiptId receipt)
+          _ -> pure ""
+      putStrLn (receiptLine receipt suffix)
+      case receiptOutcome receipt of
+        Applied -> pure ()
+        Queued -> pure ()
+        RefusedStale ->
+          refuse
+            ( "refused: stale revision (expected "
+                <> show expected
+                <> ", current "
+                <> show (revisionInt (receiptRevision receipt))
+                <> ")"
+            )
+    Left CommandKeyConflict ->
+      refuse "refused: this idempotency key was already used for a different command"
+    Left (CommandInvalid reason) ->
+      refuse ("invalid command: " <> renderInvalidReason reason)
+    Left (CommandNotReady reason) ->
+      notReady reason
+
+receiptLine :: Receipt -> String -> String
+receiptLine receipt suffix =
   "receipt "
     <> show (receiptId receipt)
     <> " "
@@ -256,6 +307,7 @@ receiptLine receipt =
     <> show (revisionInt (receiptRevision receipt))
     <> " key "
     <> T.unpack (receiptKey receipt)
+    <> suffix
     <> (if receiptReplayed receipt then " (replayed)" else "")
 
 refuse :: String -> IO ()

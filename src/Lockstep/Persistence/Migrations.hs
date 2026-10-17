@@ -64,4 +64,30 @@ CREATE TABLE lockstep_command_receipts (
 );
 |]
       )
+    ,
+      ( [Interpolate.i|background jobs|]
+      , [Interpolate.i|
+ALTER TABLE lockstep_command_receipts DROP CONSTRAINT lockstep_command_receipts_outcome_check;
+ALTER TABLE lockstep_command_receipts ADD CONSTRAINT lockstep_command_receipts_outcome_check
+  CHECK (outcome IN ('applied', 'refused_stale', 'queued'));
+CREATE TABLE lockstep_jobs (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  receipt_id bigint NOT NULL UNIQUE REFERENCES lockstep_command_receipts (id),
+  kind text NOT NULL CHECK (kind = 'noop'),
+  state text NOT NULL CHECK (state IN ('queued', 'running', 'succeeded', 'failed')),
+  steps_total integer NOT NULL CHECK (steps_total BETWEEN 1 AND 20),
+  step_millis integer NOT NULL CHECK (step_millis BETWEEN 0 AND 5000),
+  fail_at_step integer CHECK (fail_at_step BETWEEN 1 AND steps_total),
+  steps_done integer NOT NULL DEFAULT 0,
+  attempts integer NOT NULL DEFAULT 0,
+  owner text,
+  lease_until timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  started_at timestamptz,
+  finished_at timestamptz,
+  last_error text,
+  recovered_count integer NOT NULL DEFAULT 0
+);
+|]
+      )
     ]

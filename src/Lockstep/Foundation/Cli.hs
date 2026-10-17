@@ -3,6 +3,7 @@ module Lockstep.Foundation.Cli
   , BackupPolicy (..)
   , CliError (..)
   , RenameArgs (..)
+  , QueueArgs (..)
   , parseArgs
   , renderCliError
   , usage
@@ -33,6 +34,19 @@ data Command
   | OperatorSignOutAll
   | WorkspaceShow
   | WorkspaceRename RenameArgs
+  | JobQueue QueueArgs
+  | JobShow Integer
+  deriving (Eq, Show)
+
+-- | @job queue@ options (contract C-P1.5 E6); ranges are checked by the application.
+data QueueArgs
+  = QueueArgs
+  { queueExpected :: Integer
+  , queueSteps :: Integer
+  , queueStepMillis :: Integer
+  , queueFailAt :: Maybe Integer
+  , queueKey :: Maybe String
+  }
   deriving (Eq, Show)
 
 data RenameArgs
@@ -67,6 +81,7 @@ data CliError
   | MissingOption String
   | InvalidRevision String
   | MissingArgument String
+  | InvalidNumber String String
   deriving (Eq, Show)
 
 parseArgs :: [String] -> Either CliError Command
@@ -77,7 +92,64 @@ parseArgs args =
     "db" : rest -> parseDbCommand rest
     "operator" : rest -> parseOperatorCommand rest
     "workspace" : rest -> parseWorkspaceCommand rest
+    "job" : rest -> parseJobCommand rest
     command : _ -> Left (UnknownCommand command)
+
+-- | Contract C-P1.5 E6.
+parseJobCommand :: [String] -> Either CliError Command
+parseJobCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "job")
+    "queue" : options -> fmap JobQueue (parseQueueOptions options)
+    ["show"] -> Left (MissingArgument "JOB")
+    ["show", job] -> JobShow <$> parseNumber "JOB" job
+    "show" : _ : extra : _ -> Left (unexpected extra)
+    command : _ -> Left (UnknownCommand ("job " <> command))
+
+parseNumber :: String -> String -> Either CliError Integer
+parseNumber name value =
+  if not (L.null value) && L.length value <= 18 && L.all Char.isDigit value
+    then Right (L.foldl' (\acc c -> acc * 10 + toInteger (Char.ord c - Char.ord '0')) 0 value)
+    else Left (InvalidNumber name value)
+
+parseQueueOptions :: [String] -> Either CliError QueueArgs
+parseQueueOptions =
+  let
+    names = [expectedRevisionOption, "--steps", "--step-ms", "--fail-at-step", idempotencyKeyOption]
+
+    set option value acc =
+      case L.lookup option acc of
+        Just _ -> Left (DuplicateOption option)
+        Nothing -> Right ((option, value) : acc)
+
+    finish acc = do
+      expected <-
+        maybe (Left (MissingOption expectedRevisionOption)) parseRevision (L.lookup expectedRevisionOption acc)
+      steps <- maybe (Right 3) (parseNumber "--steps") (L.lookup "--steps" acc)
+      millis <- maybe (Right 100) (parseNumber "--step-ms") (L.lookup "--step-ms" acc)
+      failAt <- traverse (parseNumber "--fail-at-step") (L.lookup "--fail-at-step" acc)
+      pure (QueueArgs expected steps millis failAt (L.lookup idempotencyKeyOption acc))
+
+    go acc options =
+      case options of
+        [] ->
+          finish acc
+        option : rest
+          | option `L.elem` names ->
+              case rest of
+                [] -> Left (MissingOptionValue option)
+                value : rest'
+                  | L.null value -> Left (MissingOptionValue option)
+                  | otherwise -> set option value acc >>= \acc' -> go acc' rest'
+          | (name, '=' : value) <- L.break (== '=') option
+          , name `L.elem` names ->
+              if L.null value
+                then Left (MissingOptionValue name)
+                else set name value acc >>= \acc' -> go acc' rest
+          | otherwise ->
+              Left (unexpected option)
+  in
+    go []
 
 -- | Contract C-P1.4 E8.
 parseWorkspaceCommand :: [String] -> Either CliError Command
@@ -292,6 +364,7 @@ renderCliError err =
     MissingOption option -> "option " <> option <> " is required"
     InvalidRevision value -> "--expected-revision: not a revision number: " <> value
     MissingArgument name -> "argument " <> name <> " is required"
+    InvalidNumber name value -> name <> ": not a valid number: " <> value
 
 usage :: String
 usage =
@@ -303,6 +376,8 @@ usage =
     , "       lockstep operator sign-out-all"
     , "       lockstep workspace show"
     , "       lockstep workspace rename --expected-revision N [--idempotency-key K] NAME"
+    , "       lockstep job queue --expected-revision N [--steps S] [--step-ms M] [--fail-at-step K] [--idempotency-key K]"
+    , "       lockstep job show JOB"
     , ""
     , "  serve        run the local service on 127.0.0.1 (default port 8000)"
     , "  --port N     listen on port N (1-65535)"
@@ -314,6 +389,8 @@ usage =
     , "  workspace show        print the workspace name and revision"
     , "  workspace rename      rename the workspace if it is still at revision N; a repeated"
     , "                        command with the same key returns the same receipt"
+    , "  job queue             queue a model-free no-op job; lockstep serve runs it"
+    , "  job show              print a job's state and progress"
     , ""
     , "The database is configured by the file named in LOCKSTEP_CONFIG."
     ]

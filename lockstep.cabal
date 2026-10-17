@@ -29,6 +29,7 @@ library
   exposed-modules:
       Lockstep.Application.Command
       Lockstep.Application.Database
+      Lockstep.Application.Dispatcher
       Lockstep.Application.OperatorTrust
       Lockstep.Foundation.Cli
       Lockstep.Foundation.Config
@@ -36,6 +37,7 @@ library
       Lockstep.Foundation.SystemConfig
       Lockstep.Persistence.Commands
       Lockstep.Persistence.Connection
+      Lockstep.Persistence.Jobs
       Lockstep.Persistence.Migrate
       Lockstep.Persistence.Migration
       Lockstep.Persistence.Migrations
@@ -120,6 +122,7 @@ test-suite lockstep-integration
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
+      Lockstep.DispatcherTest
       Lockstep.MigrationDbTest
       Lockstep.OperatorCommandTest
       Lockstep.OperatorTrustTest
@@ -160,8 +163,10 @@ test-suite lockstep-unit
   main-is: Main.hs
   other-modules:
       Lockstep.Application.CommandTest
+      Lockstep.Application.NoopCommandTest
       Lockstep.Application.ReadinessTest
       Lockstep.Foundation.CliDbTest
+      Lockstep.Foundation.CliJobTest
       Lockstep.Foundation.CliOperatorTest
       Lockstep.Foundation.CliTest
       Lockstep.Foundation.CliWorkspaceTest
