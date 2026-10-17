@@ -60,6 +60,11 @@ The next dependency-ready implementation item is P1.1. It is blocked by:
 
 Phase 1 license exception: ADR-0003 (LGPL-3.0 `iso3166-country-codes` via Brigid) ACCEPTED 2026-10-17 while v2 is private; must be revisited before any distribution, alongside GMP.
 
+Phase 1 owner decisions, 2026-10-17 (recorded by the writing agent at the owner's instruction):
+
+- P1.1 and P1.2 **ACCEPTED** at `b3a37233e2077de6a196112a2ef46780b71a30bb`; recovery halt lifted (`docs/gates/P1.2/r1-acceptance-packet.md`).
+- P1.3 design amendments (`docs/gates/P1.3/decision-request.md`): **D-1a** (present `Host` must be exact; missing `Host` tolerated only on public GET/HEAD; port-80 default forms), **D-2d** (`Referrer-Policy: origin` on the sign-in confirm page; strict exact `Origin` on every mutating request, no `null` exception), **D-3a** (sign-in redirects to `/operator`).
+
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.
 
