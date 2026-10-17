@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Script-level check of the operator backup/restore path (ADR-0002 Q6, C-P1.2 E12).
+# Runs on the host against a disposable PostgreSQL container:
+#   check-db-backup-restore <container> <user> <database>
+# Uses the real scripts/db with its documented overrides.
+set -euo pipefail
+
+cd "$(dirname "$0")/../.."
+
+container=$1
+user=$2
+database=$3
+backup_dir=$(mktemp -d "${TMPDIR:-/tmp}/lockstep-backup-check.XXXXXX")
+trap 'rm -rf "$backup_dir"' EXIT
+
+export LOCKSTEP_DB_CONTAINER="$container"
+export LOCKSTEP_DB_USER="$user"
+export LOCKSTEP_DB_NAME="$database"
+export LOCKSTEP_BACKUP_DIR="$backup_dir"
+
+sql() {
+  docker exec "$container" psql -X -q -t -A -v ON_ERROR_STOP=1 -U "$user" -d "$database" -c "$1"
+}
+
+fail() {
+  echo "backup/restore check: $1" >&2
+  exit 1
+}
+
+sql "CREATE TABLE backup_probe (v text); INSERT INTO backup_probe VALUES ('before-backup');"
+
+dump=$(scripts/db backup | tail -n 1)
+[ -s "$dump" ] || fail "backup did not produce a dump: $dump"
+[ -f "$dump.sha256" ] || fail "backup did not write $dump.sha256"
+(cd "$(dirname "$dump")" && shasum -a 256 -c "$(basename "$dump").sha256" >/dev/null) \
+  || fail "the recorded digest does not match the dump"
+
+sql "DELETE FROM backup_probe;"
+[ "$(sql 'SELECT count(*) FROM backup_probe;')" = 0 ] || fail "fixture: delete failed"
+
+scripts/db restore "$dump" >/dev/null
+[ "$(sql 'SELECT v FROM backup_probe;')" = before-backup ] || fail "restored data is wrong"
+
+corrupt="$backup_dir/corrupt.dump"
+cp "$dump" "$corrupt"
+cp "$dump.sha256" "$corrupt.sha256"
+sed -i.bak "s#$(basename "$dump")#corrupt.dump#" "$corrupt.sha256"
+printf 'x' >> "$corrupt"
+sql "DELETE FROM backup_probe;"
+if scripts/db restore "$corrupt" >/dev/null 2>&1; then
+  fail "a dump whose digest does not match was restored"
+fi
+[ "$(sql 'SELECT count(*) FROM backup_probe;')" = 0 ] || fail "a refused restore changed the database"
+
+echo "backup/restore check: dump + digest written; restore round trip ok; corrupted dump refused"
