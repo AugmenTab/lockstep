@@ -1,3 +1,5 @@
+> **Superseded (2026-10-18).** The human demonstration against report r1 failed at step 4 (browser forms refused). See `docs/gates/A/r2/decision-packet.md` and `docs/gates/A/r2/gate-report.md`. This packet and report r1 are kept unchanged below as evidence.
+
 # Gate A — decision packet
 
 For the human owner. This packet links the canonical artifacts and asks only for your
