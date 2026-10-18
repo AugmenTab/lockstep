@@ -68,3 +68,13 @@ RUN apt-get update \
 # The project stack.yaml sets system-ghc/install-ghc so Stack uses this GHC.
 ENV STACK_ROOT=/stack-root
 WORKDIR /work
+
+# Test tooling for the real-browser form tests (C-P1.7-R1 R2): headless
+# Chromium driven over the DevTools protocol by a Python standard-library
+# script. Neither is linked into or needed by the shipped lockstep binary.
+RUN apt-get update \
+      && apt-get install -y --no-install-recommends \
+           chromium \
+           python3 \
+      && apt-get clean \
+      && rm -rf /var/lib/apt/lists/*

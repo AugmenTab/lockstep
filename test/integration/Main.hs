@@ -5,6 +5,7 @@ module Main
 import Flipstone.Prelude
 import Test.Tasty (defaultMain, testGroup)
 
+import Lockstep.BrowserFormTest qualified as BrowserFormTest
 import Lockstep.CommandCenterTest qualified as CommandCenterTest
 import Lockstep.DispatcherTest qualified as DispatcherTest
 import Lockstep.FaultPlanTest qualified as FaultPlanTest
@@ -27,4 +28,5 @@ main =
       , DispatcherTest.tests
       , CommandCenterTest.tests
       , FaultPlanTest.tests
+      , BrowserFormTest.tests
       ]
