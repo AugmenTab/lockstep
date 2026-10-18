@@ -110,3 +110,17 @@ authorized:
 ## 6. Answer needed
 
 For example: "R-P1.3-1 approved." Or choose the meta-tag alternative.
+
+## 7. Owner decision on the amendment (verbatim, 2026-10-18)
+
+> **R-P1.3-1 APPROVED.**
+>
+> Authorize the exact one-line amendment to the frozen P1.3 test: change the `/operator` page's expected `Referrer-Policy` from `no-referrer` to `origin`.
+>
+> No other assertions or frozen tests are authorized to change. Record the amendment and re-freeze the corrected test with its new digest.
+>
+> Proceed with the already authorized Gate A recovery […]. Remain in the Implementer role.
+> Continue without further approval requests unless a genuinely new authority, security, or
+> verification conflict arises.
+
+Applied byte for byte and re-frozen: C-P1.3 §9.1 (new digest `604a78ff…`).

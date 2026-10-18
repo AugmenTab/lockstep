@@ -111,7 +111,7 @@ tests =
           operatorPage <- httpRequest port "GET" "/operator" [cookieHeader cookie] ""
           responseStatus operatorPage @?= 200
           responseHeader "Cache-Control" operatorPage @?= Just "no-store"
-          responseHeader "Referrer-Policy" operatorPage @?= Just "no-referrer"
+          responseHeader "Referrer-Policy" operatorPage @?= Just "origin"
           csrf <- csrfOf cookie
           contains' "/operator/sign-out" (responseBody operatorPage)
           contains' csrf (responseBody operatorPage)
