@@ -1,7 +1,7 @@
 # Lockstep v2 — Operator guide
 
 For the single local operator of this machine. Every procedure here was exercised on macOS
-(arm64) with Docker Desktop 29.4 during P1.7 (`docs/gates/A/evidence/a1/`). Lockstep is private
+(arm64) with OrbStack (Docker Engine 29.4.0) during P1.7 (`docs/gates/A/evidence/a1/`). Lockstep is private
 and not distributed.
 
 ## 1. What runs where
@@ -10,7 +10,7 @@ and not distributed.
 |---|---|---|
 | Build and tests | Docker image `lockstep-dev:p1` (GHC 9.10.3, Stack) | The host needs only Docker and Git. |
 | PostgreSQL 17 | Container `lockstep-postgres`, volume `lockstep-pgdata`, `127.0.0.1:5433` | Managed by `scripts/db` (ADR-0002). |
-| The service | Container `lockstep-service` running the installed binary | Binds `127.0.0.1` only; reachable at `http://127.0.0.1:8000/` from this machine. |
+| The service | Container `lockstep-service` running the installed binary | Binds `127.0.0.1` only; host networking forwards it to this machine's `127.0.0.1:8000` only (measured on OrbStack; re-run `scripts/a1` if you change the Docker runtime). |
 | Secrets | `.local/config/lockstep.json` (mode 0600, gitignored) | Database password. Never printed. Whoever can read it is the operator. |
 | Backups | `.local/backups/` | `pg_dump` custom format with a `.sha256` file. |
 

@@ -22,7 +22,6 @@ import Brigid.HTML.Types qualified as HTML
 import Brigid.Types qualified as B
 import Control.Monad (unless)
 import Data.ByteString qualified as BS
-import Data.Function ((&))
 import Data.List qualified as L
 import Data.Maybe (fromMaybe)
 import Data.String.Interpolate qualified as Interpolate
@@ -171,8 +170,12 @@ handleOperator db route request =
         withForm request $ \form ->
           case singleValue (formValues "csrf" form) of
             Just csrf | csrfMatches token (TE.decodeLatin1 csrf) -> do
-              _ <- revokeSession runtime token
-              pure (redirect "/" [(hSetCookie, clearCookie)])
+              revoked <- revokeSession runtime token
+              pure $
+                case revoked of
+                  Right () -> redirect "/" [(hSetCookie, clearCookie)]
+                  -- Never claim a sign-out the database did not record (review finding 13).
+                  Left _ -> refusal HTTP.status503 notReadyPage
             _ ->
               pure (refusal HTTP.status403 csrfPage)
 
@@ -198,10 +201,17 @@ htmlType :: HTTP.Header
 htmlType =
   (HTTP.hContentType, "text/html; charset=utf-8")
 
--- | Every operator response is no-store; the policy header is the caller's.
+{- | Every operator page is no-store and may not be framed (Gate A review
+finding 2: another 127.0.0.1 port is the same site); the referrer policy is
+the caller's.
+-}
 operatorResponse :: HTTP.Status -> HTTP.Header -> E.HTML -> Wai.Response
-operatorResponse status policy html =
-  Wai.responseLBS status [htmlType, noStore, policy] (renderLazyHTML html)
+operatorResponse status policy =
+  operatorPageResponse status policy ("Content-Security-Policy", "frame-ancestors 'none'")
+
+operatorPageResponse :: HTTP.Status -> HTTP.Header -> HTTP.Header -> E.HTML -> Wai.Response
+operatorPageResponse status policy csp html =
+  Wai.responseLBS status [htmlType, noStore, policy, csp, ("X-Frame-Options", "DENY")] (renderLazyHTML html)
 
 refusal :: HTTP.Status -> E.HTML -> Wai.Response
 refusal status =
@@ -214,18 +224,13 @@ redirect location extra =
 -- | E3: the only response that carries the raw sign-in token, once.
 confirmResponse :: RawToken -> Wai.Response
 confirmResponse token =
-  operatorResponse
+  operatorPageResponse
     HTTP.status200
     ("Referrer-Policy", "origin")
+    ( "Content-Security-Policy"
+    , "default-src 'none'; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+    )
     (confirmPage token)
-    & addHeader
-      ( "Content-Security-Policy"
-      , "default-src 'none'; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
-      )
-
-addHeader :: HTTP.Header -> Wai.Response -> Wai.Response
-addHeader header =
-  Wai.mapResponseHeaders (<> [header])
 
 signedInResponse :: RawToken -> Wai.Response
 signedInResponse session =

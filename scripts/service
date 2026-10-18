@@ -9,9 +9,11 @@
 #   scripts/service logs
 #   scripts/service cli ARGS...        run the installed binary with the same config
 #
-# The binary binds 127.0.0.1 only. The container uses host networking, which on
-# Docker Desktop makes that loopback listener reachable at this machine's
-# 127.0.0.1:N; no non-loopback listener exists. Only .local/install (read-only)
+# The binary binds 127.0.0.1 only. The container uses host networking; on this
+# Mac's Docker runtime (OrbStack, Docker Engine 29.4) that loopback listener is
+# forwarded to this machine's 127.0.0.1:N only (measured by scripts/a1, A1-04b:
+# lsof shows a single 127.0.0.1 listener and the LAN address refuses). Another
+# runtime may forward differently: re-run scripts/a1 after changing it. Only .local/install (read-only)
 # and the generated config are mounted: no repository files, no static
 # directory, no Node or Python runtime.
 #

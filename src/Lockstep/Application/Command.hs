@@ -39,6 +39,7 @@ module Lockstep.Application.Command
   , findReceipt
   ) where
 
+import Control.Exception (throwIO)
 import Crypto.Hash (SHA256 (SHA256), hashWith)
 import Crypto.Random (getRandomBytes)
 import Data.ByteArray qualified as BA
@@ -50,6 +51,7 @@ import Data.Text.Encoding qualified as TE
 import Data.Time qualified as Time
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
+import System.IO.Error (userError)
 import Text.Show (Show, show)
 
 import Lockstep.Application.Database
@@ -390,6 +392,10 @@ submitCommand runtime envelope = do
           , Store.newOutcome = outcomeCode outcome
           , Store.newRevision = revisionInt revision
           }
+    case inserted of
+      -- An effect must never commit without its receipt: abort the transaction (review finding 7).
+      Nothing -> liftIO (throwIO (userError "lockstep: the command receipt insert returned no row"))
+      Just _ -> pure ()
     pure $
       case inserted of
         Nothing -> Left (CommandNotReady DatabaseError)
