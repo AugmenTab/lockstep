@@ -186,7 +186,7 @@ cat > "$work/browser-steps.json" <<JSON
  {"op":"open","label":"op2","url":"$base/operator"},
  {"op":"click","label":"signout","selector":"form[action=\"/operator/sign-out\"] button"}]
 JSON
-docker run --rm --network host -v "$PWD:/work" -w /work lockstep-dev:p1 python3 test/browser/cdp.py < "$work/browser-steps.json" > "$work/browser.out" 2>&1
+docker run --rm -i --network host -v "$PWD:/work" -w /work lockstep-dev:p1 python3 test/browser/cdp.py < "$work/browser-steps.json" > "$work/browser.out" 2>&1
 browser_code=$?
 { echo "### browser (Chromium via test/browser/cdp.py): sign in, rename through the form, sign out"; echo "exit: $browser_code"; redact "$(grep -v '\.text' "$work/browser.out")"; echo; } >> "$log"
 bv() { grep "^$1"$'\t' "$work/browser.out" | head -n 1 | cut -f2-; }
