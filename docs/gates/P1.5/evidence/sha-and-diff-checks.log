@@ -1,0 +1,55 @@
+== shasum -a 256 -c frozen-SHA256SUMS (P1.1-P1.4 frozen files minus the runners; C-P1.5 §8 with §9.1 for DispatcherTest; runners) at 10a849d1ba067fce3676796d021523da3fd2bc58
+test/unit/Lockstep/Foundation/SystemConfigTest.hs: OK
+test/unit/Lockstep/Foundation/CliDbTest.hs: OK
+test/unit/Lockstep/Persistence/MigrationTest.hs: OK
+test/unit/Lockstep/Application/ReadinessTest.hs: OK
+test/unit/Lockstep/Web/LivenessPageTest.hs: OK
+test/unit/Lockstep/Web/ReadinessRouteTest.hs: OK
+test/integration/Lockstep/Support/Postgres.hs: OK
+test/integration/Lockstep/Support/Process.hs: OK
+test/integration/Lockstep/MigrationDbTest.hs: OK
+test/integration/Lockstep/ServiceDbTest.hs: OK
+scripts/lib/check-db-backup-restore: OK
+test/unit/Lockstep/Foundation/CliTest.hs: OK
+test/unit/Lockstep/Web/ServerTest.hs: OK
+test/unit/Lockstep/Web/ApplicationTest.hs: OK
+test/integration/Lockstep/ProcessTest.hs: OK
+test/fixtures/lint/PartialFunctions.hs: OK
+test/fixtures/boundary/violation/Lockstep/Foundation/BoundaryViolation.hs: OK
+test/fixtures/boundary/control/Lockstep/Web/BoundaryControl.hs: OK
+test/unit/Lockstep/Foundation/OperatorTokenTest.hs: OK
+test/unit/Lockstep/Foundation/CliOperatorTest.hs: OK
+test/unit/Lockstep/Web/RequestGuardTest.hs: OK
+test/unit/Lockstep/Web/OperatorRoutesTest.hs: OK
+test/integration/Lockstep/OperatorTrustTest.hs: OK
+test/integration/Lockstep/Support/Http.hs: OK
+test/unit/Lockstep/Application/CommandTest.hs: OK
+test/unit/Lockstep/Foundation/CliWorkspaceTest.hs: OK
+test/unit/Lockstep/Web/CommandRoutesTest.hs: OK
+test/integration/Lockstep/OperatorCommandTest.hs: OK
+test/unit/Lockstep/Application/NoopCommandTest.hs: OK
+test/unit/Lockstep/Foundation/CliJobTest.hs: OK
+test/integration/Lockstep/DispatcherTest.hs: OK
+test/unit/Main.hs: OK
+test/integration/Main.hs: OK
+exit=0
+
+== removed runner lines since the P1.4 freeze (5122880)
+0
+== test changes since the P1.5 freeze (73d5b57)
+ test/integration/Lockstep/DispatcherTest.hs | 27 +++++++++++++++++++--------
+ 1 file changed, 19 insertions(+), 8 deletions(-)
+(expected: exactly the R-P1.5-1 amendment, 1 file +19 -8)
+== R-P1.5-1 applied diff equals the authorized diff
+IDENTICAL
+== files changed by the implementation since the freeze
+ app/lockstep/Main.hs                   | 122 ++++++++++++++------
+ lockstep.cabal                         |   5 +
+ src/Lockstep/Application/Command.hs    |  81 +++++++++++++-
+ src/Lockstep/Application/Dispatcher.hs | 199 +++++++++++++++++++++++++++++++++
+ src/Lockstep/Foundation/Cli.hs         |  77 +++++++++++++
+ src/Lockstep/Persistence/Jobs.hs       | 159 ++++++++++++++++++++++++++
+ src/Lockstep/Persistence/Migrations.hs |  26 +++++
+ src/Lockstep/Web/Operator.hs           | 104 ++++++++++++++++-
+ src/Lockstep/Web/Server.hs             |  19 +++-
+ 9 files changed, 741 insertions(+), 51 deletions(-)

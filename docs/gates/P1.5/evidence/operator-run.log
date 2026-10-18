@@ -1,0 +1,66 @@
+# P1.5 operator run, 2026-10-18T17:18:03Z, commit 10a849d1ba067fce3676796d021523da3fd2bc58 (binary built from identical src/app at 71b6be0)
+# command: scripts/db backup; docker run --rm --network lockstep-net -e BACKUP=<that path> -v <repo>:/work lockstep-dev:p1 bash /work/docs/gates/P1.5/evidence/operator-run.sh
+$ lockstep db migrate
+lockstep: migrations are already applied: take a backup (scripts/db backup) and pass --backup FILE, or pass --no-backup
+[exit 75]
+$ lockstep db migrate --backup .local/backups/20261018T171735Z-r3-54788.dump
+applied migrations: 4
+[exit 0]
+$ lockstep workspace show
+name: Browser Workspace
+revision: 2
+[exit 0]
+$ lockstep job queue --expected-revision 2 --steps 3 --step-ms 100 --idempotency-key p15-operator-job-0001
+receipt 5 queued revision 2 key p15-operator-job-0001 job 1
+[exit 0]
+-- no service running; after 1 s:
+job 1 queued steps 0/3 attempts 0
+-- serve a started
+-- after 2 s with the service:
+job 1 succeeded steps 3/3 attempts 1
+$ lockstep job queue --expected-revision 2 --steps 3 --step-ms 100 --idempotency-key p15-operator-job-0001
+receipt 5 queued revision 2 key p15-operator-job-0001 job 1 (replayed)
+[exit 0]
+$ lockstep job queue --expected-revision 2 --steps 3 --step-ms 50 --fail-at-step 2 --idempotency-key p15-operator-job-0002
+receipt 6 queued revision 2 key p15-operator-job-0002 job 2
+[exit 0]
+job 2 failed steps 1/3 attempts 1
+error: deterministic failure injected at step 2
+$ lockstep job queue --expected-revision 2 --steps 10 --step-ms 400 --idempotency-key p15-operator-job-0003
+receipt 7 queued revision 2 key p15-operator-job-0003 job 3
+[exit 0]
+-- mid-job:
+job 3 running steps 4/10 attempts 1
+-- serve stopped (exit 0)
+-- after SIGTERM:
+job 3 queued steps 4/10 attempts 1
+-- serve b started
+-- after restart:
+job 3 succeeded steps 10/10 attempts 2
+-- browser queue: HTTP/1.1 303 See Other Location: /operator/receipts/8 in 11 ms
+-- GET /operator/receipts/8: Command=queue-noop Outcome=queued Expected revision=2 Revision=2 Actor=browser-session Accepted=2026-10-18 17:17:52 UTC Idempotency key=_6d2H8MtXaskRCbBD_n8JA Job=4 Job state=succeeded Steps=5/5 Attempts=1 
+-- serve stopped (exit 0)
+job 1 succeeded steps 3/3 attempts 1
+job 2 failed steps 1/3 attempts 1
+error: deterministic failure injected at step 2
+job 3 succeeded steps 10/10 attempts 2
+job 4 succeeded steps 5/5 attempts 1
+-- server logs
+Database readiness: ready 4
+Service start recorded
+Listening on 127.0.0.1:8000
+Dispatcher: job 1 claimed (attempt 1)
+Dispatcher: job 1 succeeded
+Dispatcher: job 2 claimed (attempt 1)
+Dispatcher: job 2 failed
+Dispatcher: job 3 claimed (attempt 1)
+Dispatcher: job 3 returned to the queue at shutdown
+Database readiness: ready 4
+Service start recorded
+Listening on 127.0.0.1:8000
+Dispatcher: job 3 claimed (attempt 2)
+Dispatcher: job 3 succeeded
+Dispatcher: job 4 claimed (attempt 1)
+Dispatcher: job 4 succeeded
+database password occurrences in all outputs: 0
+sign-in token occurrences in all outputs: 0
