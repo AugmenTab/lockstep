@@ -171,3 +171,33 @@ Pre-freeze verification (§6):
 - Expectations checked against real behaviour before the freeze: in-process WAI requests
   without `Host` (D-1a), browser `Origin`/`Referer` (D-2d probe), the row lock that serializes
   two exchanges of one token, and that `sign-out-all` counts only live sessions (E9).
+
+## 9. Amendments
+
+### 9.1 R-P1.3-1 (2026-10-18): `/operator` uses `Referrer-Policy: origin`
+
+Authority: the Planner's Gate A decision (Option A: `Referrer-Policy: origin` on operator HTML
+pages containing forms; strict exact-Origin guard kept; no `Origin: null` exception), and the
+owner's separate authorization of the test amendment, verbatim:
+
+> **R-P1.3-1 APPROVED.**
+>
+> Authorize the exact one-line amendment to the frozen P1.3 test: change the `/operator` page's expected `Referrer-Policy` from `no-referrer` to `origin`.
+>
+> No other assertions or frozen tests are authorized to change. Record the amendment and re-freeze the corrected test with its new digest.
+
+Record: `docs/gates/A/r2/browser-forms-regression.md`. E8 now reads: every `/operator*` response
+carries `Cache-Control: no-store`. `Referrer-Policy: origin` is sent by the pages that contain
+forms (the confirm page, `/operator`, `/operator/jobs/new`); every other operator response
+carries `Referrer-Policy: no-referrer`.
+
+`test/integration/Lockstep/OperatorTrustTest.hs` was amended with exactly
+`docs/gates/A/r2/proposed-test-amendment.diff` (sha256 `33114dc07607e1dab18cb8f0b4ec5097d958eabd710050fad5655534af4a4dde`;
+one line, `Just "no-referrer"` → `Just "origin"` for the `/operator` page). Superseded digest
+`bd708e56…`; **new frozen digest**:
+
+| File | SHA-256 |
+|---|---|
+| `test/integration/Lockstep/OperatorTrustTest.hs` | `604a78ffc724170252e3f8ea53b47c2f611b439ddd4949045dbade707ed4c619` |
+
+No other frozen file changes.
