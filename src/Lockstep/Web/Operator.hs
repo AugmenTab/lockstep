@@ -388,6 +388,15 @@ withSession db request action =
 
 -- * Pages
 
+{- | A @value@ attribute, HTML-escaped. Brigid 0.4's 'A.value' writes its text
+unescaped (its custom attributes escape quotes), so a workspace name containing
+a double quote could break out of the attribute (Gate A, A1-12b).
+-}
+escapedValue :: T.Text -> A.Attribute tag
+escapedValue =
+  -- Brigid's custom-attribute escaper encodes quotes; ampersands are encoded here.
+  A.customAttribute (T.pack "value") . T.replace (T.pack "&") (T.pack "&amp;")
+
 confirmPage :: RawToken -> E.HTML
 confirmPage token =
   page
@@ -406,7 +415,7 @@ confirmPage token =
             [ E.input
                 [ A.type_ HTML.InputHidden
                 , A.customAttribute [Interpolate.i|name|] [Interpolate.i|token|]
-                , A.value (encodeToken token)
+                , escapedValue (encodeToken token)
                 ]
             , E.button [] [E.text [Interpolate.i|Sign in|]]
             ]
@@ -431,7 +440,7 @@ operatorPage token session workspace key =
             [ E.input
                 [ A.type_ HTML.InputHidden
                 , A.customAttribute [Interpolate.i|name|] [Interpolate.i|csrf|]
-                , A.value (csrfFor token)
+                , escapedValue (csrfFor token)
                 ]
             , E.button [] [E.text [Interpolate.i|Sign out|]]
             ]
@@ -474,10 +483,10 @@ queuePage token workspace key =
     E.label
       []
       [ E.text label
-      , E.input [A.type_ HTML.InputText, A.customAttribute [Interpolate.i|name|] name, A.value value]
+      , E.input [A.type_ HTML.InputText, A.customAttribute [Interpolate.i|name|] name, escapedValue value]
       ]
   hiddenField name value =
-    E.input [A.type_ HTML.InputHidden, A.customAttribute [Interpolate.i|name|] name, A.value value]
+    E.input [A.type_ HTML.InputHidden, A.customAttribute [Interpolate.i|name|] name, escapedValue value]
 
 workspaceSection :: RawToken -> Maybe WorkspaceState -> IdempotencyKey -> E.ChildHTML E.Main grandparent
 workspaceSection token workspace key =
@@ -501,23 +510,23 @@ workspaceSection token workspace key =
             , E.input
                 [ A.type_ HTML.InputText
                 , A.customAttribute [Interpolate.i|name|] [Interpolate.i|name|]
-                , A.value (workspaceName current)
+                , escapedValue (workspaceName current)
                 ]
             ]
         , E.input
             [ A.type_ HTML.InputHidden
             , A.customAttribute [Interpolate.i|name|] [Interpolate.i|expected_revision|]
-            , A.value (T.pack (show (revisionInt (workspaceRevision current))))
+            , escapedValue (T.pack (show (revisionInt (workspaceRevision current))))
             ]
         , E.input
             [ A.type_ HTML.InputHidden
             , A.customAttribute [Interpolate.i|name|] [Interpolate.i|idempotency_key|]
-            , A.value (idempotencyKeyText key)
+            , escapedValue (idempotencyKeyText key)
             ]
         , E.input
             [ A.type_ HTML.InputHidden
             , A.customAttribute [Interpolate.i|name|] [Interpolate.i|csrf|]
-            , A.value (csrfFor token)
+            , escapedValue (csrfFor token)
             ]
         , E.button [] [E.text [Interpolate.i|Rename|]]
         ]
