@@ -41,3 +41,17 @@
 |---|---|
 | C-P1.7-R1 | **`VERIFIED — awaiting human acceptance`** at `6c2851d40a13be9ce08c97e692e30575b7b7d6e2` |
 | Recorded by | manual agent session (writing agent / Implementer), 2026-10-18. Not an acceptance. |
+
+## Human acceptance (2026-10-18)
+
+The human owner accepted C-P1.7-R1 with P1.3–P1.7 and Gate A r2. Recorded by the writing agent
+(Implementer) at the owner's instruction; this is the owner's decision, not the agent's. Owner's
+words, verbatim: "**P1.3–P1.7: ACCEPTED**, including the authorized C-P1.7-R1 remediation,
+against their documented tested commits and Gate A r2 qualification evidence."
+
+| Field | Value |
+|---|---|
+| C-P1.7-R1 | **ACCEPTED** |
+| Tested commit | `6c2851d40a13be9ce08c97e692e30575b7b7d6e2` |
+| Deviation 1 (R5 partly met) | accepted within its recorded scope: the browser stale check was done in the owner's demonstration (step 5b), which the owner passed |
+| Decided by | the human owner (operator), 2026-10-18 (`docs/gates/A/r2/decision-packet.md`) |

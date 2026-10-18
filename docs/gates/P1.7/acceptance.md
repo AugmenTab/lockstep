@@ -57,3 +57,18 @@
 | P1.7 | **`VERIFIED — awaiting human acceptance`** at `de8afa310e13a8d2b699ac4627afe092393b087a` |
 | Recorded by | manual agent session (writing agent / Implementer), 2026-10-18. Not an acceptance. |
 | Gate A | Not decided. The owner decides it against the exact report revision (`docs/gates/A/decision-packet.md`). |
+
+## Human acceptance (2026-10-18)
+
+The human owner accepted P1.7, with its C-P1.7-R1 remediation, and Gate A on report r2. Recorded
+by the writing agent (Implementer) at the owner's instruction; this is the owner's decision, not
+the agent's. Owner's words, verbatim: "**P1.3–P1.7: ACCEPTED**, including the authorized
+C-P1.7-R1 remediation, against their documented tested commits and Gate A r2 qualification
+evidence."
+
+| Field | Value |
+|---|---|
+| P1.7 | **ACCEPTED** |
+| Tested commit | `de8afa310e13a8d2b699ac4627afe092393b087a` (this record); remediated and requalified at `6c2851d40a13be9ce08c97e692e30575b7b7d6e2` (`r1-acceptance.md`) |
+| Gate A | **ACCEPTED** on report r2 (`docs/gates/A/r2/decision-packet.md`); report r1 is superseded and kept |
+| Decided by | the human owner (operator), 2026-10-18 |

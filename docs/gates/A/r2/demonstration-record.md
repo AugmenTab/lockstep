@@ -45,3 +45,18 @@
   smoke test, created 19:10:25). One session from the owner's first, failed demonstration attempt
   (18:54:40) is still live; `scripts/service cli operator sign-out-all` ends it.
 - The service is still running on `127.0.0.1:8010`.
+
+## Owner's disposition (2026-10-18)
+
+Before recording acceptance, the agent asked the owner whether step 5b passed. The owner had
+first reported "Nope, got receipts for both renames", and later confirmed `refused_stale` on the
+command center. Two choices were offered: (1) 5b passed, with 5a agent-run; (2) 5b failed.
+Owner's answer, verbatim: "1, I saw refused_stale on tab B. Don't proceed to phase 2."
+
+| Field | Value |
+|---|---|
+| AC-A1-18@v2 | **PASSED** (owner's disposition) |
+| Step 5a | run by the agent at the owner's request; accepted by the owner within choice 1 |
+| Findings 1–3 above | carried forward; not blocking Gate A |
+
+Housekeeping update: the service was stopped at the owner's request after the demonstration.

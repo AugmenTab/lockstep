@@ -78,7 +78,13 @@ Gate A, 2026-10-18 (`docs/gates/A/r2/browser-forms-regression.md`):
 - **Planner decision: Option A.** `Referrer-Policy: origin` on operator pages containing forms; strict exact-Origin guard kept; no `Origin: null` exception; remediation C-P1.7-R1 with real-browser tests.
 - **R-P1.3-1 APPROVED** by the owner (one-line frozen-test amendment; re-frozen in C-P1.3 §9.1).
 
-Pending owner decisions: P1.3–P1.7 acceptance (including C-P1.7-R1); **Gate A** on report r2 (`docs/gates/A/r2/decision-packet.md`), including the session-cookie limitation (r2 §3.1); the new human demonstration.
+Gate A owner decisions, 2026-10-18 (`docs/gates/A/r2/decision-packet.md`; recorded by the writing agent at the owner's instruction):
+
+- **Gate A ACCEPTED** on report r2, sha256 `33c8d26a0b7a01696fc1e2b4c3f2541fd7062a2d18f60616cc0da895520feaef`, tested commit `6c2851d`. Report r1 (`efee1118…`) is superseded and kept.
+- **P1.3–P1.7 ACCEPTED**, including C-P1.7-R1, at their documented tested commits and the Gate A r2 qualification evidence.
+- **Session-cookie limitation: option (a) ACCEPTED for Phase 1 only.** Dedicated loopback-host isolation must be addressed before consequential agent execution. This is not an authorization for remote access.
+- **Human demonstration (AC-A1-18@v2) PASSED** by the owner's disposition (step 5b confirmed; step 5a agent-run at the owner's request). Findings carried forward: the refusal page reads like success; sign-in usability; restart not shown mid-job.
+- The owner's instruction: do not proceed to Phase 2. Phase 2 has not started.
 
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.

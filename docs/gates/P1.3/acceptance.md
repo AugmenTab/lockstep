@@ -66,3 +66,17 @@
 | P1.3 | **`VERIFIED — awaiting human acceptance`** at `d2f04eac088d002d6c2a0e5c386c9cadd7873d57` |
 | Recorded by | manual agent session (writing agent / Implementer), 2026-10-17. Not an acceptance. |
 | Continuation | The owner's instruction of 2026-10-17 ("proceed sequentially through P1.3–P1.7 … Do not request ceremonial approvals") lets work continue to P1.4 while this record awaits the owner. |
+
+## Human acceptance (2026-10-18)
+
+The human owner accepted P1.3 with Gate A r2. Recorded by the writing agent (Implementer) at the
+owner's instruction; this is the owner's decision, not the agent's. Owner's words, verbatim:
+"**P1.3–P1.7: ACCEPTED**, including the authorized C-P1.7-R1 remediation, against their
+documented tested commits and Gate A r2 qualification evidence."
+
+| Field | Value |
+|---|---|
+| P1.3 | **ACCEPTED** |
+| Tested commit | `d2f04eac088d002d6c2a0e5c386c9cadd7873d57` (this record); qualified with Gate A r2 at `6c2851d40a13be9ce08c97e692e30575b7b7d6e2` (`docs/gates/A/r2/gate-report.md`, sha256 `33c8d26a0b7a01696fc1e2b4c3f2541fd7062a2d18f60616cc0da895520feaef`) |
+| Scope | as recorded above, including the 2026-10-18 correction |
+| Decided by | the human owner (operator), 2026-10-18 (`docs/gates/A/r2/decision-packet.md`) |

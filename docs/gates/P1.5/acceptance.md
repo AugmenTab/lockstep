@@ -80,3 +80,17 @@ above is kept unchanged as history.
 - **New coverage:** the frozen real-browser test `BrowserFormTest` (headless Chromium submits the
   served forms; state checked in PostgreSQL), plus A1's browser step. See
   `docs/gates/A/r2/gate-report.md`.
+
+## Human acceptance (2026-10-18)
+
+The human owner accepted P1.5 with Gate A r2. Recorded by the writing agent (Implementer) at the
+owner's instruction; this is the owner's decision, not the agent's. Owner's words, verbatim:
+"**P1.3–P1.7: ACCEPTED**, including the authorized C-P1.7-R1 remediation, against their
+documented tested commits and Gate A r2 qualification evidence."
+
+| Field | Value |
+|---|---|
+| P1.5 | **ACCEPTED** |
+| Tested commit | `10a849d1ba067fce3676796d021523da3fd2bc58` (this record); qualified with Gate A r2 at `6c2851d40a13be9ce08c97e692e30575b7b7d6e2` (`docs/gates/A/r2/gate-report.md`, sha256 `33c8d26a0b7a01696fc1e2b4c3f2541fd7062a2d18f60616cc0da895520feaef`) |
+| Scope | as recorded above, including the 2026-10-18 correction |
+| Decided by | the human owner (operator), 2026-10-18 (`docs/gates/A/r2/decision-packet.md`) |

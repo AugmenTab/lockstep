@@ -45,10 +45,18 @@ r1 and is superseded by the failed demonstration. Nothing here is decided.
 
 ## Your decision (to be filled in by you)
 
+Recorded by the writing agent (Implementer) at the owner's instruction, 2026-10-18. These are the
+human owner's decisions, not the agent's. The report identity was checked before recording:
+`shasum -a 256 docs/gates/A/r2/gate-report.md` gave
+`33c8d26a0b7a01696fc1e2b4c3f2541fd7062a2d18f60616cc0da895520feaef`, matching the owner's
+decision. The report itself is unchanged.
+
 | Field | Value |
 |---|---|
-| Gate A (report r2, `33c8d26a…`) | |
-| P1.3 / P1.4 / P1.5 / P1.6 / P1.7 (incl. C-P1.7-R1) | |
-| Session-cookie limitation | |
-| Human demonstration: date, result per step, anything unexpected | |
-| Decided by / at | |
+| Gate A (report r2, `33c8d26a0b7a01696fc1e2b4c3f2541fd7062a2d18f60616cc0da895520feaef`, tested commit `6c2851d`) | **ACCEPTED** (owner: "Gate A: ACCEPTED, contingent on the human-operated walkthrough having passed, including the browser stale-command check in step 5b"; the walkthrough passed, see the last row) |
+| P1.3 / P1.4 / P1.5 / P1.6 / P1.7 (incl. C-P1.7-R1) | **ACCEPTED**, "including the authorized C-P1.7-R1 remediation, against their documented tested commits and Gate A r2 qualification evidence" (each record's "Human acceptance" section) |
+| Session-cookie limitation | **Option (a) ACCEPTED for Phase 1 only.** The localhost cookie-sharing risk is an explicitly documented temporary limitation. Dedicated host isolation must be addressed before consequential agent execution. Not an authorization for remote access. |
+| Human demonstration: date, result per step, anything unexpected | **PASS**, 2026-10-18, revised r2 procedure (`demonstration-record.md`). Step 5b: the owner confirmed "I saw refused_stale on tab B" and chose to count 5b as passed, with step 5a run by the agent at the owner's request. Unexpected: the refusal page reads like a success page; sign-in usability; restart was not shown mid-job (findings 1–3 of the record). |
+| Decided by / at | the human owner (operator), 2026-10-18 |
+
+Owner's instruction with the decision: "Don't proceed to phase 2." Phase 2 has not started.
