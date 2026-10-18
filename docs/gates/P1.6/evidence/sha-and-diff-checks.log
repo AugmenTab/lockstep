@@ -1,0 +1,55 @@
+== shasum -a 256 -c frozen-SHA256SUMS (P1.1-P1.5 frozen files minus runners; C-P1.6 §8 with runners) at 2ac00597ff4d3bc92140a649c5aca71a420d5a56
+test/unit/Lockstep/Foundation/SystemConfigTest.hs: OK
+test/unit/Lockstep/Foundation/CliDbTest.hs: OK
+test/unit/Lockstep/Persistence/MigrationTest.hs: OK
+test/unit/Lockstep/Application/ReadinessTest.hs: OK
+test/unit/Lockstep/Web/LivenessPageTest.hs: OK
+test/unit/Lockstep/Web/ReadinessRouteTest.hs: OK
+test/integration/Lockstep/Support/Postgres.hs: OK
+test/integration/Lockstep/Support/Process.hs: OK
+test/integration/Lockstep/MigrationDbTest.hs: OK
+test/integration/Lockstep/ServiceDbTest.hs: OK
+scripts/lib/check-db-backup-restore: OK
+test/unit/Lockstep/Foundation/CliTest.hs: OK
+test/unit/Lockstep/Web/ServerTest.hs: OK
+test/unit/Lockstep/Web/ApplicationTest.hs: OK
+test/integration/Lockstep/ProcessTest.hs: OK
+test/fixtures/lint/PartialFunctions.hs: OK
+test/fixtures/boundary/violation/Lockstep/Foundation/BoundaryViolation.hs: OK
+test/fixtures/boundary/control/Lockstep/Web/BoundaryControl.hs: OK
+test/unit/Lockstep/Foundation/OperatorTokenTest.hs: OK
+test/unit/Lockstep/Foundation/CliOperatorTest.hs: OK
+test/unit/Lockstep/Web/RequestGuardTest.hs: OK
+test/unit/Lockstep/Web/OperatorRoutesTest.hs: OK
+test/integration/Lockstep/OperatorTrustTest.hs: OK
+test/integration/Lockstep/Support/Http.hs: OK
+test/unit/Lockstep/Application/CommandTest.hs: OK
+test/unit/Lockstep/Foundation/CliWorkspaceTest.hs: OK
+test/unit/Lockstep/Web/CommandRoutesTest.hs: OK
+test/integration/Lockstep/OperatorCommandTest.hs: OK
+test/unit/Lockstep/Application/NoopCommandTest.hs: OK
+test/unit/Lockstep/Foundation/CliJobTest.hs: OK
+test/integration/Lockstep/DispatcherTest.hs: OK
+test/unit/Lockstep/Foundation/EvidenceModelTest.hs: OK
+test/unit/Lockstep/Web/CommandCenterViewTest.hs: OK
+test/integration/Lockstep/CommandCenterTest.hs: OK
+test/unit/Main.hs: OK
+test/integration/Main.hs: OK
+exit=0
+
+== removed runner lines since the P1.5 freeze (73d5b57)
+0
+== test changes since the P1.6 freeze (2dcdc46)
+(empty = none)
+== files changed by the implementation commit
+ README.md                                 |   9 ++
+ lockstep.cabal                            |   7 ++
+ src/Lockstep/Application/CommandCenter.hs | 201 ++++++++++++++++++++++++++++++
+ src/Lockstep/Foundation/EvidenceModel.hs  | 119 ++++++++++++++++++
+ src/Lockstep/Persistence/CommandCenter.hs |  96 ++++++++++++++
+ src/Lockstep/Persistence/Jobs.hs          |  14 ++-
+ src/Lockstep/Persistence/Migrations.hs    |   6 +
+ src/Lockstep/Web/CommandCenter.hs         | 197 +++++++++++++++++++++++++++++
+ src/Lockstep/Web/Operator.hs              |   8 ++
+ static/lockstep.css                       | 114 +++++++++++++++++
+ 10 files changed, 770 insertions(+), 1 deletion(-)
