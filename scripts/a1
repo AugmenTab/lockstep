@@ -3,6 +3,9 @@
 #
 #   scripts/a1 [OUT_DIR]      default OUT_DIR: docs/gates/A/evidence/a1
 #
+# While it runs, everything is written under .local/evidence/a1-<stamp>/
+# (gitignored), so the checkout stays clean for the cleanliness checks; the
+# directory is copied to OUT_DIR at the end.
 # Run from a clean checkout of the commit under test, with scripts/db up. It
 # creates a fresh database lockstep_a1_<UTC stamp> on the operator PostgreSQL
 # server (kept afterwards for inspection), installs and runs the service as a
@@ -13,11 +16,12 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
-out=${1:-docs/gates/A/evidence/a1}
+final_out=${1:-docs/gates/A/evidence/a1}
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+out=".local/evidence/a1-$stamp"
 mkdir -p "$out"
 log="$out/a1.log"
 : > "$log"
-stamp=$(date -u +%Y%m%dT%H%M%SZ)
 db="lockstep_a1_$(echo "$stamp" | tr 'A-Z' 'a-z')"
 port=8100
 base="http://127.0.0.1:$port"
@@ -273,4 +277,8 @@ check A1-14 "the provider-CLI sentinel log is empty and no secret appears in the
 rm -rf "$clone"
 note "A1 result: $failures failing check(s); database $db kept for inspection"
 (cd "$out" && rm -f SHA256SUMS && shasum -a 256 $(ls | grep -v '^SHA256SUMS$') > SHA256SUMS)
+rm -rf "$final_out"
+mkdir -p "$(dirname "$final_out")"
+cp -R "$out" "$final_out"
+echo "A1 evidence copied to $final_out"
 [ "$failures" = 0 ]
