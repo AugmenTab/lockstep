@@ -255,8 +255,12 @@ check A1-12 "receipts table holds 2 applied, 2 refused_stale, 1 queued; the job 
 note "A1-12b user-supplied text is escaped in pages (review finding 14)"
 rec "rename to markup via CLI" 0 scripts/service cli workspace rename --expected-revision 2 --idempotency-key a1-cli-key-00000003 '<b>"&x</b>'
 http "operator page with markup name" -H "$cookie" "$base/operator"
-check A1-12b "a workspace name '<b>\"&x</b>' renders escaped, never as markup" \
-  "$(printf '%s' "$HTTP_BODY" | grep -q '&lt;b&gt;' && ! printf '%s' "$HTTP_BODY" | grep -q -F '<b>"&x</b>'; echo $?)"
+# Brigid escapes text with numeric entities (&#60;) and attributes' quotes as &#34;.
+check A1-12b "a workspace name '<b>\"&x</b>' never appears raw: the text node is entity-escaped and the value attribute cannot be broken out of" \
+  "$(! printf '%s' "$HTTP_BODY" | grep -q -F '<b>"&x</b>' \
+    && ! printf '%s' "$HTTP_BODY" | grep -q -F 'value="<b>"' \
+    && printf '%s' "$HTTP_BODY" | grep -q -F '&#60;b&#62;' \
+    && printf '%s' "$HTTP_BODY" | grep -q -F 'value="<b>&#34;&amp;x</b>"'; echo $?)"
 
 note "A1-13 rendered pages (headless Chromium through a cookie proxy)"
 docker run --rm --network host -v "$PWD/$out:/out" lockstep-dev:p1 bash -c "
