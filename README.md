@@ -96,6 +96,20 @@ repeating a command with the same key returns the same receipt instead of
 applying it twice, and reusing a key for a different command is refused. The
 operator page (`/operator`) submits the same command through the browser.
 
+## Background jobs (C-P1.5)
+
+```sh
+lockstep job queue --expected-revision N [--steps S] [--step-ms M] [--fail-at-step K] [--idempotency-key K]
+lockstep job show JOB
+```
+
+Queueing only records the job (and its receipt); the running `lockstep serve`
+executes it in the background, one short transaction per step. Closing the
+browser or dropping the request does not cancel it. On a normal stop the
+service returns a running job to the queue; after a crash the job is reclaimed
+once its lease expires and resumes from its last completed step. Jobs are
+model-free no-ops; the browser form is at `/operator/jobs/new`.
+
 ## Licensing
 
 Lockstep v2 has no chosen license yet and is not distributed. Launchpad-derived
