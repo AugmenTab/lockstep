@@ -28,13 +28,16 @@ source-repository head
 library
   exposed-modules:
       Lockstep.Application.Command
+      Lockstep.Application.CommandCenter
       Lockstep.Application.Database
       Lockstep.Application.Dispatcher
       Lockstep.Application.OperatorTrust
       Lockstep.Foundation.Cli
       Lockstep.Foundation.Config
+      Lockstep.Foundation.EvidenceModel
       Lockstep.Foundation.OperatorToken
       Lockstep.Foundation.SystemConfig
+      Lockstep.Persistence.CommandCenter
       Lockstep.Persistence.Commands
       Lockstep.Persistence.Connection
       Lockstep.Persistence.Jobs
@@ -44,6 +47,7 @@ library
       Lockstep.Persistence.OperatorSessions
       Lockstep.Persistence.Queries
       Lockstep.Web.Application
+      Lockstep.Web.CommandCenter
       Lockstep.Web.Common
       Lockstep.Web.Components.Page
       Lockstep.Web.Components.Page404
@@ -122,6 +126,7 @@ test-suite lockstep-integration
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
+      Lockstep.CommandCenterTest
       Lockstep.DispatcherTest
       Lockstep.MigrationDbTest
       Lockstep.OperatorCommandTest
@@ -170,10 +175,12 @@ test-suite lockstep-unit
       Lockstep.Foundation.CliOperatorTest
       Lockstep.Foundation.CliTest
       Lockstep.Foundation.CliWorkspaceTest
+      Lockstep.Foundation.EvidenceModelTest
       Lockstep.Foundation.OperatorTokenTest
       Lockstep.Foundation.SystemConfigTest
       Lockstep.Persistence.MigrationTest
       Lockstep.Web.ApplicationTest
+      Lockstep.Web.CommandCenterViewTest
       Lockstep.Web.CommandRoutesTest
       Lockstep.Web.LivenessPageTest
       Lockstep.Web.OperatorRoutesTest

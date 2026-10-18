@@ -142,8 +142,20 @@ finishJob jobId owner state lastError =
       <> text state
       <> sql ", last_error = "
       <> maybe (sql "NULL") text lastError
-      <> sql ", finished_at = now(), owner = NULL, lease_until = NULL"
+      <> sql ", finished_at = now(), owner = NULL, lease_until = NULL, outcome_digest = "
+      <> outcomeDigestSql state lastError
       <> ownedBy jobId owner
+
+{- | C-P1.6 E3: SHA-256 of the canonical outcome text, computed in the same
+update from the row's final values.
+-}
+outcomeDigestSql :: T.Text -> Maybe T.Text -> RawSql.RawSql
+outcomeDigestSql state lastError =
+  sql "sha256(convert_to('lockstep-job-outcome-v1' || E'\\n' || id::text || E'\\n' || "
+    <> text state
+    <> sql " || E'\\n' || steps_done::text || '/' || steps_total::text || E'\\n' || "
+    <> maybe (sql "''") text lastError
+    <> sql ", 'UTF8'))"
 
 -- | Returns a running job to the queue (graceful shutdown).
 releaseJob :: O.MonadOrville m => Int64 -> T.Text -> m Bool
