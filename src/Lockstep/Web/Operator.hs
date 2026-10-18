@@ -53,6 +53,7 @@ import Lockstep.Application.Command
   , revisionInt
   , submitCommand
   )
+import Lockstep.Application.CommandCenter (loadCommandCenter)
 import Lockstep.Application.Database (DatabaseRuntime)
 import Lockstep.Application.Dispatcher (Job (..), findJobForReceipt, jobStateCode)
 import Lockstep.Application.OperatorTrust
@@ -63,6 +64,7 @@ import Lockstep.Application.OperatorTrust
   , revokeSession
   )
 import Lockstep.Foundation.OperatorToken (RawToken, csrfFor, csrfMatches, decodeToken, encodeToken)
+import Lockstep.Web.CommandCenter (commandCenterPage)
 import Lockstep.Web.Components.Page (page)
 import Lockstep.Web.RequestGuard (GuardRefusal (..))
 
@@ -75,6 +77,7 @@ data OperatorRoute
   | ReceiptView T.Text
   | QueueCommand
   | QueueForm
+  | CenterView
   deriving (Eq, Show)
 
 matchOperatorRoute :: HTTP.Method -> [T.Text] -> Maybe OperatorRoute
@@ -88,6 +91,7 @@ matchOperatorRoute method path =
     (["operator", "receipts", receipt], True, _) -> Just (ReceiptView receipt)
     (["operator", "commands", "queue-noop"], _, True) -> Just QueueCommand
     (["operator", "jobs", "new"], True, _) -> Just QueueForm
+    (["operator", "center"], True, _) -> Just CenterView
     _ -> Nothing
 
 handleOperator :: Maybe DatabaseRuntime -> OperatorRoute -> Wai.Request -> IO Wai.Response
@@ -154,6 +158,9 @@ handleOperator db route request =
                     Right envelope -> commandResponse <$> submitCommand runtime envelope
             _ ->
               pure (refusal HTTP.status403 csrfPage)
+    CenterView ->
+      withSession db request $ \runtime _ _ ->
+        operatorResponse HTTP.status200 noReferrer . commandCenterPage <$> loadCommandCenter runtime
     QueueForm ->
       withSession db request $ \runtime token _ -> do
         workspace <- readWorkspace runtime
@@ -425,6 +432,7 @@ operatorPage token session workspace key =
             ]
         , E.h2 [] [E.text [Interpolate.i|Workspace|]]
         , workspaceSection token workspace key
+        , E.p [] [E.a [A.href (B.mkRawURL [Interpolate.i|/operator/center|])] [E.text [Interpolate.i|Command center: status, activity and evidence|]]]
         , E.h2 [] [E.text [Interpolate.i|Background jobs|]]
         , E.p [] [E.a [A.href (B.mkRawURL [Interpolate.i|/operator/jobs/new|])] [E.text [Interpolate.i|Queue a no-op job|]]]
         ]

@@ -110,6 +110,15 @@ service returns a running job to the queue; after a crash the job is reclaimed
 once its lease expires and resumes from its last completed step. Jobs are
 model-free no-ops; the browser form is at `/operator/jobs/new`.
 
+## Command center (C-P1.6)
+
+`/operator/center` (signed in) shows job and receipt counts by status, the
+newest commands, and an evidence table for jobs (criterion, method, expected,
+actual, disposition, evidence). Everything is read from the database when the
+page is rendered. A job shows `PASSED` only when it succeeded and its stored
+outcome digest still matches its row; queued, running, failed, edited or
+unrecorded jobs never show as passed. The machine summary is not acceptance.
+
 ## Licensing
 
 Lockstep v2 has no chosen license yet and is not distributed. Launchpad-derived

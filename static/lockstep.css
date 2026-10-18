@@ -17,6 +17,17 @@
   --ls-space-5: 2.5rem;
   --ls-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --ls-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* Disposition colours (C-P1.6 E8). Green is reserved for PASSED. */
+  --ls-passed-fg: #0b5d1e;
+  --ls-passed-bg: #e3f4e6;
+  --ls-failed-fg: #8a1414;
+  --ls-failed-bg: #fbe5e5;
+  --ls-inconclusive-fg: #6b4400;
+  --ls-inconclusive-bg: #fdf0d5;
+  --ls-blocked-fg: #4b2a7a;
+  --ls-blocked-bg: #efe7fa;
+  --ls-not-run-fg: #3d4147;
+  --ls-not-run-bg: #eceef1;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -28,6 +39,16 @@
     --ls-border: #3b3f46;
     --ls-accent: #8fb6ff;
     --ls-focus: #8fb6ff;
+    --ls-passed-fg: #a6e9b4;
+    --ls-passed-bg: #11331a;
+    --ls-failed-fg: #ffb3b3;
+    --ls-failed-bg: #3d1414;
+    --ls-inconclusive-fg: #f6d18a;
+    --ls-inconclusive-bg: #3a2a08;
+    --ls-blocked-fg: #d6c2f5;
+    --ls-blocked-bg: #2b1d42;
+    --ls-not-run-fg: #d0d4da;
+    --ls-not-run-bg: #2a2d33;
   }
 }
 
@@ -110,5 +131,98 @@ code {
 
   .ls-facts dd {
     margin-bottom: var(--ls-space-2);
+  }
+}
+
+/* Command center (C-P1.6). Status is always text; colour is a redundant cue. */
+
+main.ls-wide {
+  max-width: 72rem;
+}
+
+h2 {
+  font-size: 1.25rem;
+  margin: var(--ls-space-4) 0 var(--ls-space-2);
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0 0 var(--ls-space-3);
+  background: var(--ls-surface);
+}
+
+caption {
+  text-align: left;
+  color: var(--ls-text-muted);
+  padding: var(--ls-space-1) 0;
+}
+
+th,
+td {
+  border: 1px solid var(--ls-border);
+  padding: var(--ls-space-2);
+  text-align: left;
+  vertical-align: top;
+}
+
+thead th {
+  font-weight: 600;
+}
+
+td.ls-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+}
+
+.ls-disposition {
+  display: inline-block;
+  padding: 0 var(--ls-space-2);
+  border: 2px solid transparent;
+  border-radius: var(--ls-radius);
+  font-family: var(--ls-mono);
+  font-weight: 600;
+}
+
+.ls-passed {
+  color: var(--ls-passed-fg);
+  background: var(--ls-passed-bg);
+  border-color: var(--ls-passed-fg);
+}
+
+.ls-failed {
+  color: var(--ls-failed-fg);
+  background: var(--ls-failed-bg);
+  border-color: var(--ls-failed-fg);
+}
+
+.ls-inconclusive {
+  color: var(--ls-inconclusive-fg);
+  background: var(--ls-inconclusive-bg);
+  border-color: var(--ls-inconclusive-fg);
+}
+
+.ls-blocked {
+  color: var(--ls-blocked-fg);
+  background: var(--ls-blocked-bg);
+  border-color: var(--ls-blocked-fg);
+}
+
+.ls-not-run {
+  color: var(--ls-not-run-fg);
+  background: var(--ls-not-run-bg);
+  border: 2px dashed var(--ls-not-run-fg);
+}
+
+.ls-notice {
+  border: 2px dashed var(--ls-border);
+  padding: var(--ls-space-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none;
+    animation: none;
   }
 }

@@ -90,4 +90,10 @@ CREATE TABLE lockstep_jobs (
 );
 |]
       )
+    ,
+      ( [Interpolate.i|job outcome digests|]
+      , [Interpolate.i|
+ALTER TABLE lockstep_jobs ADD COLUMN outcome_digest bytea CHECK (octet_length(outcome_digest) = 32);
+|]
+      )
     ]
