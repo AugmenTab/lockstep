@@ -44,7 +44,8 @@ redact() {
   local text=$1
   [ -n "$token" ] && text=${text//$token/<TOKEN>}
   [ -n "$session" ] && text=${text//$session/<SESSION>}
-  printf '%s' "$text"
+  # Any cookie or token value, even before the script knows it (the exchange's Set-Cookie).
+  printf '%s' "$text" | sed -E -e 's/(lockstep_session=)[A-Za-z0-9_-]{43}/\1<SESSION>/g' -e 's/(token=)[A-Za-z0-9_-]{43}/\1<TOKEN>/g'
 }
 
 note() { echo "## $*" | tee -a "$log"; }
@@ -310,8 +311,10 @@ if [ -n "$token" ]; then
   token_leaks=$(cat "$out"/*.html "$out/service.log" | grep -c -F "$token" || true)
 fi
 echo "sentinel log: $(wc -c < "$work/sentinel/sentinel.log" | tr -d ' ') bytes; password occurrences: $leaks; sign-in token occurrences in pages and service log: $token_leaks" >> "$log"
-check A1-14 "inside the service container claude resolves to the shim and a canary call is logged (exit 97); the service's sentinel log is empty; no secret appears in the recorded output" \
-  "$([ "$canary_ok" = 0 ] && [ ! -s "$work/sentinel/sentinel.log" ] && [ "$leaks" = 0 ] && [ "$token_leaks" = 0 ]; echo $?)"
+raw_secrets=$(cat "$log" "$out"/*.html "$out/service.log" | grep -c -E 'lockstep_session=[A-Za-z0-9_-]{43}|token=[A-Za-z0-9_-]{43}' || true)
+echo "raw session-cookie or token values in the recorded output: $raw_secrets" >> "$log"
+check A1-14 "inside the service container claude resolves to the shim and a canary call is logged (exit 97); the service's sentinel log is empty; no password, token or session value appears in the recorded output" \
+  "$([ "$canary_ok" = 0 ] && [ ! -s "$work/sentinel/sentinel.log" ] && [ "$leaks" = 0 ] && [ "$token_leaks" = 0 ] && [ "$raw_secrets" = 0 ]; echo $?)"
 
 rm -rf "$clone"
 note "A1 result: $failures failing check(s); database $db kept for inspection"
