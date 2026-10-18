@@ -46,3 +46,21 @@
 | P1.4 | **`VERIFIED — awaiting human acceptance`** at `75cc8623e7880c83a14ffe6dff08e7466d03a3b6` |
 | Recorded by | manual agent session (writing agent / Implementer), 2026-10-17. Not an acceptance. |
 | Continuation | Under the owner's instruction of 2026-10-17 to proceed sequentially through P1.7. |
+
+## Correction (2026-10-18): browser form submissions
+
+Recorded by the writing agent under the Planner's Gate A decision and C-P1.7-R1 R7. The text
+above is kept unchanged as history.
+
+- **What was overstated:** The HTTP rows of AC-P1.4-06 ("same `Location`"), AC-P1.4-07, AC-P1.4-08 and AC-P1.4-10, and the operator run's "browser POST twice" line, were verified with browser-shaped HTTP requests (curl or
+  http-client sending an explicit `Origin` header), **not with a browser**.
+- **What a real browser did:** the owner's human A1 demonstration on 2026-10-18 found that a real
+  browser could not submit these forms. The pages sent `Referrer-Policy: no-referrer`, so the
+  browser sent `Origin: null`, which the strict guard refused (403).
+- **Server behaviour not affected:** the receipt, idempotency, stale-revision and refusal behaviour
+  recorded above is unaffected. Only submission from the rendered page failed.
+- **Fix:** `c5915e3` (C-P1.3 §9.1; C-P1.7-R1 R1). `/operator` and `/operator/jobs/new` now send
+  `Referrer-Policy: origin`; the guard is unchanged.
+- **New coverage:** the frozen real-browser test `BrowserFormTest` (headless Chromium submits the
+  served forms; state checked in PostgreSQL), plus A1's browser step. See
+  `docs/gates/A/r2/gate-report.md`.

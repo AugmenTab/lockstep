@@ -175,14 +175,34 @@ session=$(printf '%s' "$HTTP_HEADERS" | sed -n -E 's/^[Ss]et-[Cc]ookie: lockstep
 cookie="Cookie: lockstep_session=$session"
 check A1-05 "confirm page 200, exchange 303 to /operator with a session cookie" "$([ "$confirm" = 200 ] && [ "$HTTP_STATUS" = 303 ] && [ "$HTTP_LOCATION" = /operator ] && [ -n "$session" ]; echo $?)"
 
-note "A1-06 typed command through the browser form, then the same command again"
-http "operator page" -H "$cookie" "$base/operator"
-csrf=$(field csrf); key=$(field idempotency_key); expected=$(field expected_revision)
-http "rename via form" -X POST -H "Origin: $base" -H "$cookie" --data-urlencode "name=A1 Workspace" --data "expected_revision=$expected&idempotency_key=$key&csrf=$csrf" "$base/operator/commands/rename-workspace"
-first_status=$HTTP_STATUS; receipt1=$HTTP_LOCATION
-http "same form again (duplicate)" -X POST -H "Origin: $base" -H "$cookie" --data-urlencode "name=A1 Workspace" --data "expected_revision=$expected&idempotency_key=$key&csrf=$csrf" "$base/operator/commands/rename-workspace"
-check A1-06 "form command 303 to a receipt; the duplicate returns the same receipt ($receipt1)" "$([ "$first_status" = 303 ] && [ "$HTTP_STATUS" = 303 ] && [ "$HTTP_LOCATION" = "$receipt1" ] && [ -n "$receipt1" ]; echo $?)"
+note "A1-06 typed command through the served form in a real browser (headless Chromium; C-P1.7-R1)"
+browser_link=$(scripts/service cli operator sign-in --port "$port" 2>/dev/null)
+cat > "$work/browser-steps.json" <<JSON
+[{"op":"open","label":"confirm","url":"$browser_link"},
+ {"op":"click","label":"signin","selector":"form[action=\"/operator/sign-in\"] button"},
+ {"op":"open","label":"op","url":"$base/operator"},
+ {"op":"type","selector":"input[name=\"name\"]","text":"A1 Workspace"},
+ {"op":"click","label":"rename","selector":"form[action=\"/operator/commands/rename-workspace\"] button"},
+ {"op":"open","label":"op2","url":"$base/operator"},
+ {"op":"click","label":"signout","selector":"form[action=\"/operator/sign-out\"] button"}]
+JSON
+docker run --rm --network host -v "$PWD:/work" -w /work lockstep-dev:p1 python3 test/browser/cdp.py < "$work/browser-steps.json" > "$work/browser.out" 2>&1
+browser_code=$?
+{ echo "### browser (Chromium via test/browser/cdp.py): sign in, rename through the form, sign out"; echo "exit: $browser_code"; redact "$(grep -v '\.text' "$work/browser.out")"; echo; } >> "$log"
+bv() { grep "^$1"$'\t' "$work/browser.out" | head -n 1 | cut -f2-; }
+receipt1=$(bv rename.post.location)
+check A1-06 "in a real browser: sign-in, then the served rename form sends the exact Origin (origin-only Referer) and lands on an 'applied' receipt; /operator sends Referrer-Policy: origin; sign-out from the form works" \
+  "$([ "$browser_code" = 0 ] && [ "$(bv done)" = ok ] \
+    && [ "$(bv signin.post.origin)" = "$base" ] \
+    && [ "$(bv op.referrer_policy)" = origin ] \
+    && [ "$(bv rename.post.origin)" = "$base" ] && [ "$(bv rename.post.referer)" = "$base/" ] \
+    && [ "$(bv rename.post.status)" = 303 ] && [ -n "$receipt1" ] \
+    && bv rename.text | grep -q applied \
+    && [ "$(bv signout.post.origin)" = "$base" ] && [ "$(bv signout.post.status)" = 303 ]; echo $?)"
+check A1-06c "the browser's rename is durable and attributed to the browser session" \
+  "$([ "$(psql_v "SELECT name FROM lockstep_workspace")" = "A1 Workspace" ] && [ "$(psql_v "SELECT actor FROM lockstep_command_receipts WHERE id = ${receipt1##*/}")" = browser-session ]; echo $?)"
 http "operator page headers" -H "$cookie" "$base/operator"
+csrf=$(field csrf)   # the HTTP-level refusal checks below use the curl session's CSRF value
 check A1-06b "operator pages refuse framing (X-Frame-Options: DENY; CSP frame-ancestors 'none')" \
   "$(printf '%s' "$HTTP_HEADERS" | tr -d '\r' | grep -qi '^x-frame-options: DENY$' && printf '%s' "$HTTP_HEADERS" | tr -d '\r' | grep -qi "^content-security-policy: frame-ancestors 'none'$"; echo $?)"
 
