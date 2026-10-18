@@ -13,10 +13,12 @@ import Lockstep.Foundation.CliJobTest qualified as CliJobTest
 import Lockstep.Foundation.CliOperatorTest qualified as CliOperatorTest
 import Lockstep.Foundation.CliTest qualified as CliTest
 import Lockstep.Foundation.CliWorkspaceTest qualified as CliWorkspaceTest
+import Lockstep.Foundation.EvidenceModelTest qualified as EvidenceModelTest
 import Lockstep.Foundation.OperatorTokenTest qualified as OperatorTokenTest
 import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
 import Lockstep.Persistence.MigrationTest qualified as MigrationTest
 import Lockstep.Web.ApplicationTest qualified as ApplicationTest
+import Lockstep.Web.CommandCenterViewTest qualified as CommandCenterViewTest
 import Lockstep.Web.CommandRoutesTest qualified as CommandRoutesTest
 import Lockstep.Web.LivenessPageTest qualified as LivenessPageTest
 import Lockstep.Web.OperatorRoutesTest qualified as OperatorRoutesTest
@@ -47,4 +49,6 @@ main =
       , CommandRoutesTest.tests
       , NoopCommandTest.tests
       , CliJobTest.tests
+      , EvidenceModelTest.tests
+      , CommandCenterViewTest.tests
       ]
