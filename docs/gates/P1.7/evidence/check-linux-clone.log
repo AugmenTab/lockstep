@@ -1,0 +1,15 @@
+# Linux clone, 2026-10-18T18:32:21Z; command: docs/gates/P1.3/evidence/linux-clone-run.sh with names lockstep-linux-p17*, commit de8afa310e13a8d2b699ac4627afe092393b087a
+de8afa310e13a8d2b699ac4627afe092393b087a
+Application
+Foundation
+Persistence
+Web
+format PASSED
+lint PASSED
+build PASSED
+unit PASSED
+integration PASSED
+All 259 tests passed (0.02s)
+All 66 tests passed (53.63s)
+exit=0
+linux exit=0
