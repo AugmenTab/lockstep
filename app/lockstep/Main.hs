@@ -64,6 +64,7 @@ import Lockstep.Web.Server (serverSettingsWith)
 
 main :: IO ()
 main = do
+  refuseFaultPlan
   args <- getArgs
   case parseArgs args of
     Left err -> do
@@ -88,6 +89,18 @@ main = do
       withRequiredDatabase (jobQueue queueArgs)
     Right (JobShow job) ->
       withRequiredDatabase (jobShow job)
+
+{- | C-P1.7 E4: this build has no fault-injection flag, so a fault plan is
+refused before arguments, configuration or the database are read.
+-}
+refuseFaultPlan :: IO ()
+refuseFaultPlan = do
+  plan <- lookupEnv "LOCKSTEP_FAULT_PLAN"
+  case plan of
+    Nothing -> pure ()
+    Just _ -> do
+      hPutStrLn stderr "lockstep: fault plans are not accepted by this build (no fault-injection flag)"
+      exitWith (ExitFailure 78)
 
 configVariable :: String
 configVariable =

@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Step 5, the no-live-model guard (C-P1.7 E3; TESTING_STRATEGY §8). Runs in the
+# dev container with LOCKSTEP_SENTINEL_DIR set by scripts/check. Every check
+# fails the step; nothing is skipped.
+#
+#   check-guard          checks (a)-(e)
+#   check-guard log      check (e) only (re-run after the integration step)
+#
+# Overrides (used by check-guard-selftest only): LOCKSTEP_GUARD_BINARY (the
+# lockstep binary to probe), LOCKSTEP_GUARD_ROOT (the tree to scan).
+set -euo pipefail
+
+dir=${LOCKSTEP_SENTINEL_DIR:?LOCKSTEP_SENTINEL_DIR is not set}
+shims="$dir/bin"
+log="$dir/sentinel.log"
+root=${LOCKSTEP_GUARD_ROOT:-.}
+clis=$(grep -v '^ *$' "$(dirname "$0")/provider-clis")
+
+fail() {
+  echo "guard: FAILED: $*" >&2
+  exit 1
+}
+
+check_log() {
+  [ -f "$log" ] || fail "sentinel log $log is missing"
+  if [ -s "$log" ]; then
+    fail "the sentinel log is not empty (a provider CLI was invoked): $(head -n 5 "$log" | tr '\n' ';')"
+  fi
+  echo "guard: (e) sentinel log empty"
+}
+
+if [ "${1:-}" = "log" ]; then
+  check_log
+  exit 0
+fi
+
+# (a) every supported CLI resolves to its shim.
+for cli in $clis; do
+  resolved=$(command -v "$cli" || true)
+  [ "$resolved" = "$shims/$cli" ] || fail "$cli resolves to '${resolved:-nothing}', not the shim $shims/$cli"
+done
+echo "guard: (a) shims resolve: $(echo $clis)"
+
+# (b) sentinel negative test: deliberately exec claude, only after asserting it is the shim.
+resolved=$(command -v claude || true)
+if [ "$resolved" != "$shims/claude" ]; then
+  echo "guard: (b) sentinel negative test NOT_RUN: claude resolves to '${resolved:-nothing}'" >&2
+  exit 1
+fi
+probe=$(mktemp)
+set +e
+LOCKSTEP_SENTINEL_LOG="$probe" claude --probe >/dev/null 2>&1
+code=$?
+set -e
+[ "$code" = 97 ] || fail "the claude shim exited $code, expected 97"
+[ "$(wc -l < "$probe" | tr -d ' ')" = 1 ] || fail "the probe log has $(wc -l < "$probe" | tr -d ' ') entries, expected 1"
+rm -f "$probe"
+echo "guard: (b) sentinel negative test: shim exit 97, one probe entry"
+
+# (c) construction gate: Lockstep.Effects.Provider.Live only from its allowed importers.
+files=$(cd "$root" && find src app test -name '*.hs' -not -path 'test/fixtures/*' 2>/dev/null | sort)
+offenders=$(cd "$root" && for f in $files; do
+  case "$f" in
+    src/Lockstep/Effects/Provider/Live.hs | app/lockstep/Main.hs | app/lockstep-smoke/*) ;;
+    *) grep -l -E '^import +(qualified +)?Lockstep\.Effects\.Provider\.Live( |$|\()' "$f" || true ;;
+  esac
+done)
+[ -z "$offenders" ] || fail "Lockstep.Effects.Provider.Live imported by: $(echo $offenders)"
+echo "guard: (c) construction gate: $(echo "$files" | grep -c . ) Haskell files scanned, no forbidden Provider.Live import"
+
+# (d) the built binary refuses a fault plan for every command.
+binary=${LOCKSTEP_GUARD_BINARY:-$(stack path --local-install-root)/bin/lockstep}
+[ -x "$binary" ] || fail "lockstep binary not found at $binary"
+for args in "serve --port 1" "db status" "workspace show"; do
+  errfile=$(mktemp)
+  set +e
+  # shellcheck disable=SC2086
+  out=$(LOCKSTEP_FAULT_PLAN=FP-CMD-AFTER-ADMIT timeout 10 "$binary" $args 2>"$errfile")
+  code=$?
+  set -e
+  err=$(cat "$errfile"); rm -f "$errfile"
+  [ "$code" = 78 ] || fail "lockstep $args with a fault plan exited $code, expected 78"
+  [ -z "$out" ] || fail "lockstep $args with a fault plan wrote to stdout"
+  case "$err" in
+    *"fault plans are not accepted by this build"*) ;;
+    *) fail "lockstep $args with a fault plan: unexpected stderr: $err" ;;
+  esac
+done
+echo "guard: (d) fault plan refused (exit 78) by serve, db status, workspace show"
+
+check_log

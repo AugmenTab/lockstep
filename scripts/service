@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# The installed Lockstep service on this host (C-P1.7 E6; docs/OPERATOR_GUIDE.md).
+#
+#   scripts/service install            build the release binary into .local/install
+#   scripts/service start [--port N]   run it detached (container lockstep-service)
+#   scripts/service stop               SIGTERM; waits up to 10 s
+#   scripts/service restart [--port N]
+#   scripts/service status
+#   scripts/service logs
+#   scripts/service cli ARGS...        run the installed binary with the same config
+#
+# The binary binds 127.0.0.1 only. The container uses host networking, which on
+# Docker Desktop makes that loopback listener reachable at this machine's
+# 127.0.0.1:N; no non-loopback listener exists. Only .local/install (read-only)
+# and the generated config are mounted: no repository files, no static
+# directory, no Node or Python runtime.
+#
+# Overrides: LOCKSTEP_SERVICE_CONFIG (a config file with host/port reachable
+# from the host, default generated from .local/config/lockstep.json),
+# LOCKSTEP_SERVICE_SENTINEL_DIR (provider-CLI shims put first on PATH, used by
+# scripts/a1), LOCKSTEP_SERVICE_NAME.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+image=lockstep-dev:p1
+name=${LOCKSTEP_SERVICE_NAME:-lockstep-service}
+install_dir=.local/install
+db_config=.local/config/lockstep.json
+host_config=.local/config/lockstep-host.json
+
+usage() {
+  sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' >&2
+  exit 64
+}
+
+host_config_path() {
+  if [ -n "${LOCKSTEP_SERVICE_CONFIG:-}" ]; then
+    echo "$LOCKSTEP_SERVICE_CONFIG"
+    return
+  fi
+  [ -f "$db_config" ] || { echo "scripts/service: $db_config is missing; run scripts/db up" >&2; exit 66; }
+  # scripts/db publishes PostgreSQL on 127.0.0.1:5433 (ADR-0002 Q1).
+  umask 077
+  sed -E -e 's/"host":"[^"]*"/"host":"127.0.0.1"/' -e 's/"port":[0-9]+/"port":5433/' "$db_config" > "$host_config"
+  chmod 600 "$host_config"
+  echo "$host_config"
+}
+
+run_args() { # common docker arguments
+  local config
+  config=$(host_config_path)
+  local args=(--network host
+    --volume "$PWD/$install_dir:/opt/lockstep:ro"
+    --volume "$PWD/$config:/etc/lockstep/lockstep.json:ro"
+    --env LOCKSTEP_CONFIG=/etc/lockstep/lockstep.json)
+  if [ -n "${LOCKSTEP_SERVICE_SENTINEL_DIR:-}" ]; then
+    args+=(--volume "$PWD/$LOCKSTEP_SERVICE_SENTINEL_DIR:/opt/sentinel"
+      --env PATH="/opt/sentinel/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      --env LOCKSTEP_SENTINEL_LOG=/opt/sentinel/sentinel.log)
+  fi
+  printf '%s\n' "${args[@]}"
+}
+
+require_install() {
+  [ -x "$install_dir/bin/lockstep" ] || { echo "scripts/service: not installed; run scripts/service install" >&2; exit 69; }
+}
+
+command=${1:-}
+[ -n "$command" ] || usage
+shift
+
+case "$command" in
+  install)
+    docker build --quiet --tag "$image" . >/dev/null
+    mkdir -p "$install_dir/bin"
+    docker run --rm --volume "$PWD:/work" --volume lockstep-stack-root:/stack-root --workdir /work "$image" \
+      sh -c 'stack build --copy-bins --local-bin-path .local/install/bin >/dev/null 2>&1'
+    commit=$(git rev-parse HEAD)
+    dirty=false
+    [ -z "$(git status --porcelain)" ] || dirty=true
+    digest=$(shasum -a 256 "$install_dir/bin/lockstep" | cut -d' ' -f1)
+    printf 'commit %s\ndirty %s\nsha256 %s\ninstalled_at %s\n' "$commit" "$dirty" "$digest" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$install_dir/VERSION"
+    cat "$install_dir/VERSION"
+    ;;
+
+  start)
+    require_install
+    port=8000
+    case "${1:-}" in
+      --port) port=${2:?--port needs a value} ;;
+      --port=*) port=${1#--port=} ;;
+      "") ;;
+      *) usage ;;
+    esac
+    if docker container inspect "$name" >/dev/null 2>&1; then
+      echo "scripts/service: $name already exists; use stop or restart" >&2
+      exit 75
+    fi
+    args=()
+    while IFS= read -r a; do args+=("$a"); done < <(run_args)
+    docker run --detach --name "$name" --stop-timeout 10 "${args[@]}" "$image" \
+      /opt/lockstep/bin/lockstep serve --port "$port" >/dev/null
+    for _ in $(seq 1 50); do
+      if curl -s -o /dev/null "http://127.0.0.1:$port/api/health_check"; then
+        echo "started $name: http://127.0.0.1:$port/ ($(sed -n 's/^commit //p' "$install_dir/VERSION"))"
+        exit 0
+      fi
+      sleep 0.2
+    done
+    echo "scripts/service: $name did not answer on 127.0.0.1:$port; see scripts/service logs" >&2
+    exit 1
+    ;;
+
+  stop)
+    if docker container inspect "$name" >/dev/null 2>&1; then
+      docker stop --time 10 "$name" >/dev/null
+      code=$(docker container inspect --format '{{.State.ExitCode}}' "$name")
+      docker logs "$name" > ".local/install/last-run.log" 2>&1 || true
+      docker rm "$name" >/dev/null
+      echo "stopped $name (exit $code); log saved to .local/install/last-run.log"
+    else
+      echo "$name is not running"
+    fi
+    ;;
+
+  restart)
+    "$0" stop
+    "$0" start "$@"
+    ;;
+
+  status)
+    if docker container inspect "$name" >/dev/null 2>&1; then
+      echo "$name: $(docker container inspect --format '{{.State.Status}} since {{.State.StartedAt}}' "$name")"
+    else
+      echo "$name: not running"
+    fi
+    [ -f "$install_dir/VERSION" ] && sed 's/^/installed /' "$install_dir/VERSION"
+    ;;
+
+  logs)
+    docker logs "$name"
+    ;;
+
+  cli)
+    require_install
+    args=()
+    while IFS= read -r a; do args+=("$a"); done < <(run_args)
+    docker run --rm "${args[@]}" "$image" /opt/lockstep/bin/lockstep "$@"
+    ;;
+
+  *)
+    usage
+    ;;
+esac

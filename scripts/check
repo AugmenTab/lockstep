@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Repository-native verification command (ARCHITECTURE §4).
 #
-#   scripts/check                 steps 1-4: format, lint (+ static checks), build, unit
+#   scripts/check                 steps 1-5: format, lint (+ static checks), build, unit,
+#                                 no-live-model guard
 #   scripts/check --integration   additionally step 6: real process/HTTP integration
 #
 # Every step runs inside the dev container (the host needs only Docker). The
-# unit step runs with --network none. Step 5 (no-live-model guard) arrives in
-# P1.7 and is reported NOT_RUN until then; it is never reported as passed.
+# unit step runs with --network none. Steps 4-6 run with provider-CLI sentinel
+# shims first on PATH (C-P1.7 E2); step 5 fails if a shim does not resolve or
+# was ever invoked, including during step 6.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -67,8 +69,21 @@ step() {
 step 0 none format
 step 1 none lint
 step 2 bridge build
+# Provider-CLI sentinel shims (C-P1.7 E2; TESTING_STRATEGY §8.2).
+sentinel_dir=".local/check-sentinel/$$-$RANDOM"
+mkdir -p "$sentinel_dir/bin"
+: > "$sentinel_dir/sentinel.log"
+while IFS= read -r cli; do
+  [ -n "$cli" ] || continue
+  printf '#!/bin/sh\nprintf "%%s %%s\\n" "$(basename "$0")" "$*" >> "${LOCKSTEP_SENTINEL_LOG:-$(dirname "$0")/../sentinel.log}"\nexit 97\n' > "$sentinel_dir/bin/$cli"
+  chmod +x "$sentinel_dir/bin/$cli"
+done < scripts/lib/provider-clis
+sentinel_env=(--env "LOCKSTEP_SENTINEL_DIR=/work/$sentinel_dir")
+
+extra_env=("${sentinel_env[@]}")
 step 3 none unit
-# results[4] stays NOT_RUN: the sentinel/no-live-model guard is P1.7 work.
+step 4 none guard
+extra_env=()
 if [ "$integration" = true ] && [ "$failed" = false ]; then
   # A disposable PostgreSQL (ADR-0002 Q8, C-P1.2 E11) on a private network,
   # removed on exit whatever happens.
@@ -96,12 +111,19 @@ if [ "$integration" = true ] && [ "$failed" = false ]; then
   done
   if [ "$ready" = true ]; then
     extra_env=(
+      "${sentinel_env[@]}"
       --env LOCKSTEP_TEST_PG_HOST="$test_pg"
       --env LOCKSTEP_TEST_PG_PORT=5432
       --env LOCKSTEP_TEST_PG_USER=postgres
       --env LOCKSTEP_TEST_PG_PASSWORD="$test_password"
     )
     step 5 "$test_network" integration
+    # The guard's sentinel log must still be empty after the integration step.
+    extra_env=("${sentinel_env[@]}")
+    if [ "${results[4]}" = PASSED ] && ! run_step none guard-log; then
+      results[4]=FAILED
+      failed=true
+    fi
     extra_env=()
     if [ "$failed" = false ]; then
       echo "== backup/restore check"
