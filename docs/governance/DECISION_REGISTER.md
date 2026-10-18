@@ -72,7 +72,13 @@ Phase 1 owner decisions, 2026-10-18 (`docs/gates/P1.5/decision-request.md`, "Hum
 - Dispatcher lease `step_millis + 5000` ms **RATIFIED for the model-free no-op dispatcher only**; it does not approve external-effect replay or pre-empt DG-04 (C-P1.5 §9 A2).
 - Test-helper connection-pool churn recorded as a known issue; no refactor of accepted P1.2 tests unless required for correctness (C-P1.5 §9.2).
 
-Pending owner decisions: P1.3–P1.7 acceptance; **Gate A** (`docs/gates/A/decision-packet.md`), including the session-cookie limitation (Gate A report §3.1).
+Gate A, 2026-10-18 (`docs/gates/A/r2/browser-forms-regression.md`):
+
+- The owner's human demonstration against report r1 **failed** at step 4 (browser forms refused: `Origin: null` from `no-referrer` pages).
+- **Planner decision: Option A.** `Referrer-Policy: origin` on operator pages containing forms; strict exact-Origin guard kept; no `Origin: null` exception; remediation C-P1.7-R1 with real-browser tests.
+- **R-P1.3-1 APPROVED** by the owner (one-line frozen-test amendment; re-frozen in C-P1.3 §9.1).
+
+Pending owner decisions: P1.3–P1.7 acceptance (including C-P1.7-R1); **Gate A** on report r2 (`docs/gates/A/r2/decision-packet.md`), including the session-cookie limitation (r2 §3.1); the new human demonstration.
 
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.
