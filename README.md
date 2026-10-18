@@ -5,7 +5,8 @@ Private. Haskell rebuild of Lockstep on a Launchpad-derived foundation
 v0.1 reference lives on `main` (tag `python-v0.1-final`).
 
 Governance, architecture and gate evidence are in `docs/`. Start with
-`docs/architecture/ARCHITECTURE.md`.
+`docs/architecture/ARCHITECTURE.md`. To install and run the service, follow
+`docs/OPERATOR_GUIDE.md`.
 
 ## Requirements
 
@@ -15,8 +16,10 @@ Docker only. GHC 9.10.3, Stack, fourmolu and hlint live in the dev container
 ## Verify
 
 ```sh
-scripts/check                 # format, lint + static checks, build, unit tests
+scripts/check                 # format, lint + static checks, build, unit tests, no-live-model guard
 scripts/check --integration   # also real PostgreSQL + process/HTTP integration and backup/restore
+scripts/service ...           # install / start / stop the service on this host (docs/OPERATOR_GUIDE.md)
+scripts/a1                    # scenario A1, scripted, against the installed service
 scripts/format                # format Haskell sources (host-side, via the dev image)
 scripts/licenses              # dependency license inventory and policy check
 ```

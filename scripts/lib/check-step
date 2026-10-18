@@ -7,6 +7,13 @@ export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0=safe.directory
 export GIT_CONFIG_VALUE_0=/work
 
+# Provider-CLI sentinel shims (C-P1.7 E2): set up by scripts/check for the test
+# and guard steps.
+if [ -n "${LOCKSTEP_SENTINEL_DIR:-}" ]; then
+  export PATH="$LOCKSTEP_SENTINEL_DIR/bin:$PATH"
+  export LOCKSTEP_SENTINEL_LOG="$LOCKSTEP_SENTINEL_DIR/sentinel.log"
+fi
+
 # Tracked and new (not ignored) files; fixtures are checked by their own steps.
 haskell_sources() {
   git ls-files --cached --others --exclude-standard -- '*.hs' | grep -v '^test/fixtures/' || true
@@ -32,6 +39,15 @@ case "${1:-}" in
 
   unit)
     stack test lockstep:lockstep-unit
+    ;;
+
+  guard)
+    scripts/lib/check-guard
+    scripts/lib/check-guard-selftest
+    ;;
+
+  guard-log)
+    scripts/lib/check-guard log
     ;;
 
   integration)

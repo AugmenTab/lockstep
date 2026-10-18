@@ -1,0 +1,276 @@
+#!/usr/bin/env bash
+# Scenario A1, scripted, against the installed service (C-P1.7 E8; PRD A1).
+#
+#   scripts/a1 [OUT_DIR]      default OUT_DIR: docs/gates/A/evidence/a1
+#
+# Run from a clean checkout of the commit under test, with scripts/db up. It
+# creates a fresh database lockstep_a1_<UTC stamp> on the operator PostgreSQL
+# server (kept afterwards for inspection), installs and runs the service as a
+# separate container (lockstep-a1, port 8100) with provider-CLI sentinel shims
+# first on its PATH, and records every command with its exit code and output
+# digests. Raw tokens and session cookies are written as <TOKEN> / <SESSION>.
+set -uo pipefail
+
+cd "$(dirname "$0")/.."
+
+out=${1:-docs/gates/A/evidence/a1}
+mkdir -p "$out"
+log="$out/a1.log"
+: > "$log"
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+db="lockstep_a1_$(echo "$stamp" | tr 'A-Z' 'a-z')"
+port=8100
+base="http://127.0.0.1:$port"
+work=".local/a1-$stamp"
+mkdir -p "$work/sentinel/bin"
+: > "$work/sentinel/sentinel.log"
+while IFS= read -r cli; do
+  [ -n "$cli" ] || continue
+  printf '#!/bin/sh\nprintf "%%s %%s\\n" "$(basename "$0")" "$*" >> "${LOCKSTEP_SENTINEL_LOG:-$(dirname "$0")/../sentinel.log}"\nexit 97\n' > "$work/sentinel/bin/$cli"
+  chmod +x "$work/sentinel/bin/$cli"
+done < scripts/lib/provider-clis
+
+export LOCKSTEP_SERVICE_NAME=lockstep-a1
+export LOCKSTEP_SERVICE_CONFIG=".local/config/lockstep-a1.json"
+export LOCKSTEP_SERVICE_SENTINEL_DIR="$work/sentinel"
+token="" session=""
+failures=0
+
+redact() {
+  local text=$1
+  [ -n "$token" ] && text=${text//$token/<TOKEN>}
+  [ -n "$session" ] && text=${text//$session/<SESSION>}
+  printf '%s' "$text"
+}
+
+note() { echo "## $*" | tee -a "$log"; }
+
+# rec NAME EXPECT-EXIT CMD... : run, record argv, exit, output digests and output.
+rec() {
+  local name=$1 expect=$2; shift 2
+  local outf errf code
+  outf=$(mktemp); errf=$(mktemp)
+  "$@" >"$outf" 2>"$errf"
+  code=$?
+  {
+    echo "### $name"
+    echo "argv: $(redact "$*")"
+    echo "exit: $code (expected $expect)"
+    echo "stdout sha256: $(shasum -a 256 < "$outf" | cut -d' ' -f1)  stderr sha256: $(shasum -a 256 < "$errf" | cut -d' ' -f1)"
+    echo "stdout:"; redact "$(cat "$outf")"; echo
+    echo "stderr:"; redact "$(cat "$errf")"; echo
+  } >> "$log"
+  if [ "$expect" != "any" ] && [ "$code" != "$expect" ]; then
+    echo "A1: $name exited $code, expected $expect" | tee -a "$log" >&2
+    failures=$((failures + 1))
+  fi
+  LAST_OUT=$(cat "$outf"); LAST_ERR=$(cat "$errf")
+  rm -f "$outf" "$errf"
+}
+
+# check NAME CONDITION-DESCRIPTION TEST-RESULT(0/1)
+check() {
+  if [ "$3" = 0 ]; then
+    echo "CHECK PASSED: $1: $2" | tee -a "$log"
+  else
+    echo "CHECK FAILED: $1: $2" | tee -a "$log" >&2
+    failures=$((failures + 1))
+  fi
+}
+
+http() { # name, curl args... : status line, selected headers and body digest
+  local name=$1; shift
+  local h b
+  h=$(mktemp); b=$(mktemp)
+  curl -s -D "$h" -o "$b" "$@"
+  HTTP_STATUS=$(head -n 1 "$h" | awk '{print $2}')
+  HTTP_LOCATION=$(grep -i '^location:' "$h" | tr -d '\r' | cut -d' ' -f2)
+  HTTP_BODY=$(cat "$b")
+  HTTP_HEADERS=$(cat "$h")
+  {
+    echo "### $name"
+    echo "request: curl $(redact "$*")"
+    echo "status: $HTTP_STATUS"
+    grep -iE '^(location|cache-control|referrer-policy|content-security-policy|set-cookie):' "$h" | tr -d '\r' | while IFS= read -r line; do redact "$line"; echo; done
+    echo "body sha256: $(shasum -a 256 < "$b" | cut -d' ' -f1) ($(wc -c < "$b" | tr -d ' ') bytes)"
+  } >> "$log"
+  rm -f "$h" "$b"
+}
+
+field() { # NAME from $HTTP_BODY
+  printf '%s' "$HTTP_BODY" | grep -oE "<input[^>]*name=\"$1\"[^>]*>" | head -n 1 | grep -oE 'value="[^"]*"' | cut -d'"' -f2
+}
+
+psql_v() { docker exec lockstep-postgres psql -U lockstep -d "$db" -tAc "$1"; }
+
+note "A1 run $stamp; commit $(git rev-parse HEAD); clean: $([ -z "$(git status --porcelain)" ] && echo yes || echo NO); database $db; port $port"
+
+note "A1-01 clean build: fresh clone + scripts/check --integration"
+clone=".local/a1-clone-$stamp"
+rec "fresh clone" 0 git clone -q . "$clone"
+rec "checkout" 0 git -C "$clone" checkout -q "$(git rev-parse HEAD)"
+( cd "$clone" && scripts/check --integration ) > "$out/check-fresh-clone.log" 2>&1
+code=$?
+echo "scripts/check --integration in $clone: exit $code; log $out/check-fresh-clone.log sha256 $(shasum -a 256 < "$out/check-fresh-clone.log" | cut -d' ' -f1)" >> "$log"
+check A1-01 "scripts/check --integration from a fresh clone exits 0 with step 5 PASSED" "$([ "$code" = 0 ] && grep -q 'no-live-model guard *PASSED' "$out/check-fresh-clone.log"; echo $?)"
+
+note "A1-02 install the release binary"
+rec "scripts/service install" 0 scripts/service install
+cp .local/install/VERSION "$out/VERSION"
+check A1-02 "installed from a clean checkout of the tested commit" "$(grep -q "^commit $(git rev-parse HEAD)$" .local/install/VERSION && grep -q '^dirty false$' .local/install/VERSION; echo $?)"
+
+note "A1-03 fresh database, migration, readiness"
+rec "create database" 0 docker exec lockstep-postgres psql -U lockstep -d lockstep -c "CREATE DATABASE $db"
+umask 077
+sed -E -e 's/"host":"[^"]*"/"host":"127.0.0.1"/' -e 's/"port":[0-9]+/"port":5433/' -e "s/\"name\":\"[^\"]*\"/\"name\":\"$db\"/" .local/config/lockstep.json > "$LOCKSTEP_SERVICE_CONFIG"
+chmod 600 "$LOCKSTEP_SERVICE_CONFIG"
+rec "db status (before)" 0 scripts/service cli db status
+rec "db migrate (empty database, no backup needed)" 0 scripts/service cli db migrate
+rec "db status (after)" 0 scripts/service cli db status
+check A1-03 "a fresh database migrates to revision 5 and reports ready 5" "$(printf '%s' "$LAST_OUT" | grep -q '^readiness ready 5$'; echo $?)"
+
+note "A1-04 start the installed service"
+scripts/service stop >/dev/null 2>&1
+rec "scripts/service start" 0 scripts/service start --port "$port"
+http "health" "$base/api/health_check"
+health=$HTTP_STATUS
+http "readiness" "$base/api/readiness"
+check A1-04 "the installed service answers health 204 and readiness 'ready 5' on 127.0.0.1:$port" "$([ "$health" = 204 ] && [ "$HTTP_STATUS" = 200 ] && [ "$HTTP_BODY" = "ready 5" ]; echo $?)"
+
+note "A1-05 operator sign-in (CLI link, browser-shaped exchange)"
+url=$(scripts/service cli operator sign-in --port "$port" 2>"$work/signin.err")
+signin_code=$?
+token=${url#*token=}
+{
+  echo "### operator sign-in"
+  echo "argv: scripts/service cli operator sign-in --port $port"
+  echo "exit: $signin_code (expected 0)"
+  echo "stdout: $(redact "$url")"
+  echo "stderr bytes: $(wc -c < "$work/signin.err" | tr -d ' ')"
+} >> "$log"
+[ "$signin_code" = 0 ] || failures=$((failures + 1))
+http "confirm page" "$base/operator/sign-in?token=$token"
+confirm=$HTTP_STATUS
+http "exchange" -X POST -H "Origin: $base" -H "Referer: $base/" --data "token=$token" "$base/operator/sign-in"
+session=$(printf '%s' "$HTTP_HEADERS" | sed -n -E 's/^[Ss]et-[Cc]ookie: lockstep_session=([A-Za-z0-9_-]*);.*/\1/p')
+cookie="Cookie: lockstep_session=$session"
+check A1-05 "confirm page 200, exchange 303 to /operator with a session cookie" "$([ "$confirm" = 200 ] && [ "$HTTP_STATUS" = 303 ] && [ "$HTTP_LOCATION" = /operator ] && [ -n "$session" ]; echo $?)"
+
+note "A1-06 typed command through the browser form, then the same command again"
+http "operator page" -H "$cookie" "$base/operator"
+csrf=$(field csrf); key=$(field idempotency_key); expected=$(field expected_revision)
+http "rename via form" -X POST -H "Origin: $base" -H "$cookie" --data-urlencode "name=A1 Workspace" --data "expected_revision=$expected&idempotency_key=$key&csrf=$csrf" "$base/operator/commands/rename-workspace"
+first_status=$HTTP_STATUS; receipt1=$HTTP_LOCATION
+http "same form again (duplicate)" -X POST -H "Origin: $base" -H "$cookie" --data-urlencode "name=A1 Workspace" --data "expected_revision=$expected&idempotency_key=$key&csrf=$csrf" "$base/operator/commands/rename-workspace"
+check A1-06 "form command 303 to a receipt; the duplicate returns the same receipt ($receipt1)" "$([ "$first_status" = 303 ] && [ "$HTTP_STATUS" = 303 ] && [ "$HTTP_LOCATION" = "$receipt1" ] && [ -n "$receipt1" ]; echo $?)"
+
+note "A1-07 typed command through the CLI (same operation)"
+rec "workspace rename via CLI" 0 scripts/service cli workspace rename --expected-revision 1 --idempotency-key a1-cli-key-00000001 "A1 via CLI"
+cli_receipt=$LAST_OUT
+rec "same CLI command again (duplicate)" 0 scripts/service cli workspace rename --expected-revision 1 --idempotency-key a1-cli-key-00000001 "A1 via CLI"
+check A1-07 "CLI command applied at revision 2; the duplicate prints the same receipt, replayed" "$([ "$LAST_OUT" = "$cli_receipt (replayed)" ] && printf '%s' "$cli_receipt" | grep -q 'applied revision 2'; echo $?)"
+
+note "A1-08 stale commands are refused durably"
+rec "stale via CLI" 65 scripts/service cli workspace rename --expected-revision 0 --idempotency-key a1-cli-key-00000002 "Too old"
+stale_cli=$LAST_OUT
+http "operator page" -H "$cookie" "$base/operator"
+http "stale via form" -X POST -H "Origin: $base" -H "$cookie" --data-urlencode "name=Too old" --data "expected_revision=0&idempotency_key=$(field idempotency_key)&csrf=$csrf" "$base/operator/commands/rename-workspace"
+check A1-08 "stale CLI command exit 65 with a refused_stale receipt; stale form 409" "$(printf '%s' "$stale_cli" | grep -q 'refused_stale revision 2' && [ "$HTTP_STATUS" = 409 ]; echo $?)"
+
+note "A1-09 unauthorized requests are refused and store nothing"
+before=$(psql_v "SELECT count(*) FROM lockstep_command_receipts")
+http "no session" -X POST -H "Origin: $base" --data "name=X&expected_revision=2&idempotency_key=a1-unauth-key-0001&csrf=$csrf" "$base/operator/commands/rename-workspace"
+s1=$HTTP_STATUS
+http "wrong csrf" -X POST -H "Origin: $base" -H "$cookie" --data "name=X&expected_revision=2&idempotency_key=a1-unauth-key-0002&csrf=0qaHzxn_v8Upc4bffhI6afA_xIAGTDTqTqbLRVQjALU" "$base/operator/commands/rename-workspace"
+s2=$HTTP_STATUS
+http "foreign origin" -X POST -H "Origin: http://attacker.example" -H "$cookie" --data "name=X&expected_revision=2&idempotency_key=a1-unauth-key-0003&csrf=$csrf" "$base/operator/commands/rename-workspace"
+s3=$HTTP_STATUS
+http "Host localhost" -H "Host: localhost:$port" -H "$cookie" "$base/operator"
+s4=$HTTP_STATUS
+after=$(psql_v "SELECT count(*) FROM lockstep_command_receipts")
+echo "receipts before $before, after $after; statuses $s1 $s2 $s3 $s4" >> "$log"
+check A1-09 "no session 401, wrong CSRF 403, foreign Origin 403, Host localhost 403; no receipt stored" "$([ "$s1" = 401 ] && [ "$s2" = 403 ] && [ "$s3" = 403 ] && [ "$s4" = 403 ] && [ "$before" = "$after" ]; echo $?)"
+
+note "A1-10 a client that disconnects right after queueing a job"
+http "queue form" -H "$cookie" "$base/operator/jobs/new"
+body="steps=5&step_ms=200&fail_at_step=&expected_revision=$(field expected_revision)&idempotency_key=$(field idempotency_key)&csrf=$csrf"
+{
+  exec 3<>"/dev/tcp/127.0.0.1/$port"
+  printf 'POST /operator/commands/queue-noop HTTP/1.1\r\nHost: 127.0.0.1:%s\r\nOrigin: %s\r\nCookie: lockstep_session=%s\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: %s\r\nConnection: close\r\n\r\n%s' \
+    "$port" "$base" "$session" "${#body}" "$body" >&3
+  exec 3>&-
+} 2>>"$log"
+echo "raw POST sent and the socket closed without reading the response" >> "$log"
+job_state=""
+for _ in $(seq 1 50); do
+  job_state=$(psql_v "SELECT state FROM lockstep_jobs ORDER BY id DESC LIMIT 1")
+  [ "$job_state" = succeeded ] && break
+  sleep 0.2
+done
+rec "job show 1" 0 scripts/service cli job show 1
+check A1-10 "the disconnected client's job was admitted and succeeded" "$([ "$LAST_OUT" = "job 1 succeeded steps 5/5 attempts 1" ]; echo $?)"
+
+note "A1-11 restart the service; the same operation and evidence are shown"
+rec "scripts/service restart" 0 scripts/service restart --port "$port"
+http "receipt after restart" -H "$cookie" "$base$receipt1"
+r_status=$HTTP_STATUS; r_body=$HTTP_BODY
+http "command center after restart" -H "$cookie" "$base/operator/center"
+c_body=$HTTP_BODY
+printf '%s' "$c_body" > "$out/center-after-restart.html"
+printf '%s' "$r_body" > "$out/receipt-after-restart.html"
+check A1-11 "after restart: the form receipt shows 'applied'; the center lists the job as PASSED and counts match" \
+  "$([ "$r_status" = 200 ] && printf '%s' "$r_body" | grep -q '>applied<' \
+    && printf '%s' "$c_body" | grep -q 'data-criterion="AC-JOB-1@v1" data-disposition="PASSED"' \
+    && printf '%s' "$c_body" | grep -q 'data-status="receipts:applied" data-count="2"' \
+    && printf '%s' "$c_body" | grep -q 'data-status="receipts:refused_stale" data-count="2"'; echo $?)"
+
+note "A1-12 durable receipts in PostgreSQL"
+psql_v "SELECT id, command_kind, outcome, actor, expected_revision, resulting_revision, idempotency_key FROM lockstep_command_receipts ORDER BY id" > "$out/receipts.txt"
+psql_v "SELECT id, receipt_id, state, steps_done, steps_total, attempts, encode(outcome_digest, 'hex') FROM lockstep_jobs ORDER BY id" > "$out/jobs.txt"
+cat "$out/receipts.txt" "$out/jobs.txt" >> "$log"
+check A1-12 "receipts table holds 2 applied, 2 refused_stale, 1 queued; the job row has an outcome digest" \
+  "$([ "$(grep -c '|applied|' "$out/receipts.txt")" = 2 ] && [ "$(grep -c '|refused_stale|' "$out/receipts.txt")" = 2 ] && [ "$(grep -c '|queued|' "$out/receipts.txt")" = 1 ] && grep -qE '\|succeeded\|5\|5\|1\|[0-9a-f]{64}$' "$out/jobs.txt"; echo $?)"
+
+note "A1-13 rendered pages (headless Chromium through a cookie proxy)"
+docker run --rm --network host -v "$PWD/$out:/out" lockstep-dev:p1 bash -c "
+  apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends chromium python3 >/dev/null 2>&1
+  cat > /tmp/proxy.py <<'PY'
+import http.server, sys, urllib.request, urllib.error
+TARGET, COOKIE = sys.argv[2], sys.argv[3]
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        req = urllib.request.Request('http://' + TARGET + self.path, headers={'Host': TARGET, 'Cookie': 'lockstep_session=' + COOKIE})
+        try:
+            r = urllib.request.urlopen(req)
+        except urllib.error.HTTPError as e:
+            r = e
+        body = r.read()
+        self.send_response(r.status)
+        for k, v in r.headers.items():
+            if k.lower() not in ('transfer-encoding', 'connection', 'content-length'):
+                self.send_header(k, v)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers(); self.wfile.write(body)
+http.server.HTTPServer(('127.0.0.1', 8199), H).serve_forever()
+PY
+  python3 /tmp/proxy.py 8199 127.0.0.1:$port $session & sleep 1
+  chromium --headless --no-sandbox --disable-gpu --window-size=1280,1300 --screenshot=/out/center-after-restart.png http://127.0.0.1:8199/operator/center >/dev/null 2>&1
+  chromium --headless --no-sandbox --disable-gpu --window-size=1280,900 --screenshot=/out/receipt-after-restart.png http://127.0.0.1:8199$receipt1 >/dev/null 2>&1
+  chromium --version
+" >> "$log" 2>&1
+check A1-13 "screenshots captured" "$([ -s "$out/center-after-restart.png" ] && [ -s "$out/receipt-after-restart.png" ]; echo $?)"
+
+note "A1-14 zero live-model calls"
+rec "scripts/service stop" 0 scripts/service stop
+cp .local/install/last-run.log "$out/service.log"
+password=$(sed -E 's/.*"password":"([^"]*)".*/\1/' .local/config/lockstep.json)
+leaks=$(cat "$log" "$out"/*.html "$out/service.log" | grep -c -F "$password")
+token_leaks=$( [ -n "$token" ] && cat "$out"/*.html "$out/service.log" | grep -c -F "$token" || echo 0)
+echo "sentinel log: $(wc -c < "$work/sentinel/sentinel.log" | tr -d ' ') bytes; password occurrences: $leaks; sign-in token occurrences in pages and service log: $token_leaks" >> "$log"
+check A1-14 "the provider-CLI sentinel log is empty and no secret appears in the recorded output" "$([ ! -s "$work/sentinel/sentinel.log" ] && [ "$leaks" = 0 ] && [ "$token_leaks" = 0 ]; echo $?)"
+
+rm -rf "$clone"
+note "A1 result: $failures failing check(s); database $db kept for inspection"
+(cd "$out" && rm -f SHA256SUMS && shasum -a 256 $(ls | grep -v '^SHA256SUMS$') > SHA256SUMS)
+[ "$failures" = 0 ]
