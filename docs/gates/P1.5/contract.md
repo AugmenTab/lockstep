@@ -29,10 +29,10 @@ restarting the service never loses or duplicates accepted work.
 | E1 | **Command.** `OperatorCommand` gains `QueueNoop NoopSpec`, `NoopSpec { noopSteps :: 1–20, noopStepMillis :: 0–5000, noopFailAtStep :: Maybe (1–steps) }` (validated: `StepsOutOfRange`, `StepMillisOutOfRange`, `FailAtOutOfRange`). Same envelope, key, digest and `decide` as C-P1.4; payload text `steps=<n>;step_ms=<m>;fail_at=<k\|none>`, kind `queue-noop`. The expected revision is checked against the workspace revision (stale → `refused_stale` receipt) but queueing does **not** change the workspace: `decide` returns `Apply current` for this kind. |
 | E2 | **Admission.** In the C-P1.4 transaction, an applied `queue-noop` inserts a receipt with outcome **`queued`** and one job row referencing it. A replay returns the same receipt; no second job. The admission transaction never waits for execution. |
 | E3 | **Migration `0004`.** Widens the receipt outcome check to `('applied', 'refused_stale', 'queued')` and creates `lockstep_jobs(id bigint identity PK, receipt_id bigint NOT NULL UNIQUE REFERENCES lockstep_command_receipts(id), kind text NOT NULL CHECK (kind = 'noop'), state text NOT NULL CHECK (state IN ('queued', 'running', 'succeeded', 'failed')), steps_total integer NOT NULL, step_millis integer NOT NULL, fail_at_step integer, steps_done integer NOT NULL DEFAULT 0, attempts integer NOT NULL DEFAULT 0, owner text, lease_until timestamptz, created_at timestamptz NOT NULL DEFAULT now(), started_at timestamptz, finished_at timestamptz, last_error text, recovered_count integer NOT NULL DEFAULT 0)`. |
-| E4 | **Dispatcher.** `serve` starts one background dispatcher thread when the database is `Ready`. Every 200 ms it claims at most one job: `queued`, or `running` with `lease_until < now()` (a crashed owner), oldest first, `FOR UPDATE SKIP LOCKED`, setting `state = 'running'`, `owner` = a random per-process id, `lease_until = now() + 5 s`, `attempts + 1`, `started_at` if null, and `recovered_count + 1` when it was `running`. Then for each step from `steps_done + 1`: if the step equals `fail_at_step`, set `failed` with `last_error = 'deterministic failure injected at step <k>'` and stop; otherwise sleep `step_millis`, then set `steps_done = step` and renew the lease, **only while `owner` is still this process** (a lost lease stops the run). After the last step: `succeeded`. Each update is its own short transaction. |
+| E4 | **Dispatcher.** `serve` starts one background dispatcher thread when the database is `Ready`. Every 200 ms it claims at most one job: `queued`, or `running` with `lease_until < now()` (a crashed owner), oldest first, `FOR UPDATE SKIP LOCKED`, setting `state = 'running'`, `owner` = a random per-process id, `lease_until = now() + (step_millis + 5000) ms` (amended, §9 A2), `attempts + 1`, `started_at` if null, and `recovered_count + 1` when it was `running`. Then for each step from `steps_done + 1`: if the step equals `fail_at_step`, set `failed` with `last_error = 'deterministic failure injected at step <k>'` and stop; otherwise sleep `step_millis`, then set `steps_done = step` and renew the lease, **only while `owner` is still this process** (a lost lease stops the run). After the last step: `succeeded`. Each update is its own short transaction. |
 | E5 | **Shutdown and recovery.** On SIGTERM the dispatcher stops between steps and returns its running job to `queued` (`owner`, `lease_until` cleared), so a restart resumes it at once from `steps_done`. After a crash (no release) the job is reclaimed when its lease expires and resumes from `steps_done`. A no-op step has no effect outside the job row, so re-running an interrupted step is safe; this is the only reason resume is allowed (see the DG-04 boundary above). A dispatcher error is logged as a fixed line with the job id and does not stop `serve`. |
 | E6 | **CLI.** `lockstep job queue --expected-revision N [--steps S] [--step-ms M] [--fail-at-step K] [--idempotency-key K]` (defaults: 3 steps, 100 ms, no failure) prints `receipt <id> queued revision <n> key <k> job <j>` (+ ` (replayed)`); refusals as C-P1.4 E8. `lockstep job show J` prints `job <j> <state> steps <done>/<total> attempts <a>` and, if failed, a second line `error: <last_error>`; unknown → exit 65. The CLI never executes a job. |
-| E7 | **HTTP.** `POST /operator/commands/queue-noop` (fields `steps`, `step_ms`, `fail_at_step` (empty = none), `expected_revision`, `idempotency_key`, `csrf`; guard, session and CSRF as before) → `303` to `/operator/receipts/<id>` for `queued`, other outcomes as C-P1.4 E9. It returns without waiting for the job. The receipt page shows the job's state, progress, attempts and error. `/operator` gains a queue form. |
+| E7 | **HTTP.** `POST /operator/commands/queue-noop` (fields `steps`, `step_ms`, `fail_at_step` (empty = none), `expected_revision`, `idempotency_key`, `csrf`; guard, session and CSRF as before) → `303` to `/operator/receipts/<id>` for `queued`, other outcomes as C-P1.4 E9. It returns without waiting for the job. The receipt page shows the job's state, progress, attempts and error. The queue form is served at `GET /operator/jobs/new` (protected), linked from `/operator` (amended, §9 A1). |
 | E8 | **Layering.** `Lockstep.Application.Command` (admission), `Lockstep.Application.Dispatcher` (the loop, using `Lockstep.Persistence.Jobs`), started from `Main.serve`. No new dependency; the thread uses `base`/`unliftio`. |
 
 ## 3. Allowed paths
@@ -115,3 +115,33 @@ fourmolu and lint clean; baseline against `04c3ff2` fails only on the missing ex
 integration suite compiles against the current code (it binds only to existing modules) and
 fails at run time until the feature exists. Frozen backup-gate tests of P1.3/P1.4 expect
 `applied migrations: 2` / `3` as substrings, which `…: 2, 3, 4` and `…: 3, 4` satisfy.
+
+## 9. Amendments (human owner, 2026-10-18; `decision-request.md`, "Human decisions")
+
+| # | Amendment | Authority |
+|---|---|---|
+| A1 | E7: the queue form is at `GET /operator/jobs/new`, linked from `/operator` (a second form on `/operator` would break the frozen P1.4 `fieldValue` helper, which requires one `idempotency_key` input). | "Queue-form placement RATIFIED." |
+| A2 | E4: the lease is `now() + (step_millis + 5000) ms`, for the model-free no-op dispatcher only; it does not approve external-effect replay or pre-empt DG-04. | "Dispatcher lease RATIFIED." |
+| A3 | **R-P1.5-1** test amendment and re-freeze, below. | "R-P1.5-1 APPROVED, conditional on …" |
+
+### 9.1 R-P1.5-1 re-freeze
+
+`test/integration/Lockstep/DispatcherTest.hs` amended with exactly
+`evidence/proposed-test-fix.diff` (sha256 `d30e9d763d62f875f1a5af224f371dba3ceb7a74d194ed7b77240db14854edd8`):
+`healthy` catches `HttpException` as "not ready yet"; `jobState` uses one query instead of four.
+No assertion, timing or scenario change. Superseded digest `b34935aa…`; **new frozen digest**:
+
+| File | SHA-256 |
+|---|---|
+| `test/integration/Lockstep/DispatcherTest.hs` | `2c1673f607829b0a65061b3283ed1a9dce888a9756cfa06dcf1bff1e97b0c457` |
+
+The other §8 digests are unchanged.
+
+### 9.2 Known issue (recorded at the owner's instruction, not fixed)
+
+The frozen P1.2 helper `test/integration/Lockstep/Support/Postgres.hs` opens a new connection
+pool for each `queryInts` / `queryBool` / `adminExecute` call and never closes it; connections
+stay open for at least the 1 s linger time. Fast polling through it can exhaust PostgreSQL's
+`max_connections` (100), which caused the P1.5 SIGKILL-case failure before A3. New tests should
+poll with one query per iteration. Per the owner's instruction, the accepted P1.2 helper is not
+refactored unless correctness requires it.
