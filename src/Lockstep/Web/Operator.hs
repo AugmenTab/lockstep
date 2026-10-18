@@ -118,7 +118,7 @@ handleOperator db route request =
     OperatorHome ->
       withSession db request $ \runtime token session -> do
         workspace <- readWorkspace runtime
-        operatorResponse HTTP.status200 noReferrer . operatorPage token session (either (const Nothing) Just workspace)
+        operatorResponse HTTP.status200 formPagePolicy . operatorPage token session (either (const Nothing) Just workspace)
           <$> generateIdempotencyKey
     RenameCommand ->
       withSession db request $ \runtime token _ ->
@@ -163,7 +163,7 @@ handleOperator db route request =
     QueueForm ->
       withSession db request $ \runtime token _ -> do
         workspace <- readWorkspace runtime
-        operatorResponse HTTP.status200 noReferrer . queuePage token (either (const Nothing) Just workspace)
+        operatorResponse HTTP.status200 formPagePolicy . queuePage token (either (const Nothing) Just workspace)
           <$> generateIdempotencyKey
     SignOut ->
       withSession db request $ \runtime token _ ->
@@ -192,6 +192,15 @@ sessionCookieName =
 noReferrer :: HTTP.Header
 noReferrer =
   ("Referrer-Policy", "no-referrer")
+
+{- | Pages whose forms change state (C-P1.3 §9.1, R-P1.3-1; C-P1.7-R1 R1). With
+@no-referrer@ a browser sends @Origin: null@ for their submissions, which the
+strict guard refuses. @origin@ sends the exact Origin and only the bare origin
+as Referer. These pages' URLs carry no secrets.
+-}
+formPagePolicy :: HTTP.Header
+formPagePolicy =
+  ("Referrer-Policy", "origin")
 
 noStore :: HTTP.Header
 noStore =
