@@ -1,0 +1,74 @@
+== shasum -a 256 -c frozen-SHA256SUMS (every frozen file; OperatorTrustTest at its R-P1.3-1 digest; C-P1.7-R1 §8 files) at 6c2851d40a13be9ce08c97e692e30575b7b7d6e2
+test/unit/Lockstep/Foundation/SystemConfigTest.hs: OK
+test/unit/Lockstep/Foundation/CliDbTest.hs: OK
+test/unit/Lockstep/Persistence/MigrationTest.hs: OK
+test/unit/Lockstep/Application/ReadinessTest.hs: OK
+test/unit/Lockstep/Web/LivenessPageTest.hs: OK
+test/unit/Lockstep/Web/ReadinessRouteTest.hs: OK
+test/integration/Lockstep/Support/Postgres.hs: OK
+test/integration/Lockstep/Support/Process.hs: OK
+test/integration/Lockstep/MigrationDbTest.hs: OK
+test/integration/Lockstep/ServiceDbTest.hs: OK
+scripts/lib/check-db-backup-restore: OK
+test/unit/Lockstep/Foundation/CliTest.hs: OK
+test/unit/Lockstep/Web/ServerTest.hs: OK
+test/unit/Lockstep/Web/ApplicationTest.hs: OK
+test/integration/Lockstep/ProcessTest.hs: OK
+test/fixtures/lint/PartialFunctions.hs: OK
+test/fixtures/boundary/violation/Lockstep/Foundation/BoundaryViolation.hs: OK
+test/fixtures/boundary/control/Lockstep/Web/BoundaryControl.hs: OK
+test/unit/Lockstep/Foundation/OperatorTokenTest.hs: OK
+test/unit/Lockstep/Foundation/CliOperatorTest.hs: OK
+test/unit/Lockstep/Web/RequestGuardTest.hs: OK
+test/unit/Lockstep/Web/OperatorRoutesTest.hs: OK
+test/integration/Lockstep/OperatorTrustTest.hs: OK
+test/integration/Lockstep/Support/Http.hs: OK
+test/unit/Lockstep/Application/CommandTest.hs: OK
+test/unit/Lockstep/Foundation/CliWorkspaceTest.hs: OK
+test/unit/Lockstep/Web/CommandRoutesTest.hs: OK
+test/integration/Lockstep/OperatorCommandTest.hs: OK
+test/unit/Lockstep/Application/NoopCommandTest.hs: OK
+test/unit/Lockstep/Foundation/CliJobTest.hs: OK
+test/integration/Lockstep/DispatcherTest.hs: OK
+test/unit/Lockstep/Foundation/EvidenceModelTest.hs: OK
+test/unit/Lockstep/Web/CommandCenterViewTest.hs: OK
+test/integration/Lockstep/CommandCenterTest.hs: OK
+test/unit/Main.hs: OK
+test/integration/Lockstep/FaultPlanTest.hs: OK
+test/integration/Main.hs: OK
+test/integration/Lockstep/BrowserFormTest.hs: OK
+test/browser/cdp.py: OK
+exit=0
+
+== test changes since the P1.7 freeze (e350645), by file
+ test/browser/cdp.py                            | 363 +++++++++++++++++++++++++
+ test/integration/Lockstep/BrowserFormTest.hs   | 238 ++++++++++++++++
+ test/integration/Lockstep/OperatorTrustTest.hs |   2 +-
+ test/integration/Main.hs                       |   2 +
+ 4 files changed, 604 insertions(+), 1 deletion(-)
+== the R-P1.3-1 change equals the authorized diff
+IDENTICAL
+== removed runner lines since e350645: 0
+== test changes since the R1 freeze (2410593)
+(empty = none)
+== changes since the R1 freeze
+ docs/OPERATOR_GUIDE.md                             |   4 +-
+ docs/gates/A/r2/evidence/a1-history/README.md      |   5 +
+ .../a1-history/run1-20261018T192429Z/SHA256SUMS    |  10 +
+ .../a1-history/run1-20261018T192429Z/VERSION       |   4 +
+ .../a1-history/run1-20261018T192429Z/a1.log        | 304 ++++++++++++
+ .../center-after-restart.html                      |   1 +
+ .../run1-20261018T192429Z/center-after-restart.png | Bin 0 -> 173948 bytes
+ .../run1-20261018T192429Z/check-fresh-clone.log    | 541 +++++++++++++++++++++
+ .../a1-history/run1-20261018T192429Z/jobs.txt      |   1 +
+ .../receipt-after-restart.html                     |   1 +
+ .../receipt-after-restart.png                      | Bin 0 -> 59797 bytes
+ .../a1-history/run1-20261018T192429Z/receipts.txt  |   4 +
+ .../a1-history/run1-20261018T192429Z/service.log   |   4 +
+ docs/gates/P1.4/acceptance.md                      |  18 +
+ docs/gates/P1.5/acceptance.md                      |  18 +
+ docs/gates/P1.6/acceptance.md                      |  18 +
+ lockstep.cabal                                     |   1 +
+ scripts/a1                                         |  34 +-
+ src/Lockstep/Web/Operator.hs                       |  13 +-
+ 19 files changed, 971 insertions(+), 10 deletions(-)

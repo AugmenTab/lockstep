@@ -1,0 +1,5 @@
+1|rename-workspace|applied|browser-session|0|1|pv9H7GA2xSYvCNbhOm5rLw
+2|rename-workspace|applied|cli|1|2|a1-cli-key-00000001
+3|rename-workspace|refused_stale|cli|0|2|a1-cli-key-00000002
+4|rename-workspace|refused_stale|browser-session|0|2|k1UNJYG-XEKMkBDcXPXZAA
+5|queue-noop|queued|browser-session|2|2|wCa6lTYWo81yvBjs6228kA
