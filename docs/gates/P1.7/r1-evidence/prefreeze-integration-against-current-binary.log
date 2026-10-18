@@ -1,0 +1,133 @@
+sentinel: not configured for this step (only scripts/check runs step 5)
+lockstep> test (suite: lockstep-integration)
+
+lockstep-integration
+  Process
+    serve with no --port answers health on 127.0.0.1:8000:                                                    Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:8000
+OK (0.44s)
+    serve --port P answers health and the liveness page on 127.0.0.1:P:                                       Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:52135
+OK (0.43s)
+    serve is not reachable on a non-loopback interface:                                                       Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:50123
+OK (0.42s)
+    serve --port without a value exits 64 with a typed error:                                                 OK
+    SIGTERM stops the server with exit 0 within 5 seconds:                                                    Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:56149
+OK (0.42s)
+  PostgreSQL migrations and readiness
+    fresh install: the production list applies, then is a no-op:                                              OK (0.11s)
+    an ordered list applies in id order and the ledger records that order:                                    OK (0.21s)
+    after a partial run only the remainder applies:                                                           OK (0.08s)
+    a failing migration leaves no DDL and no ledger row; earlier ones stay:                                   OK (0.19s)
+    a changed applied migration is refused before any SQL runs:                                               OK (0.20s)
+    a database ahead of the binary is refused:                                                                OK (0.08s)
+    a gap in the ledger is refused:                                                                           OK (0.20s)
+    two concurrent runners apply each migration exactly once:                                                 OK (0.72s)
+    readiness: schema behind before migrate, ready after:                                                     OK (0.09s)
+    readiness: a wrong password is an authentication failure:                                                 OK (0.06s)
+    readiness: a missing database is reported as missing:                                                     OK (0.07s)
+    readiness: a closed port is unreachable:                                                                  OK (0.05s)
+    backup gate
+      an applied ledger with pending work and no backup is refused:                                           OK (0.19s)
+      a missing backup file is refused:                                                                       OK (0.19s)
+      a backup older than the last applied migration is refused:                                              OK (0.20s)
+      a fresh backup file allows the migration:                                                               OK (0.22s)
+      an explicit --no-backup allows the migration:                                                           OK (0.21s)
+      an empty database needs no backup:                                                                      OK (0.20s)
+  lockstep process with PostgreSQL
+    db migrate installs a fresh database, then is a no-op; db status reports it:                              OK (0.13s)
+    serve reports schema_behind truthfully, then ready after migrate; starts persist across restarts:         OK (2.08s)
+    an invalid configuration file stops serve with exit 66:                                                   OK (0.01s)
+    a leftover rollbar block stops serve with exit 66 and names the key:                                      OK
+    a configuration readable by others stops serve with exit 66:                                              OK
+    a missing configuration file stops serve with exit 66:                                                    OK
+  operator trust (PostgreSQL + real binary)
+    operator sign-in prints one loopback URL and stores only the token's SHA-256 digest:                      OK (0.25s)
+    operator sign-in refuses an unmigrated database (exit 69) and an unset config (exit 66):                  OK (0.11s)
+    happy path: confirm, exchange, operator page, sign-out with CSRF; bounded token exposure:                 FAIL (0.67s)
+      test/integration/Lockstep/OperatorTrustTest.hs:114:
+      expected: Just "origin"
+       but got: Just "no-referrer"
+      Use -p '/happy path: confirm, exchange, operator page, sign-out with CSRF; bounded token exposure/' to rerun this test only.
+    browser-shaped sign-in [D-2d]: Origin null is refused and does not consume the token:                     OK (0.55s)
+    token refusals: reused, expired and unknown tokens answer 403 and create no session:                      OK (0.69s)
+    two concurrent exchanges of one token: exactly one succeeds and one session exists:                       OK (0.72s)
+    session refusals: expired session, sign-out-all, and missing or wrong CSRF:                               OK (0.66s)
+    Host and Origin over HTTP: foreign or localhost Host and foreign or missing Origin answer 403:            OK (0.56s)
+    malformed input answers 4xx, never 500:                                                                   OK (0.74s)
+    db migrate from revision 1 needs a backup decision for migration 0002 (exit 75, then --no-backup):        OK (0.21s)
+  typed operator command (PostgreSQL + real binary)
+    CLI: show, rename, replay, key conflict, stale and its replay:                                            OK (0.35s)
+    CLI: a generated key is printed; invalid input stores nothing:                                            OK (0.26s)
+    CLI: not configured exits 66, an unmigrated database exits 69:                                            OK (0.10s)
+    HTTP: operator page form, rename, receipt page, replay:                                                   OK (0.73s)
+    CLI and HTTP share one operation: one key, one receipt:                                                   OK (0.70s)
+    HTTP: stale, conflict and invalid input are refused without changing state:                               OK (0.73s)
+    HTTP authority: no session, wrong CSRF and foreign Origin store nothing:                                  OK (0.74s)
+    concurrency: one key twice gives one receipt; two keys at one revision give one applied, one stale:       OK (1.11s)
+    a client that disconnects right after sending does not undo the accepted command:                         OK (0.69s)
+    db migrate from revision 2 needs a backup decision for migration 0003:                                    OK (0.13s)
+  background dispatcher (PostgreSQL + real binary)
+    the CLI only queues; a running service executes the job:                                                  OK (1.81s)
+    HTTP admission returns before the work and the job still completes:                                       OK (6.56s)
+    a client that disconnects right after queueing does not lose the job:                                     OK (0.87s)
+    duplicate admission (CLI, then HTTP with the same key) creates one job:                                   OK (0.72s)
+    a deterministic failure stops the job at its step and is not retried:                                     OK (1.46s)
+    SIGTERM mid-job returns it to the queue; a restart resumes it from its last step:                         OK (6.44s)
+    after SIGKILL the job stays running until its lease expires, then is reclaimed:                           OK (12.22s)
+    two services on one database run every job exactly once:                                                  OK (1.47s)
+    db migrate from revision 3 needs a backup decision for migration 0004:                                    OK (0.12s)
+  command center (PostgreSQL + real binary)
+    the page projects canonical rows truthfully; tampered or missing evidence is never PASSED:                OK (1.31s)
+    an operator action visibly changes the page:                                                              OK (0.54s)
+    no session is 401; a database that stops being ready shows a notice and no evidence:                      OK (0.90s)
+    db migrate from revision 4 needs a backup decision for migration 0005:                                    OK (0.11s)
+  fault plans are refused by this build
+    serve with a fault plan exits 78 and never listens:                                                       OK (0.31s)
+    every command refuses a fault plan before reading arguments or configuration:                             OK (0.03s)
+    a fault plan is refused even when LOCKSTEP_CONFIG names a missing file:                                   OK
+    without a fault plan, serve answers health as before:                                                     OK (0.94s)
+  real browser (headless Chromium) against the real service
+    served forms work in a real browser; cross-origin, tampered-CSRF and null-Origin submissions are refused: FAIL (66.52s)
+      test/integration/Lockstep/BrowserFormTest.hs:107:
+      browser expectations failed:
+      op.referrer_policy: expected "origin", got "no-referrer"
+      tamper.post.origin: expected "http://127.0.0.1:47955", got "null"
+      tamper.text lacks "not from this session": "Request refused  This request did not come from a page of this service."
+      rename.post.origin: expected "http://127.0.0.1:47955", got "null"
+      rename.post.referer: expected "http://127.0.0.1:47955/", got ""
+      rename.post.status: expected "303", got "403"
+      rename.post.location: expected prefix "/operator/receipts/", got ""
+      rename.url: expected "http://127.0.0.1:47955", got "http://127.0.0.1:47955/operator/commands/rename-workspace"
+      rename.text lacks "applied": "Request refused  This request did not come from a page of this service."
+      queueform.referrer_policy: expected "origin", got "no-referrer"
+      queue.post.origin: expected "http://127.0.0.1:47955", got "null"
+      queue.post.status: expected "303", got "403"
+      queue.post.location: expected prefix "/operator/receipts/", got ""
+      queue.text lacks "queued": "Request refused  This request did not come from a page of this service."
+      signout.post.origin: expected "http://127.0.0.1:47955", got "null"
+      signout.post.status: expected "303", got "403"
+      signout.post.location: expected "/", got ""
+      signout.url: expected "http://127.0.0.1:47955/", got "http://127.0.0.1:47955/operator/sign-out"
+      after.status: expected "401", got "200"
+      
+      Use -p '/served forms work in a real browser; cross-origin, tampered-CSRF and null-Origin submissions are refused/' to rerun this test only.
+
+2 out of 67 tests failed (120.28s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       
