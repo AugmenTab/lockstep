@@ -84,7 +84,9 @@ session. Use `http://127.0.0.1:8000`, not `localhost` (refused by design). Sign 
 | Status, activity, evidence | `/operator/center` | — |
 
 Every command has an idempotency key (the browser form makes one; the CLI generates one unless
-`--idempotency-key` is given). Repeating a command with the same key returns the same receipt;
+`--idempotency-key` is given). Each time the form page loads, it gets a fresh key, so going Back
+and submitting again counts as a new command. To repeat a command deliberately, reuse the key
+with the CLI. Repeating a command with the same key and the same payload returns the same receipt;
 reusing a key for a different command is refused; a command whose expected revision is stale is
 recorded as `refused_stale`. Jobs run only in the service; closing the browser does not cancel
 them. In the command center, a job shows `PASSED` only when it succeeded and its recorded outcome
