@@ -65,6 +65,15 @@ Phase 1 owner decisions, 2026-10-17 (recorded by the writing agent at the owner'
 - P1.1 and P1.2 **ACCEPTED** at `b3a37233e2077de6a196112a2ef46780b71a30bb`; recovery halt lifted (`docs/gates/P1.2/r1-acceptance-packet.md`).
 - P1.3 design amendments (`docs/gates/P1.3/decision-request.md`): **D-1a** (present `Host` must be exact; missing `Host` tolerated only on public GET/HEAD; port-80 default forms), **D-2d** (`Referrer-Policy: origin` on the sign-in confirm page; strict exact `Origin` on every mutating request, no `null` exception), **D-3a** (sign-in redirects to `/operator`).
 
+Phase 1 owner decisions, 2026-10-18 (`docs/gates/P1.5/decision-request.md`, "Human decisions"):
+
+- **R-P1.5-1 APPROVED** (conditional on the diff touching only the `healthy` and `jobState` helpers; verified and applied byte for byte, re-frozen in C-P1.5 §9.1).
+- Queue-form placement at `/operator/jobs/new` **RATIFIED** (C-P1.5 §9 A1).
+- Dispatcher lease `step_millis + 5000` ms **RATIFIED for the model-free no-op dispatcher only**; it does not approve external-effect replay or pre-empt DG-04 (C-P1.5 §9 A2).
+- Test-helper connection-pool churn recorded as a known issue; no refactor of accepted P1.2 tests unless required for correctness (C-P1.5 §9.2).
+
+Pending owner decisions: P1.3–P1.7 acceptance; **Gate A** (`docs/gates/A/decision-packet.md`), including the session-cookie limitation (Gate A report §3.1).
+
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.
 

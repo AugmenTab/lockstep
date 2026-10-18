@@ -1,0 +1,101 @@
+== shasum -a 256 -c frozen-SHA256SUMS (every frozen P1.1-P1.7 file; runners at their latest frozen digest) at de8afa310e13a8d2b699ac4627afe092393b087a
+test/unit/Lockstep/Foundation/SystemConfigTest.hs: OK
+test/unit/Lockstep/Foundation/CliDbTest.hs: OK
+test/unit/Lockstep/Persistence/MigrationTest.hs: OK
+test/unit/Lockstep/Application/ReadinessTest.hs: OK
+test/unit/Lockstep/Web/LivenessPageTest.hs: OK
+test/unit/Lockstep/Web/ReadinessRouteTest.hs: OK
+test/integration/Lockstep/Support/Postgres.hs: OK
+test/integration/Lockstep/Support/Process.hs: OK
+test/integration/Lockstep/MigrationDbTest.hs: OK
+test/integration/Lockstep/ServiceDbTest.hs: OK
+scripts/lib/check-db-backup-restore: OK
+test/unit/Lockstep/Foundation/CliTest.hs: OK
+test/unit/Lockstep/Web/ServerTest.hs: OK
+test/unit/Lockstep/Web/ApplicationTest.hs: OK
+test/integration/Lockstep/ProcessTest.hs: OK
+test/fixtures/lint/PartialFunctions.hs: OK
+test/fixtures/boundary/violation/Lockstep/Foundation/BoundaryViolation.hs: OK
+test/fixtures/boundary/control/Lockstep/Web/BoundaryControl.hs: OK
+test/unit/Lockstep/Foundation/OperatorTokenTest.hs: OK
+test/unit/Lockstep/Foundation/CliOperatorTest.hs: OK
+test/unit/Lockstep/Web/RequestGuardTest.hs: OK
+test/unit/Lockstep/Web/OperatorRoutesTest.hs: OK
+test/integration/Lockstep/OperatorTrustTest.hs: OK
+test/integration/Lockstep/Support/Http.hs: OK
+test/unit/Lockstep/Application/CommandTest.hs: OK
+test/unit/Lockstep/Foundation/CliWorkspaceTest.hs: OK
+test/unit/Lockstep/Web/CommandRoutesTest.hs: OK
+test/integration/Lockstep/OperatorCommandTest.hs: OK
+test/unit/Lockstep/Application/NoopCommandTest.hs: OK
+test/unit/Lockstep/Foundation/CliJobTest.hs: OK
+test/integration/Lockstep/DispatcherTest.hs: OK
+test/unit/Lockstep/Foundation/EvidenceModelTest.hs: OK
+test/unit/Lockstep/Web/CommandCenterViewTest.hs: OK
+test/integration/Lockstep/CommandCenterTest.hs: OK
+test/unit/Main.hs: OK
+test/integration/Lockstep/FaultPlanTest.hs: OK
+test/integration/Main.hs: OK
+exit=0
+
+== removed runner lines since the P1.6 freeze (2dcdc46)
+0
+== test changes since the P1.7 freeze (e350645)
+(empty = none)
+== existing test files modified since the accepted baseline b3a3723 (files created later are covered by the digests above)
+ test/integration/Main.hs | 10 ++++++++++
+ test/unit/Main.hs        | 22 ++++++++++++++++++++++
+ 2 files changed, 32 insertions(+)
+== removed lines in those files: 0
+== files changed since the P1.7 freeze
+ README.md                                          |   7 +-
+ app/lockstep/Main.hs                               |  13 +
+ docs/OPERATOR_GUIDE.md                             | 110 +++++
+ docs/gates/A/evidence/a1-history/README.md         |   9 +
+ .../a1-history/run1-20261018T175731Z/SHA256SUMS    |  10 +
+ .../a1-history/run1-20261018T175731Z/VERSION       |   4 +
+ .../a1-history/run1-20261018T175731Z/a1.log        | 264 ++++++++++
+ .../center-after-restart.html                      |   1 +
+ .../run1-20261018T175731Z/center-after-restart.png | Bin 0 -> 174841 bytes
+ .../run1-20261018T175731Z/check-fresh-clone.log    | 536 ++++++++++++++++++++
+ .../a1-history/run1-20261018T175731Z/jobs.txt      |   1 +
+ .../receipt-after-restart.html                     |   1 +
+ .../receipt-after-restart.png                      | Bin 0 -> 36006 bytes
+ .../a1-history/run1-20261018T175731Z/receipts.txt  |   5 +
+ .../a1-history/run1-20261018T175731Z/service.log   |   3 +
+ .../a1-history/run2-20261018T181126Z/SHA256SUMS    |  10 +
+ .../a1-history/run2-20261018T181126Z/VERSION       |   4 +
+ .../a1-history/run2-20261018T181126Z/a1.log        | 305 ++++++++++++
+ .../center-after-restart.html                      |   1 +
+ .../run2-20261018T181126Z/center-after-restart.png | Bin 0 -> 182675 bytes
+ .../run2-20261018T181126Z/check-fresh-clone.log    | 538 +++++++++++++++++++++
+ .../a1-history/run2-20261018T181126Z/jobs.txt      |   1 +
+ .../receipt-after-restart.html                     |   1 +
+ .../receipt-after-restart.png                      | Bin 0 -> 36410 bytes
+ .../a1-history/run2-20261018T181126Z/receipts.txt  |   5 +
+ .../a1-history/run2-20261018T181126Z/service.log   |   4 +
+ .../a1-history/run3-20261018T182158Z/SHA256SUMS    |  10 +
+ .../a1-history/run3-20261018T182158Z/VERSION       |   4 +
+ .../a1-history/run3-20261018T182158Z/a1.log        | 305 ++++++++++++
+ .../center-after-restart.html                      |   1 +
+ .../run3-20261018T182158Z/center-after-restart.png | Bin 0 -> 181149 bytes
+ .../run3-20261018T182158Z/check-fresh-clone.log    | 538 +++++++++++++++++++++
+ .../a1-history/run3-20261018T182158Z/jobs.txt      |   1 +
+ .../receipt-after-restart.html                     |   1 +
+ .../receipt-after-restart.png                      | Bin 0 -> 36214 bytes
+ .../a1-history/run3-20261018T182158Z/receipts.txt  |   5 +
+ .../a1-history/run3-20261018T182158Z/service.log   |   4 +
+ docs/gates/A/review.md                             |  36 ++
+ docs/gates/P1.7/evidence/frozen-SHA256SUMS         |  37 ++
+ lockstep.cabal                                     |   1 +
+ scripts/a1                                         | 326 +++++++++++++
+ scripts/check                                      |  30 +-
+ scripts/lib/check-guard                            |  91 ++++
+ scripts/lib/check-guard-selftest                   |  65 +++
+ scripts/lib/check-step                             |  37 ++
+ scripts/lib/provider-clis                          |   2 +
+ scripts/service                                    | 157 ++++++
+ src/Lockstep/Application/Command.hs                |   6 +
+ src/Lockstep/Application/Dispatcher.hs             |  44 +-
+ src/Lockstep/Web/Operator.hs                       |  60 ++-
+ 50 files changed, 3555 insertions(+), 39 deletions(-)
