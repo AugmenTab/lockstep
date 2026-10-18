@@ -1,0 +1,105 @@
+# P1.6 operator run, two passes, 2026-10-18, binary built from 2ac0059
+# command: scripts/db backup; docker run --rm --network lockstep-net -e BACKUP=<path> -e OUT=<dir> -v <repo>:/work lockstep-dev:p1 bash /work/docs/gates/P1.6/evidence/operator-run.sh
+# pass 1: the script started serve before migrating, so no dispatcher ran (C-P1.5 E4: only when Ready at start); jobs stayed queued and rendered NOT_RUN (queued). Script order fixed; pass 2 below captured the screenshots.
+## pass 1
+Chromium 155.0.8059.79 built on Debian GNU/Linux 12 (bookworm)
+== operator database
+readiness not_ready schema_behind 1
+revision 4
+pending 1
+$ lockstep db migrate
+lockstep: migrations are already applied: take a backup (scripts/db backup) and pass --backup FILE, or pass --no-backup
+[exit 75]
+$ lockstep db migrate --backup .local/backups/20261018T173714Z-r4-58444.dump
+applied migrations: 5
+[exit 0]
+$ lockstep job queue --expected-revision 2 --steps 2 --step-ms 50 --idempotency-key p16-operator-job-0001
+receipt 9 queued revision 2 key p16-operator-job-0001 job 5
+[exit 0]
+$ lockstep job queue --expected-revision 2 --steps 20 --step-ms 5000 --idempotency-key p16-operator-job-0002
+receipt 10 queued revision 2 key p16-operator-job-0002 job 6
+[exit 0]
+-- operator: dispositions on the page:
+data-criterion="AC-JOB-6@v1" data-disposition="NOT_RUN (queued)"
+data-criterion="AC-JOB-5@v1" data-disposition="NOT_RUN (queued)"
+data-criterion="AC-JOB-4@v1" data-disposition="INCONCLUSIVE (incomplete evidence)"
+data-criterion="AC-JOB-3@v1" data-disposition="INCONCLUSIVE (incomplete evidence)"
+data-criterion="AC-JOB-2@v1" data-disposition="FAILED"
+data-criterion="AC-JOB-1@v1" data-disposition="INCONCLUSIVE (incomplete evidence)"
+data-aggregate="FAILED"
+data-status="jobs:queued" data-count="2"
+data-status="jobs:running" data-count="0"
+data-status="jobs:succeeded" data-count="3"
+data-status="jobs:failed" data-count="1"
+data-status="receipts:applied" data-count="2"
+data-status="receipts:queued" data-count="6"
+data-status="receipts:refused_stale" data-count="2"
+   password occurrences: 0
+== scratch database (negative case)
+NOTICE:  database "lockstep_p16_negative" does not exist, skipping
+   edited job 1 (steps_done) and cleared job 2's digest
+-- negative: dispositions on the page:
+data-criterion="AC-JOB-3@v1" data-disposition="NOT_RUN (queued)"
+data-criterion="AC-JOB-2@v1" data-disposition="NOT_RUN (queued)"
+data-criterion="AC-JOB-1@v1" data-disposition="NOT_RUN (queued)"
+data-aggregate="NOT_RUN (queued)"
+data-status="jobs:queued" data-count="3"
+data-status="jobs:running" data-count="0"
+data-status="jobs:succeeded" data-count="0"
+data-status="jobs:failed" data-count="0"
+data-status="receipts:applied" data-count="0"
+data-status="receipts:queued" data-count="3"
+data-status="receipts:refused_stale" data-count="0"
+   password occurrences: 0
+== done
+## pass 2
+Chromium 155.0.8059.79 built on Debian GNU/Linux 12 (bookworm)
+== operator database
+readiness ready 5
+revision 5
+pending 0
+$ lockstep db migrate
+nothing to apply: the database is at this binary's schema revision
+[exit 0]
+$ lockstep db migrate --backup .local/backups/20261018T173714Z-r4-58444.dump
+nothing to apply: the database is at this binary's schema revision
+[exit 0]
+$ lockstep job queue --expected-revision 2 --steps 2 --step-ms 50 --idempotency-key p16-operator-job-0001
+receipt 9 queued revision 2 key p16-operator-job-0001 job 5 (replayed)
+[exit 0]
+$ lockstep job queue --expected-revision 2 --steps 20 --step-ms 5000 --idempotency-key p16-operator-job-0002
+receipt 10 queued revision 2 key p16-operator-job-0002 job 6 (replayed)
+[exit 0]
+-- operator: dispositions on the page:
+data-criterion="AC-JOB-6@v1" data-disposition="NOT_RUN (in progress)"
+data-criterion="AC-JOB-5@v1" data-disposition="PASSED"
+data-criterion="AC-JOB-4@v1" data-disposition="INCONCLUSIVE (incomplete evidence)"
+data-criterion="AC-JOB-3@v1" data-disposition="INCONCLUSIVE (incomplete evidence)"
+data-criterion="AC-JOB-2@v1" data-disposition="FAILED"
+data-criterion="AC-JOB-1@v1" data-disposition="INCONCLUSIVE (incomplete evidence)"
+data-aggregate="FAILED"
+data-status="jobs:queued" data-count="0"
+data-status="jobs:running" data-count="1"
+data-status="jobs:succeeded" data-count="4"
+data-status="jobs:failed" data-count="1"
+data-status="receipts:applied" data-count="2"
+data-status="receipts:queued" data-count="6"
+data-status="receipts:refused_stale" data-count="2"
+   password occurrences: 0
+== scratch database (negative case)
+NOTICE:  database "lockstep_p16_negative" does not exist, skipping
+   edited job 1 (steps_done) and cleared job 2's digest
+-- negative: dispositions on the page:
+data-criterion="AC-JOB-3@v1" data-disposition="FAILED"
+data-criterion="AC-JOB-2@v1" data-disposition="INCONCLUSIVE (incomplete evidence)"
+data-criterion="AC-JOB-1@v1" data-disposition="INCONCLUSIVE (evidence changed)"
+data-aggregate="FAILED"
+data-status="jobs:queued" data-count="0"
+data-status="jobs:running" data-count="0"
+data-status="jobs:succeeded" data-count="2"
+data-status="jobs:failed" data-count="1"
+data-status="receipts:applied" data-count="0"
+data-status="receipts:queued" data-count="3"
+data-status="receipts:refused_stale" data-count="0"
+   password occurrences: 0
+== done
