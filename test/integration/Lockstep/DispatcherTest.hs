@@ -5,7 +5,7 @@ module Lockstep.DispatcherTest
   ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (bracket)
+import Control.Exception (bracket, try)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.List qualified as L
@@ -14,6 +14,7 @@ import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import Flipstone.Prelude
+import Network.HTTP.Client qualified as HTTPClient
 import Network.HTTP.Types qualified as HTTP
 import Network.Socket qualified as Socket
 import Network.Socket.ByteString qualified as SocketBS
@@ -249,8 +250,11 @@ withServeStoppedBy signal fx dir name action = do
 
 healthy :: Int -> IO Bool
 healthy port = do
-  result <- timeout 1000000 (httpGet port "/api/health_check")
-  pure (fmap fst result == Just 204)
+  result <- try (timeout 1000000 (httpGet port "/api/health_check"))
+  pure $
+    case result of
+      Right reply -> fmap fst reply == Just 204
+      Left (_ :: HTTPClient.HttpException) -> False
 
 pollUntil :: Int -> IO Bool -> IO Bool
 pollUntil remainingMillis check = do
@@ -265,11 +269,18 @@ isState fx job state =
 
 jobState :: Fixture -> Int -> IO String
 jobState fx job = do
-  states <-
-    traverse
-      (\s -> (\b -> (s, b)) <$> queryBool (fxAdmin fx) (fxDb fx) ("SELECT coalesce(bool_or(state = '" <> s <> "'), false) AS v FROM lockstep_jobs WHERE id = " <> show job))
-      ["queued", "running", "succeeded", "failed"]
-  pure (maybe "missing" fst (L.find snd states))
+  codes <-
+    queryInts
+      (fxAdmin fx)
+      (fxDb fx)
+      ("SELECT CASE state WHEN 'queued' THEN 1 WHEN 'running' THEN 2 WHEN 'succeeded' THEN 3 ELSE 4 END AS v FROM lockstep_jobs WHERE id = " <> show job)
+  pure $
+    case codes of
+      [1] -> "queued"
+      [2] -> "running"
+      [3] -> "succeeded"
+      [4] -> "failed"
+      _ -> "missing"
 
 stepsDone :: Fixture -> Int -> IO [Int]
 stepsDone fx job =

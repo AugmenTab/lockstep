@@ -1,6 +1,7 @@
 # P1.5 — decision request: a defect in a frozen test
 
-- Prepared by: the writing agent (Implementer), 2026-10-17. **Nothing here is decided.**
+- Prepared by: the writing agent (Implementer), 2026-10-17. As prepared, nothing here was
+  decided. **Decided by the human owner on 2026-10-18; see "Human decisions" at the end.**
 - State: `v2` at `71b6be0` (P1.5 implementation `7eb31b1`, committed as RED WIP, plus an
   implementation fix `71b6be0` found during this investigation). P1.1/P1.2 ACCEPTED;
   P1.3 and P1.4 `VERIFIED — awaiting human acceptance`.
@@ -97,3 +98,24 @@ the difference. Ratify, or direct exactly 5 s.
 
 For example: "R-P1.5-1 approved; queue-form placement and lease ratified." Until then P1.5 stays RED
 and P1.6/P1.7 do not start.
+
+## Human decisions (2026-10-18)
+
+Decided by the human owner. Recorded by the writing agent (Implementer) at the owner's
+instruction; these are the owner's decisions, not the agent's. Owner's words, verbatim:
+
+> **R-P1.5-1 APPROVED**, conditional on the actual `proposed-test-fix.diff` modifying only the `healthy` and `jobState` test helpers as documented. No test assertions, timing expectations, or scenarios may change. Record the authorized amendment, re-freeze the corrected test, and run the full verification suite.
+>
+> **Queue-form placement RATIFIED.** Keep the form at `/operator/jobs/new`, linked from `/operator`. Update the Contract to reflect this decision.
+>
+> **Dispatcher lease RATIFIED.** The `step_millis + 5000` millisecond lease is accepted for the model-free no-op dispatcher only. This does not approve general external-effect replay or preempt DG-04.
+>
+> Record the test helper's connection-pool churn as a known issue. Do not expand this recovery into a refactor of already accepted P1.2 tests unless it becomes necessary for correctness.
+
+Condition check (by the writing agent, before applying): the diff (sha256 `d30e9d76…`) has four
+hunks: two import lines used only by `healthy` (`try`, `Network.HTTP.Client.HttpException`), the
+body of `healthy`, and the body of `jobState`. No assertion, timing value, poll limit or scenario
+changes. Base blob `c1ccda9` = the frozen file (sha256 `b34935aa…`). The new `jobState` maps
+states outside `queued`/`running`/`succeeded` to `failed`; the `lockstep_jobs.state` CHECK
+constraint allows only those four, so the reported state is unchanged. Applied and re-frozen in
+C-P1.5 §9.
