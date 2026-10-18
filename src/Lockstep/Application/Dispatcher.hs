@@ -19,9 +19,9 @@ module Lockstep.Application.Dispatcher
   , requestStop
   ) where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkFinally)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar, tryPutMVar)
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeException (SomeException), try)
 import Control.Monad (unless)
 import Crypto.Random (getRandomBytes)
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
@@ -29,6 +29,7 @@ import Data.ByteString qualified as BS
 import Data.Maybe (isJust)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
+import Data.Typeable (typeOf)
 import Flipstone.Prelude
 import System.Timeout (timeout)
 import Text.Show (Show, show)
@@ -120,7 +121,12 @@ startDispatcher runtime logLine = do
   let
     owner = TE.decodeLatin1 (convertToBase Base16 ownerBytes)
     dispatcher = Dispatcher stop done
-  _ <- forkIO (loop dispatcher runtime logLine owner >> putMVar done ())
+  _ <-
+    forkFinally (loop dispatcher runtime logLine owner) $ \ended -> do
+      case ended of
+        Right () -> logLine "Dispatcher: stopped"
+        Left err -> logLine ("Dispatcher: thread ended by an exception (" <> exceptionKind err <> "); no jobs will run until restart")
+      putMVar done ()
   pure dispatcher
 
 -- | Signals the thread to stop between steps without waiting.
@@ -157,9 +163,10 @@ loop dispatcher runtime logLine owner = do
         waitOrStop dispatcher pollMicros
   unless stopped (loop dispatcher runtime logLine owner)
 
+-- | The exception's type only: its message may carry query text.
 exceptionKind :: SomeException -> String
-exceptionKind _ =
-  "exception"
+exceptionKind (SomeException inner) =
+  show (typeOf inner)
 
 {- | Runs the claimed job from its next step. Returns 'True' when a stop was
 signalled (the job was released back to the queue).
@@ -171,8 +178,16 @@ runJob dispatcher runtime logLine owner row =
     total = Jobs.jobRowStepsTotal row
     micros = fromIntegral (Jobs.jobRowStepMillis row) * 1000
     finish state lastError = do
-      _ <- withDatabase runtime (Jobs.finishJob ident owner (T.pack state) lastError)
-      logLine ("Dispatcher: job " <> show ident <> " " <> state)
+      recorded <- withDatabase runtime (Jobs.finishJob ident owner (T.pack state) lastError)
+      logLine $
+        "Dispatcher: job "
+          <> show ident
+          <> " "
+          <> state
+          <> case recorded of
+            Right True -> ""
+            Right False -> " (not recorded: the lease was lost)"
+            Left reason -> " (not recorded: " <> show reason <> ")"
       pure False
     go step
       | step > total =
@@ -183,15 +198,24 @@ runJob dispatcher runtime logLine owner row =
           stop <- waitOrStop dispatcher micros
           if stop
             then do
-              _ <- withDatabase runtime (Jobs.releaseJob ident owner)
-              logLine ("Dispatcher: job " <> show ident <> " returned to the queue at shutdown")
+              released <- withDatabase runtime (Jobs.releaseJob ident owner)
+              logLine $
+                "Dispatcher: job "
+                  <> show ident
+                  <> case released of
+                    Right True -> " returned to the queue at shutdown"
+                    Right False -> " not returned at shutdown: the lease was already lost"
+                    Left reason -> " not returned at shutdown (" <> show reason <> "); it will be reclaimed when its lease expires"
               pure True
             else do
               kept <- withDatabase runtime (Jobs.recordStep ident owner step)
               case kept of
                 Right True -> go (step + 1)
-                _ -> do
+                Right False -> do
                   logLine ("Dispatcher: job " <> show ident <> " lost its lease")
+                  pure False
+                Left reason -> do
+                  logLine ("Dispatcher: job " <> show ident <> " step " <> show step <> " not recorded (" <> show reason <> "); it will be reclaimed when its lease expires")
                   pure False
   in
     do

@@ -141,6 +141,20 @@ health=$HTTP_STATUS
 http "readiness" "$base/api/readiness"
 check A1-04 "the installed service answers health 204 and readiness 'ready 5' on 127.0.0.1:$port" "$([ "$health" = 204 ] && [ "$HTTP_STATUS" = 200 ] && [ "$HTTP_BODY" = "ready 5" ]; echo $?)"
 
+note "A1-04b the service is reachable on this Mac's loopback only (review finding 3)"
+listeners=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null)
+echo "lsof -nP -iTCP:$port -sTCP:LISTEN:" >> "$log"; printf '%s\n' "$listeners" >> "$log"
+lan=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)
+lan_code="none"
+if [ -n "$lan" ]; then
+  curl -s -o /dev/null --max-time 3 "http://$lan:$port/api/health_check"
+  lan_code=$?
+fi
+echo "LAN address: ${lan:-none}; curl http://${lan:-none}:$port exit $lan_code (7 = connection refused)" >> "$log"
+non_loopback=$(printf '%s\n' "$listeners" | awk 'NR > 1 { print $9 }' | grep -v -E '^(127\.0\.0\.1|\[::1\]):' || true)
+check A1-04b "every listener on port $port is 127.0.0.1/::1, and the Mac's LAN address ($lan) refuses the connection" \
+  "$([ -n "$listeners" ] && [ -z "$non_loopback" ] && [ -n "$lan" ] && [ "$lan_code" = 7 ]; echo $?)"
+
 note "A1-05 operator sign-in (CLI link, browser-shaped exchange)"
 url=$(scripts/service cli operator sign-in --port "$port" 2>"$work/signin.err")
 signin_code=$?
@@ -167,6 +181,9 @@ http "rename via form" -X POST -H "Origin: $base" -H "$cookie" --data-urlencode 
 first_status=$HTTP_STATUS; receipt1=$HTTP_LOCATION
 http "same form again (duplicate)" -X POST -H "Origin: $base" -H "$cookie" --data-urlencode "name=A1 Workspace" --data "expected_revision=$expected&idempotency_key=$key&csrf=$csrf" "$base/operator/commands/rename-workspace"
 check A1-06 "form command 303 to a receipt; the duplicate returns the same receipt ($receipt1)" "$([ "$first_status" = 303 ] && [ "$HTTP_STATUS" = 303 ] && [ "$HTTP_LOCATION" = "$receipt1" ] && [ -n "$receipt1" ]; echo $?)"
+http "operator page headers" -H "$cookie" "$base/operator"
+check A1-06b "operator pages refuse framing (X-Frame-Options: DENY; CSP frame-ancestors 'none')" \
+  "$(printf '%s' "$HTTP_HEADERS" | tr -d '\r' | grep -qi '^x-frame-options: DENY$' && printf '%s' "$HTTP_HEADERS" | tr -d '\r' | grep -qi "^content-security-policy: frame-ancestors 'none'$"; echo $?)"
 
 note "A1-07 typed command through the CLI (same operation)"
 rec "workspace rename via CLI" 0 scripts/service cli workspace rename --expected-revision 1 --idempotency-key a1-cli-key-00000001 "A1 via CLI"
@@ -235,6 +252,12 @@ cat "$out/receipts.txt" "$out/jobs.txt" >> "$log"
 check A1-12 "receipts table holds 2 applied, 2 refused_stale, 1 queued; the job row has an outcome digest" \
   "$([ "$(grep -c '|applied|' "$out/receipts.txt")" = 2 ] && [ "$(grep -c '|refused_stale|' "$out/receipts.txt")" = 2 ] && [ "$(grep -c '|queued|' "$out/receipts.txt")" = 1 ] && grep -qE '\|succeeded\|5\|5\|1\|[0-9a-f]{64}$' "$out/jobs.txt"; echo $?)"
 
+note "A1-12b user-supplied text is escaped in pages (review finding 14)"
+rec "rename to markup via CLI" 0 scripts/service cli workspace rename --expected-revision 2 --idempotency-key a1-cli-key-00000003 '<b>"&x</b>'
+http "operator page with markup name" -H "$cookie" "$base/operator"
+check A1-12b "a workspace name '<b>\"&x</b>' renders escaped, never as markup" \
+  "$(printf '%s' "$HTTP_BODY" | grep -q '&lt;b&gt;' && ! printf '%s' "$HTTP_BODY" | grep -q -F '<b>"&x</b>'; echo $?)"
+
 note "A1-13 rendered pages (headless Chromium through a cookie proxy)"
 docker run --rm --network host -v "$PWD/$out:/out" lockstep-dev:p1 bash -c "
   apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends chromium python3 >/dev/null 2>&1
@@ -266,13 +289,25 @@ PY
 check A1-13 "screenshots captured" "$([ -s "$out/center-after-restart.png" ] && [ -s "$out/receipt-after-restart.png" ]; echo $?)"
 
 note "A1-14 zero live-model calls"
+in_container=$(docker exec lockstep-a1 sh -c 'command -v claude' 2>&1)
+docker exec lockstep-a1 sh -c 'LOCKSTEP_SENTINEL_LOG=/tmp/canary.log claude --a1-canary; echo "exit $?"; wc -l < /tmp/canary.log' > "$work/canary.out" 2>&1
+echo "inside lockstep-a1: claude resolves to $in_container; canary: $(tr '\n' ' ' < "$work/canary.out")" >> "$log"
+canary_ok=$([ "$in_container" = /opt/sentinel/bin/claude ] && grep -q '^exit 97$' "$work/canary.out" && [ "$(tail -n 1 "$work/canary.out" | tr -d ' ')" = 1 ]; echo $?)
 rec "scripts/service stop" 0 scripts/service stop
 cp .local/install/last-run.log "$out/service.log"
-password=$(sed -E 's/.*"password":"([^"]*)".*/\1/' .local/config/lockstep.json)
-leaks=$(cat "$log" "$out"/*.html "$out/service.log" | grep -c -F "$password")
-token_leaks=$( [ -n "$token" ] && cat "$out"/*.html "$out/service.log" | grep -c -F "$token" || echo 0)
+password=$(sed -n -E 's/.*"password":"([^"]*)".*/\1/p' .local/config/lockstep.json)
+case "$password" in
+  "" | *"{"*) echo "A1: could not extract the database password from .local/config/lockstep.json" | tee -a "$log" >&2; failures=$((failures + 1)); password="<unextractable>" ;;
+esac
+# grep -c prints the count (0 included) and exits 1 on no match; keep only its output.
+leaks=$(cat "$log" "$out"/*.html "$out/service.log" | grep -c -F "$password" || true)
+token_leaks=0
+if [ -n "$token" ]; then
+  token_leaks=$(cat "$out"/*.html "$out/service.log" | grep -c -F "$token" || true)
+fi
 echo "sentinel log: $(wc -c < "$work/sentinel/sentinel.log" | tr -d ' ') bytes; password occurrences: $leaks; sign-in token occurrences in pages and service log: $token_leaks" >> "$log"
-check A1-14 "the provider-CLI sentinel log is empty and no secret appears in the recorded output" "$([ ! -s "$work/sentinel/sentinel.log" ] && [ "$leaks" = 0 ] && [ "$token_leaks" = 0 ]; echo $?)"
+check A1-14 "inside the service container claude resolves to the shim and a canary call is logged (exit 97); the service's sentinel log is empty; no secret appears in the recorded output" \
+  "$([ "$canary_ok" = 0 ] && [ ! -s "$work/sentinel/sentinel.log" ] && [ "$leaks" = 0 ] && [ "$token_leaks" = 0 ]; echo $?)"
 
 rm -rf "$clone"
 note "A1 result: $failures failing check(s); database $db kept for inspection"

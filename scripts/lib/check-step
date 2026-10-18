@@ -14,6 +14,25 @@ if [ -n "${LOCKSTEP_SENTINEL_DIR:-}" ]; then
   export LOCKSTEP_SENTINEL_LOG="$LOCKSTEP_SENTINEL_DIR/sentinel.log"
 fi
 
+# Before any test runs: every provider CLI resolves to its shim *inside stack's
+# environment* (stack prepends its own directories), so the test processes see
+# the shims (TESTING_STRATEGY §8.2; Gate A review finding 4).
+assert_shims_in_stack() {
+  if [ -z "${LOCKSTEP_SENTINEL_DIR:-}" ]; then
+    echo "sentinel: not configured for this step (only scripts/check runs step 5)"
+    return 0
+  fi
+  local cli resolved
+  for cli in $(grep -v '^ *$' scripts/lib/provider-clis); do
+    resolved=$(stack exec -- sh -c "command -v $cli" 2>/dev/null || true)
+    if [ "$resolved" != "$LOCKSTEP_SENTINEL_DIR/bin/$cli" ]; then
+      echo "sentinel: FAILED: inside stack's environment $cli resolves to '${resolved:-nothing}'" >&2
+      exit 1
+    fi
+  done
+  echo "sentinel: inside stack's environment, $(grep -v '^ *$' scripts/lib/provider-clis | tr '\n' ' ')resolve to the shims"
+}
+
 # Tracked and new (not ignored) files; fixtures are checked by their own steps.
 haskell_sources() {
   git ls-files --cached --others --exclude-standard -- '*.hs' | grep -v '^test/fixtures/' || true
@@ -38,6 +57,7 @@ case "${1:-}" in
     ;;
 
   unit)
+    assert_shims_in_stack
     stack test lockstep:lockstep-unit
     ;;
 
@@ -52,6 +72,7 @@ case "${1:-}" in
 
   integration)
     address=$(ip -4 -o addr show scope global | awk '{ split($4, a, "/"); print a[1]; exit }')
+    assert_shims_in_stack
     LOCKSTEP_TEST_NONLOOPBACK_ADDR="$address" stack test lockstep:lockstep-integration
     ;;
 

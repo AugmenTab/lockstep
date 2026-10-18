@@ -62,7 +62,7 @@ files=$(cd "$root" && find src app test -name '*.hs' -not -path 'test/fixtures/*
 offenders=$(cd "$root" && for f in $files; do
   case "$f" in
     src/Lockstep/Effects/Provider/Live.hs | app/lockstep/Main.hs | app/lockstep-smoke/*) ;;
-    *) grep -l -E '^import +(qualified +)?Lockstep\.Effects\.Provider\.Live( |$|\()' "$f" || true ;;
+    *) grep -l -E '^import( +(safe|qualified|\{-# *SOURCE *#-\}|"[^"]*"))* +Lockstep\.Effects\.Provider\.Live( |$|\()' "$f" || true ;;
   esac
 done)
 [ -z "$offenders" ] || fail "Lockstep.Effects.Provider.Live imported by: $(echo $offenders)"

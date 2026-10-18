@@ -20,10 +20,15 @@ make_sentinel() { # dir [cli...]: shims for the given CLIs (default: all) and an
   done
 }
 
-expect_failure() { # name, env assignments..., to run check-guard with
-  local name=$1; shift
+expect_failure() { # name, expected message fragment, env assignments..., to run check-guard with
+  local name=$1 reason=$2; shift 2
   if env "$@" "$guard" >"$work/out" 2>&1; then
     echo "guard self-test: '$name' did NOT fail the guard" >&2
+    cat "$work/out" >&2
+    exit 1
+  fi
+  if ! grep -q -F -- "$reason" "$work/out"; then
+    echo "guard self-test: '$name' failed the guard for another reason (expected '$reason'):" >&2
     cat "$work/out" >&2
     exit 1
   fi
@@ -32,28 +37,29 @@ expect_failure() { # name, env assignments..., to run check-guard with
 
 # 1. a missing shim
 make_sentinel "$work/missing" codex
-expect_failure "missing claude shim" LOCKSTEP_SENTINEL_DIR="$work/missing" PATH="$work/missing/bin:$base_path"
+expect_failure "missing claude shim" "claude resolves to 'nothing'" LOCKSTEP_SENTINEL_DIR="$work/missing" PATH="$work/missing/bin:$base_path"
 
 # 2. a shim shadowed by another claude earlier on PATH
 make_sentinel "$work/shadow"
 mkdir -p "$work/other"
 printf '#!/bin/sh\nexit 0\n' > "$work/other/claude"; chmod +x "$work/other/claude"
-expect_failure "shadowed claude" LOCKSTEP_SENTINEL_DIR="$work/shadow" PATH="$work/other:$work/shadow/bin:$base_path"
+expect_failure "shadowed claude" "/other/claude', not the shim" LOCKSTEP_SENTINEL_DIR="$work/shadow" PATH="$work/other:$work/shadow/bin:$base_path"
 
 # 3. a forbidden Provider.Live import
 make_sentinel "$work/import"
 mkdir -p "$work/tree/src" "$work/tree/app" "$work/tree/test"
 printf 'module Bad where\nimport Lockstep.Effects.Provider.Live qualified as Live\n' > "$work/tree/test/Bad.hs"
-expect_failure "forbidden Provider.Live import" LOCKSTEP_SENTINEL_DIR="$work/import" PATH="$work/import/bin:$base_path" LOCKSTEP_GUARD_ROOT="$work/tree"
+printf 'module Bad2 where\nimport "lockstep" Lockstep.Effects.Provider.Live (live)\n' > "$work/tree/test/Bad2.hs"
+expect_failure "forbidden Provider.Live import" "imported by: test/Bad.hs test/Bad2.hs" LOCKSTEP_SENTINEL_DIR="$work/import" PATH="$work/import/bin:$base_path" LOCKSTEP_GUARD_ROOT="$work/tree"
 
 # 4. a binary that accepts a fault plan
 make_sentinel "$work/accepts"
 printf '#!/bin/sh\nexit 0\n' > "$work/fake-lockstep"; chmod +x "$work/fake-lockstep"
-expect_failure "binary accepts a fault plan" LOCKSTEP_SENTINEL_DIR="$work/accepts" PATH="$work/accepts/bin:$base_path" LOCKSTEP_GUARD_BINARY="$work/fake-lockstep"
+expect_failure "binary accepts a fault plan" "with a fault plan exited 0, expected 78" LOCKSTEP_SENTINEL_DIR="$work/accepts" PATH="$work/accepts/bin:$base_path" LOCKSTEP_GUARD_BINARY="$work/fake-lockstep"
 
 # 5. a non-empty sentinel log
 make_sentinel "$work/used"
 echo "claude -p hello" > "$work/used/sentinel.log"
-expect_failure "non-empty sentinel log" LOCKSTEP_SENTINEL_DIR="$work/used" PATH="$work/used/bin:$base_path"
+expect_failure "non-empty sentinel log" "the sentinel log is not empty" LOCKSTEP_SENTINEL_DIR="$work/used" PATH="$work/used/bin:$base_path"
 
 echo "guard self-test: all 5 failure modes detected"
