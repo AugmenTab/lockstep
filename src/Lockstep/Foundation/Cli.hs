@@ -6,6 +6,10 @@ module Lockstep.Foundation.Cli
   , QueueArgs (..)
   , RegisterArgs (..)
   , ResolveArgs (..)
+  , WorkOrderArgs (..)
+  , EvidenceArgs (..)
+  , ExecuteArgs (..)
+  , EffectChoice (..)
   , parseArgs
   , renderCliError
   , usage
@@ -46,6 +50,61 @@ data Command
   | ProfileShow String (Maybe Integer)
   | RepositorySetProfile String String
   | ProfileResolve ResolveArgs
+  | LedgerShow
+  | TicketCreate String
+  | TicketAccept String Integer
+  | WorkOrderCreate WorkOrderArgs
+  | WorkOrderEvidence EvidenceArgs
+  | WorkOrderHalt String Integer String
+  | WorkOrderRequeue String Integer
+  | ScheduleRunOnce
+  | SupervisorStart String Integer [String]
+  | SupervisorExecuteOnce ExecuteArgs
+  | SupervisorReconcileOnce
+  | WorkUnitAdmit String (Maybe String)
+  | EffectsResolve String Integer EffectChoice
+  | EffectsAbandon String String
+  | SandboxShow
+  deriving (Eq, Show)
+
+-- | @work-order create@ options (contract C-P2.8 §5).
+data WorkOrderArgs
+  = WorkOrderArgs
+  { orderTicket :: String
+  , orderEngineer :: String
+  , orderPriority :: Integer
+  , orderKind :: String
+  , orderClasses :: [String]
+  , orderPathClasses :: [String]
+  , orderNonBehavioural :: Maybe String
+  }
+  deriving (Eq, Show)
+
+-- | @work-order evidence@ options (contract C-P2.8 §5).
+data EvidenceArgs
+  = EvidenceArgs
+  { evidenceWorkOrder :: String
+  , evidenceArtifactName :: String
+  , evidenceDigestHex :: String
+  , evidenceVerifiers :: [String]
+  , evidenceApprovalName :: String
+  }
+  deriving (Eq, Show)
+
+-- | @supervisor execute-once@ options (contract C-P2.8 §5).
+data ExecuteArgs
+  = ExecuteArgs
+  { executeOwner :: String
+  , executeLeaseSeconds :: Integer
+  , executeTimeoutMs :: Integer
+  }
+  deriving (Eq, Show)
+
+-- | The one choice of @effects resolve@ (contract C-P2.8 §5).
+data EffectChoice
+  = ChooseAttestApplied String
+  | ChooseAttestNotApplied String
+  | ChooseRetryAcknowledged
   deriving (Eq, Show)
 
 -- | @profile resolve@ options (contract C-P2.3 F14).
@@ -126,6 +185,14 @@ parseArgs args =
     "engineer" : rest -> parseEngineerCommand rest
     "repository" : rest -> parseRepositoryCommand rest
     "profile" : rest -> parseProfileCommand rest
+    "ledger" : rest -> parseLedgerCommand rest
+    "ticket" : rest -> parseTicketCommand rest
+    "work-order" : rest -> parseWorkOrderCommand rest
+    "schedule" : rest -> parseScheduleCommand rest
+    "supervisor" : rest -> parseSupervisorCommand rest
+    "work-unit" : rest -> parseWorkUnitCommand rest
+    "effects" : rest -> parseEffectsCommand rest
+    "sandbox" : rest -> parseSandboxCommand rest
     command : _ -> Left (UnknownCommand command)
 
 -- | Contract C-P2.1 I10.
@@ -283,6 +350,197 @@ parseResolveOptions options = do
       , resolvePathClasses = [value | ("--path-class", value) <- acc]
       , resolveNonBehavioural = L.lookup "--non-behavioural" acc
       }
+
+-- Ledger commands (contract C-P2.8 §5) -------------------------------------------
+
+{- | Options with values, flags without, and at most one positional argument.
+Options in @repeatable@ may be given more than once; their values are kept in
+order. Returns the option values, the flags present and the argument.
+-}
+parseWithFlags :: [String] -> [String] -> [String] -> [String] -> Either CliError ([(String, String)], [String], Maybe String)
+parseWithFlags names repeatable flags =
+  let
+    go acc seen mbArgument options =
+      case options of
+        [] -> Right (acc, L.reverse seen, mbArgument)
+        option : rest
+          | option `L.elem` flags ->
+              if option `L.elem` seen
+                then Left (DuplicateOption option)
+                else go acc (option : seen) mbArgument rest
+          | option `L.elem` names ->
+              case rest of
+                value : rest'
+                  | not (L.null value) ->
+                      if option `L.notElem` repeatable && option `L.elem` fmap fst acc
+                        then Left (DuplicateOption option)
+                        else go (acc <> [(option, value)]) seen mbArgument rest'
+                _ -> Left (MissingOptionValue option)
+          | "-" `L.isPrefixOf` option -> Left (UnknownOption option)
+          | otherwise ->
+              case mbArgument of
+                Just _ -> Left (UnexpectedArgument option)
+                Nothing -> go acc seen (Just option) rest
+  in
+    go [] [] Nothing
+
+required :: String -> [(String, String)] -> Either CliError String
+required option acc =
+  maybe (Left (MissingOption option)) Right (L.lookup option acc)
+
+argument :: String -> Maybe String -> Either CliError String
+argument name =
+  maybe (Left (MissingArgument name)) Right
+
+noArgument :: Maybe String -> Either CliError ()
+noArgument =
+  maybe (Right ()) (Left . UnexpectedArgument)
+
+expectedRevision :: [(String, String)] -> Either CliError Integer
+expectedRevision acc =
+  required expectedRevisionOption acc >>= parseNumber expectedRevisionOption
+
+parseLedgerCommand :: [String] -> Either CliError Command
+parseLedgerCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "ledger")
+    "show" : rest -> LedgerShow <$ noMoreArguments rest
+    command : _ -> Left (UnknownCommand ("ledger " <> command))
+
+parseTicketCommand :: [String] -> Either CliError Command
+parseTicketCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "ticket")
+    "create" : options -> do
+      (_, _, title) <- parseWithFlags [] [] [] options
+      TicketCreate <$> argument "TITLE" title
+    "accept" : options -> do
+      (acc, _, ticket) <- parseWithFlags [expectedRevisionOption] [] [] options
+      t <- argument "TICKET" ticket
+      TicketAccept t <$> expectedRevision acc
+    command : _ -> Left (UnknownCommand ("ticket " <> command))
+
+parseWorkOrderCommand :: [String] -> Either CliError Command
+parseWorkOrderCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "work-order")
+    "create" : options -> do
+      let
+        repeatable = ["--class", "--path-class"]
+      (acc, _, extra) <- parseWithFlags (["--ticket", engineerOption, "--priority", "--kind", "--non-behavioural"] <> repeatable) repeatable [] options
+      noArgument extra
+      ticket <- required "--ticket" acc
+      engineer <- required engineerOption acc
+      priority <- required "--priority" acc >>= parseNumber "--priority"
+      pure
+        ( WorkOrderCreate
+            WorkOrderArgs
+              { orderTicket = ticket
+              , orderEngineer = engineer
+              , orderPriority = priority
+              , orderKind = fromMaybe "engineering" (L.lookup "--kind" acc)
+              , orderClasses = [value | ("--class", value) <- acc]
+              , orderPathClasses = [value | ("--path-class", value) <- acc]
+              , orderNonBehavioural = L.lookup "--non-behavioural" acc
+              }
+        )
+    "evidence" : options -> do
+      (acc, _, workOrder) <- parseWithFlags ["--artifact", "--digest", "--verifier", "--approval"] ["--verifier"] [] options
+      w <- argument "WORK-ORDER" workOrder
+      artifact <- required "--artifact" acc
+      digest <- required "--digest" acc
+      verifiers <- case [value | ("--verifier", value) <- acc] of
+        [] -> Left (MissingOption "--verifier")
+        vs -> Right vs
+      approval <- required "--approval" acc
+      pure (WorkOrderEvidence (EvidenceArgs w artifact digest verifiers approval))
+    "halt" : options -> do
+      (acc, _, workOrder) <- parseWithFlags [expectedRevisionOption, "--reason"] [] [] options
+      w <- argument "WORK-ORDER" workOrder
+      revision <- expectedRevision acc
+      WorkOrderHalt w revision <$> required "--reason" acc
+    "requeue" : options -> do
+      (acc, _, workOrder) <- parseWithFlags [expectedRevisionOption] [] [] options
+      w <- argument "WORK-ORDER" workOrder
+      WorkOrderRequeue w <$> expectedRevision acc
+    command : _ -> Left (UnknownCommand ("work-order " <> command))
+
+parseScheduleCommand :: [String] -> Either CliError Command
+parseScheduleCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "schedule")
+    "run-once" : rest -> ScheduleRunOnce <$ noMoreArguments rest
+    command : _ -> Left (UnknownCommand ("schedule " <> command))
+
+parseSupervisorCommand :: [String] -> Either CliError Command
+parseSupervisorCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "supervisor")
+    "start" : options -> do
+      (acc, _, workOrder) <- parseWithFlags [expectedRevisionOption, "--effect"] ["--effect"] [] options
+      w <- argument "WORK-ORDER" workOrder
+      revision <- expectedRevision acc
+      pure (SupervisorStart w revision [value | ("--effect", value) <- acc])
+    "execute-once" : options -> do
+      (acc, _, extra) <- parseWithFlags ["--owner", "--lease-seconds", "--timeout-ms"] [] [] options
+      noArgument extra
+      lease <- maybe (Right 60) (parseNumber "--lease-seconds") (L.lookup "--lease-seconds" acc)
+      timeoutMs <- maybe (Right 30000) (parseNumber "--timeout-ms") (L.lookup "--timeout-ms" acc)
+      pure (SupervisorExecuteOnce (ExecuteArgs (fromMaybe "supervisor" (L.lookup "--owner" acc)) lease timeoutMs))
+    "reconcile-once" : rest -> SupervisorReconcileOnce <$ noMoreArguments rest
+    command : _ -> Left (UnknownCommand ("supervisor " <> command))
+
+parseWorkUnitCommand :: [String] -> Either CliError Command
+parseWorkUnitCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "work-unit")
+    "admit" : options -> do
+      (acc, _, workOrder) <- parseWithFlags ["--plan-ref"] [] [] options
+      w <- argument "WORK-ORDER" workOrder
+      pure (WorkUnitAdmit w (L.lookup "--plan-ref" acc))
+    command : _ -> Left (UnknownCommand ("work-unit " <> command))
+
+acknowledgeOption :: String
+acknowledgeOption =
+  "--acknowledge-duplication-risk"
+
+parseEffectsCommand :: [String] -> Either CliError Command
+parseEffectsCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "effects")
+    "resolve" : options -> do
+      (acc, flags, operation) <- parseWithFlags ["--generation", "--attest-applied", "--attest-not-applied"] [] ["--retry", acknowledgeOption] options
+      o <- argument "OPERATION" operation
+      generation <- required "--generation" acc >>= parseNumber "--generation"
+      let
+        chosen =
+          [c | c <- ["--attest-applied", "--attest-not-applied"], c `L.elem` fmap fst acc]
+            <> ["--retry" | "--retry" `L.elem` flags]
+        acknowledged = acknowledgeOption `L.elem` flags
+      choice <-
+        case chosen of
+          [] -> Left (MissingOption "--attest-applied")
+          first : second : _ -> Left (ConflictingOptions first second)
+          ["--retry"]
+            | acknowledged -> Right ChooseRetryAcknowledged
+            | otherwise -> Left (MissingOption acknowledgeOption)
+          [option]
+            | acknowledged -> Left (UnexpectedArgument acknowledgeOption)
+            | option == "--attest-applied" -> ChooseAttestApplied <$> required option acc
+            | otherwise -> ChooseAttestNotApplied <$> required option acc
+      pure (EffectsResolve o generation choice)
+    "abandon" : options -> do
+      (acc, _, operation) <- parseWithFlags ["--reason"] [] [] options
+      o <- argument "OPERATION" operation
+      EffectsAbandon o <$> required "--reason" acc
+    command : _ -> Left (UnknownCommand ("effects " <> command))
+
+parseSandboxCommand :: [String] -> Either CliError Command
+parseSandboxCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "sandbox")
+    "show" : rest -> SandboxShow <$ noMoreArguments rest
+    command : _ -> Left (UnknownCommand ("sandbox " <> command))
 
 -- | Contract C-P1.5 E6.
 parseJobCommand :: [String] -> Either CliError Command
@@ -575,6 +833,21 @@ usage =
     , "       lockstep profile list"
     , "       lockstep profile show ID [--version N]"
     , "       lockstep profile resolve --engineer NAME --kind KIND [--class TAG]... [--path-class CLASS]... [--non-behavioural RATIONALE]"
+    , "       lockstep ledger show"
+    , "       lockstep ticket create TITLE"
+    , "       lockstep ticket accept TICKET --expected-revision N"
+    , "       lockstep work-order create --ticket TICKET --engineer NAME --priority N [--kind KIND] [--class TAG]... [--path-class CLASS]... [--non-behavioural RATIONALE]"
+    , "       lockstep work-order evidence WORK-ORDER --artifact A --digest HEX --verifier V... --approval none|supervisor|human"
+    , "       lockstep work-order halt WORK-ORDER --expected-revision N --reason TEXT"
+    , "       lockstep work-order requeue WORK-ORDER --expected-revision N"
+    , "       lockstep schedule run-once"
+    , "       lockstep supervisor start WORK-ORDER --expected-revision N [--effect NAME[:MODE]]..."
+    , "       lockstep supervisor execute-once [--owner O] [--lease-seconds N] [--timeout-ms N]"
+    , "       lockstep supervisor reconcile-once"
+    , "       lockstep work-unit admit WORK-ORDER [--plan-ref REF]"
+    , "       lockstep effects resolve OPERATION --generation G (--attest-applied E | --attest-not-applied E | --retry --acknowledge-duplication-risk)"
+    , "       lockstep effects abandon OPERATION --reason TEXT"
+    , "       lockstep sandbox show"
     , ""
     , "  serve        run the local service on 127.0.0.1 (default port 8000)"
     , "  --port N     listen on port N (1-65535)"
@@ -598,6 +871,13 @@ usage =
     , "  profile list          print every registered Profile version and its digest"
     , "  profile show          print a Profile's canonical rendering and digest (default: the latest version)"
     , "  profile resolve       print the effective Profile the Engineer's repository would bind for this work"
+    , "  ledger show           print the durable ledger: tickets, work orders, effects with their status, refusals"
+    , "  ticket, work-order, work-unit, effects   the operator's (Human) decisions on the ledger"
+    , "  schedule run-once     run the deterministic scheduler once"
+    , "  supervisor            run Lockstep's own deterministic supervisor steps once: start a"
+    , "                        claimed work order with sandbox effects, execute or recover one"
+    , "                        effect, reconcile one uncertain effect (model-free; no daemon)"
+    , "  sandbox show          print the sandbox destination's applications per operation"
     , ""
     , "The database is configured by the file named in LOCKSTEP_CONFIG."
     ]

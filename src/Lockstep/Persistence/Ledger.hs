@@ -7,6 +7,7 @@ module Lockstep.Persistence.Ledger
   ( SubjectRow (..)
   , lockSubject
   , lockSubjectsOfKind
+  , subjectsOfKind
   , insertSubject
   , updateSubject
   , EventRow (..)
@@ -14,6 +15,7 @@ module Lockstep.Persistence.Ledger
   , subjectEvents
   , NewRefusal (..)
   , insertRefusal
+  , allRefusals
   , TicketRow (..)
   , insertTicket
   , findTicket
@@ -30,6 +32,7 @@ module Lockstep.Persistence.Ledger
   , IntentRow (..)
   , insertIntent
   , lockIntent
+  , intentsOfSubject
   , updateIntent
   , insertObservation
   , ObservationRow (..)
@@ -48,6 +51,7 @@ module Lockstep.Persistence.Ledger
   , insertEvidence
   , evidenceOf
   , insertScheduleDecision
+  , latestScheduleDecision
   , lockScheduling
   , insertWorkUnit
   , activeOwners
@@ -142,6 +146,11 @@ lockSubjectsOfKind :: O.MonadOrville m => T.Text -> m [SubjectRow]
 lockSubjectsOfKind kind =
   O.executeAndDecode O.SelectQuery (sql subjectColumns <> sql "WHERE kind = " <> text kind <> sql " ORDER BY id FOR UPDATE") subjectMarshaller
 
+-- | Every subject of one kind, by creation, without locking them (C-P2.8 V2).
+subjectsOfKind :: O.MonadOrville m => T.Text -> m [SubjectRow]
+subjectsOfKind kind =
+  O.executeAndDecode O.SelectQuery (sql subjectColumns <> sql "WHERE kind = " <> text kind <> sql " ORDER BY created_at, id") subjectMarshaller
+
 insertSubject :: O.MonadOrville m => T.Text -> T.Text -> T.Text -> m ()
 insertSubject subjectId kind state =
   O.executeVoid O.InsertQuery $
@@ -209,6 +218,21 @@ insertRefusal r =
     sql "INSERT INTO lockstep_decision_refusals (subject_id, expected_revision, principal, command, refusal_code) VALUES ("
       <> commaSeparated [uuid (refusalSubject r), int (refusalExpectedRevision r), text (refusalPrincipal r), text (refusalCommand r), text (refusalCode r)]
       <> sql ")"
+
+-- | Every decision refusal, oldest first (C-P2.8 V2).
+allRefusals :: O.MonadOrville m => m [NewRefusal]
+allRefusals =
+  O.executeAndDecode
+    O.SelectQuery
+    (sql "SELECT subject_id::text AS subject_id, expected_revision, principal, command, refusal_code FROM lockstep_decision_refusals ORDER BY id")
+    ( marshal $
+        NewRefusal
+          <$> O.marshallField refusalSubject (uuidField "subject_id")
+          <*> O.marshallField refusalExpectedRevision (O.integerField "expected_revision")
+          <*> O.marshallField refusalPrincipal (O.unboundedTextField "principal")
+          <*> O.marshallField refusalCommand (O.unboundedTextField "command")
+          <*> O.marshallField refusalCode (O.unboundedTextField "refusal_code")
+    )
 
 -- Tickets ----------------------------------------------------------------------
 
@@ -414,38 +438,45 @@ insertIntent row =
 -- | The intent row with its subject's kind, locked until the transaction ends.
 lockIntent :: O.MonadOrville m => T.Text -> m (Maybe IntentRow)
 lockIntent operation =
-  headMay
-    <$> O.executeAndDecode
-      O.SelectQuery
-      ( sql "SELECT i.operation_id::text AS operation_id, i.subject_id::text AS subject_id, s.kind AS subject_kind, i.basis_revision, i.effect_key, i.event_id, i.spec_name, i.effect_class, i.retry_budget, i.key_lifetime_seconds, i.refuses_changed_parameters, i.lookup_authoritative, i.lookup_excludes_late_application, i.parameters, i.parameters_digest, i.state, i.generation, i.dispatches, i.lease_owner, i.lease_until, i.outcome_text, i.settled_applied FROM lockstep_effect_intents i JOIN lockstep_subjects s ON s.id = i.subject_id WHERE i.operation_id = "
-          <> uuid operation
-          <> sql " FOR UPDATE OF i"
-      )
-      ( marshal $
-          IntentRow
-            <$> O.marshallField intentRowOperation (uuidField "operation_id")
-            <*> O.marshallField intentRowSubject (uuidField "subject_id")
-            <*> O.marshallField intentRowSubjectKind (O.unboundedTextField "subject_kind")
-            <*> O.marshallField intentRowBasisRevision (O.integerField "basis_revision")
-            <*> O.marshallField intentRowKey (O.unboundedTextField "effect_key")
-            <*> O.marshallField intentRowEvent (O.bigIntegerField "event_id")
-            <*> O.marshallField intentRowSpecName (O.unboundedTextField "spec_name")
-            <*> O.marshallField intentRowClass (O.unboundedTextField "effect_class")
-            <*> O.marshallField intentRowBudget (O.integerField "retry_budget")
-            <*> O.marshallField intentRowKeyLifetime (O.nullableField (O.bigIntegerField "key_lifetime_seconds"))
-            <*> O.marshallField intentRowRefusesChanged (O.nullableField (O.booleanField "refuses_changed_parameters"))
-            <*> O.marshallField intentRowLookupAuthoritative (O.nullableField (O.booleanField "lookup_authoritative"))
-            <*> O.marshallField intentRowLookupExcludesLate (O.nullableField (O.booleanField "lookup_excludes_late_application"))
-            <*> O.marshallField intentRowParameters (O.unboundedTextField "parameters")
-            <*> O.marshallField intentRowParametersDigest (O.unboundedTextField "parameters_digest")
-            <*> O.marshallField intentRowState (O.unboundedTextField "state")
-            <*> O.marshallField intentRowGeneration (O.integerField "generation")
-            <*> O.marshallField intentRowDispatches (O.integerField "dispatches")
-            <*> O.marshallField intentRowLeaseOwner (O.nullableField (O.unboundedTextField "lease_owner"))
-            <*> O.marshallField intentRowLeaseUntil (O.nullableField (O.utcTimestampField "lease_until"))
-            <*> O.marshallField intentRowOutcome (O.nullableField (O.unboundedTextField "outcome_text"))
-            <*> O.marshallField intentRowSettledApplied (O.nullableField (O.booleanField "settled_applied"))
-      )
+  headMay <$> intentRows (sql "WHERE i.operation_id = " <> uuid operation <> sql " FOR UPDATE OF i")
+
+-- | A subject's intent rows, oldest first, without locking them (C-P2.8 V2).
+intentsOfSubject :: O.MonadOrville m => T.Text -> m [IntentRow]
+intentsOfSubject subjectId =
+  intentRows (sql "WHERE i.subject_id = " <> uuid subjectId <> sql " ORDER BY i.id")
+
+intentRows :: O.MonadOrville m => RawSql.RawSql -> m [IntentRow]
+intentRows condition =
+  O.executeAndDecode
+    O.SelectQuery
+    ( sql "SELECT i.operation_id::text AS operation_id, i.subject_id::text AS subject_id, s.kind AS subject_kind, i.basis_revision, i.effect_key, i.event_id, i.spec_name, i.effect_class, i.retry_budget, i.key_lifetime_seconds, i.refuses_changed_parameters, i.lookup_authoritative, i.lookup_excludes_late_application, i.parameters, i.parameters_digest, i.state, i.generation, i.dispatches, i.lease_owner, i.lease_until, i.outcome_text, i.settled_applied FROM lockstep_effect_intents i JOIN lockstep_subjects s ON s.id = i.subject_id "
+        <> condition
+    )
+    ( marshal $
+        IntentRow
+          <$> O.marshallField intentRowOperation (uuidField "operation_id")
+          <*> O.marshallField intentRowSubject (uuidField "subject_id")
+          <*> O.marshallField intentRowSubjectKind (O.unboundedTextField "subject_kind")
+          <*> O.marshallField intentRowBasisRevision (O.integerField "basis_revision")
+          <*> O.marshallField intentRowKey (O.unboundedTextField "effect_key")
+          <*> O.marshallField intentRowEvent (O.bigIntegerField "event_id")
+          <*> O.marshallField intentRowSpecName (O.unboundedTextField "spec_name")
+          <*> O.marshallField intentRowClass (O.unboundedTextField "effect_class")
+          <*> O.marshallField intentRowBudget (O.integerField "retry_budget")
+          <*> O.marshallField intentRowKeyLifetime (O.nullableField (O.bigIntegerField "key_lifetime_seconds"))
+          <*> O.marshallField intentRowRefusesChanged (O.nullableField (O.booleanField "refuses_changed_parameters"))
+          <*> O.marshallField intentRowLookupAuthoritative (O.nullableField (O.booleanField "lookup_authoritative"))
+          <*> O.marshallField intentRowLookupExcludesLate (O.nullableField (O.booleanField "lookup_excludes_late_application"))
+          <*> O.marshallField intentRowParameters (O.unboundedTextField "parameters")
+          <*> O.marshallField intentRowParametersDigest (O.unboundedTextField "parameters_digest")
+          <*> O.marshallField intentRowState (O.unboundedTextField "state")
+          <*> O.marshallField intentRowGeneration (O.integerField "generation")
+          <*> O.marshallField intentRowDispatches (O.integerField "dispatches")
+          <*> O.marshallField intentRowLeaseOwner (O.nullableField (O.unboundedTextField "lease_owner"))
+          <*> O.marshallField intentRowLeaseUntil (O.nullableField (O.utcTimestampField "lease_until"))
+          <*> O.marshallField intentRowOutcome (O.nullableField (O.unboundedTextField "outcome_text"))
+          <*> O.marshallField intentRowSettledApplied (O.nullableField (O.booleanField "settled_applied"))
+    )
 
 -- | Writes the lifecycle columns only; a trigger refuses any change to the identity, spec or parameters.
 updateIntent :: O.MonadOrville m => IntentRow -> m ()
@@ -618,6 +649,19 @@ insertScheduleDecision rendering digest selected =
     sql "INSERT INTO lockstep_schedule_decisions (rendering, digest, selected_work_order) VALUES ("
       <> commaSeparated [text rendering, text digest, maybeOf uuid selected]
       <> sql ")"
+
+-- | The latest schedule decision: (rendering, digest) (C-P2.8 V2).
+latestScheduleDecision :: O.MonadOrville m => m (Maybe (T.Text, T.Text))
+latestScheduleDecision =
+  headMay
+    <$> O.executeAndDecode
+      O.SelectQuery
+      (sql "SELECT rendering, digest FROM lockstep_schedule_decisions ORDER BY id DESC LIMIT 1")
+      ( marshal $
+          (,)
+            <$> O.marshallField fst (O.unboundedTextField "rendering")
+            <*> O.marshallField snd (O.unboundedTextField "digest")
+      )
 
 -- | Serializes scheduling runs until the transaction ends.
 lockScheduling :: O.MonadOrville m => m ()

@@ -55,6 +55,7 @@ import Lockstep.Application.Command
 import Lockstep.Application.CommandCenter (loadCommandCenter)
 import Lockstep.Application.Database (DatabaseRuntime)
 import Lockstep.Application.Dispatcher (Job (..), findJobForReceipt, jobStateCode)
+import Lockstep.Application.LedgerView (projectLedger)
 import Lockstep.Application.OperatorTrust
   ( Session (..)
   , SignInRefusal (..)
@@ -65,6 +66,7 @@ import Lockstep.Application.OperatorTrust
 import Lockstep.Foundation.OperatorToken (RawToken, csrfFor, csrfMatches, decodeToken, encodeToken)
 import Lockstep.Web.CommandCenter (commandCenterPage)
 import Lockstep.Web.Components.Page (page)
+import Lockstep.Web.LedgerPage (ledgerFailurePage, ledgerPage)
 import Lockstep.Web.RequestGuard (GuardRefusal (..))
 
 data OperatorRoute
@@ -77,6 +79,7 @@ data OperatorRoute
   | QueueCommand
   | QueueForm
   | CenterView
+  | LedgerView
   deriving (Eq, Show)
 
 matchOperatorRoute :: HTTP.Method -> [T.Text] -> Maybe OperatorRoute
@@ -91,6 +94,7 @@ matchOperatorRoute method path =
     (["operator", "commands", "queue-noop"], _, True) -> Just QueueCommand
     (["operator", "jobs", "new"], True, _) -> Just QueueForm
     (["operator", "center"], True, _) -> Just CenterView
+    (["operator", "ledger"], True, _) -> Just LedgerView
     _ -> Nothing
 
 handleOperator :: Maybe DatabaseRuntime -> OperatorRoute -> Wai.Request -> IO Wai.Response
@@ -160,6 +164,14 @@ handleOperator db route request =
     CenterView ->
       withSession db request $ \runtime _ _ ->
         operatorResponse HTTP.status200 noReferrer . commandCenterPage <$> loadCommandCenter runtime
+    LedgerView ->
+      withSession db request $ \runtime _ _ -> do
+        projected <- projectLedger runtime
+        pure $
+          case projected of
+            Right projection -> operatorResponse HTTP.status200 noReferrer (ledgerPage projection)
+            -- C-P2.8 V3: a failure to project is said, never a partial page.
+            Left _ -> operatorResponse HTTP.status500 noReferrer ledgerFailurePage
     QueueForm ->
       withSession db request $ \runtime token _ -> do
         workspace <- readWorkspace runtime

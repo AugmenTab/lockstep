@@ -23,6 +23,7 @@ module Lockstep.Application.Ledger
   , WorkOrderView (..)
   , showWorkOrder
   , recordGateEvidence
+  , gateEvidenceNamed
   , ScheduleReceipt (..)
   , scheduleOnce
   , admitWorkUnit
@@ -48,6 +49,10 @@ module Lockstep.Application.Ledger
   , reconcilableIntents
   , StoredResolution (..)
   , intentResolutions
+  , IntentFacts (..)
+  , OrderFacts (..)
+  , LedgerFacts (..)
+  , readLedger
   ) where
 
 import Control.Exception (SomeException, throwIO, try)
@@ -791,6 +796,17 @@ storedEvidence row = do
  where
   unreadable = integrity "stored gate evidence is unreadable"
 
+-- | Gate evidence from its names, as an operator gives them (C-P2.8 §5); a name that is not known is @invalid-evidence@.
+gateEvidenceNamed :: T.Text -> T.Text -> [T.Text] -> T.Text -> Either LedgerFailure GateEvidence
+gateEvidenceNamed artifact digest verifiers approval = do
+  a <- maybe (bad "an unknown artifact") Right (parseBy artifactName artifact)
+  d <- maybe (bad "a digest must be 64 lowercase hex characters") Right (mkContentDigest digest)
+  vs <- maybe (bad "an unknown verifier") Right (traverse (parseBy verifierName) verifiers)
+  ap <- maybe (bad "an unknown approval (none, supervisor or human)") Right (parseBy approvalName approval)
+  pure (GateEvidence a d vs ap)
+ where
+  bad = refused (T.pack "invalid-evidence")
+
 -- Scheduling -----------------------------------------------------------------
 
 data ScheduleReceipt
@@ -1473,11 +1489,111 @@ data StoredResolution
 
 intentResolutions :: DatabaseRuntime -> OperationId -> IO (Either LedgerFailure [StoredResolution])
 intentResolutions runtime operation =
+  transaction runtime $ \_ -> Right <$> storedResolutions operation
+
+storedResolutions :: OperationId -> O.Orville [StoredResolution]
+storedResolutions operation = do
+  rows <- Store.resolutionsOf (oid operation)
+  pure [StoredResolution (fromIntegral (Store.resolutionRowGeneration r)) (Store.resolutionRowBasis r) (Store.resolutionRowDecision r) (Store.resolutionRowAcknowledged r) | r <- rows]
+
+storedObservations :: OperationId -> O.Orville [StoredObservation]
+storedObservations operation = do
+  rows <- Store.observationsOf (oid operation)
+  pure [StoredObservation (fromIntegral (Store.observationRowGeneration r)) (Store.observationRowText r) (Store.observationRowAccepted r) (Store.observationRowRefusal r) | r <- rows]
+
+storedRecoveries :: OperationId -> O.Orville [StoredRecovery]
+storedRecoveries operation = do
+  rows <- Store.recoveriesOf (oid operation)
+  pure [StoredRecovery (fromIntegral (Store.recoveryRowGeneration r)) (Store.recoveryRowDecision r) | r <- rows]
+
+-- Reading the whole ledger (C-P2.8 V2) -------------------------------------------
+
+data IntentFacts
+  = IntentFacts
+  { factIntent :: Intent
+  , factObservations :: [StoredObservation]
+  , factRecoveries :: [StoredRecovery]
+  , factResolutions :: [StoredResolution]
+  }
+
+data OrderFacts
+  = OrderFacts
+  { factOrder :: WorkOrder
+  , factTicket :: TicketId
+  , factRevision :: Int
+  , factBinding :: T.Text
+  , factIntents :: [IntentFacts]
+  }
+
+-- | Everything the projection shows, read in one transaction; @(subject, expected, principal, command, code)@ per refusal.
+data LedgerFacts
+  = LedgerFacts
+  { factTime :: UTCTime
+  , factTickets :: [(TicketId, T.Text, T.Text, Int)]
+  , factOrders :: [OrderFacts]
+  , factRefusals :: [(T.Text, Int, T.Text, T.Text, T.Text)]
+  , factSchedule :: Maybe (T.Text, T.Text)
+  }
+
+{- | Reads every Ticket and Work Order (replayed: one that does not reproduce
+is an integrity failure), their intents with their evidence, the refusals and
+the latest schedule decision. Nothing is locked or written.
+-}
+readLedger :: DatabaseRuntime -> IO (Either LedgerFailure LedgerFacts)
+readLedger runtime =
   transaction runtime $ \_ -> do
-    rows <- Store.resolutionsOf (oid operation)
-    pure
-      ( Right
-          [ StoredResolution (fromIntegral (Store.resolutionRowGeneration r)) (Store.resolutionRowBasis r) (Store.resolutionRowDecision r) (Store.resolutionRowAcknowledged r)
-          | r <- rows
-          ]
-      )
+    now <- Store.databaseNow
+    ticketSubjects <- Store.subjectsOfKind (T.pack "ticket")
+    ticketFacts <- traverse ticketFact ticketSubjects
+    orderSubjects <- Store.subjectsOfKind (T.pack "work-order")
+    orderFacts <- traverse orderFact orderSubjects
+    refusalRows <- Store.allRefusals
+    schedule <- Store.latestScheduleDecision
+    pure $ do
+      ts <- sequenceA ticketFacts
+      os <- sequenceA orderFacts
+      pure
+        LedgerFacts
+          { factTime = now
+          , factTickets = ts
+          , factOrders = os
+          , factRefusals = [(Store.refusalSubject r, fromIntegral (Store.refusalExpectedRevision r), Store.refusalPrincipal r, Store.refusalCommand r, Store.refusalCode r) | r <- refusalRows]
+          , factSchedule = schedule
+          }
+ where
+  ticketFact subject = do
+    row <- Store.findTicket (Store.subjectRowId subject)
+    case row of
+      Nothing -> pure (integrity "a ticket subject has no ticket row")
+      Just r -> do
+        events <- Store.subjectEvents (Store.subjectRowId subject)
+        pure $ do
+          (state, _) <- replayTicket subject r events
+          u <- uuidOf (Store.subjectRowId subject)
+          pure (TicketId u, Store.ticketRowTitle r, ticketStateName state, fromIntegral (Store.subjectRowRevision subject))
+  orderFact subject = do
+    loaded <- loadWorkOrder subject
+    case loaded of
+      Left failure -> pure (Left failure)
+      Right l -> do
+        rows <- Store.intentsOfSubject (Store.subjectRowId subject)
+        intents <- traverse intentFact rows
+        pure $ do
+          is <- sequenceA intents
+          u <- uuidOf (Store.workOrderRowTicket (loadedRow l))
+          pure
+            OrderFacts
+              { factOrder = loadedOrder l
+              , factTicket = TicketId u
+              , factRevision = fromIntegral (Store.subjectRowRevision subject)
+              , factBinding = contentDigestText (bindingDigest (loadedBinding l))
+              , factIntents = is
+              }
+  intentFact row =
+    case restoreIntent row of
+      Left failure -> pure (Left failure)
+      Right intent -> do
+        observations <- storedObservations (intentOperation intent)
+        recoveries <- storedRecoveries (intentOperation intent)
+        resolutions <- storedResolutions (intentOperation intent)
+        pure (Right (IntentFacts intent observations recoveries resolutions))

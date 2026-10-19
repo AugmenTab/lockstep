@@ -61,6 +61,11 @@ how an uncertain effect outcome was resolved: by a destination lookup, by a huma
 or retry, or as a late observation that conflicted with the durable state. It changes no
 existing table. Migrate with a backup as usual.
 
+Migration 0011 (C-P2.8) adds the sandbox destination: three tables
+(`lockstep_sandbox_applications`, `lockstep_sandbox_keys`, `lockstep_sandbox_queryable`) that stand
+for the external world of the model-free sandbox effects. They are not evidence. It changes no
+existing table. Migrate with a backup as usual.
+
 ## 4. The service
 
 | Task | Command |
@@ -146,6 +151,29 @@ KIND …` prints the effective Profile it would bind. Every `profile add` and `s
 is recorded in `lockstep_profile_decisions`; Profile rows and default assignments cannot be
 updated or deleted (database triggers). A stored document that no longer reproduces its digest is
 an integrity failure (exit 70) and is never used: restore the database from a backup.
+
+### The ledger: tickets, work orders and sandbox effects (Phase 2, C-P2.8)
+
+| Task | Command |
+|---|---|
+| Show everything, with each effect's status | `lockstep ledger show` (browser: `/operator/ledger`) |
+| A ticket | `lockstep ticket create TITLE`, then `ticket accept TICKET --expected-revision N` |
+| A work order and its gate evidence | `lockstep work-order create --ticket T --engineer NAME --priority N --path-class CLASS`, then `work-order evidence WO --artifact A --digest HEX --verifier V --approval none\|supervisor\|human` |
+| Schedule and claim | `lockstep schedule run-once` |
+| Start with sandbox effects | `lockstep supervisor start WO --expected-revision N --effect sandbox-repeatable[:MODE] …` |
+| Execute or recover one effect | `lockstep supervisor execute-once [--lease-seconds N] [--timeout-ms N]` |
+| Look one uncertain effect up | `lockstep supervisor reconcile-once` |
+| Resolve an unknown outcome | `lockstep effects resolve OP --generation G --attest-applied E` (or `--attest-not-applied E`, or `--retry --acknowledge-duplication-risk`) |
+| Halt, requeue, abandon | `lockstep work-order halt WO --expected-revision N --reason R`, `work-order requeue …`, `effects abandon OP --reason R` |
+| The sandbox world | `lockstep sandbox show` |
+
+The sandbox effects (`sandbox-repeatable`, `-idempotent`, `-queryable`, `-unqueryable`, one per
+effect class) are model-free. Modes `apply` (default), `refuse`, `hang` and `apply-then-hang` let
+you produce every outcome. A `hang` lasts until the timeout, or until you kill the process: a
+killed `execute-once` is a real crash, and the next `execute-once` recovers by the effect's
+class. An effect shows `PASSED` only when its destination answered that it applied; a human
+attestation shows `ATTESTED`. The `supervisor` commands run Lockstep's own deterministic steps
+once, on your request. There is no supervisor daemon.
 
 ## 7. Troubleshooting
 

@@ -34,11 +34,13 @@ library
       Lockstep.Application.Executor
       Lockstep.Application.Identity
       Lockstep.Application.Ledger
+      Lockstep.Application.LedgerView
       Lockstep.Application.OperatorTrust
       Lockstep.Application.ProfileDocument
       Lockstep.Application.Profiles
       Lockstep.Application.Reconciler
       Lockstep.Application.Repositories
+      Lockstep.Application.Sandbox
       Lockstep.Effects.Executor
       Lockstep.Effects.Git
       Lockstep.Effects.Reconciler
@@ -50,6 +52,7 @@ library
       Lockstep.Foundation.SystemConfig
       Lockstep.Kernel.Delivery
       Lockstep.Kernel.Effect
+      Lockstep.Kernel.EffectView
       Lockstep.Kernel.EventCodec
       Lockstep.Kernel.Evidence
       Lockstep.Kernel.Identity
@@ -75,6 +78,7 @@ library
       Lockstep.Persistence.Profiles
       Lockstep.Persistence.Queries
       Lockstep.Persistence.Repositories
+      Lockstep.Persistence.Sandbox
       Lockstep.Web.Application
       Lockstep.Web.CommandCenter
       Lockstep.Web.Common
@@ -83,6 +87,7 @@ library
       Lockstep.Web.Handler.NoPermissionError
       Lockstep.Web.Handler.NoUser
       Lockstep.Web.Health
+      Lockstep.Web.LedgerPage
       Lockstep.Web.Liveness
       Lockstep.Web.Operator
       Lockstep.Web.Readiness
@@ -162,8 +167,10 @@ test-suite lockstep-integration
       Lockstep.ExecutorTest
       Lockstep.FaultPlanTest
       Lockstep.LedgerTest
+      Lockstep.LedgerTraceTest
       Lockstep.MigrationDbTest
       Lockstep.OperatorCommandTest
+      Lockstep.OperatorLedgerTest
       Lockstep.OperatorTrustTest
       Lockstep.ProcessTest
       Lockstep.ProfileRegistryTest
@@ -213,6 +220,7 @@ test-suite lockstep-unit
       Lockstep.Effects.ReconcilerTest
       Lockstep.Foundation.CliDbTest
       Lockstep.Foundation.CliJobTest
+      Lockstep.Foundation.CliLedgerTest
       Lockstep.Foundation.CliOperatorTest
       Lockstep.Foundation.CliProfileTest
       Lockstep.Foundation.CliRepositoryTest
@@ -223,6 +231,7 @@ test-suite lockstep-unit
       Lockstep.Foundation.SystemConfigTest
       Lockstep.Kernel.DeliveryTest
       Lockstep.Kernel.EffectTest
+      Lockstep.Kernel.EffectViewTest
       Lockstep.Kernel.EventCodecTest
       Lockstep.Kernel.IdentityTest
       Lockstep.Kernel.LifecycleFixtures
@@ -236,6 +245,7 @@ test-suite lockstep-unit
       Lockstep.Kernel.SchedulerPropertyTest
       Lockstep.Kernel.SchedulerTest
       Lockstep.Kernel.TicketTest
+      Lockstep.Kernel.TraceTest
       Lockstep.Kernel.TransitionTest
       Lockstep.Kernel.WorkOrderTest
       Lockstep.Kernel.WorkUnitLifecycleTest
@@ -244,6 +254,7 @@ test-suite lockstep-unit
       Lockstep.Web.ApplicationTest
       Lockstep.Web.CommandCenterViewTest
       Lockstep.Web.CommandRoutesTest
+      Lockstep.Web.LedgerPageTest
       Lockstep.Web.LivenessPageTest
       Lockstep.Web.OperatorRoutesTest
       Lockstep.Web.ReadinessRouteTest
