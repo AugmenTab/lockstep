@@ -52,6 +52,10 @@ events, refusals, observations, evidence, schedule decisions and Profile sources
 updated or deleted. It changes nothing in the Phase 1 job tables. No command uses these tables
 yet (operator commands arrive with C-P2.8); migrate with a backup as usual.
 
+Migration 0009 (C-P2.6) adds one append-only table, `lockstep_effect_recoveries`: the record of
+each recovery of an interrupted effect dispatch. It changes no existing table. As with 0008, no
+command uses it yet; migrate with a backup as usual.
+
 ## 4. The service
 
 | Task | Command |

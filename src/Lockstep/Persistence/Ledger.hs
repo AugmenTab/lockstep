@@ -34,6 +34,12 @@ module Lockstep.Persistence.Ledger
   , insertObservation
   , ObservationRow (..)
   , observationsOf
+  , intentSubject
+  , runnableIntentIds
+  , recoverableIntentIds
+  , insertRecovery
+  , RecoveryRow (..)
+  , recoveriesOf
   , EvidenceRow (..)
   , insertEvidence
   , evidenceOf
@@ -484,6 +490,55 @@ observationsOf operation =
           <*> O.marshallField observationRowText (O.unboundedTextField "observation")
           <*> O.marshallField observationRowAccepted (O.booleanField "accepted")
           <*> O.marshallField observationRowRefusal (O.nullableField (O.unboundedTextField "refusal_code"))
+    )
+
+-- Execution and recovery (C-P2.6) ------------------------------------------------
+
+-- | The intent's subject, read without a lock (the caller locks the subject first, then the intent).
+intentSubject :: O.MonadOrville m => T.Text -> m (Maybe T.Text)
+intentSubject operation =
+  headMay <$> operationIds (sql "SELECT subject_id::text AS v FROM lockstep_effect_intents WHERE operation_id = " <> uuid operation)
+
+-- | X10: intents of active Work Orders that may be claimed now, oldest first.
+runnableIntentIds :: O.MonadOrville m => m [T.Text]
+runnableIntentIds =
+  operationIds $
+    sql "SELECT i.operation_id::text AS v FROM lockstep_effect_intents i JOIN lockstep_subjects s ON s.id = i.subject_id"
+      <> sql " WHERE s.kind = 'work-order' AND s.state = 'active' AND (i.state = 'pending'"
+      <> sql " OR (i.state = 'claimed' AND i.lease_until <= now())"
+      <> sql " OR (i.state = 'confirmed-not-applied' AND i.dispatches <= i.retry_budget)) ORDER BY i.id"
+
+-- | X10: dispatched intents whose lease has ended, oldest first.
+recoverableIntentIds :: O.MonadOrville m => m [T.Text]
+recoverableIntentIds =
+  operationIds (sql "SELECT operation_id::text AS v FROM lockstep_effect_intents WHERE state = 'dispatched' AND lease_until <= now() ORDER BY id")
+
+operationIds :: O.MonadOrville m => RawSql.RawSql -> m [T.Text]
+operationIds statement =
+  O.executeAndDecode O.SelectQuery statement (marshal (O.marshallField id (uuidField "v")))
+
+insertRecovery :: O.MonadOrville m => T.Text -> Int32 -> T.Text -> m ()
+insertRecovery operation generation decision =
+  O.executeVoid O.InsertQuery $
+    sql "INSERT INTO lockstep_effect_recoveries (operation_id, generation, decision) VALUES ("
+      <> commaSeparated [uuid operation, int generation, text decision]
+      <> sql ")"
+
+data RecoveryRow
+  = RecoveryRow
+  { recoveryRowGeneration :: Int32
+  , recoveryRowDecision :: T.Text
+  }
+
+recoveriesOf :: O.MonadOrville m => T.Text -> m [RecoveryRow]
+recoveriesOf operation =
+  O.executeAndDecode
+    O.SelectQuery
+    (sql "SELECT generation, decision FROM lockstep_effect_recoveries WHERE operation_id = " <> uuid operation <> sql " ORDER BY id")
+    ( marshal $
+        RecoveryRow
+          <$> O.marshallField recoveryRowGeneration (O.integerField "generation")
+          <*> O.marshallField recoveryRowDecision (O.unboundedTextField "decision")
     )
 
 -- Evidence, schedule decisions, Work Units -------------------------------------
