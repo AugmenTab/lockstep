@@ -1,8 +1,8 @@
 # R-P2.3-1 — protected-test amendment request (C-P2.3)
 
-- Prepared by: the writing agent (Implementer), 2026-10-18. **Not applied.** A frozen test may be
+- Prepared by: the writing agent (Implementer), 2026-10-18. A frozen test may be
   changed only with the human owner's approval (PRD §6.1; the protected-test amendment protocol
-  used for R-P1.3-1 and R-P1.5-1). Status: `REQUESTED`.
+  used for R-P1.3-1 and R-P1.5-1). Status: **`APPROVED` by the human owner (2026-10-19) and applied**; see C-P2.3 §10.1.
 - Contract: `C-P2.3@v1`, frozen at `493036a`.
 - File: `test/integration/Lockstep/ProfileRegistryTest.hs`, frozen SHA-256
   `305cc30f9d9d62bde7a0e987086a3fd6ca07991d2fecc269b7c1dfd09d04b139`.
@@ -53,3 +53,17 @@ in the group pass, including this one (`evidence/integration-with-proposed-amend
 Approve R-P2.3-1 as written, or give another instruction. If approved, I will apply the diff byte
 for byte, record the new digest as a re-freeze in C-P2.3 §10.1, re-run `scripts/check
 --integration` and a Linux clone, and continue to P2.4.
+
+## Human decision (2026-10-19)
+
+The owner's words, verbatim (excerpt):
+
+> **R-P2.3-1 APPROVED.** … Authorize the exact amendment in `evidence/r-p2.3-1.diff` to
+> `test/integration/Lockstep/ProfileRegistryTest.hs`. Replace the single multi-statement
+> `adminExecute` call with three separate calls as proposed. Preserve all existing assertions and
+> test scenarios. Record the amendment in C-P2.3 §10.1, re-freeze the corrected test with its new
+> digest, and complete the required fresh-clone and Linux-clone verification. … Carry forward the
+> lesson: pre-freeze verification must exercise test setup independently when the baseline cannot
+> reach it.
+
+Applied with `git apply evidence/r-p2.3-1.diff`; new SHA-256 `c9ae6cea…` (C-P2.3 §10.1).
