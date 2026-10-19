@@ -88,6 +88,13 @@ from importing the Kernel, so the Profile document decoder, which yields the Ker
 returns a decision with a canonical rendering and digest. It emits only the Scheduler's
 `mark-eligible` / `mark-ineligible` commands; claiming is C-P2.5.*
 
+*P2.5 status note (C-P2.5, DG-04): Tickets and Work Orders are event-sourced. The current state is
+rebuilt by replaying the stored events through the pure step functions, and a projection that
+differs is an integrity failure. `Application.Ledger` sequences each decision in one transaction:
+lock, replay, Kernel decision, then the event, the projection and any effect intents.
+`Kernel.Effect` owns the intent lifecycle and its fencing generations. Leases use the database
+clock. Nothing executes an effect yet (C-P2.6).*
+
 Kernel signature direction, from Bible §37 (conceptual, not final API):
 `decide :: Snapshot -> Observation -> Either Refusal (NonEmpty DomainEvent, [EffectIntent])`.
 Time, ids and randomness enter the Kernel as **inputs**. It never reads a clock.

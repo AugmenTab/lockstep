@@ -46,6 +46,12 @@ last applied migration, or an explicit `--no-backup`. Migrations are forward-onl
 a bad migration is a restore of the pre-migration backup. `lockstep serve` never migrates: with a
 schema behind the binary, `/api/readiness` answers 503 and the status page says so.
 
+Migration 0008 (C-P2.5) adds the durable ledger: Tickets, Work Orders, their events, effect
+intents and observations, gate evidence, schedule decisions and Work Units. It only adds tables;
+events, refusals, observations, evidence, schedule decisions and Profile sources can never be
+updated or deleted. It changes nothing in the Phase 1 job tables. No command uses these tables
+yet (operator commands arrive with C-P2.8); migrate with a backup as usual.
+
 ## 4. The service
 
 | Task | Command |
