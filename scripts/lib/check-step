@@ -54,6 +54,7 @@ case "${1:-}" in
   build)
     stack build --pedantic --test --no-run-tests
     scripts/lib/check-boundary-fixture
+    scripts/lib/check-kernel-boundary
     ;;
 
   unit)
@@ -73,7 +74,10 @@ case "${1:-}" in
   integration)
     address=$(ip -4 -o addr show scope global | awk '{ split($4, a, "/"); print a[1]; exit }')
     assert_shims_in_stack
-    LOCKSTEP_TEST_NONLOOPBACK_ADDR="$address" stack test lockstep:lockstep-integration
+    # C-P2.1: a directory on the bind-mounted checkout, whose case behaviour is the host's.
+    case_dir=${LOCKSTEP_TEST_CASE_DIR:-/work/.local/test-case-dir}
+    mkdir -p "$case_dir"
+    LOCKSTEP_TEST_CASE_DIR="$case_dir" LOCKSTEP_TEST_NONLOOPBACK_ADDR="$address" stack test lockstep:lockstep-integration
     ;;
 
   *)

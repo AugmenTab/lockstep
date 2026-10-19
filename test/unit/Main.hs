@@ -11,11 +11,16 @@ import Lockstep.Application.ReadinessTest qualified as ReadinessTest
 import Lockstep.Foundation.CliDbTest qualified as CliDbTest
 import Lockstep.Foundation.CliJobTest qualified as CliJobTest
 import Lockstep.Foundation.CliOperatorTest qualified as CliOperatorTest
+import Lockstep.Foundation.CliRepositoryTest qualified as CliRepositoryTest
 import Lockstep.Foundation.CliTest qualified as CliTest
 import Lockstep.Foundation.CliWorkspaceTest qualified as CliWorkspaceTest
 import Lockstep.Foundation.EvidenceModelTest qualified as EvidenceModelTest
 import Lockstep.Foundation.OperatorTokenTest qualified as OperatorTokenTest
 import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
+import Lockstep.Kernel.IdentityTest qualified as IdentityTest
+import Lockstep.Kernel.RemoteTest qualified as RemoteTest
+import Lockstep.Kernel.RepositoryTest qualified as RepositoryTest
+import Lockstep.Kernel.WorkUnitTest qualified as WorkUnitTest
 import Lockstep.Persistence.MigrationTest qualified as MigrationTest
 import Lockstep.Web.ApplicationTest qualified as ApplicationTest
 import Lockstep.Web.CommandCenterViewTest qualified as CommandCenterViewTest
@@ -51,4 +56,9 @@ main =
       , CliJobTest.tests
       , EvidenceModelTest.tests
       , CommandCenterViewTest.tests
+      , IdentityTest.tests
+      , RemoteTest.tests
+      , RepositoryTest.tests
+      , WorkUnitTest.tests
+      , CliRepositoryTest.tests
       ]

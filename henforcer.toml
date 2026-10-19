@@ -7,12 +7,32 @@ moduleHeaderMaintainerMustExistNonEmpty = false
 encapsulatedTrees = []
 # ARCHITECTURE §2. "A depends on B" forbids B from importing A. "Web must not
 # import Persistence" is encoded as a mutual declaration (C-P1.2 E10): each of
-# the two forbids the other. Kernel/Effects rows are added when those trees
-# first exist (NOT_RUN until then).
+# the two forbids the other. C-P2.1 I2 adds the Kernel and Effects rows: the
+# Kernel imports no other layer and no IO-performing library; Effects imports
+# only the Kernel and Foundation; Foundation, Kernel and Effects are otherwise
+# mutually independent.
 treeDependencies = [
-  { moduleTree = "Lockstep.Web", dependencies = ["Lockstep.Application", "Lockstep.Foundation", "Lockstep.Persistence"], note = "Foundation is a leaf; Application must not import Web; Persistence must not import Web (ARCHITECTURE §2)." },
-  { moduleTree = "Lockstep.Application", dependencies = ["Lockstep.Persistence", "Lockstep.Foundation"], note = "Persistence and Foundation must not import Application (ARCHITECTURE §2)." },
-  { moduleTree = "Lockstep.Persistence", dependencies = ["Lockstep.Foundation", "Lockstep.Web"], note = "Foundation must not import Persistence; Web must not import Persistence, only Application (ARCHITECTURE §2)." },
+  { moduleTree = "Lockstep.Web", dependencies = ["Lockstep.Application", "Lockstep.Foundation", "Lockstep.Persistence", "Lockstep.Kernel", "Lockstep.Effects"], note = "Foundation is a leaf; Application, Persistence, Kernel and Effects must not import Web (ARCHITECTURE §2)." },
+  { moduleTree = "Lockstep.Application", dependencies = ["Lockstep.Persistence", "Lockstep.Foundation", "Lockstep.Kernel", "Lockstep.Effects"], note = "Persistence, Foundation, Kernel and Effects must not import Application (ARCHITECTURE §2)." },
+  { moduleTree = "Lockstep.Persistence", dependencies = ["Lockstep.Foundation", "Lockstep.Web", "Lockstep.Kernel", "Lockstep.Effects"], note = "Foundation, Kernel and Effects must not import Persistence; Web must not import Persistence, only Application (ARCHITECTURE §2)." },
+  { moduleTree = "Lockstep.Effects", dependencies = ["Lockstep.Kernel", "Lockstep.Foundation", "Lockstep.Web"], note = "The Kernel and Foundation must not import Effects; Web must not import Effects (ARCHITECTURE §2, C-P2.1 I2)." },
+  { moduleTree = "Lockstep.Foundation", dependencies = ["Lockstep.Kernel"], note = "The Kernel must not import Foundation (ARCHITECTURE §2, C-P2.1 I2)." },
+  { moduleTree = "Lockstep.Kernel", dependencies = ["Lockstep.Foundation"], note = "Foundation is a leaf and must not import the Kernel (ARCHITECTURE §2)." },
+  { moduleTree = "System", dependencies = ["Lockstep.Kernel"], note = "The Kernel is pure: no process, file, environment or exit facilities (C-P2.1 I2)." },
+  { moduleTree = "Network", dependencies = ["Lockstep.Kernel"], note = "The Kernel is pure: no network (C-P2.1 I2)." },
+  { moduleTree = "Control.Concurrent", dependencies = ["Lockstep.Kernel"], note = "The Kernel is pure: no threads (C-P2.1 I2)." },
+  { moduleTree = "Control.Exception", dependencies = ["Lockstep.Kernel"], note = "The Kernel is pure: refusals are values, not exceptions (C-P2.1 I2)." },
+  { moduleTree = "Control.Monad.IO", dependencies = ["Lockstep.Kernel"], note = "The Kernel is pure: no liftIO (C-P2.1 I2)." },
+  { moduleTree = "Data.IORef", dependencies = ["Lockstep.Kernel"], note = "The Kernel is pure: no mutable references (C-P2.1 I2)." },
+  { moduleTree = "Debug", dependencies = ["Lockstep.Kernel"], note = "The Kernel is pure: no tracing (C-P2.1 I2)." },
+  { moduleTree = "Foreign", dependencies = ["Lockstep.Kernel"], note = "The Kernel is pure: no FFI (C-P2.1 I2)." },
+  { moduleTree = "GHC.IO", dependencies = ["Lockstep.Kernel"], note = "The Kernel is pure (C-P2.1 I2)." },
+  { moduleTree = "Orville", dependencies = ["Lockstep.Kernel"], note = "The Kernel does not touch the database (C-P2.1 I2)." },
+  { moduleTree = "Orb", dependencies = ["Lockstep.Kernel"], note = "The Kernel has no HTTP (C-P2.1 I2)." },
+  { moduleTree = "Beeline", dependencies = ["Lockstep.Kernel"], note = "The Kernel has no HTTP routing (C-P2.1 I2)." },
+  { moduleTree = "Brigid", dependencies = ["Lockstep.Kernel"], note = "The Kernel renders no HTML (C-P2.1 I2)." },
+  { moduleTree = "Crypto", dependencies = ["Lockstep.Kernel"], note = "The Kernel takes randomness and digests as inputs (C-P2.1 I2)." },
+  { moduleTree = "UnliftIO", dependencies = ["Lockstep.Kernel"], note = "The Kernel is pure (C-P2.1 I2)." },
 ]
 
 [[forAnyModule.allowedQualifications]]

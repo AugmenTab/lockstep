@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Negative check (C-P2.1 I2): the Kernel is pure. Henforcer must reject a
+# Kernel module that imports System.Process and one that imports Persistence,
+# and accept a pure control module with the same command. A purity scan must
+# find no IO or unsafe token in src/Lockstep/Kernel, and must find one in the
+# IO fixture (so a broken scan cannot pass silently).
+set -euo pipefail
+
+compile() {
+  stack exec -- ghc -fno-code -fplugin=Henforcer \
+    -package lockstep -package flipstone-prelude -package process -package text \
+    -XGHC2021 -XNoImplicitPrelude "$1"
+}
+
+if ! control=$(compile test/fixtures/boundary/control-kernel/Lockstep/Kernel/KernelControl.hs 2>&1); then
+  echo "kernel boundary: positive control failed to compile; result is INCONCLUSIVE" >&2
+  echo "$control" >&2
+  exit 1
+fi
+
+expect_rejected() {
+  local fixture=$1 imported=$2 output
+  if output=$(compile "$fixture" 2>&1); then
+    echo "kernel boundary: Henforcer ACCEPTED $fixture" >&2
+    exit 1
+  fi
+  if ! grep -q "HEN-" <<<"$output" || ! grep -q "$imported" <<<"$output"; then
+    echo "kernel boundary: $fixture failed for an unexpected reason" >&2
+    echo "$output" >&2
+    exit 1
+  fi
+}
+
+expect_rejected test/fixtures/boundary/violation-kernel-io/Lockstep/Kernel/IoViolation.hs System.Process
+expect_rejected test/fixtures/boundary/violation-kernel-persistence/Lockstep/Kernel/PersistenceViolation.hs Lockstep.Persistence
+
+scan() {
+  grep -n -E '\bIO\b|unsafe' "$@" || true
+}
+
+if [ -z "$(scan test/fixtures/boundary/violation-kernel-io/Lockstep/Kernel/IoViolation.hs)" ]; then
+  echo "kernel boundary: the purity scan did not find IO in the fixture; the scan is broken" >&2
+  exit 1
+fi
+kernel_files=$(git ls-files --cached --others --exclude-standard -- 'src/Lockstep/Kernel/*.hs')
+if [ -z "$kernel_files" ]; then
+  echo "kernel boundary: no Kernel sources found" >&2
+  exit 1
+fi
+# shellcheck disable=SC2086
+found=$(scan $kernel_files)
+if [ -n "$found" ]; then
+  echo "kernel boundary: IO or unsafe in the Kernel:" >&2
+  echo "$found" >&2
+  exit 1
+fi
+
+echo "kernel boundary: Kernel -> System.Process and Kernel -> Persistence rejected by Henforcer; control compiled; purity scan clean ($(wc -w <<<"$kernel_files") files)"
