@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# The host-side `lockstep` command (C-OPEN O1). The lockstep binary runs only in
+# the service container, so this host wrapper is the one user-facing command:
+#
+#   scripts/lockstep open [--port N]   start the service if needed and open the
+#                                      sign-in page in this host's browser
+#   scripts/lockstep ARGS...           any other command, run by the installed
+#                                      binary (same as scripts/service cli ARGS...)
+#
+# Tip: alias lockstep=<this checkout>/scripts/lockstep
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+case "${1:-}" in
+  open)
+    shift
+    exec "$here/service" open "$@"
+    ;;
+  *)
+    exec "$here/service" cli "$@"
+    ;;
+esac

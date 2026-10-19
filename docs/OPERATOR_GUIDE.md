@@ -66,6 +66,22 @@ ready when the service starts; after a migration, restart the service.
 ## 5. Signing in
 
 ```sh
+scripts/lockstep open [--port N]            # start if needed, open the sign-in page in your browser
+```
+
+`scripts/lockstep open` checks that the database is ready, starts the service if it is not
+running (with a running service it uses that service's port), asks the installed CLI for a
+one-time sign-in link and hands it to this machine's browser (`open` on macOS, `xdg-open` on
+Linux, or the command in `LOCKSTEP_BROWSER`). Press **Sign in**. The link is never printed. While
+the launcher runs it is visible in the process list to your OS user and root, and the browser
+keeps it in its history, but it is single-use and expires within 5 minutes. Failures exit with a
+reason: 69 not ready or not running, 75 a running service on another port, 70 no link or no
+working browser launcher. Tip: `alias lockstep=<checkout>/scripts/lockstep`; every other
+`lockstep …` command then runs the installed binary, like `scripts/service cli`.
+
+By hand, without opening a browser:
+
+```sh
 scripts/service cli operator sign-in        # prints a one-time link, valid 5 minutes
 ```
 
