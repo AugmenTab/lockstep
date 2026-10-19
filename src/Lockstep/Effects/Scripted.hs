@@ -4,7 +4,8 @@ makes, and its adapter answers by a script, one step per call. A destination
 behind an idempotent spec deduplicates by operation id, as DG-04 binding
 requirement 2 demands of a real one: a repeat with the same parameters gets
 the first result and applies nothing; a repeat with other parameters is
-refused. Its keys never expire within the process.
+refused. Its keys never expire within the process. A scripted lookup
+(C-P2.7 R2) answers from the destination's own record.
 -}
 module Lockstep.Effects.Scripted
   ( ScriptedDestination
@@ -13,6 +14,8 @@ module Lockstep.Effects.Scripted
   , destinationApplications
   , ScriptStep (..)
   , scriptedAdapter
+  , LookupStep (..)
+  , scriptedReconciler
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -25,6 +28,7 @@ import System.IO.Error (userError)
 import Text.Show (Show)
 
 import Lockstep.Effects.Executor (DestinationAnswer (..), EffectAdapter (..))
+import Lockstep.Effects.Reconciler (EffectReconciler (..), LookupAnswer (..))
 import Lockstep.Kernel.Effect (EffectClass (..), EffectSpec, OperationId, effectSpecClass)
 
 data Application
@@ -105,3 +109,36 @@ nextStep script =
   case script of
     step : _ -> step
     [] -> StepApply (T.pack "ok")
+
+-- Lookups (C-P2.7 R2) -----------------------------------------------------------
+
+data LookupStep
+  = LookupTruthful
+  | LookupHang
+  | LookupFail
+  deriving (Eq, Show)
+
+{- | A lookup at the destination: truthful answers come from its record of
+applications, with the result each one answered.
+-}
+scriptedReconciler :: EffectSpec -> ScriptedDestination -> [LookupStep] -> IO EffectReconciler
+scriptedReconciler spec (ScriptedDestination store) script = do
+  steps <- newMVar script
+  pure $
+    EffectReconciler spec $ \operation _ -> do
+      step <- modifyMVar steps (\s -> pure (L.drop 1 s, nextLookup s))
+      case step of
+        LookupTruthful -> do
+          applied <- readMVar store
+          pure $
+            case L.find ((== operation) . appliedOperation . fst) applied of
+              Just (_, result) -> LookupApplied result
+              Nothing -> LookupAbsent
+        LookupHang -> threadDelay 3600000000 >> throwIO (userError "a scripted lookup hang ended")
+        LookupFail -> throwIO (userError "scripted lookup failure")
+
+nextLookup :: [LookupStep] -> LookupStep
+nextLookup script =
+  case script of
+    step : _ -> step
+    [] -> LookupTruthful

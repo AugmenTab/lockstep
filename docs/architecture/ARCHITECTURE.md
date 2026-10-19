@@ -104,6 +104,16 @@ a repeatable or idempotent effect may be redispatched within its budget, and any
 an unknown outcome. An unknown outcome or an exhausted budget halts the Work Order. Class-C
 lookup and human resolution are C-P2.7.*
 
+*P2.7 status note (C-P2.7, DG-04 requirements 3–6, 8): `Kernel.Reconciliation` resolves an
+uncertain outcome in only three ways. A queryable effect can be looked up at the destination,
+under its declared terms: a negative answer counts as not applied only when the destination is
+authoritative and excludes a late application. Otherwise a Human decides, recorded as
+`human-attested` and never as an observation. A Human retry must acknowledge the duplication
+risk. Each reconciliation raises the fencing generation. A fenced worker's late applied
+observation that contradicts the durable state is a recorded conflict: it halts the order and
+blocks the intent. `Application.Reconciler` performs the lookup outside any transaction.
+Cross-process contention is tested with real separate processes.*
+
 Kernel signature direction, from Bible §37 (conceptual, not final API):
 `decide :: Snapshot -> Observation -> Either Refusal (NonEmpty DomainEvent, [EffectIntent])`.
 Time, ids and randomness enter the Kernel as **inputs**. It never reads a clock.

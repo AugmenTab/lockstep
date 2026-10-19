@@ -40,6 +40,10 @@ module Lockstep.Persistence.Ledger
   , insertRecovery
   , RecoveryRow (..)
   , recoveriesOf
+  , reconcilableIntentIds
+  , insertResolution
+  , ResolutionRow (..)
+  , resolutionsOf
   , EvidenceRow (..)
   , insertEvidence
   , evidenceOf
@@ -539,6 +543,43 @@ recoveriesOf operation =
         RecoveryRow
           <$> O.marshallField recoveryRowGeneration (O.integerField "generation")
           <*> O.marshallField recoveryRowDecision (O.unboundedTextField "decision")
+    )
+
+-- Reconciliation and resolution (C-P2.7) ----------------------------------------
+
+-- | R4: queryable intents whose outcome is unknown, or dispatched with an ended lease, oldest first.
+reconcilableIntentIds :: O.MonadOrville m => m [T.Text]
+reconcilableIntentIds =
+  operationIds $
+    sql "SELECT operation_id::text AS v FROM lockstep_effect_intents WHERE effect_class = 'queryable'"
+      <> sql " AND (state = 'outcome-unknown' OR (state = 'dispatched' AND lease_until <= now())) ORDER BY id"
+
+insertResolution :: O.MonadOrville m => T.Text -> Int32 -> T.Text -> T.Text -> Bool -> m ()
+insertResolution operation generation basis decision acknowledged =
+  O.executeVoid O.InsertQuery $
+    sql "INSERT INTO lockstep_effect_resolutions (operation_id, generation, basis, decision, duplication_acknowledged) VALUES ("
+      <> commaSeparated [uuid operation, int generation, text basis, text decision, bool acknowledged]
+      <> sql ")"
+
+data ResolutionRow
+  = ResolutionRow
+  { resolutionRowGeneration :: Int32
+  , resolutionRowBasis :: T.Text
+  , resolutionRowDecision :: T.Text
+  , resolutionRowAcknowledged :: Bool
+  }
+
+resolutionsOf :: O.MonadOrville m => T.Text -> m [ResolutionRow]
+resolutionsOf operation =
+  O.executeAndDecode
+    O.SelectQuery
+    (sql "SELECT generation, basis, decision, duplication_acknowledged FROM lockstep_effect_resolutions WHERE operation_id = " <> uuid operation <> sql " ORDER BY id")
+    ( marshal $
+        ResolutionRow
+          <$> O.marshallField resolutionRowGeneration (O.integerField "generation")
+          <*> O.marshallField resolutionRowBasis (O.unboundedTextField "basis")
+          <*> O.marshallField resolutionRowDecision (O.unboundedTextField "decision")
+          <*> O.marshallField resolutionRowAcknowledged (O.booleanField "duplication_acknowledged")
     )
 
 -- Evidence, schedule decisions, Work Units -------------------------------------
