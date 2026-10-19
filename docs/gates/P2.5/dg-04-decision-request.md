@@ -152,3 +152,45 @@ later, separately recorded change.
 | D-4.8 no-op dispatcher unchanged | |
 | D-4.9 placement | |
 | Decided by / at | |
+
+## Human decision (2026-10-18)
+
+Recorded by the writing agent (Implementer) at the owner's instruction
+(`.local/plans/phase-02_update1.md`). The owner's words, verbatim:
+
+> ### DG-04 — APPROVED WITH SAFETY CLARIFICATIONS
+>
+> Approve D-4.1 through D-4.9 as the foundation, subject to these binding requirements:
+>
+> 1. **Stable intent identity:** Distinct legitimate effects authorized at the same subject revision must remain distinct. Use a stable effect identity within the authorizing decision. Retries must retain the original operation ID and parameters.
+>
+> 2. **Class B:** Destination idempotency must be real and documented, including key lifetime and parameter consistency. A repeated request may occur, but must not create an unintended duplicate effect.
+>
+> 3. **Class C:** A negative destination lookup counts as `confirmed_not_applied` only when the destination can authoritatively establish non-application, including that an earlier in-flight attempt cannot subsequently apply. Otherwise the outcome remains UNKNOWN and automatic re-execution is forbidden.
+>
+> 4. **Fencing:** Database fencing rejects stale writes but does not cancel external work. Preserve late observations as reconciliation evidence. Do not silently ignore evidence that an old worker may have completed an external effect.
+>
+> 5. **Class D:** Never automatically re-dispatch after an uncertain attempt. Any human-authorized retry following an unknown outcome must be explicit, auditable, and acknowledge the risk of duplication.
+>
+> 6. **Human resolution:** Distinguish human-attested outcomes from independently verified observations in durable evidence. Never present an unverified human assertion as destination-confirmed proof.
+>
+> 7. **Retry semantics:** Keep finite, effect-specific budgets. Do not introduce generic retries that bypass class-specific safety rules.
+>
+> 8. **Testing:** Prove no unintended duplicate external effects, not an impossible blanket guarantee of exactly-once invocation. Include delayed workers, expired leases, late external completion, ambiguous negative lookups, duplicate requests and cross-process contention.
+>
+> The Phase 1 no-op dispatcher remains unchanged. Its provisional lease behavior does not authorize general external-effect replay.
+
+| Field | Value |
+|---|---|
+| D-4.1 events + intents in one transaction | ACCEPTED; requirement 1: the uniqueness key includes a stable effect identity within the decision, so distinct effects at one revision stay distinct |
+| D-4.2 claims, leases, fencing generations | ACCEPTED; requirement 4: fencing refuses stale writes but cancels nothing; late observations are kept as evidence |
+| D-4.3 effect classes A–D | ACCEPTED; requirements 2 (B: documented key lifetime and parameter consistency) and 3 (C: negative lookup authoritative only if a late in-flight application is excluded) |
+| D-4.4 outcome vocabulary | ACCEPTED |
+| D-4.5 crash table | ACCEPTED, amended by requirements 3 and 5 |
+| D-4.6 human resolution of unknown | ACCEPTED; requirements 5 and 6: human-attested outcomes are marked as such; a human retry after unknown acknowledges the duplication risk |
+| D-4.7 retry budgets (default 3 / D: 0) | ACCEPTED; requirement 7 |
+| D-4.8 no-op dispatcher unchanged | ACCEPTED |
+| D-4.9 placement | ACCEPTED |
+| Decided by / at | the human owner, 2026-10-18 |
+
+Status: **ACCEPTED** (with binding safety requirements 1–8). C-P2.5–C-P2.7 incorporate them.
