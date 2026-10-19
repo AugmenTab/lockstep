@@ -1,0 +1,19 @@
+cc11ea08f1d1a23b24f1f48fefb09d4c584cde07
+Application
+Effects
+Foundation
+Kernel
+Persistence
+Web
+format PASSED
+lint PASSED
+build PASSED
+unit PASSED
+integration PASSED
+All 489 tests passed (0.35s)
+All 79 tests passed (130.91s)
+    case sensitivity: the system temporary directory and LOCKSTEP_TEST_CASE_DIR:                              OK (0.75s)
+      system temporary directory: case-sensitive (Proj and proj are distinct repositories); LOCKSTEP_TEST_CASE_DIR: case-sensitive (Proj and proj are distinct repositories)
+kernel boundary: Kernel -> System.Process and Kernel -> Persistence rejected by Henforcer; control compiled; purity scan clean (11 files)
+exit=0
+exit=0
