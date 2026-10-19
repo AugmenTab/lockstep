@@ -105,8 +105,10 @@ tests:
       - brigid
       - bytestring
       - http-types
+      - QuickCheck
       - tasty
       - tasty-hunit
+      - tasty-quickcheck
       - text
       - time
       - wai
