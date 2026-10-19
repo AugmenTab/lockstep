@@ -1,9 +1,9 @@
 # P2.4 Contract — Deterministic Work Order scheduler
 
 - Contract ID: `C-P2.4@v1`
-- Status: **DRAFT** (frozen when §10 is filled in)
-- Basis: `v2` after P2.3 (`VERIFIED — awaiting human acceptance`); C-P2.2 Work Order lifecycle;
-  C-P2.3 Profile bindings.
+- Status: **FROZEN** (2026-10-19)
+- Basis: `v2` at `c9100c0` (P2.3 `VERIFIED — awaiting human acceptance`); C-P2.2 Work Order
+  lifecycle; C-P2.3 Profile bindings.
 - Authority: `.local/plans/phase-02.md` §8 (P2.4) and §3; **DG-05 ACCEPTED with clarifications**
   (`docs/gates/P2.3/dg-05-decision-request.md`, Human decision, 2026-10-18), D-5.7–D-5.11 and
   clarifications 1 and 3.
@@ -86,6 +86,7 @@ renderScheduleDecision :: ScheduleDecision -> Text
 scheduleDigest :: Hasher -> ScheduleDecision -> ContentDigest
 data SchedulerRefusal = PriorityNotHuman Principal | InvalidPriority Int | InvalidResource Text | ConflictingInput Text
 schedulerRefusalCode :: SchedulerRefusal -> Text
+-- Every type derives Eq and Show; Priority and ResourceName also Ord.
 ```
 
 ## 5. Allowed paths
@@ -141,4 +142,29 @@ or a source document. Rollback: revert the P2.4 commits (no migration).
 
 ## 9. Freeze record
 
-(Filled in at freeze.)
+Frozen 2026-10-19 by the writing agent (manual). Frozen files never change in P2.4 without the
+protected-test amendment protocol.
+
+| File | SHA-256 |
+|---|---|
+| `test/unit/Lockstep/Kernel/SchedulerTest.hs` | `eb85dcb642613bf3644c88a3fee2743a4bceda02b7dd0353cf39d73d7d419413` |
+| `test/unit/Lockstep/Kernel/SchedulerPropertyTest.hs` | `a2e188bad47946c59fe4efb7acef29cf44b1ef6164b4b74a53eec1ff696fedb0` |
+| `test/unit/Lockstep/Kernel/SchedulerFixtures.hs` | `442cbbc5f6ad3b85c73027e6616e72c6cf2707354632534dbad7d9c09577ffa6` |
+| `test/unit/Main.hs` (runner, additive) | `49805e77222b0ec0a717e3511484a6a18a36952424189e7266297f620102707f` |
+
+Runner change: `test/unit/Main.hs` +4 lines (two imports, two entries); nothing removed.
+
+Pre-freeze verification (§7), against a type-only stub of `Lockstep.Kernel.Scheduler` (scratch;
+the §4 API with refusing or empty bodies; `mkPriority` and `mkResourceName` real, being leaf
+utilities):
+
+- Build: library and suites compile under `--pedantic`; fourmolu clean; hlint clean on the new
+  tests after five hints (traverse_ twice, an infix `intersect`, a hoisted `not`, one lambda).
+- Unit baseline (`evidence/prefreeze-unit-baseline.log`): 35 of 489 fail, **all** in the two new
+  groups; the 451 earlier tests pass (the one `FAILED` match is an EvidenceModel test name). Three
+  new tests pass against the stub: "the fixture world builds", which exercises every fixture
+  binding, receipt, priority, resource and world helper on its own (the R-P2.3-1 lesson), and the
+  two `mkPriority` acceptance cases. Every property fails at the stub's refusal *after* its
+  generator produced a world (the log prints the generated `SchedulerInput`), so the generators run.
+- The stub cannot produce decisions, so every expected reason, order, command and the golden
+  rendering were checked against §2–§3 by reading before the freeze.
