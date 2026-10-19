@@ -380,7 +380,7 @@ effectRefusalCode refusal =
     case refusal of
       InvalidEffectSpec _ -> "invalid-effect-spec"
       IdempotencyUndocumented -> "idempotency-undocumented"
-      UnsafeRetryBudget -> "unsafe-retry-budget"
+      UnsafeRetryBudget -> "retry-budget-forbidden"
       InvalidEffectKey _ -> "invalid-effect-key"
       InvalidEffectParameters -> "invalid-effect-parameters"
       DuplicateEffectKey _ -> "duplicate-effect-key"

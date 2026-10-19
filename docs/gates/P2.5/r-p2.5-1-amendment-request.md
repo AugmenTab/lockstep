@@ -1,6 +1,6 @@
 # R-P2.5-1 — protected-test amendment request (C-P2.5)
 
-- Prepared by: the writing agent (Implementer), 2026-10-19. Status: `REQUESTED`. A frozen test
+- Prepared by: the writing agent (Implementer), 2026-10-19. Status: `APPROVED` by the human owner, 2026-10-19 ("R-P2.5-1 APPROVED … Authorize the exact two-literal amendment in `evidence/r-p2.5-1.diff`, replacing `unsafe-retry-budget` with `retry-budget-forbidden` in the frozen `EffectTest`."); recorded in C-P2.5 §10.1. A frozen test
   may be changed only with the human owner's approval. The protocol is the one used for
   R-P1.3-1, R-P1.5-1 and R-P2.3-1.
 - Contract: `C-P2.5@v1`, frozen at `5f2d1e2`; implementation `d8fa98b`.

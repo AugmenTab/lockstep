@@ -29,7 +29,7 @@ The Phase 1 no-op job dispatcher, its tables and its lease rule are unchanged (D
 
 | # | Decision |
 |---|---|
-| E1 | **Effect classes** (D-4.3) in `Lockstep.Kernel.Effect`: `repeatable` (A), `idempotent` (B), `queryable` (C), `unqueryable` (D). An effect spec has a name (`^[a-z][a-z0-9-]{0,63}$`), class terms and a retry budget. Requirement 2: class B terms are the destination's documented key lifetime in seconds (≥ 1) and whether the destination refuses a repeated key with different parameters; a spec whose destination does not refuse that is `idempotency-undocumented`. Requirement 3 (declaration only here): class C terms say whether a negative lookup is authoritative and whether it excludes a later application by an earlier in-flight attempt; C-P2.7 uses them. Requirement 7: the budget is 0–3 for A–C and must be 0 for D (`unsafe-retry-budget`); any other value is `invalid-effect-spec`. |
+| E1 | **Effect classes** (D-4.3) in `Lockstep.Kernel.Effect`: `repeatable` (A), `idempotent` (B), `queryable` (C), `unqueryable` (D). An effect spec has a name (`^[a-z][a-z0-9-]{0,63}$`), class terms and a retry budget. Requirement 2: class B terms are the destination's documented key lifetime in seconds (≥ 1) and whether the destination refuses a repeated key with different parameters; a spec whose destination does not refuse that is `idempotency-undocumented`. Requirement 3 (declaration only here): class C terms say whether a negative lookup is authoritative and whether it excludes a later application by an earlier in-flight attempt; C-P2.7 uses them. Requirement 7: the budget is 0–3 for A–C and must be 0 for D (`retry-budget-forbidden`); any other value is `invalid-effect-spec`. |
 | E2 | **Stable intent identity** (requirement 1). An intent is created only by a decision. Its key is (subject, basis revision, effect key); the effect key (same pattern as names) is the decision's stable name for that effect, so distinct effects at one revision stay distinct and a repeated decision cannot create a second intent. Two requests with one key in a decision are `duplicate-effect-key`. The operation id is a UUID issued at the boundary. Parameters are text (1–4096 characters, no control characters; `invalid-effect-parameters`) and their SHA-256 digest is stored. No operation changes an intent's operation id, spec or parameters; every retry uses them unchanged. |
 | E3 | **Intent lifecycle** (D-4.4), table in §3. States `pending`, `claimed`, `dispatched`, `confirmed-applied`, `confirmed-not-applied`, `outcome-unknown`, `settled`, `abandoned`. Inputs `claim` (owner, now, lease end), `dispatch` (generation, now), `observe` (generation, observation), `settle` (generation), `abandon` (reason). Check order: `Agent` → `agent-assertion`; `settled`/`abandoned` → `already-settled`; principal not permitted → `not-authorized` (claim, dispatch, observe and settle: `Supervisor`; abandon: `Human`); a generation-bearing input whose generation is not the intent's current one → `stale-claim`; then the cell. |
 | E4 | **Fencing** (D-4.2, requirement 4). A claim raises the generation by one and records the owner and the lease end. Every later write carries the generation it claimed with; an older one is `stale-claim`. A lease end gates only a *new* claim and the dispatch marker (`lease-expired` when `now` ≥ the lease end: nothing may be dispatched on an expired lease). It never invalidates an observation from the current generation: an expired lease proves nothing about the effect. Fencing cancels nothing outside the database: a stale observation is refused for the state **and stored** as evidence (`accepted = false`, refusal `stale-claim`), never dropped. |
@@ -176,7 +176,7 @@ Unit (`lockstep-unit`, pure):
 
 | Area | Cases |
 |---|---|
-| Specs | each class accepted with budget 0–3 (D only 0); budget 4 and -1 → `invalid-effect-spec`; D with budget 1 → `unsafe-retry-budget`; B with lifetime 0 → `invalid-effect-spec`; B whose destination does not refuse changed parameters → `idempotency-undocumented`; bad names → `invalid-effect-spec` |
+| Specs | each class accepted with budget 0–3 (D only 0); budget 4 and -1 → `invalid-effect-spec`; D with budget 1 → `retry-budget-forbidden`; B with lifetime 0 → `invalid-effect-spec`; B whose destination does not refuse changed parameters → `idempotency-undocumented`; bad names → `invalid-effect-spec` |
 | Identity | `newIntents` gives `pending`, generation 0, no dispatches, the parameters' SHA-256; two keys at one revision → two intents; one key twice → `duplicate-effect-key`; empty or control-character parameters → `invalid-effect-parameters`; bad keys → `invalid-effect-key` |
 | Lifecycle table | every (state, input) cell of §3 for an A spec, including the `now`/lease boundary (equal is expired); `Agent` → `agent-assertion` everywhere; wrong principals → `not-authorized`; terminal states → `already-settled`; every stale generation → `stale-claim` |
 | Fencing | a reclaim after expiry raises the generation; the old owner's dispatch, observation and settle → `stale-claim`; the current owner's observation after its lease ended is accepted |
@@ -251,3 +251,22 @@ validators the fixtures need; no migration 0008):
   trigger's own message (`rows are immutable`), exercised on an existing immutable table first.
 - The stubs cannot produce ledger behaviour, so every expected state, revision, count, code and
   text was checked against §2–§4 by reading before the freeze.
+
+### 10.1 Amendment R-P2.5-1 (approved by the human owner, 2026-10-19)
+
+The owner approved R-P2.5-1 as written (`r-p2.5-1-amendment-request.md`): the exact two-literal
+diff in `evidence/r-p2.5-1.diff`, applied byte for byte with `git apply`. The class-D budget refusal
+code `unsafe-retry-budget` became `retry-budget-forbidden` in the two `EffectTest` literals, in the
+matching string in `Lockstep.Kernel.Effect`, and in E1 and §7 above. The old name could not appear
+in Kernel source under the frozen C-P2.1 purity scan (`grep -E '\bIO\b|unsafe'`). Every case, input
+and other assertion is unchanged; the constructor `UnsafeRetryBudget` and the test title are
+unchanged. Re-frozen digest:
+
+| File | SHA-256 |
+|---|---|
+| `test/unit/Lockstep/Kernel/EffectTest.hs` | `4ccf32bdbcb1037b228d2af09fb9fe444689255610445d793f9a307ae43d7bb6` (was `da22e6ab…`) |
+
+The other five digests above are unchanged. Process improvement carried forward: before a freeze,
+every new Kernel identifier, code string and comment is checked against the existing static
+enforcement rules (the purity scan, the partial-function ban list, the forbidden-facilities list);
+the rules are never weakened or circumvented to fit a name.
