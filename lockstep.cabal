@@ -31,12 +31,18 @@ library
       Lockstep.Application.CommandCenter
       Lockstep.Application.Database
       Lockstep.Application.Dispatcher
+      Lockstep.Application.Identity
       Lockstep.Application.OperatorTrust
+      Lockstep.Application.Repositories
+      Lockstep.Effects.Git
       Lockstep.Foundation.Cli
       Lockstep.Foundation.Config
       Lockstep.Foundation.EvidenceModel
       Lockstep.Foundation.OperatorToken
       Lockstep.Foundation.SystemConfig
+      Lockstep.Kernel.Identity
+      Lockstep.Kernel.Repository
+      Lockstep.Kernel.WorkUnit
       Lockstep.Persistence.CommandCenter
       Lockstep.Persistence.Commands
       Lockstep.Persistence.Connection
@@ -46,6 +52,7 @@ library
       Lockstep.Persistence.Migrations
       Lockstep.Persistence.OperatorSessions
       Lockstep.Persistence.Queries
+      Lockstep.Persistence.Repositories
       Lockstep.Web.Application
       Lockstep.Web.CommandCenter
       Lockstep.Web.Common
@@ -93,6 +100,7 @@ library
     , orb
     , orville-postgresql
     , postgresql-libpq
+    , process
     , safe-exceptions
     , shrubbery
     , string-interpolate
@@ -134,6 +142,7 @@ test-suite lockstep-integration
       Lockstep.OperatorCommandTest
       Lockstep.OperatorTrustTest
       Lockstep.ProcessTest
+      Lockstep.RepositoryOwnershipTest
       Lockstep.ServiceDbTest
       Lockstep.Support.Http
       Lockstep.Support.Postgres
@@ -175,11 +184,16 @@ test-suite lockstep-unit
       Lockstep.Foundation.CliDbTest
       Lockstep.Foundation.CliJobTest
       Lockstep.Foundation.CliOperatorTest
+      Lockstep.Foundation.CliRepositoryTest
       Lockstep.Foundation.CliTest
       Lockstep.Foundation.CliWorkspaceTest
       Lockstep.Foundation.EvidenceModelTest
       Lockstep.Foundation.OperatorTokenTest
       Lockstep.Foundation.SystemConfigTest
+      Lockstep.Kernel.IdentityTest
+      Lockstep.Kernel.RemoteTest
+      Lockstep.Kernel.RepositoryTest
+      Lockstep.Kernel.WorkUnitTest
       Lockstep.Persistence.MigrationTest
       Lockstep.Web.ApplicationTest
       Lockstep.Web.CommandCenterViewTest

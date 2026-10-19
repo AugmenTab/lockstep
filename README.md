@@ -122,6 +122,28 @@ page is rendered. A job shows `PASSED` only when it succeeded and its stored
 outcome digest still matches its row; queued, running, failed, edited or
 unrecorded jobs never show as passed. The machine summary is not acceptance.
 
+## Engineers and repository ownership (C-P2.1)
+
+```sh
+lockstep engineer add NAME
+lockstep repository register --engineer NAME [--authoritative-remote REMOTE] PATH
+lockstep repository list
+```
+
+Each Engineer owns exactly one repository, and each repository has exactly one
+owning Engineer (DG-03). `PATH` must be the top level of a repository's main
+worktree (not a linked worktree, subdirectory, bare repository, shallow clone
+or submodule). A repository is identified by the physical Git common directory
+and by its authoritative remote: the only remote, or the one named with
+`--authoritative-remote` when there are several. A second registration of the
+same directory (through any path, symlink or case spelling) or of another clone
+with the same authoritative remote is refused. Shared history alone is not
+identity, so forks and template-derived projects can be registered. Every
+attempt, accepted or refused, is recorded with its reason. Git is only read,
+never changed. Registration observes the filesystem of the process that runs
+`lockstep`; the installed service container (`scripts/service cli`) mounts no
+host repositories.
+
 ## Licensing
 
 Lockstep v2 has no chosen license yet and is not distributed. Launchpad-derived

@@ -4,6 +4,7 @@ module Lockstep.Foundation.Cli
   , CliError (..)
   , RenameArgs (..)
   , QueueArgs (..)
+  , RegisterArgs (..)
   , parseArgs
   , renderCliError
   , usage
@@ -36,6 +37,18 @@ data Command
   | WorkspaceRename RenameArgs
   | JobQueue QueueArgs
   | JobShow Integer
+  | EngineerAdd String
+  | RepositoryRegister RegisterArgs
+  | RepositoryList
+  deriving (Eq, Show)
+
+-- | @repository register@ options (contract C-P2.1 I10).
+data RegisterArgs
+  = RegisterArgs
+  { registerEngineer :: String
+  , registerRemote :: Maybe String
+  , registerPath :: String
+  }
   deriving (Eq, Show)
 
 -- | @job queue@ options (contract C-P1.5 E6); ranges are checked by the application.
@@ -93,7 +106,83 @@ parseArgs args =
     "operator" : rest -> parseOperatorCommand rest
     "workspace" : rest -> parseWorkspaceCommand rest
     "job" : rest -> parseJobCommand rest
+    "engineer" : rest -> parseEngineerCommand rest
+    "repository" : rest -> parseRepositoryCommand rest
     command : _ -> Left (UnknownCommand command)
+
+-- | Contract C-P2.1 I10.
+parseEngineerCommand :: [String] -> Either CliError Command
+parseEngineerCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "engineer")
+    ["add"] -> Left (MissingArgument "NAME")
+    ["add", name] -> EngineerAdd name <$ noOption name
+    "add" : _ : extra : _ -> Left (unexpected extra)
+    command : _ -> Left (UnknownCommand ("engineer " <> command))
+
+noOption :: String -> Either CliError ()
+noOption arg =
+  if "-" `L.isPrefixOf` arg
+    then Left (UnknownOption arg)
+    else Right ()
+
+-- | Contract C-P2.1 I10.
+parseRepositoryCommand :: [String] -> Either CliError Command
+parseRepositoryCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "repository")
+    "register" : options -> fmap RepositoryRegister (parseRegisterOptions options)
+    "list" : rest -> RepositoryList <$ noMoreArguments rest
+    command : _ -> Left (UnknownCommand ("repository " <> command))
+
+engineerOption :: String
+engineerOption =
+  "--engineer"
+
+authoritativeRemoteOption :: String
+authoritativeRemoteOption =
+  "--authoritative-remote"
+
+parseRegisterOptions :: [String] -> Either CliError RegisterArgs
+parseRegisterOptions =
+  let
+    names = [engineerOption, authoritativeRemoteOption]
+
+    set option value acc =
+      case L.lookup option acc of
+        Just _ -> Left (DuplicateOption option)
+        Nothing -> Right ((option, value) : acc)
+
+    finish acc mbPath =
+      case (L.lookup engineerOption acc, mbPath) of
+        (Nothing, _) -> Left (MissingOption engineerOption)
+        (_, Nothing) -> Left (MissingArgument "PATH")
+        (Just engineer, Just path) -> Right (RegisterArgs engineer (L.lookup authoritativeRemoteOption acc) path)
+
+    go acc mbPath options =
+      case options of
+        [] ->
+          finish acc mbPath
+        option : rest
+          | option `L.elem` names ->
+              case rest of
+                [] -> Left (MissingOptionValue option)
+                value : rest'
+                  | L.null value -> Left (MissingOptionValue option)
+                  | otherwise -> set option value acc >>= \acc' -> go acc' mbPath rest'
+          | (name, '=' : value) <- L.break (== '=') option
+          , name `L.elem` names ->
+              if L.null value
+                then Left (MissingOptionValue name)
+                else set name value acc >>= \acc' -> go acc' mbPath rest
+          | "-" `L.isPrefixOf` option ->
+              Left (UnknownOption option)
+          | otherwise ->
+              case mbPath of
+                Just _ -> Left (UnexpectedArgument option)
+                Nothing -> go acc (Just option) rest
+  in
+    go [] Nothing
 
 -- | Contract C-P1.5 E6.
 parseJobCommand :: [String] -> Either CliError Command
@@ -378,6 +467,9 @@ usage =
     , "       lockstep workspace rename --expected-revision N [--idempotency-key K] NAME"
     , "       lockstep job queue --expected-revision N [--steps S] [--step-ms M] [--fail-at-step K] [--idempotency-key K]"
     , "       lockstep job show JOB"
+    , "       lockstep engineer add NAME"
+    , "       lockstep repository register --engineer NAME [--authoritative-remote REMOTE] PATH"
+    , "       lockstep repository list"
     , ""
     , "  serve        run the local service on 127.0.0.1 (default port 8000)"
     , "  --port N     listen on port N (1-65535)"
@@ -391,6 +483,11 @@ usage =
     , "                        command with the same key returns the same receipt"
     , "  job queue             queue a model-free no-op job; lockstep serve runs it"
     , "  job show              print a job's state and progress"
+    , "  engineer add          add an Engineer (name: a-z, 0-9 and -, up to 40 characters)"
+    , "  repository register   give an Engineer exclusive ownership of the Git repository whose"
+    , "                        main worktree is PATH; with several remotes, name the"
+    , "                        repository's own with --authoritative-remote"
+    , "  repository list       print every owned repository"
     , ""
     , "The database is configured by the file named in LOCKSTEP_CONFIG."
     ]

@@ -51,13 +51,23 @@ import Lockstep.Application.Database
   )
 import Lockstep.Application.Dispatcher (Job (..), findJob, findJobForReceipt, jobStateCode, requestStop, startDispatcher, stopDispatcher)
 import Lockstep.Application.OperatorTrust (issueSignIn, revokeAllSessions, signInUrl)
-import Lockstep.Foundation.Cli (BackupPolicy, Command (..), QueueArgs (..), RenameArgs (..), parseArgs, renderCliError, usage)
+import Lockstep.Application.Repositories
+  ( EngineerRecord (..)
+  , Refused (..)
+  , RegisterRequest (..)
+  , RepositoryRecord (..)
+  , addEngineer
+  , listRepositories
+  , registerRepository
+  )
+import Lockstep.Foundation.Cli (BackupPolicy, Command (..), QueueArgs (..), RegisterArgs (..), RenameArgs (..), parseArgs, renderCliError, usage)
 import Lockstep.Foundation.Config (Port, ServeConfig (..), bindHostAddress, portNumber)
 import Lockstep.Foundation.SystemConfig
   ( SystemConfig (..)
   , loadSystemConfig
   , renderConfigError
   )
+import Lockstep.Kernel.Identity (EngineerId (..), uuidText)
 import Lockstep.Persistence.Migrations (migrations)
 import Lockstep.Web.Application (applicationWith)
 import Lockstep.Web.Server (serverSettingsWith)
@@ -89,6 +99,12 @@ main = do
       withRequiredDatabase (jobQueue queueArgs)
     Right (JobShow job) ->
       withRequiredDatabase (jobShow job)
+    Right (EngineerAdd name) ->
+      withRequiredDatabase (engineerAdd name)
+    Right (RepositoryRegister registerArgs) ->
+      withRequiredDatabase (repositoryRegister registerArgs)
+    Right RepositoryList ->
+      withRequiredDatabase repositoryList
 
 {- | C-P1.7 E4: this build has no fault-injection flag, so a fault plan is
 refused before arguments, configuration or the database are read.
@@ -327,3 +343,56 @@ refuse :: String -> IO ()
 refuse message = do
   hPutStrLn stderr ("lockstep: " <> message)
   exitWith (ExitFailure 65)
+
+-- | C-P2.1 I10.
+engineerAdd :: String -> DatabaseRuntime -> IO ()
+engineerAdd name runtime = do
+  result <- addEngineer runtime (T.pack name)
+  case result of
+    Left reason -> notReady reason
+    Right (Left refused) -> refusal refused
+    Right (Right engineer) ->
+      let
+        EngineerId uuid = engineerRecordId engineer
+      in
+        putStrLn ("engineer " <> T.unpack (uuidText uuid) <> " " <> T.unpack (engineerRecordName engineer))
+
+-- | C-P2.1 I10: observes in this process's filesystem view, then decides.
+repositoryRegister :: RegisterArgs -> DatabaseRuntime -> IO ()
+repositoryRegister args runtime = do
+  result <-
+    registerRepository
+      runtime
+      RegisterRequest
+        { registrationEngineer = T.pack (registerEngineer args)
+        , registrationPath = registerPath args
+        , registrationRemote = fmap T.pack (registerRemote args)
+        }
+  case result of
+    Left reason -> notReady reason
+    Right (Left refused) -> refusal refused
+    Right (Right repository) -> putStrLn (repositoryLine repository)
+
+repositoryList :: DatabaseRuntime -> IO ()
+repositoryList runtime = do
+  result <- listRepositories runtime
+  case result of
+    Left reason -> notReady reason
+    Right repositories -> traverse_ (putStrLn . repositoryLine) repositories
+
+repositoryLine :: RepositoryRecord -> String
+repositoryLine repository =
+  "repository "
+    <> T.unpack (repositoryRecordId repository)
+    <> " owner "
+    <> T.unpack (repositoryRecordOwner repository)
+    <> " authoritative "
+    <> maybe "none" (\(name, identity) -> T.unpack name <> "=" <> T.unpack identity) (repositoryRecordAuthoritative repository)
+    <> " common-dir "
+    <> T.unpack (repositoryRecordCommonDir repository)
+
+-- | A recorded refusal: the code and decision on stdout, the reason on stderr; exit 65.
+refusal :: Refused -> IO ()
+refusal refused = do
+  putStrLn ("refused " <> T.unpack (refusedCode refused) <> " decision " <> show (refusedDecision refused))
+  refuse ("refused (" <> T.unpack (refusedCode refused) <> "): " <> T.unpack (refusedMessage refused))

@@ -74,6 +74,9 @@ configures `henforcer.toml` tree-dependency rules for the table above, and adds
 a deliberately violating fixture module that must fail to compile (a negative
 check). The Kernel row becomes enforceable when the first Kernel module lands
 (P2.1). Until then the rule is recorded but **NOT_RUN**.
+*P2.1 status note (C-P2.1 I2): the Kernel and Effects rows are enforced in `henforcer.toml`,
+including external IO libraries for the Kernel, with negative fixtures checked by
+`scripts/lib/check-kernel-boundary` in the build step.*
 
 Kernel signature direction, from Bible §37 (conceptual, not final API):
 `decide :: Snapshot -> Observation -> Either Refusal (NonEmpty DomainEvent, [EffectIntent])`.

@@ -96,4 +96,45 @@ CREATE TABLE lockstep_jobs (
 ALTER TABLE lockstep_jobs ADD COLUMN outcome_digest bytea CHECK (octet_length(outcome_digest) = 32);
 |]
       )
+    ,
+      ( [Interpolate.i|engineers, repository ownership and identity decisions|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_engineers (
+  id uuid PRIMARY KEY,
+  name text NOT NULL UNIQUE CHECK (name ~ '^[a-z][a-z0-9-]{0,39}$'),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE lockstep_repositories (
+  id uuid PRIMARY KEY,
+  owner_engineer_id uuid NOT NULL REFERENCES lockstep_engineers (id),
+  common_dir text NOT NULL,
+  physical_id text NOT NULL,
+  authoritative_remote text,
+  authoritative_identity text,
+  other_remotes text NOT NULL,
+  observation_digest bytea NOT NULL CHECK (octet_length(observation_digest) = 32),
+  registered_at timestamptz NOT NULL DEFAULT now(),
+  released_at timestamptz CHECK (released_at IS NULL),
+  CHECK ((authoritative_remote IS NULL) = (authoritative_identity IS NULL))
+);
+CREATE UNIQUE INDEX lockstep_repositories_active_owner ON lockstep_repositories (owner_engineer_id) WHERE released_at IS NULL;
+CREATE UNIQUE INDEX lockstep_repositories_active_physical ON lockstep_repositories (physical_id) WHERE released_at IS NULL;
+CREATE UNIQUE INDEX lockstep_repositories_active_common_dir ON lockstep_repositories (common_dir) WHERE released_at IS NULL;
+CREATE UNIQUE INDEX lockstep_repositories_active_remote ON lockstep_repositories (authoritative_identity) WHERE released_at IS NULL;
+CREATE TABLE lockstep_identity_decisions (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  operation text NOT NULL CHECK (operation IN ('engineer-add', 'repository-register')),
+  engineer_name text NOT NULL,
+  requested_path text,
+  requested_remote text,
+  outcome text NOT NULL CHECK (outcome IN ('accepted', 'refused')),
+  refusal_code text,
+  engineer_id uuid,
+  repository_id uuid,
+  observation text,
+  decided_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((outcome = 'refused') = (refusal_code IS NOT NULL))
+);
+|]
+      )
     ]
