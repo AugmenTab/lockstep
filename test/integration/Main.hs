@@ -13,6 +13,7 @@ import Lockstep.MigrationDbTest qualified as MigrationDbTest
 import Lockstep.OperatorCommandTest qualified as OperatorCommandTest
 import Lockstep.OperatorTrustTest qualified as OperatorTrustTest
 import Lockstep.ProcessTest qualified as ProcessTest
+import Lockstep.ProfileRegistryTest qualified as ProfileRegistryTest
 import Lockstep.RepositoryOwnershipTest qualified as RepositoryOwnershipTest
 import Lockstep.ServiceDbTest qualified as ServiceDbTest
 
@@ -31,4 +32,5 @@ main =
       , FaultPlanTest.tests
       , BrowserFormTest.tests
       , RepositoryOwnershipTest.tests
+      , ProfileRegistryTest.tests
       ]

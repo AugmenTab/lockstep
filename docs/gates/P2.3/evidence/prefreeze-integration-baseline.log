@@ -1,0 +1,179 @@
+lockstep> test (suite: lockstep-integration, args: -p "Profile registry")
+
+lockstep-integration
+  Profile registry and resolution (C-P2.3; real PostgreSQL + binary)
+    add, unchanged, version rules, invalid and weakening documents, list and show:    FAIL (0.14s)
+      test/integration/Lockstep/ProfileRegistryTest.hs:45:
+      expected: ExitSuccess
+       but got: ExitFailure 64
+      Use -p '/Profile registry/&&/add, unchanged, version rules, invalid and weakening documents, list and show/' to rerun this test only.
+    stored profiles and default assignments cannot be changed or deleted:             FAIL (0.13s)
+      test/integration/Lockstep/ProfileRegistryTest.hs:266:
+      profile add /tmp/lockstep-p23-06f003e3e51168e0/w/team1.json: lockstep: unknown command: profile
+      usage: lockstep serve [--port N]
+             lockstep db migrate [--backup FILE | --no-backup]
+             lockstep db status
+             lockstep operator sign-in [--port N]
+             lockstep operator sign-out-all
+             lockstep workspace show
+             lockstep workspace rename --expected-revision N [--idempotency-key K] NAME
+             lockstep job queue --expected-revision N [--steps S] [--step-ms M] [--fail-at-step K] [--idempotency-key K]
+             lockstep job show JOB
+             lockstep engineer add NAME
+             lockstep repository register --engineer NAME [--authoritative-remote REMOTE] PATH
+             lockstep repository list
+      
+        serve        run the local service on 127.0.0.1 (default port 8000)
+        --port N     listen on port N (1-65535)
+        db migrate   apply pending database migrations (needs a backup once any are applied)
+        db status    show the database schema revision and pending migrations
+        operator sign-in      print a one-time browser sign-in link (valid 5 minutes)
+                              for the service on port N (default 8000)
+        operator sign-out-all revoke every operator browser session
+        workspace show        print the workspace name and revision
+        workspace rename      rename the workspace if it is still at revision N; a repeated
+                              command with the same key returns the same receipt
+        job queue             queue a model-free no-op job; lockstep serve runs it
+        job show              print a job's state and progress
+        engineer add          add an Engineer (name: a-z, 0-9 and -, up to 40 characters)
+        repository register   give an Engineer exclusive ownership of the Git repository whose
+                              main worktree is PATH; with several remotes, name the
+                              repository's own with --authoritative-remote
+        repository list       print every owned repository
+      
+      The database is configured by the file named in LOCKSTEP_CONFIG.
+      
+      Use -p '/Profile registry/&&/stored profiles and default assignments cannot be changed or deleted/' to rerun this test only.
+    repository set-profile records the default and refuses the unknown:               FAIL (0.12s)
+      test/integration/Lockstep/ProfileRegistryTest.hs:266:
+      profile add /tmp/lockstep-p23-990f257e9faf3292/w/team1.json: lockstep: unknown command: profile
+      usage: lockstep serve [--port N]
+             lockstep db migrate [--backup FILE | --no-backup]
+             lockstep db status
+             lockstep operator sign-in [--port N]
+             lockstep operator sign-out-all
+             lockstep workspace show
+             lockstep workspace rename --expected-revision N [--idempotency-key K] NAME
+             lockstep job queue --expected-revision N [--steps S] [--step-ms M] [--fail-at-step K] [--idempotency-key K]
+             lockstep job show JOB
+             lockstep engineer add NAME
+             lockstep repository register --engineer NAME [--authoritative-remote REMOTE] PATH
+             lockstep repository list
+      
+        serve        run the local service on 127.0.0.1 (default port 8000)
+        --port N     listen on port N (1-65535)
+        db migrate   apply pending database migrations (needs a backup once any are applied)
+        db status    show the database schema revision and pending migrations
+        operator sign-in      print a one-time browser sign-in link (valid 5 minutes)
+                              for the service on port N (default 8000)
+        operator sign-out-all revoke every operator browser session
+        workspace show        print the workspace name and revision
+        workspace rename      rename the workspace if it is still at revision N; a repeated
+                              command with the same key returns the same receipt
+        job queue             queue a model-free no-op job; lockstep serve runs it
+        job show              print a job's state and progress
+        engineer add          add an Engineer (name: a-z, 0-9 and -, up to 40 characters)
+        repository register   give an Engineer exclusive ownership of the Git repository whose
+                              main worktree is PATH; with several remotes, name the
+                              repository's own with --authoritative-remote
+        repository list       print every owned repository
+      
+      The database is configured by the file named in LOCKSTEP_CONFIG.
+      
+      Use -p '/Profile registry/&&/repository set-profile records the default and refuses the unknown/' to rerun this test only.
+    resolution: unset default, specialization, weakening, new version, invalid facts: FAIL (0.16s)
+      test/integration/Lockstep/ProfileRegistryTest.hs:303:
+      expected: ExitFailure 65
+       but got: ExitFailure 64
+      Use -p '/Profile registry/&&/resolution: unset default, specialization, weakening, new version, invalid facts/' to rerun this test only.
+    a tampered stored document is an integrity failure, never used:                   FAIL (0.14s)
+      test/integration/Lockstep/ProfileRegistryTest.hs:266:
+      profile add /tmp/lockstep-p23-ccd7a0188ae3a2cd/w/team1.json: lockstep: unknown command: profile
+      usage: lockstep serve [--port N]
+             lockstep db migrate [--backup FILE | --no-backup]
+             lockstep db status
+             lockstep operator sign-in [--port N]
+             lockstep operator sign-out-all
+             lockstep workspace show
+             lockstep workspace rename --expected-revision N [--idempotency-key K] NAME
+             lockstep job queue --expected-revision N [--steps S] [--step-ms M] [--fail-at-step K] [--idempotency-key K]
+             lockstep job show JOB
+             lockstep engineer add NAME
+             lockstep repository register --engineer NAME [--authoritative-remote REMOTE] PATH
+             lockstep repository list
+      
+        serve        run the local service on 127.0.0.1 (default port 8000)
+        --port N     listen on port N (1-65535)
+        db migrate   apply pending database migrations (needs a backup once any are applied)
+        db status    show the database schema revision and pending migrations
+        operator sign-in      print a one-time browser sign-in link (valid 5 minutes)
+                              for the service on port N (default 8000)
+        operator sign-out-all revoke every operator browser session
+        workspace show        print the workspace name and revision
+        workspace rename      rename the workspace if it is still at revision N; a repeated
+                              command with the same key returns the same receipt
+        job queue             queue a model-free no-op job; lockstep serve runs it
+        job show              print a job's state and progress
+        engineer add          add an Engineer (name: a-z, 0-9 and -, up to 40 characters)
+        repository register   give an Engineer exclusive ownership of the Git repository whose
+                              main worktree is PATH; with several remotes, name the
+                              repository's own with --authoritative-remote
+        repository list       print every owned repository
+      
+      The database is configured by the file named in LOCKSTEP_CONFIG.
+      
+      Use -p '/Profile registry/&&/a tampered stored document is an integrity failure, never used/' to rerun this test only.
+    profile add - reads the document from standard input:                             FAIL (0.10s)
+      test/integration/Lockstep/ProfileRegistryTest.hs:182:
+      add - failed: lockstep: unknown command: profile
+      usage: lockstep serve [--port N]
+             lockstep db migrate [--backup FILE | --no-backup]
+             lockstep db status
+             lockstep operator sign-in [--port N]
+             lockstep operator sign-out-all
+             lockstep workspace show
+             lockstep workspace rename --expected-revision N [--idempotency-key K] NAME
+             lockstep job queue --expected-revision N [--steps S] [--step-ms M] [--fail-at-step K] [--idempotency-key K]
+             lockstep job show JOB
+             lockstep engineer add NAME
+             lockstep repository register --engineer NAME [--authoritative-remote REMOTE] PATH
+             lockstep repository list
+      
+        serve        run the local service on 127.0.0.1 (default port 8000)
+        --port N     listen on port N (1-65535)
+        db migrate   apply pending database migrations (needs a backup once any are applied)
+        db status    show the database schema revision and pending migrations
+        operator sign-in      print a one-time browser sign-in link (valid 5 minutes)
+                              for the service on port N (default 8000)
+        operator sign-out-all revoke every operator browser session
+        workspace show        print the workspace name and revision
+        workspace rename      rename the workspace if it is still at revision N; a repeated
+                              command with the same key returns the same receipt
+        job queue             queue a model-free no-op job; lockstep serve runs it
+        job show              print a job's state and progress
+        engineer add          add an Engineer (name: a-z, 0-9 and -, up to 40 characters)
+        repository register   give an Engineer exclusive ownership of the Git repository whose
+                              main worktree is PATH; with several remotes, name the
+                              repository's own with --authoritative-remote
+        repository list       print every owned repository
+      
+      The database is configured by the file named in LOCKSTEP_CONFIG.
+      
+      Use -p '/Profile registry/&&/profile add - reads the document from standard input/' to rerun this test only.
+
+6 out of 6 tests failed (0.78s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       
