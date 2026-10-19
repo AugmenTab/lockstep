@@ -7,10 +7,12 @@ import Test.Tasty (defaultMain, testGroup)
 
 import Lockstep.Application.CommandTest qualified as CommandTest
 import Lockstep.Application.NoopCommandTest qualified as NoopCommandTest
+import Lockstep.Application.ProfileDocumentTest qualified as ProfileDocumentTest
 import Lockstep.Application.ReadinessTest qualified as ReadinessTest
 import Lockstep.Foundation.CliDbTest qualified as CliDbTest
 import Lockstep.Foundation.CliJobTest qualified as CliJobTest
 import Lockstep.Foundation.CliOperatorTest qualified as CliOperatorTest
+import Lockstep.Foundation.CliProfileTest qualified as CliProfileTest
 import Lockstep.Foundation.CliRepositoryTest qualified as CliRepositoryTest
 import Lockstep.Foundation.CliTest qualified as CliTest
 import Lockstep.Foundation.CliWorkspaceTest qualified as CliWorkspaceTest
@@ -20,6 +22,7 @@ import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
 import Lockstep.Kernel.DeliveryTest qualified as DeliveryTest
 import Lockstep.Kernel.IdentityTest qualified as IdentityTest
 import Lockstep.Kernel.LifecyclePropertyTest qualified as LifecyclePropertyTest
+import Lockstep.Kernel.ProfileTest qualified as ProfileTest
 import Lockstep.Kernel.RemoteTest qualified as RemoteTest
 import Lockstep.Kernel.RepositoryTest qualified as RepositoryTest
 import Lockstep.Kernel.TicketTest qualified as TicketTest
@@ -73,4 +76,7 @@ main =
       , WorkUnitLifecycleTest.tests
       , DeliveryTest.tests
       , LifecyclePropertyTest.tests
+      , ProfileTest.tests
+      , ProfileDocumentTest.tests
+      , CliProfileTest.tests
       ]
