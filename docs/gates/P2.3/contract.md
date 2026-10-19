@@ -276,3 +276,19 @@ empty bodies; `mkContentDigest` and `sha256Hasher` are real, being leaf utilitie
   binary through its own helper. `sqlFails`, `count` and the digest helpers were checked by reading.
 - The Kernel fixtures cannot be built by the stubs, so every expected rendering, refusal and order
   in `ProfileTest` was checked against §2–§3 by reading before the freeze.
+
+### 10.1 Amendment R-P2.3-1 (approved by the human owner, 2026-10-19)
+
+The owner approved R-P2.3-1 as written (`r-p2.3-1-amendment-request.md`): the exact diff in
+`evidence/r-p2.3-1.diff`, applied byte for byte with `git apply`. In the test "a tampered stored
+document is an integrity failure, never used", the single multi-statement `adminExecute` call
+(refused by PostgreSQL, 42601) became three calls. Test setup only; every assertion and scenario is
+unchanged. Re-frozen digest:
+
+| File | SHA-256 |
+|---|---|
+| `test/integration/Lockstep/ProfileRegistryTest.hs` | `c9ae6ceaea07496d1e4b3394bd63c80e689ccd238cb7f8b7b551277f4efda3f6` (was `305cc30f…`) |
+
+The other five digests above are unchanged. Lesson carried forward: when the pre-freeze baseline
+cannot reach a test's setup, the setup is exercised on its own before the freeze; reading it is not
+enough.
