@@ -48,7 +48,7 @@ Nothing in B1 calls a model, a provider or the network beyond loopback.
 | AC-B1-12@v1 | Crash and restart: an `execute-once` process killed after its idempotent effect applied, then a service restart, then (after the lease ends) recovery applies it under the same operation id: the sandbox shows **one** application, and the effect is `PASSED`. | yes |
 | AC-B1-13@v1 | Uncertain outcome, reconciled: a queryable effect that hangs is `unknown timeout` (`RECONCILIATION_NEEDED`); `reconcile-once` looks it up, `not-applied lookup: not found`; the destination has fenced the operation id and shows no application. | yes |
 | AC-B1-14@v1 | Uncertain outcome, resolved by a human: an unqueryable effect killed after applying becomes `unknown dispatch-interrupted: unqueryable effect` and halts its order. A resolution with a stale generation is `refused stale-claim`. Attesting it applied makes it `ATTESTED`, never `PASSED`. The sandbox shows one application. | yes |
-| AC-B1-15@v1 | Duplicate ownership: two `execute-once` processes started together for one pending effect: one executes it, the other does not (`idle` or `refused claim-held`); one application. | yes |
+| AC-B1-15@v1 | Duplicate ownership: two `execute-once` processes started together for one pending effect: one executes it; the other executes nothing — it is `idle`, or its claim is refused (`claim-held`, `dispatched-needs-recovery` or `already-settled`); one application. | yes |
 | AC-B1-16@v1 | Durable, inspectable evidence: `ledger show` is identical (apart from its time line) before and after a service restart. No effect is left `UNKNOWN`, `RECONCILIATION_NEEDED` or `IN_PROGRESS`. In headless Chromium after sign-in, `/operator/ledger` shows the statuses as text (`PASSED`, `ATTESTED`) and the refused decisions. Without a session the page is refused as `/operator/center` is. | yes |
 | AC-B1-17@v1 | Zero live-model calls, no secrets: inside the service container `claude` resolves to the shim and a canary call is logged; the service's sentinel log is empty; no password, token or session value appears in the recorded output. | yes |
 
@@ -66,7 +66,21 @@ followed by a full re-run.
 - The review record and its dispositions.
 - The report's machine summary is computed from the B1 checks, not asserted.
 
-## 6. Stop
+## 6. Amendments
+
+### 6.1 R-P2.9-1 (approved by the human owner, 2026-10-19)
+
+The owner approved R-P2.9-1 as written (`r-p2.9-1-amendment-request.md`;
+`.local/plans/phase-02_update2.md`: "R-P2.9-1 APPROVED as written"). Applied exactly:
+- AC-B1-15 accepts the four lifecycle outcomes of a losing claim (`idle`, `claim-held`,
+  `dispatched-needs-recovery`, `already-settled`), and still requires exactly one execution and
+  one application.
+- `scripts/b1` keeps the two processes' stdout and stderr apart.
+
+The owner added that this alone does not make Gate B ready. Real overlap is required separately,
+by remediation C-P2.9-R1.
+
+## 7. Stop
 
 The decision packet is the end of Phase 2 work. Phase 3 is not begun. Anything that needs the
 owner's authority is listed in the packet, not decided.

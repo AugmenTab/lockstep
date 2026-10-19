@@ -1,6 +1,6 @@
 # R-P2.9-1 — frozen-criterion amendment request (C-P2.9 AC-B1-15)
 
-- Prepared by: the writing agent (Implementer), 2026-10-19. Status: `REQUESTED`. A frozen
+- Prepared by: the writing agent (Implementer), 2026-10-19. Status: `APPROVED` by the human owner ("R-P2.9-1 APPROVED as written", `.local/plans/phase-02_update2.md`); applied and recorded in C-P2.9 §6.1. A frozen
   criterion may change only with the human owner's approval. The protocol is the one used for
   R-P2.3-1 and R-P2.5-1.
 - Contract: `C-P2.9@v1`, frozen at `1e59942` together with `scripts/b1`.
