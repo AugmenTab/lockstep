@@ -9,6 +9,7 @@ import Lockstep.Application.CommandTest qualified as CommandTest
 import Lockstep.Application.NoopCommandTest qualified as NoopCommandTest
 import Lockstep.Application.ProfileDocumentTest qualified as ProfileDocumentTest
 import Lockstep.Application.ReadinessTest qualified as ReadinessTest
+import Lockstep.Effects.ExecutorTest qualified as ExecutorTest
 import Lockstep.Foundation.CliDbTest qualified as CliDbTest
 import Lockstep.Foundation.CliJobTest qualified as CliJobTest
 import Lockstep.Foundation.CliOperatorTest qualified as CliOperatorTest
@@ -25,6 +26,7 @@ import Lockstep.Kernel.EventCodecTest qualified as EventCodecTest
 import Lockstep.Kernel.IdentityTest qualified as IdentityTest
 import Lockstep.Kernel.LifecyclePropertyTest qualified as LifecyclePropertyTest
 import Lockstep.Kernel.ProfileTest qualified as ProfileTest
+import Lockstep.Kernel.RecoveryTest qualified as RecoveryTest
 import Lockstep.Kernel.RemoteTest qualified as RemoteTest
 import Lockstep.Kernel.RepositoryTest qualified as RepositoryTest
 import Lockstep.Kernel.SchedulerPropertyTest qualified as SchedulerPropertyTest
@@ -87,4 +89,6 @@ main =
       , SchedulerPropertyTest.tests
       , EffectTest.tests
       , EventCodecTest.tests
+      , RecoveryTest.tests
+      , ExecutorTest.tests
       ]

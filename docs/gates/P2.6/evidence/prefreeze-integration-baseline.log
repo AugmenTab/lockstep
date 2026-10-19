@@ -1,0 +1,206 @@
+sentinel: not configured for this step (only scripts/check runs step 5)
+lockstep> test (suite: lockstep-integration)
+
+lockstep-integration
+  Process
+    serve with no --port answers health on 127.0.0.1:8000:                                                    Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:8000
+OK (0.45s)
+    serve --port P answers health and the liveness page on 127.0.0.1:P:                                       Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:51201
+OK (0.43s)
+    serve is not reachable on a non-loopback interface:                                                       Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:38395
+OK (0.42s)
+    serve --port without a value exits 64 with a typed error:                                                 OK
+    SIGTERM stops the server with exit 0 within 5 seconds:                                                    Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:33309
+OK (0.43s)
+  PostgreSQL migrations and readiness
+    fresh install: the production list applies, then is a no-op:                                              OK (0.18s)
+    an ordered list applies in id order and the ledger records that order:                                    OK (0.20s)
+    after a partial run only the remainder applies:                                                           OK (0.08s)
+    a failing migration leaves no DDL and no ledger row; earlier ones stay:                                   OK (0.22s)
+    a changed applied migration is refused before any SQL runs:                                               OK (0.31s)
+    a database ahead of the binary is refused:                                                                OK (0.13s)
+    a gap in the ledger is refused:                                                                           OK (0.27s)
+    two concurrent runners apply each migration exactly once:                                                 OK (0.75s)
+    readiness: schema behind before migrate, ready after:                                                     OK (0.11s)
+    readiness: a wrong password is an authentication failure:                                                 OK (0.07s)
+    readiness: a missing database is reported as missing:                                                     OK (0.07s)
+    readiness: a closed port is unreachable:                                                                  OK (0.05s)
+    backup gate
+      an applied ledger with pending work and no backup is refused:                                           OK (0.19s)
+      a missing backup file is refused:                                                                       OK (0.20s)
+      a backup older than the last applied migration is refused:                                              OK (0.20s)
+      a fresh backup file allows the migration:                                                               OK (0.22s)
+      an explicit --no-backup allows the migration:                                                           OK (0.19s)
+      an empty database needs no backup:                                                                      OK (0.19s)
+  lockstep process with PostgreSQL
+    db migrate installs a fresh database, then is a no-op; db status reports it:                              OK (0.15s)
+    serve reports schema_behind truthfully, then ready after migrate; starts persist across restarts:         OK (1.76s)
+    an invalid configuration file stops serve with exit 66:                                                   OK
+    a leftover rollbar block stops serve with exit 66 and names the key:                                      OK
+    a configuration readable by others stops serve with exit 66:                                              OK
+    a missing configuration file stops serve with exit 66:                                                    OK
+  operator trust (PostgreSQL + real binary)
+    operator sign-in prints one loopback URL and stores only the token's SHA-256 digest:                      OK (0.27s)
+    operator sign-in refuses an unmigrated database (exit 69) and an unset config (exit 66):                  OK (0.12s)
+    happy path: confirm, exchange, operator page, sign-out with CSRF; bounded token exposure:                 OK (0.59s)
+    browser-shaped sign-in [D-2d]: Origin null is refused and does not consume the token:                     OK (0.59s)
+    token refusals: reused, expired and unknown tokens answer 403 and create no session:                      OK (0.72s)
+    two concurrent exchanges of one token: exactly one succeeds and one session exists:                       OK (0.69s)
+    session refusals: expired session, sign-out-all, and missing or wrong CSRF:                               OK (0.72s)
+    Host and Origin over HTTP: foreign or localhost Host and foreign or missing Origin answer 403:            OK (0.84s)
+    malformed input answers 4xx, never 500:                                                                   OK (0.57s)
+    db migrate from revision 1 needs a backup decision for migration 0002 (exit 75, then --no-backup):        OK (0.16s)
+  typed operator command (PostgreSQL + real binary)
+    CLI: show, rename, replay, key conflict, stale and its replay:                                            OK (0.36s)
+    CLI: a generated key is printed; invalid input stores nothing:                                            OK (0.28s)
+    CLI: not configured exits 66, an unmigrated database exits 69:                                            OK (0.09s)
+    HTTP: operator page form, rename, receipt page, replay:                                                   OK (0.62s)
+    CLI and HTTP share one operation: one key, one receipt:                                                   OK (0.73s)
+    HTTP: stale, conflict and invalid input are refused without changing state:                               OK (0.71s)
+    HTTP authority: no session, wrong CSRF and foreign Origin store nothing:                                  OK (0.70s)
+    concurrency: one key twice gives one receipt; two keys at one revision give one applied, one stale:       OK (0.71s)
+    a client that disconnects right after sending does not undo the accepted command:                         OK (0.75s)
+    db migrate from revision 2 needs a backup decision for migration 0003:                                    OK (0.14s)
+  background dispatcher (PostgreSQL + real binary)
+    the CLI only queues; a running service executes the job:                                                  OK (2.15s)
+    HTTP admission returns before the work and the job still completes:                                       OK (6.68s)
+    a client that disconnects right after queueing does not lose the job:                                     OK (1.05s)
+    duplicate admission (CLI, then HTTP with the same key) creates one job:                                   OK (0.77s)
+    a deterministic failure stops the job at its step and is not retried:                                     OK (1.52s)
+    SIGTERM mid-job returns it to the queue; a restart resumes it from its last step:                         OK (6.54s)
+    after SIGKILL the job stays running until its lease expires, then is reclaimed:                           OK (11.08s)
+    two services on one database run every job exactly once:                                                  OK (1.27s)
+    db migrate from revision 3 needs a backup decision for migration 0004:                                    OK (0.24s)
+  command center (PostgreSQL + real binary)
+    the page projects canonical rows truthfully; tampered or missing evidence is never PASSED:                OK (1.46s)
+    an operator action visibly changes the page:                                                              OK (0.86s)
+    no session is 401; a database that stops being ready shows a notice and no evidence:                      OK (1.62s)
+    db migrate from revision 4 needs a backup decision for migration 0005:                                    OK (0.36s)
+  fault plans are refused by this build
+    serve with a fault plan exits 78 and never listens:                                                       OK (0.31s)
+    every command refuses a fault plan before reading arguments or configuration:                             OK (0.04s)
+    a fault plan is refused even when LOCKSTEP_CONFIG names a missing file:                                   OK
+    without a fault plan, serve answers health as before:                                                     OK (0.43s)
+  real browser (headless Chromium) against the real service
+    served forms work in a real browser; cross-origin, tampered-CSRF and null-Origin submissions are refused: OK (70.06s)
+  repository identity and ownership (C-P2.1; real Git + PostgreSQL + binary)
+    engineers: add, duplicate name, invalid name; one decision per attempt:                                   OK (0.33s)
+    aliases, linked worktrees, subdirectories and unsupported shapes fail closed:                             OK (0.85s)
+    duplicate clones are refused; forks, shared ancestry and templates stay eligible:                         OK (0.82s)
+    case sensitivity: the system temporary directory and LOCKSTEP_TEST_CASE_DIR:                              OK (0.74s)
+      system temporary directory: case-sensitive (Proj and proj are distinct repositories); LOCKSTEP_TEST_CASE_DIR: case-insensitive (ORIG refused as an alias of orig)
+    concurrent alias registrations leave exactly one owner (5 rounds):                                        OK (0.56s)
+    db migrate from revision 5 needs a backup decision for migration 0006:                                    OK (0.16s)
+  Profile registry and resolution (C-P2.3; real PostgreSQL + binary)
+    add, unchanged, version rules, invalid and weakening documents, list and show:                            OK (0.46s)
+    stored profiles and default assignments cannot be changed or deleted:                                     OK (0.33s)
+    repository set-profile records the default and refuses the unknown:                                       OK (0.39s)
+    resolution: unset default, specialization, weakening, new version, invalid facts:                         OK (0.41s)
+    a tampered stored document is an integrity failure, never used:                                           OK (0.35s)
+    profile add - reads the document from standard input:                                                     OK (0.14s)
+  Durable ledger (C-P2.5; real PostgreSQL)
+    scenario setup: migrate, Engineer, repository, Profile and default through the binary:                    OK (0.44s)
+    tickets: create, accept, stale revision, illegal input, revise:                                           OK (0.33s)
+    work order creation from a ready Ticket, and each refusal:                                                OK (0.43s)
+    a decision commits its event and intents together; faults leave neither:                                  OK (0.37s)
+    intents with any input but start or resume are refused:                                                   OK (0.33s)
+    replay integrity: a tampered projection or Profile source is an integrity failure:                        OK (0.39s)
+    scheduling claims an order with satisfied evidence; the decision is stored with its digest:               OK (0.36s)
+    scheduling leaves an order missing evidence pending, with the reason:                                     OK (0.23s)
+    after a halt and requeue the next claim has generation 2:                                                 OK (0.36s)
+    a revised Ticket makes its order source-stale:                                                            OK (0.23s)
+    work unit admission: plan-less for a claimed order; refused for a pending one:                            OK (0.34s)
+    claims and fencing: one winner, reclaim after expiry, stale writes refused and stored, unknown blocks:    OK (0.35s)
+    retry budget 1: not applied twice, then retries-exhausted:                                                OK (0.23s)
+    events, refusals, observations, evidence, schedule decisions and Profile sources are immutable:           OK (0.44s)
+  Typed executor and dispatch recovery (C-P2.6; real PostgreSQL)
+    scenario setup: an active order with one intent of each class, through the real ledger:                   OK (0.42s)
+    each class applied: settled, generation 1, one dispatch, one application:                                 FAIL (0.22s)
+      test/integration/Lockstep/ExecutorTest.hs:562:
+      execute: LedgerRefused "stub" ""
+      Use -p '/each class applied: settled, generation 1, one dispatch, one application/' to rerun this test only.
+    refusals before any write: no adapter, adapter mismatch, invalid executor, unknown intent:                FAIL (0.21s)
+      test/integration/Lockstep/ExecutorTest.hs:568:
+      expected: "no-adapter"
+       but got: "stub"
+      Use -p '/refusals before any write: no adapter, adapter mismatch, invalid executor, unknown intent/' to rerun this test only.
+    an order that is not active executes nothing, even when it halts after the claim:                         FAIL (0.22s)
+      test/integration/Lockstep/ExecutorTest.hs:568:
+      expected: "subject-not-active"
+       but got: "stub"
+      Use -p '/an order that is not active executes nothing, even when it halts after the claim/' to rerun this test only.
+    crash before dispatch: claimed, nothing applied; reclaimed after the lease and applied once:              FAIL (0.30s)
+      test/integration/Lockstep/ExecutorTest.hs:180:
+      the crash propagates
+      Use -p '/crash before dispatch: claimed, nothing applied; reclaimed after the lease and applied once/' to rerun this test only.
+    crash after dispatch, repeatable: recovery redispatches under generation 2 and applies once:              FAIL (0.23s)
+      test/integration/Lockstep/ExecutorTest.hs:203:
+      the crash propagates
+      Use -p '/crash after dispatch, repeatable: recovery redispatches under generation 2 and applies once/' to rerun this test only.
+    crash after the effect, repeatable: recovery re-executes (class A permits it):                            FAIL (0.20s)
+      test/integration/Lockstep/ExecutorTest.hs:228:
+      the crash propagates
+      Use -p '/crash after the effect, repeatable: recovery re-executes (class A permits it)/' to rerun this test only.
+    crash after the effect, idempotent: the same operation id is deduplicated, one application:               FAIL (0.21s)
+      test/integration/Lockstep/ExecutorTest.hs:244:
+      the crash propagates
+      Use -p '/crash after the effect, idempotent: the same operation id is deduplicated, one application/' to rerun this test only.
+    crash after the effect, queryable and unqueryable: unknown, the order halted, never re-executed:          FAIL (0.22s)
+      test/integration/Lockstep/ExecutorTest.hs:260:
+      the crash propagates
+      Use -p '/crash after the effect, queryable and unqueryable: unknown, the order halted, never re-executed/' to rerun this test only.
+    unqueryable crash after dispatch: unknown and never executed:                                             FAIL (0.23s)
+      test/integration/Lockstep/ExecutorTest.hs:286:
+      the crash propagates
+      Use -p '/unqueryable crash after dispatch: unknown and never executed/' to rerun this test only.
+    ambiguous answers are unknown, recorded, and halt the order:                                              FAIL (0.21s)
+      test/integration/Lockstep/ExecutorTest.hs:562:
+      execute: LedgerRefused "stub" ""
+      Use -p '/ambiguous answers are unknown, recorded, and halt the order/' to rerun this test only.
+    not applied: retried within the budget; budget 0 settles not applied and halts:                           FAIL (0.21s)
+      test/integration/Lockstep/ExecutorTest.hs:562:
+      execute: LedgerRefused "stub" ""
+      Use -p '/not applied: retried within the budget; budget 0 settles not applied and halts/' to rerun this test only.
+    duplicate claim: a second executor is refused claim-held and nothing runs twice:                          FAIL (0.22s)
+      test/integration/Lockstep/ExecutorTest.hs:562:
+      execute: LedgerRefused "stub" ""
+      Use -p '/duplicate claim: a second executor is refused claim-held and nothing runs twice/' to rerun this test only.
+    delayed worker: fenced out after a recovery, its observation kept as evidence:                            FAIL (0.24s)
+      test/integration/Lockstep/ExecutorTest.hs:568:
+      expected: "stale-claim"
+       but got: "stub"
+      Use -p '/delayed worker: fenced out after a recovery, its observation kept as evidence/' to rerun this test only.
+    abandoned mid-flight: the applied observation is kept, refused already-settled:                           FAIL (0.24s)
+      test/integration/Lockstep/ExecutorTest.hs:568:
+      expected: "already-settled"
+       but got: "stub"
+      Use -p '/abandoned mid-flight: the applied observation is kept, refused already-settled/' to rerun this test only.
+    restart pass: recover first, then execute, then nothing without an adapter:                               FAIL (0.23s)
+      test/integration/Lockstep/ExecutorTest.hs:389:
+      the crash propagates
+      Use -p '/restart pass: recover first, then execute, then nothing without an adapter/' to rerun this test only.
+    recovery records are immutable:                                                                           FAIL (0.22s)
+      test/integration/Lockstep/ExecutorTest.hs:412:
+      the crash propagates
+      Use -p '/recovery records are immutable/' to rerun this test only.
+
+16 out of 110 tests failed (138.49s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       
