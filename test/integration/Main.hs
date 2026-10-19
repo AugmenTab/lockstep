@@ -8,6 +8,7 @@ import Test.Tasty (defaultMain, testGroup)
 import Lockstep.BrowserFormTest qualified as BrowserFormTest
 import Lockstep.CommandCenterTest qualified as CommandCenterTest
 import Lockstep.DispatcherTest qualified as DispatcherTest
+import Lockstep.ExecutorTest qualified as ExecutorTest
 import Lockstep.FaultPlanTest qualified as FaultPlanTest
 import Lockstep.LedgerTest qualified as LedgerTest
 import Lockstep.MigrationDbTest qualified as MigrationDbTest
@@ -35,4 +36,5 @@ main =
       , RepositoryOwnershipTest.tests
       , ProfileRegistryTest.tests
       , LedgerTest.tests
+      , ExecutorTest.tests
       ]
