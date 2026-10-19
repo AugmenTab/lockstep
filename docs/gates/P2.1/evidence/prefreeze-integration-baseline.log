@@ -1,0 +1,226 @@
+sentinel: not configured for this step (only scripts/check runs step 5)
+lockstep-0.2.0.0: unregistering (components added: test:lockstep-integration)
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[ 7 of 14] Compiling Lockstep.RepositoryOwnershipTest [Source file changed]
+[15 of 15] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-integration/lockstep-integration [Objects changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-LbyGVvC3SAD1WrwLNazpw6
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-integration)
+lockstep-integration
+  Process
+    serve with no --port answers health on 127.0.0.1:8000:                                                    Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:8000
+OK (0.45s)
+    serve --port P answers health and the liveness page on 127.0.0.1:P:                                       Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:52373
+OK (0.48s)
+    serve is not reachable on a non-loopback interface:                                                       Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:46861
+OK (0.43s)
+    serve --port without a value exits 64 with a typed error:                                                 OK (0.01s)
+    SIGTERM stops the server with exit 0 within 5 seconds:                                                    Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:46265
+OK (0.42s)
+  PostgreSQL migrations and readiness
+    fresh install: the production list applies, then is a no-op:                                              OK (0.11s)
+    an ordered list applies in id order and the ledger records that order:                                    OK (0.20s)
+    after a partial run only the remainder applies:                                                           OK (0.08s)
+    a failing migration leaves no DDL and no ledger row; earlier ones stay:                                   OK (0.18s)
+    a changed applied migration is refused before any SQL runs:                                               OK (0.19s)
+    a database ahead of the binary is refused:                                                                OK (0.08s)
+    a gap in the ledger is refused:                                                                           OK (0.27s)
+    two concurrent runners apply each migration exactly once:                                                 OK (1.01s)
+    readiness: schema behind before migrate, ready after:                                                     OK (0.11s)
+    readiness: a wrong password is an authentication failure:                                                 OK (0.07s)
+    readiness: a missing database is reported as missing:                                                     OK (0.07s)
+    readiness: a closed port is unreachable:                                                                  OK (0.06s)
+    backup gate
+      an applied ledger with pending work and no backup is refused:                                           OK (0.19s)
+      a missing backup file is refused:                                                                       OK (0.18s)
+      a backup older than the last applied migration is refused:                                              OK (0.19s)
+      a fresh backup file allows the migration:                                                               OK (0.19s)
+      an explicit --no-backup allows the migration:                                                           OK (0.19s)
+      an empty database needs no backup:                                                                      OK (0.19s)
+  lockstep process with PostgreSQL
+    db migrate installs a fresh database, then is a no-op; db status reports it:                              OK (0.12s)
+    serve reports schema_behind truthfully, then ready after migrate; starts persist across restarts:         OK (1.77s)
+    an invalid configuration file stops serve with exit 66:                                                   OK
+    a leftover rollbar block stops serve with exit 66 and names the key:                                      OK
+    a configuration readable by others stops serve with exit 66:                                              OK
+    a missing configuration file stops serve with exit 66:                                                    OK
+  operator trust (PostgreSQL + real binary)
+    operator sign-in prints one loopback URL and stores only the token's SHA-256 digest:                      OK (0.24s)
+    operator sign-in refuses an unmigrated database (exit 69) and an unset config (exit 66):                  OK (0.15s)
+    happy path: confirm, exchange, operator page, sign-out with CSRF; bounded token exposure:                 OK (0.56s)
+    browser-shaped sign-in [D-2d]: Origin null is refused and does not consume the token:                     OK (0.58s)
+    token refusals: reused, expired and unknown tokens answer 403 and create no session:                      OK (0.68s)
+    two concurrent exchanges of one token: exactly one succeeds and one session exists:                       OK (0.70s)
+    session refusals: expired session, sign-out-all, and missing or wrong CSRF:                               OK (0.81s)
+    Host and Origin over HTTP: foreign or localhost Host and foreign or missing Origin answer 403:            OK (0.55s)
+    malformed input answers 4xx, never 500:                                                                   OK (0.74s)
+    db migrate from revision 1 needs a backup decision for migration 0002 (exit 75, then --no-backup):        OK (0.15s)
+  typed operator command (PostgreSQL + real binary)
+    CLI: show, rename, replay, key conflict, stale and its replay:                                            OK (0.34s)
+    CLI: a generated key is printed; invalid input stores nothing:                                            OK (0.24s)
+    CLI: not configured exits 66, an unmigrated database exits 69:                                            OK (0.10s)
+    HTTP: operator page form, rename, receipt page, replay:                                                   OK (0.68s)
+    CLI and HTTP share one operation: one key, one receipt:                                                   OK (0.69s)
+    HTTP: stale, conflict and invalid input are refused without changing state:                               OK (0.69s)
+    HTTP authority: no session, wrong CSRF and foreign Origin store nothing:                                  OK (0.74s)
+    concurrency: one key twice gives one receipt; two keys at one revision give one applied, one stale:       OK (0.74s)
+    a client that disconnects right after sending does not undo the accepted command:                         OK (0.69s)
+    db migrate from revision 2 needs a backup decision for migration 0003:                                    OK (0.13s)
+  background dispatcher (PostgreSQL + real binary)
+    the CLI only queues; a running service executes the job:                                                  OK (2.08s)
+    HTTP admission returns before the work and the job still completes:                                       OK (6.51s)
+    a client that disconnects right after queueing does not lose the job:                                     OK (0.88s)
+    duplicate admission (CLI, then HTTP with the same key) creates one job:                                   OK (0.71s)
+    a deterministic failure stops the job at its step and is not retried:                                     OK (1.45s)
+    SIGTERM mid-job returns it to the queue; a restart resumes it from its last step:                         OK (6.38s)
+    after SIGKILL the job stays running until its lease expires, then is reclaimed:                           OK (9.61s)
+    two services on one database run every job exactly once:                                                  OK (1.03s)
+    db migrate from revision 3 needs a backup decision for migration 0004:                                    OK (0.11s)
+  command center (PostgreSQL + real binary)
+    the page projects canonical rows truthfully; tampered or missing evidence is never PASSED:                OK (1.21s)
+    an operator action visibly changes the page:                                                              OK (0.54s)
+    no session is 401; a database that stops being ready shows a notice and no evidence:                      OK (0.90s)
+    db migrate from revision 4 needs a backup decision for migration 0005:                                    OK (0.11s)
+  fault plans are refused by this build
+    serve with a fault plan exits 78 and never listens:                                                       OK (0.31s)
+    every command refuses a fault plan before reading arguments or configuration:                             OK (0.03s)
+    a fault plan is refused even when LOCKSTEP_CONFIG names a missing file:                                   OK
+    without a fault plan, serve answers health as before:                                                     OK (0.46s)
+  real browser (headless Chromium) against the real service
+    served forms work in a real browser; cross-origin, tampered-CSRF and null-Origin submissions are refused: OK (15.35s)
+  repository identity and ownership (C-P2.1; real Git + PostgreSQL + binary)
+    engineers: add, duplicate name, invalid name; one decision per attempt:                                   FAIL (0.12s)
+      test/integration/Lockstep/RepositoryOwnershipTest.hs:50:
+      expected: ExitSuccess
+       but got: ExitFailure 64
+      Use -p '/engineers: add, duplicate name, invalid name; one decision per attempt/' to rerun this test only.
+    aliases, linked worktrees, subdirectories and unsupported shapes fail closed:                             FAIL (0.10s)
+      test/integration/Lockstep/RepositoryOwnershipTest.hs:264:
+      engineer add alice: lockstep: unknown command: engineer
+      usage: lockstep serve [--port N]
+             lockstep db migrate [--backup FILE | --no-backup]
+             lockstep db status
+             lockstep operator sign-in [--port N]
+             lockstep operator sign-out-all
+             lockstep workspace show
+             lockstep workspace rename --expected-revision N [--idempotency-key K] NAME
+             lockstep job queue --expected-revision N [--steps S] [--step-ms M] [--fail-at-step K] [--idempotency-key K]
+             lockstep job show JOB
+        serve        run the local service on 127.0.0.1 (default port 8000)
+        --port N     listen on port N (1-65535)
+        db migrate   apply pending database migrations (needs a backup once any are applied)
+        db status    show the database schema revision and pending migrations
+        operator sign-in      print a one-time browser sign-in link (valid 5 minutes)
+                              for the service on port N (default 8000)
+        operator sign-out-all revoke every operator browser session
+        workspace show        print the workspace name and revision
+        workspace rename      rename the workspace if it is still at revision N; a repeated
+                              command with the same key returns the same receipt
+        job queue             queue a model-free no-op job; lockstep serve runs it
+        job show              print a job's state and progress
+      The database is configured by the file named in LOCKSTEP_CONFIG.
+      Use -p '/aliases, linked worktrees, subdirectories and unsupported shapes fail closed/' to rerun this test only.
+    duplicate clones are refused; forks, shared ancestry and templates stay eligible:                         FAIL (0.11s)
+      test/integration/Lockstep/RepositoryOwnershipTest.hs:264:
+      engineer add alice: lockstep: unknown command: engineer
+      usage: lockstep serve [--port N]
+             lockstep db migrate [--backup FILE | --no-backup]
+             lockstep db status
+             lockstep operator sign-in [--port N]
+             lockstep operator sign-out-all
+             lockstep workspace show
+             lockstep workspace rename --expected-revision N [--idempotency-key K] NAME
+             lockstep job queue --expected-revision N [--steps S] [--step-ms M] [--fail-at-step K] [--idempotency-key K]
+             lockstep job show JOB
+        serve        run the local service on 127.0.0.1 (default port 8000)
+        --port N     listen on port N (1-65535)
+        db migrate   apply pending database migrations (needs a backup once any are applied)
+        db status    show the database schema revision and pending migrations
+        operator sign-in      print a one-time browser sign-in link (valid 5 minutes)
+                              for the service on port N (default 8000)
+        operator sign-out-all revoke every operator browser session
+        workspace show        print the workspace name and revision
+        workspace rename      rename the workspace if it is still at revision N; a repeated
+                              command with the same key returns the same receipt
+        job queue             queue a model-free no-op job; lockstep serve runs it
+        job show              print a job's state and progress
+      The database is configured by the file named in LOCKSTEP_CONFIG.
+      Use -p '/duplicate clones are refused; forks, shared ancestry and templates stay eligible/' to rerun this test only.
+    case sensitivity: the system temporary directory and LOCKSTEP_TEST_CASE_DIR:                              FAIL (0.10s)
+      test/integration/Lockstep/RepositoryOwnershipTest.hs:264:
+      engineer add e1: lockstep: unknown command: engineer
+      usage: lockstep serve [--port N]
+             lockstep db migrate [--backup FILE | --no-backup]
+             lockstep db status
+             lockstep operator sign-in [--port N]
+             lockstep operator sign-out-all
+             lockstep workspace show
+             lockstep workspace rename --expected-revision N [--idempotency-key K] NAME
+             lockstep job queue --expected-revision N [--steps S] [--step-ms M] [--fail-at-step K] [--idempotency-key K]
+             lockstep job show JOB
+        serve        run the local service on 127.0.0.1 (default port 8000)
+        --port N     listen on port N (1-65535)
+        db migrate   apply pending database migrations (needs a backup once any are applied)
+        db status    show the database schema revision and pending migrations
+        operator sign-in      print a one-time browser sign-in link (valid 5 minutes)
+                              for the service on port N (default 8000)
+        operator sign-out-all revoke every operator browser session
+        workspace show        print the workspace name and revision
+        workspace rename      rename the workspace if it is still at revision N; a repeated
+                              command with the same key returns the same receipt
+        job queue             queue a model-free no-op job; lockstep serve runs it
+        job show              print a job's state and progress
+      The database is configured by the file named in LOCKSTEP_CONFIG.
+      Use -p '/case sensitivity: the system temporary directory and LOCKSTEP_TEST_CASE_DIR/' to rerun this test only.
+    concurrent alias registrations leave exactly one owner (5 rounds):                                        FAIL (0.17s)
+      test/integration/Lockstep/RepositoryOwnershipTest.hs:264:
+      engineer add e0: lockstep: unknown command: engineer
+      usage: lockstep serve [--port N]
+             lockstep db migrate [--backup FILE | --no-backup]
+             lockstep db status
+             lockstep operator sign-in [--port N]
+             lockstep operator sign-out-all
+             lockstep workspace show
+             lockstep workspace rename --expected-revision N [--idempotency-key K] NAME
+             lockstep job queue --expected-revision N [--steps S] [--step-ms M] [--fail-at-step K] [--idempotency-key K]
+             lockstep job show JOB
+        serve        run the local service on 127.0.0.1 (default port 8000)
+        --port N     listen on port N (1-65535)
+        db migrate   apply pending database migrations (needs a backup once any are applied)
+        db status    show the database schema revision and pending migrations
+        operator sign-in      print a one-time browser sign-in link (valid 5 minutes)
+                              for the service on port N (default 8000)
+        operator sign-out-all revoke every operator browser session
+        workspace show        print the workspace name and revision
+        workspace rename      rename the workspace if it is still at revision N; a repeated
+                              command with the same key returns the same receipt
+        job queue             queue a model-free no-op job; lockstep serve runs it
+        job show              print a job's state and progress
+      The database is configured by the file named in LOCKSTEP_CONFIG.
+      Use -p '/concurrent alias registrations leave exactly one owner (5 rounds)/' to rerun this test only.
+    db migrate from revision 5 needs a backup decision for migration 0006:                                    FAIL (0.16s)
+      test/integration/Lockstep/RepositoryOwnershipTest.hs:184:
+      expected: ExitFailure 75
+       but got: ExitSuccess
+      Use -p '/db migrate from revision 5 needs a backup decision for migration 0006/' to rerun this test only.
+6 out of 73 tests failed (65.88s)
+lockstep> Test suite lockstep-integration failed
+Completed 2 action(s).
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       While executing the build plan, Stack encountered the error:
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console

@@ -13,6 +13,7 @@ import Lockstep.MigrationDbTest qualified as MigrationDbTest
 import Lockstep.OperatorCommandTest qualified as OperatorCommandTest
 import Lockstep.OperatorTrustTest qualified as OperatorTrustTest
 import Lockstep.ProcessTest qualified as ProcessTest
+import Lockstep.RepositoryOwnershipTest qualified as RepositoryOwnershipTest
 import Lockstep.ServiceDbTest qualified as ServiceDbTest
 
 main :: IO ()
@@ -29,4 +30,5 @@ main =
       , CommandCenterTest.tests
       , FaultPlanTest.tests
       , BrowserFormTest.tests
+      , RepositoryOwnershipTest.tests
       ]
