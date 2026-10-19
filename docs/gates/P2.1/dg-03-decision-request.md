@@ -1,8 +1,9 @@
 # DG-03 — decision request: canonical repository identity and exclusive ownership
 
-- Prepared by: the writing agent (Implementer), 2026-10-18. **Nothing here is decided.** The
-  human owner decides DG-03 (Decision Register; PRD §11). Status on preparation:
-  `EVIDENCE-PREPARED`.
+- Prepared by: the writing agent (Implementer), 2026-10-18. As prepared, nothing here was
+  decided. **Decided by the human owner on 2026-10-18: D-3.1a, D-3.2a (amended), D-3.3d (a new
+  option), D-3.4 (amended), D-3.5a, D-3.6, D-3.7.** See "Human decision" at the end; it
+  supersedes the recommendations where they differ.
 - Basis: `v2` after Gate A acceptance (report r2 `33c8d26a…`, tested commit `6c2851d`). Phase 2
   authorized by the handoff `.local/plans/phase-02.md` (2026-10-18).
 - Blocks: the P2.1 Contract (stable identities, canonical repository identity, exclusive
@@ -123,15 +124,38 @@ observations and existing ownership, and returns a decision or a typed refusal.
   own Git configuration (so `insteadOf` applies), no network access and a timeout; its output is
   parsed into a typed observation.
 
-## Human decision (to be filled in by the owner)
+## Human decision (2026-10-18)
+
+Recorded by the writing agent (Implementer) at the owner's instruction ("DG-03 Decision — Resume
+Phase 2"). These are the owner's decisions, not the agent's. The owner's words, verbatim:
+
+> - **D-3.1a:** Use opaque, stable, Lockstep-issued `RepositoryId` values.
+> - **D-3.2a, amended:** Main-worktree-only registration for Phase 2. Use filesystem-aware
+>   canonicalization; do not blindly case-fold paths on case-sensitive filesystems.
+> - **D-3.3d (new):** Reject competing ownership of the same physical Git common directory or the
+>   same authoritative remote repository. **Shared Git ancestry or root commits alone do not
+>   establish repository identity.** Independent forks and template-derived projects must remain
+>   eligible. Ambiguous identity requires an explicit refusal or human resolution.
+> - **D-3.4:** Normalize remote identities, distinguishing a repository's authoritative remote
+>   from shared upstream/template remotes.
+> - **D-3.5a:** One active Engineer per repository and one repository per Engineer in Phase 2.
+> - **D-3.6:** Defer repository release and relocation, without precluding future support.
+> - **D-3.7:** Observe repository filesystem identity from the Engineer's filesystem view.
+>
+> The persistent `RepositoryId` is distinct from the filesystem and remote evidence used to
+> establish identity.
 
 | Field | Value |
 |---|---|
-| D-3.1 identity | |
-| D-3.2 local key / registrable shape | |
-| D-3.3 second-clone detection | |
-| D-3.4 remote normalization | |
-| D-3.5 cardinality / duplicates | |
-| D-3.6 release / relocation scope | |
-| D-3.7 observation location | |
-| Decided by / at | |
+| D-3.1 identity | **D-3.1a** opaque Lockstep-issued `RepositoryId` |
+| D-3.2 local key / registrable shape | **D-3.2a amended**: main worktree only; filesystem-aware canonicalization (physical identity of the common directory), no blind case-folding |
+| D-3.3 second-clone detection | **D-3.3d (new)**: same physical common directory or same authoritative remote; root commits / shared ancestry are **not** identity; forks and template-derived projects eligible; ambiguity refused or resolved by a human |
+| D-3.4 remote normalization | **D-3.4** with the authoritative remote distinguished from upstream/template remotes |
+| D-3.5 cardinality / duplicates | **D-3.5a** one active Engineer per repository, one repository per Engineer |
+| D-3.6 release / relocation scope | **D-3.6** deferred, not precluded |
+| D-3.7 observation location | **D-3.7** the Engineer's filesystem view |
+| Decided by / at | the human owner (operator), 2026-10-18 |
+
+How the P2.1 Contract (`contract.md`) applies the amendments is stated there (§2 I3–I7); in
+particular the recommended root-commit check (D-3.3a) and path case-folding (D-3.2a, D-3.4 path
+part for local paths) are **not** implemented.
