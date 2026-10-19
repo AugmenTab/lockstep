@@ -362,4 +362,20 @@ CREATE TRIGGER lockstep_effect_recoveries_immutable BEFORE UPDATE OR DELETE ON l
 CREATE TRIGGER lockstep_effect_recoveries_no_truncate BEFORE TRUNCATE ON lockstep_effect_recoveries FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
 |]
       )
+    ,
+      ( [Interpolate.i|effect resolution records|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_effect_resolutions (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  operation_id uuid NOT NULL REFERENCES lockstep_effect_intents (operation_id),
+  generation integer NOT NULL CHECK (generation >= 0),
+  basis text NOT NULL CHECK (basis IN ('lookup', 'human-attested', 'human-retry', 'late-observation')),
+  decision text NOT NULL,
+  duplication_acknowledged boolean NOT NULL DEFAULT false,
+  recorded_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TRIGGER lockstep_effect_resolutions_immutable BEFORE UPDATE OR DELETE ON lockstep_effect_resolutions FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_effect_resolutions_no_truncate BEFORE TRUNCATE ON lockstep_effect_resolutions FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+|]
+      )
     ]

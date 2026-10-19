@@ -56,6 +56,11 @@ Migration 0009 (C-P2.6) adds one append-only table, `lockstep_effect_recoveries`
 each recovery of an interrupted effect dispatch. It changes no existing table. As with 0008, no
 command uses it yet; migrate with a backup as usual.
 
+Migration 0010 (C-P2.7) adds one append-only table, `lockstep_effect_resolutions`. It records
+how an uncertain effect outcome was resolved: by a destination lookup, by a human attestation
+or retry, or as a late observation that conflicted with the durable state. It changes no
+existing table. Migrate with a backup as usual.
+
 ## 4. The service
 
 | Task | Command |

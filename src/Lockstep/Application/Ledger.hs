@@ -42,6 +42,12 @@ module Lockstep.Application.Ledger
   , recoverableIntents
   , StoredRecovery (..)
   , intentRecoveries
+  , prepareLookup
+  , applyLookup
+  , resolveOutcome
+  , reconcilableIntents
+  , StoredResolution (..)
+  , intentResolutions
   ) where
 
 import Control.Exception (SomeException, throwIO, try)
@@ -127,6 +133,19 @@ import Lockstep.Kernel.Profile
   , profileRefusalCode
   , renderProfileRefusal
   , resolveProfile
+  )
+import Lockstep.Kernel.Reconciliation
+  ( LateVerdict (..)
+  , LookupResult (..)
+  , ReconcileInput (..)
+  , ReconcileRefusal
+  , Resolution (..)
+  , judgeLateObservation
+  , reconcileIntent
+  , reconcileRefusalCode
+  , renderLookup
+  , renderResolution
+  , resolveIntent
   )
 import Lockstep.Kernel.Recovery (Recovery (..), RecoveryInput (..), recoverIntent, recoveryIntent, recoveryRefusalCode, renderRecovery)
 import Lockstep.Kernel.Repository (Ownership (..))
@@ -1262,9 +1281,10 @@ haltForIntent l code operation = do
     (Right next, Right text) -> appendStep (workOrderId order) (revision + 1) Supervisor text next
     _ -> pure ()
 
-{- | X6: stores the observation (a refused one as evidence), then settles an
-applied one, keeps a not-applied one claimable while a retry is left, and
-halts the order on an unknown outcome or an exhausted budget.
+{- | X6: stores the observation (a refused one as evidence, checked for a
+late-application conflict by C-P2.7 R7), then settles an applied one, keeps a
+not-applied one claimable while a retry is left, and halts the order on an
+unknown outcome or an exhausted budget.
 -}
 concludeIntent :: DatabaseRuntime -> OperationId -> Int -> Observation -> IO (Either LedgerFailure Intent)
 concludeIntent runtime operation generation observation =
@@ -1276,6 +1296,7 @@ concludeIntent runtime operation generation observation =
         case stepIntent intent (Command Supervisor (IntentObserve generation observation)) of
           Left r -> do
             Store.insertObservation (oid operation) (int32 generation) (observationText observation) (Just (effectRefusalCode r))
+            lateConflict l row intent operation generation observation
             pure (Left (effectRefused r))
           Right observed -> do
             Store.insertObservation (oid operation) (int32 generation) (observationText observation) Nothing
@@ -1349,3 +1370,114 @@ intentRecoveries runtime operation =
   transaction runtime $ \_ -> do
     rows <- Store.recoveriesOf (oid operation)
     pure (Right [StoredRecovery (fromIntegral (Store.recoveryRowGeneration r)) (Store.recoveryRowDecision r) | r <- rows])
+
+-- Reconciliation (C-P2.7) --------------------------------------------------------
+
+{- | R7: a refused applied observation that contradicts the durable state is
+recorded, halts the order, and blocks an intent that could still run.
+-}
+lateConflict :: LoadedOrder -> Store.IntentRow -> Intent -> OperationId -> Int -> Observation -> O.Orville ()
+lateConflict l row intent operation generation observation =
+  case judgeLateObservation intent observation of
+    LateConsistent -> pure ()
+    LateConflict next -> do
+      when (next /= intent) (Store.updateIntent (lifecycleColumns next row))
+      Store.insertResolution (oid operation) (int32 generation) (T.pack "late-observation") (T.pack "late-application " <> observationText observation) False
+      haltForIntent l (T.pack "late-application") operation
+
+reconcileRefused :: ReconcileRefusal -> LedgerFailure
+reconcileRefused r =
+  LedgerRefused (reconcileRefusalCode r) (T.pack (show r))
+
+-- | R4: the Kernel's checks before a lookup, with nothing written; the generation the lookup is made against.
+prepareLookup :: DatabaseRuntime -> OperationId -> IO (Either LedgerFailure Int)
+prepareLookup runtime operation =
+  transaction runtime $ \_ -> do
+    locked <- lockForExecution operation
+    case locked of
+      Left failure -> pure (Left failure)
+      Right (_, _, intent) -> do
+        now <- Store.databaseNow
+        pure $
+          case reconcileIntent intent (Command Supervisor (ReconcileInput now LookupNotFound)) of
+            Left r -> Left (reconcileRefused r)
+            Right _ -> Right (intentGeneration intent)
+
+-- | R4: the lookup's result, under the generation it was made against, with its record.
+applyLookup :: DatabaseRuntime -> OperationId -> Int -> LookupResult -> IO (Either LedgerFailure Intent)
+applyLookup runtime operation generation result =
+  transaction runtime $ \_ -> do
+    locked <- lockForExecution operation
+    case locked of
+      Left failure -> pure (Left failure)
+      Right (l, row, intent)
+        | intentGeneration intent /= generation -> pure (refused (T.pack "stale-claim") "the intent moved on while it was looked up")
+        | otherwise -> do
+            now <- Store.databaseNow
+            case reconcileIntent intent (Command Supervisor (ReconcileInput now result)) of
+              Left r -> pure (Left (reconcileRefused r))
+              Right next -> do
+                Store.insertResolution (oid operation) (int32 generation) (T.pack "lookup") (renderLookup result) False
+                let
+                  settle = stepIntent next (Command Supervisor (IntentSettle (intentGeneration next)))
+                  exhausted = intentDispatches next > effectSpecBudget (intentSpec next)
+                final <-
+                  case intentState next of
+                    IntentApplied _ -> pure settle
+                    IntentNotApplied _
+                      | exhausted -> do
+                          haltForIntent l (T.pack "retries-exhausted") operation
+                          pure settle
+                    IntentUnknown _ -> do
+                      haltForIntent l (T.pack "outcome-unknown") operation
+                      pure (Right next)
+                    _ -> pure (Right next)
+                case final of
+                  Left r -> pure (Left (effectRefused r))
+                  Right written -> do
+                    Store.updateIntent (lifecycleColumns written row)
+                    pure (Right written)
+
+-- | R5, R6: a Human's resolution of an unknown outcome, recorded apart from observations.
+resolveOutcome :: DatabaseRuntime -> OperationId -> Int -> Resolution -> IO (Either LedgerFailure Intent)
+resolveOutcome runtime operation generation resolution =
+  transaction runtime $ \_ -> do
+    locked <- lockForExecution operation
+    case locked of
+      Left failure -> pure (Left failure)
+      Right (_, row, intent) ->
+        case resolveIntent intent (Command Human (generation, resolution)) of
+          Left r -> pure (Left (reconcileRefused r))
+          Right next -> do
+            Store.updateIntent (lifecycleColumns next row)
+            let
+              (basis, acknowledged) =
+                case resolution of
+                  RetryAcknowledgingDuplication a -> (T.pack "human-retry", a)
+                  _ -> (T.pack "human-attested", False)
+            Store.insertResolution (oid operation) (int32 generation) basis (renderResolution resolution) acknowledged
+            pure (Right next)
+
+reconcilableIntents :: DatabaseRuntime -> IO (Either LedgerFailure [OperationId])
+reconcilableIntents runtime =
+  transaction runtime $ \_ -> operationsFrom <$> Store.reconcilableIntentIds
+
+data StoredResolution
+  = StoredResolution
+  { resolvedGeneration :: Int
+  , resolutionBasis :: T.Text
+  , resolutionDecision :: T.Text
+  , resolutionAcknowledged :: Bool
+  }
+  deriving (Eq, Show)
+
+intentResolutions :: DatabaseRuntime -> OperationId -> IO (Either LedgerFailure [StoredResolution])
+intentResolutions runtime operation =
+  transaction runtime $ \_ -> do
+    rows <- Store.resolutionsOf (oid operation)
+    pure
+      ( Right
+          [ StoredResolution (fromIntegral (Store.resolutionRowGeneration r)) (Store.resolutionRowBasis r) (Store.resolutionRowDecision r) (Store.resolutionRowAcknowledged r)
+          | r <- rows
+          ]
+      )
