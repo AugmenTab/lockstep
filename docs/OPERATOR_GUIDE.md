@@ -120,6 +120,18 @@ repositories, so through `scripts/service cli` a host path is `path-not-found`. 
 SSH host aliases from `~/.ssh/config` are not resolved, and only GitHub, GitLab and Bitbucket
 remote paths compare case-insensitively (C-P2.1 §9).
 
+### SDLC Profiles (Phase 2, C-P2.3)
+
+`lockstep profile add FILE` (or `-` for standard input; through the installed service,
+`scripts/lockstep profile add - < team.json`) registers the next version of a Profile and prints
+its digest; adding the same version again with the same content prints `unchanged`. `profile list`
+and `profile show ID [--version N]` print what is registered. `repository set-profile --engineer
+NAME PROFILE` sets the repository's default Profile, and `profile resolve --engineer NAME --kind
+KIND …` prints the effective Profile it would bind. Every `profile add` and `set-profile` attempt
+is recorded in `lockstep_profile_decisions`; Profile rows and default assignments cannot be
+updated or deleted (database triggers). A stored document that no longer reproduces its digest is
+an integrity failure (exit 70) and is never used: restore the database from a backup.
+
 ## 7. Troubleshooting
 
 | Symptom | Cause / action |
@@ -132,6 +144,8 @@ remote paths compare case-insensitively (C-P2.1 §9).
 | `exit 75` from `db migrate` | Take `scripts/db backup` and pass `--backup FILE`. |
 | `exit 78` | `LOCKSTEP_FAULT_PLAN` is set; this build refuses fault plans. Unset it. |
 | `refused authoritative-remote-ambiguous` | Several remotes: name the repository's own with `--authoritative-remote`. |
+| `refused weakens-gate` / `profile-conflict` from `profile resolve` | A specialization or override weakens or contradicts a gate; publish a stronger next version. |
+| `exit 70` with "integrity failure" | A stored Profile was changed outside Lockstep; restore from backup. |
 
 ## 8. Verification and evidence
 

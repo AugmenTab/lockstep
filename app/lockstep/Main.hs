@@ -12,7 +12,7 @@ import Flipstone.Prelude
 import Network.Wai.Handler.Warp qualified as Warp
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (ExitCode (ExitFailure), exitWith)
-import System.IO (hPutStr, hPutStrLn, putStrLn, stderr)
+import System.IO (hPutStr, hPutStrLn, putStr, putStrLn, stderr)
 import System.Log.FastLogger qualified as FL
 import Text.Show (show)
 
@@ -51,6 +51,18 @@ import Lockstep.Application.Database
   )
 import Lockstep.Application.Dispatcher (Job (..), findJob, findJobForReceipt, jobStateCode, requestStop, startDispatcher, stopDispatcher)
 import Lockstep.Application.OperatorTrust (issueSignIn, revokeAllSessions, signInUrl)
+import Lockstep.Application.Profiles
+  ( AddOutcome (..)
+  , ProfileFailure (..)
+  , ResolveRequest (..)
+  , StoredProfile (..)
+  , addProfile
+  , listProfiles
+  , readProfileDocument
+  , resolveForEngineer
+  , setRepositoryProfile
+  , showProfile
+  )
 import Lockstep.Application.Repositories
   ( EngineerRecord (..)
   , Refused (..)
@@ -60,7 +72,7 @@ import Lockstep.Application.Repositories
   , listRepositories
   , registerRepository
   )
-import Lockstep.Foundation.Cli (BackupPolicy, Command (..), QueueArgs (..), RegisterArgs (..), RenameArgs (..), parseArgs, renderCliError, usage)
+import Lockstep.Foundation.Cli (BackupPolicy, Command (..), QueueArgs (..), RegisterArgs (..), RenameArgs (..), ResolveArgs (..), parseArgs, renderCliError, usage)
 import Lockstep.Foundation.Config (Port, ServeConfig (..), bindHostAddress, portNumber)
 import Lockstep.Foundation.SystemConfig
   ( SystemConfig (..)
@@ -105,6 +117,16 @@ main = do
       withRequiredDatabase (repositoryRegister registerArgs)
     Right RepositoryList ->
       withRequiredDatabase repositoryList
+    Right (ProfileAdd file) ->
+      withRequiredDatabase (profileAdd file)
+    Right ProfileList ->
+      withRequiredDatabase profileList
+    Right (ProfileShow profileId version) ->
+      withRequiredDatabase (profileShow profileId version)
+    Right (RepositorySetProfile engineer profileId) ->
+      withRequiredDatabase (repositorySetProfile engineer profileId)
+    Right (ProfileResolve resolveArgs) ->
+      withRequiredDatabase (profileResolve resolveArgs)
 
 {- | C-P1.7 E4: this build has no fault-injection flag, so a fault plan is
 refused before arguments, configuration or the database are read.
@@ -396,3 +418,79 @@ refusal :: Refused -> IO ()
 refusal refused = do
   putStrLn ("refused " <> T.unpack (refusedCode refused) <> " decision " <> show (refusedDecision refused))
   refuse ("refused (" <> T.unpack (refusedCode refused) <> "): " <> T.unpack (refusedMessage refused))
+
+-- | C-P2.3 F14: a refusal (exit 65, with its decision when one was recorded) or an integrity failure (exit 70).
+profileFailure :: ProfileFailure -> IO ()
+profileFailure failure =
+  case failure of
+    ProfileRefused code message decision -> do
+      putStrLn ("refused " <> T.unpack code <> maybe "" (\n -> " decision " <> show n) decision)
+      refuse ("refused (" <> T.unpack code <> "): " <> T.unpack message)
+    ProfileIntegrity message -> do
+      hPutStrLn stderr ("lockstep: integrity failure: " <> T.unpack message)
+      exitWith (ExitFailure 70)
+
+storedLine :: StoredProfile -> String
+storedLine stored =
+  "profile " <> T.unpack (storedId stored) <> " version " <> show (storedVersion stored) <> " digest " <> T.unpack (storedDigest stored)
+
+profileAdd :: String -> DatabaseRuntime -> IO ()
+profileAdd file runtime = do
+  bytes <- readProfileDocument file
+  case bytes of
+    Left err -> do
+      hPutStrLn stderr ("lockstep: cannot read " <> file <> ": " <> err)
+      exitWith (ExitFailure 66)
+    Right document -> do
+      result <- addProfile runtime document
+      case result of
+        Left reason -> notReady reason
+        Right (Left failure) -> profileFailure failure
+        Right (Right (stored, outcome)) ->
+          putStrLn (storedLine stored <> (case outcome of Added -> " added"; Unchanged -> " unchanged"))
+
+profileList :: DatabaseRuntime -> IO ()
+profileList runtime = do
+  result <- listProfiles runtime
+  case result of
+    Left reason -> notReady reason
+    Right stored -> traverse_ (putStrLn . storedLine) stored
+
+-- | A rendering followed by its digest line.
+rendered :: (T.Text, T.Text) -> IO ()
+rendered (rendering, digest) = do
+  putStr (T.unpack rendering)
+  putStrLn ("digest " <> T.unpack digest)
+
+profileShow :: String -> Maybe Integer -> DatabaseRuntime -> IO ()
+profileShow profileId version runtime = do
+  result <- showProfile runtime (T.pack profileId) version
+  case result of
+    Left reason -> notReady reason
+    Right (Left failure) -> profileFailure failure
+    Right (Right shown) -> rendered shown
+
+repositorySetProfile :: String -> String -> DatabaseRuntime -> IO ()
+repositorySetProfile engineer profileId runtime = do
+  result <- setRepositoryProfile runtime (T.pack engineer) (T.pack profileId)
+  case result of
+    Left reason -> notReady reason
+    Right (Left failure) -> profileFailure failure
+    Right (Right repositoryId) -> putStrLn ("repository " <> T.unpack repositoryId <> " default-profile " <> profileId)
+
+profileResolve :: ResolveArgs -> DatabaseRuntime -> IO ()
+profileResolve args runtime = do
+  result <-
+    resolveForEngineer
+      runtime
+      ResolveRequest
+        { resolveRequestEngineer = T.pack (resolveEngineer args)
+        , resolveRequestKind = T.pack (resolveKind args)
+        , resolveRequestClasses = fmap T.pack (resolveClasses args)
+        , resolveRequestPathClasses = fmap T.pack (resolvePathClasses args)
+        , resolveRequestNonBehavioural = fmap T.pack (resolveNonBehavioural args)
+        }
+  case result of
+    Left reason -> notReady reason
+    Right (Left failure) -> profileFailure failure
+    Right (Right effective) -> rendered effective

@@ -33,6 +33,8 @@ library
       Lockstep.Application.Dispatcher
       Lockstep.Application.Identity
       Lockstep.Application.OperatorTrust
+      Lockstep.Application.ProfileDocument
+      Lockstep.Application.Profiles
       Lockstep.Application.Repositories
       Lockstep.Effects.Git
       Lockstep.Foundation.Cli
@@ -43,6 +45,7 @@ library
       Lockstep.Kernel.Delivery
       Lockstep.Kernel.Evidence
       Lockstep.Kernel.Identity
+      Lockstep.Kernel.Profile
       Lockstep.Kernel.Repository
       Lockstep.Kernel.Ticket
       Lockstep.Kernel.Transition
@@ -57,6 +60,7 @@ library
       Lockstep.Persistence.Migration
       Lockstep.Persistence.Migrations
       Lockstep.Persistence.OperatorSessions
+      Lockstep.Persistence.Profiles
       Lockstep.Persistence.Queries
       Lockstep.Persistence.Repositories
       Lockstep.Web.Application
@@ -148,6 +152,7 @@ test-suite lockstep-integration
       Lockstep.OperatorCommandTest
       Lockstep.OperatorTrustTest
       Lockstep.ProcessTest
+      Lockstep.ProfileRegistryTest
       Lockstep.RepositoryOwnershipTest
       Lockstep.ServiceDbTest
       Lockstep.Support.Http
@@ -186,10 +191,12 @@ test-suite lockstep-unit
   other-modules:
       Lockstep.Application.CommandTest
       Lockstep.Application.NoopCommandTest
+      Lockstep.Application.ProfileDocumentTest
       Lockstep.Application.ReadinessTest
       Lockstep.Foundation.CliDbTest
       Lockstep.Foundation.CliJobTest
       Lockstep.Foundation.CliOperatorTest
+      Lockstep.Foundation.CliProfileTest
       Lockstep.Foundation.CliRepositoryTest
       Lockstep.Foundation.CliTest
       Lockstep.Foundation.CliWorkspaceTest
@@ -200,6 +207,7 @@ test-suite lockstep-unit
       Lockstep.Kernel.IdentityTest
       Lockstep.Kernel.LifecycleFixtures
       Lockstep.Kernel.LifecyclePropertyTest
+      Lockstep.Kernel.ProfileTest
       Lockstep.Kernel.RemoteTest
       Lockstep.Kernel.RepositoryTest
       Lockstep.Kernel.TicketTest

@@ -154,6 +154,26 @@ never changed. Registration observes the filesystem of the process that runs
 `lockstep`; the installed service container (`scripts/service cli`) mounts no
 host repositories.
 
+## SDLC Profiles (C-P2.3)
+
+```sh
+lockstep profile add FILE            # or - to read the JSON document from standard input
+lockstep profile list
+lockstep profile show ID [--version N]
+lockstep repository set-profile --engineer NAME PROFILE
+lockstep profile resolve --engineer NAME --kind KIND [--class TAG]... [--path-class CLASS]... [--non-behavioural RATIONALE]
+```
+
+A Profile is a versioned, declarative JSON document of gates over a fixed vocabulary
+(DG-05; `docs/gates/P2.3/contract.md` §4). Versions are immutable and numbered 1, 2, 3, …; each
+is identified by the SHA-256 of its canonical rendering. The effective Profile for a piece of
+work is resolved from the built-in baseline, the repository default, the specializations the
+default declares for the work's kind or class, and human-approved stricter overrides. A later
+layer may only add or strengthen gates; any weakening, any conflict between sources at one level,
+and any attempt to waive one of the nine universal invariants is refused. `profile resolve` is a
+dry run that prints the effective Profile and its digest; binding it to a Work Order comes with
+durable Work Orders (C-P2.5). Through the installed service: `scripts/lockstep profile add - < file.json`.
+
 ## Licensing
 
 Lockstep v2 has no chosen license yet and is not distributed. Launchpad-derived
