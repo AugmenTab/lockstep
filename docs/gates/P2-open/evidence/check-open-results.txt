@@ -1,0 +1,22 @@
+PASS open --bogus exits 64
+PASS open --port 0 exits 64
+PASS open --port 8000 extra exits 64
+PASS database not ready exits 69
+PASS database not ready says so
+PASS database not ready starts no service
+PASS normal flow exits 0
+PASS normal flow started the service
+PASS normal flow: the real browser reached the authenticated /operator page
+PASS normal flow: the same link is refused the second time (single use)
+PASS already running exits 0
+PASS already running: the service was not restarted
+PASS already running: a new sign-in succeeds
+PASS port mismatch exits 75
+PASS launcher unavailable exits 70
+PASS launcher failing exits 70
+PASS scripts/lockstep workspace show exits 0
+PASS scripts/lockstep workspace show prints the workspace
+PASS no output contains token=
+PASS no output contains a token-shaped value
+PASS the service log contains no token=
+PASS the smoke summaries contain no token
