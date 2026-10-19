@@ -83,6 +83,11 @@ Profile digests are computed without the Kernel importing `Crypto`. Henforcer fo
 from importing the Kernel, so the Profile document decoder, which yields the Kernel's
 `RawProfile`, lives in `Application.ProfileDocument`.*
 
+*P2.4 status note (C-P2.4): `Kernel.Scheduler` is pure. It reads the facts the caller supplies
+(orders, owners, Profile sources, resources, revisions), never a clock or the database, and
+returns a decision with a canonical rendering and digest. It emits only the Scheduler's
+`mark-eligible` / `mark-ineligible` commands; claiming is C-P2.5.*
+
 Kernel signature direction, from Bible §37 (conceptual, not final API):
 `decide :: Snapshot -> Observation -> Either Refusal (NonEmpty DomainEvent, [EffectIntent])`.
 Time, ids and randomness enter the Kernel as **inputs**. It never reads a clock.
