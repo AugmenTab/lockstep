@@ -67,6 +67,7 @@ library:
     - orb
     - orville-postgresql
     - postgresql-libpq
+    - process
     - safe-exceptions
     - shrubbery
     - string-interpolate

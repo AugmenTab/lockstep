@@ -92,6 +92,18 @@ recorded as `refused_stale`. Jobs run only in the service; closing the browser d
 them. In the command center, a job shows `PASSED` only when it succeeded and its recorded outcome
 still matches its row.
 
+### Engineers and repositories (Phase 2, C-P2.1)
+
+`lockstep engineer add NAME` and `lockstep repository register --engineer NAME
+[--authoritative-remote REMOTE] PATH` give one Engineer exclusive ownership of one repository;
+`lockstep repository list` shows them. A refusal prints `refused <code> decision <n>` (exit 65)
+and is recorded with its reason in `lockstep_identity_decisions`. There is no release or
+relocation command yet (DG-03 D-3.6). Registration reads the repository through Git in the
+filesystem of the process that runs `lockstep`; the installed container mounts no host
+repositories, so through `scripts/service cli` a host path is `path-not-found`. Known limits:
+SSH host aliases from `~/.ssh/config` are not resolved, and only GitHub, GitLab and Bitbucket
+remote paths compare case-insensitively (C-P2.1 §9).
+
 ## 7. Troubleshooting
 
 | Symptom | Cause / action |
@@ -103,6 +115,7 @@ still matches its row.
 | `exit 69` from a CLI command | The database is not ready: `scripts/service cli db status`. |
 | `exit 75` from `db migrate` | Take `scripts/db backup` and pass `--backup FILE`. |
 | `exit 78` | `LOCKSTEP_FAULT_PLAN` is set; this build refuses fault plans. Unset it. |
+| `refused authoritative-remote-ambiguous` | Several remotes: name the repository's own with `--authoritative-remote`. |
 
 ## 8. Verification and evidence
 
