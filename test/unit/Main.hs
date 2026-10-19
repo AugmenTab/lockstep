@@ -20,6 +20,8 @@ import Lockstep.Foundation.EvidenceModelTest qualified as EvidenceModelTest
 import Lockstep.Foundation.OperatorTokenTest qualified as OperatorTokenTest
 import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
 import Lockstep.Kernel.DeliveryTest qualified as DeliveryTest
+import Lockstep.Kernel.EffectTest qualified as EffectTest
+import Lockstep.Kernel.EventCodecTest qualified as EventCodecTest
 import Lockstep.Kernel.IdentityTest qualified as IdentityTest
 import Lockstep.Kernel.LifecyclePropertyTest qualified as LifecyclePropertyTest
 import Lockstep.Kernel.ProfileTest qualified as ProfileTest
@@ -83,4 +85,6 @@ main =
       , CliProfileTest.tests
       , SchedulerTest.tests
       , SchedulerPropertyTest.tests
+      , EffectTest.tests
+      , EventCodecTest.tests
       ]

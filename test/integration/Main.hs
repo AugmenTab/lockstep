@@ -9,6 +9,7 @@ import Lockstep.BrowserFormTest qualified as BrowserFormTest
 import Lockstep.CommandCenterTest qualified as CommandCenterTest
 import Lockstep.DispatcherTest qualified as DispatcherTest
 import Lockstep.FaultPlanTest qualified as FaultPlanTest
+import Lockstep.LedgerTest qualified as LedgerTest
 import Lockstep.MigrationDbTest qualified as MigrationDbTest
 import Lockstep.OperatorCommandTest qualified as OperatorCommandTest
 import Lockstep.OperatorTrustTest qualified as OperatorTrustTest
@@ -33,4 +34,5 @@ main =
       , BrowserFormTest.tests
       , RepositoryOwnershipTest.tests
       , ProfileRegistryTest.tests
+      , LedgerTest.tests
       ]
