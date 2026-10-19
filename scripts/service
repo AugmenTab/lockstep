@@ -8,6 +8,8 @@
 #   scripts/service status
 #   scripts/service logs
 #   scripts/service cli ARGS...        run the installed binary with the same config
+#   scripts/service open [--port N]    start if needed and open the sign-in page in this
+#                                      host's browser (C-OPEN; also: scripts/lockstep open)
 #
 # The binary binds 127.0.0.1 only. The container uses host networking; on this
 # Mac's Docker runtime (OrbStack, Docker Engine 29.4) that loopback listener is
@@ -32,7 +34,7 @@ db_config=.local/config/lockstep.json
 host_config=.local/config/lockstep-host.json
 
 usage() {
-  sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 64
 }
 
@@ -149,6 +151,97 @@ case "$command" in
     args=()
     while IFS= read -r a; do args+=("$a"); done < <(run_args)
     docker run --rm "${args[@]}" "$image" /opt/lockstep/bin/lockstep "$@"
+    ;;
+
+  open)
+    # C-OPEN O2: every failure is typed and no output ever contains the link.
+    port=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --port)
+          [ $# -ge 2 ] || usage
+          port=$2
+          shift 2
+          ;;
+        --port=*)
+          port=${1#--port=}
+          shift
+          ;;
+        *) usage ;;
+      esac
+    done
+    if [ -n "$port" ]; then
+      case "$port" in
+        *[!0-9]* | "") usage ;;
+      esac
+      [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || usage
+    fi
+    require_install
+    host_config_path >/dev/null
+    args=()
+    while IFS= read -r a; do args+=("$a"); done < <(run_args)
+    # The database must be ready before anything is started.
+    readiness=$(docker run --rm --log-driver none "${args[@]}" "$image" /opt/lockstep/bin/lockstep db status 2>/dev/null | sed -n '1p' || true)
+    case "$readiness" in
+      "readiness ready"*) ;;
+      *)
+        echo "scripts/service open: the database is not ready (${readiness:-no answer}); see scripts/db status and scripts/service cli db migrate" >&2
+        exit 69
+        ;;
+    esac
+    if docker container inspect "$name" >/dev/null 2>&1; then
+      if [ "$(docker container inspect --format '{{.State.Running}}' "$name")" != true ]; then
+        echo "scripts/service open: $name exists but is not running; see scripts/service logs, then scripts/service restart" >&2
+        exit 69
+      fi
+      running_port=$(docker container inspect --format '{{range .Args}}{{.}} {{end}}' "$name" | sed -n 's/.*--port \([0-9][0-9]*\).*/\1/p')
+      running_port=${running_port:-8000}
+      if [ -n "$port" ] && [ "$port" != "$running_port" ]; then
+        echo "scripts/service open: $name is running on port $running_port, not $port" >&2
+        exit 75
+      fi
+      port=$running_port
+    else
+      port=${port:-8000}
+      "$0" start --port "$port" >/dev/null || {
+        echo "scripts/service open: the service did not start on port $port" >&2
+        exit 69
+      }
+    fi
+    if [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/health_check")" != 204 ]; then
+      echo "scripts/service open: the service does not answer on 127.0.0.1:$port" >&2
+      exit 69
+    fi
+    # The one-time link: issued by the installed CLI, kept out of the Docker log,
+    # held only in this variable and handed to the launcher (C-OPEN O5).
+    link=$(docker run --rm --log-driver none "${args[@]}" "$image" /opt/lockstep/bin/lockstep operator sign-in --port "$port" 2>/dev/null) || {
+      echo "scripts/service open: a sign-in link could not be issued" >&2
+      exit 70
+    }
+    if [[ ! "$link" =~ ^http://127\.0\.0\.1:$port/operator/sign-in\?token=[A-Za-z0-9_-]{43}$ ]]; then
+      link=""
+      echo "scripts/service open: the sign-in command answered unexpectedly" >&2
+      exit 70
+    fi
+    if [ -n "${LOCKSTEP_BROWSER:-}" ]; then
+      launcher=$LOCKSTEP_BROWSER
+    elif [ "$(uname -s)" = Darwin ]; then
+      launcher=open
+    else
+      launcher=xdg-open
+    fi
+    if ! command -v "$launcher" >/dev/null 2>&1; then
+      echo "scripts/service open: no browser launcher ($launcher); set LOCKSTEP_BROWSER to a command that opens a URL" >&2
+      exit 70
+    fi
+    # The launcher's own output is discarded: an error message may repeat the link.
+    if ! "$launcher" "$link" >/dev/null 2>&1; then
+      link=""
+      echo "scripts/service open: the browser launcher ($launcher) failed; the unused link expires within 5 minutes" >&2
+      exit 70
+    fi
+    link=""
+    echo "opened the sign-in page of http://127.0.0.1:$port/ in the browser: press Sign in (one-time link, valid 5 minutes)"
     ;;
 
   *)

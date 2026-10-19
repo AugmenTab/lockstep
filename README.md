@@ -86,6 +86,16 @@ a 12-hour session cookie. Both commands need a ready database (exit 69 if not).
 Every request must be addressed to `127.0.0.1:<port>` exactly (not
 `localhost`), and every form submission must come from a page of the service.
 
+## Opening the command center (C-OPEN)
+
+```sh
+scripts/lockstep open [--port N]
+```
+
+Host-side: starts the installed service if needed and opens its one-time sign-in page in this
+machine's browser, without printing the link. `scripts/lockstep ARGS…` runs any other command
+with the installed binary. See `docs/OPERATOR_GUIDE.md` §5.
+
 ## Operator commands (C-P1.4)
 
 ```sh
