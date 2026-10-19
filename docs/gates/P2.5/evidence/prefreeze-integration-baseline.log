@@ -1,0 +1,88 @@
+lockstep-0.2.0.0: unregistering (local file changes: test/integration/Lockstep/LedgerTest.hs)
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[ 7 of 17] Compiling Lockstep.LedgerTest [Source file changed]
+[18 of 18] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-integration/lockstep-integration [Objects changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-6ggF0AiJnRUCIB81Gsi4xx
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-integration, args: -p "Durable ledger")
+
+lockstep-integration
+  Durable ledger (C-P2.5; real PostgreSQL)
+    scenario setup: migrate, Engineer, repository, Profile and default through the binary:                 OK (0.44s)
+    tickets: create, accept, stale revision, illegal input, revise:                                        FAIL (0.20s)
+      test/integration/Lockstep/LedgerTest.hs:329:
+      create: LedgerUnavailable "stub"
+      Use -p '/Durable ledger/&&/tickets: create, accept, stale revision, illegal input, revise/' to rerun this test only.
+    work order creation from a ready Ticket, and each refusal:                                             FAIL (0.19s)
+      test/integration/Lockstep/LedgerTest.hs:329:
+      create: LedgerUnavailable "stub"
+      Use -p '/Durable ledger/&&/work order creation from a ready Ticket, and each refusal/' to rerun this test only.
+    a decision commits its event and intents together; faults leave neither:                               FAIL (0.17s)
+      test/integration/Lockstep/LedgerTest.hs:329:
+      create ticket: LedgerUnavailable "stub"
+      Use -p '/Durable ledger/&&/a decision commits its event and intents together; faults leave neither/' to rerun this test only.
+    intents with any input but start or resume are refused:                                                FAIL (0.17s)
+      test/integration/Lockstep/LedgerTest.hs:329:
+      create ticket: LedgerUnavailable "stub"
+      Use -p '/Durable ledger/&&/intents with any input but start or resume are refused/' to rerun this test only.
+    replay integrity: a tampered projection or Profile source is an integrity failure:                     FAIL (0.16s)
+      test/integration/Lockstep/LedgerTest.hs:329:
+      create ticket: LedgerUnavailable "stub"
+      Use -p '/Durable ledger/&&/replay integrity: a tampered projection or Profile source is an integrity failure/' to rerun this test only.
+    scheduling claims an order with satisfied evidence; the decision is stored with its digest:            FAIL (0.18s)
+      test/integration/Lockstep/LedgerTest.hs:329:
+      create ticket: LedgerUnavailable "stub"
+      Use -p '/Durable ledger/&&/scheduling claims an order with satisfied evidence; the decision is stored with its digest/' to rerun this test only.
+    scheduling leaves an order missing evidence pending, with the reason:                                  FAIL (0.18s)
+      test/integration/Lockstep/LedgerTest.hs:329:
+      create ticket: LedgerUnavailable "stub"
+      Use -p '/Durable ledger/&&/scheduling leaves an order missing evidence pending, with the reason/' to rerun this test only.
+    after a halt and requeue the next claim has generation 2:                                              FAIL (0.18s)
+      test/integration/Lockstep/LedgerTest.hs:329:
+      create ticket: LedgerUnavailable "stub"
+      Use -p '/Durable ledger/&&/after a halt and requeue the next claim has generation 2/' to rerun this test only.
+    a revised Ticket makes its order source-stale:                                                         FAIL (0.17s)
+      test/integration/Lockstep/LedgerTest.hs:329:
+      create ticket: LedgerUnavailable "stub"
+      Use -p '/Durable ledger/&&/a revised Ticket makes its order source-stale/' to rerun this test only.
+    work unit admission: plan-less for a claimed order; refused for a pending one:                         FAIL (0.18s)
+      test/integration/Lockstep/LedgerTest.hs:329:
+      create ticket: LedgerUnavailable "stub"
+      Use -p '/Durable ledger/&&/work unit admission: plan-less for a claimed order; refused for a pending one/' to rerun this test only.
+    claims and fencing: one winner, reclaim after expiry, stale writes refused and stored, unknown blocks: FAIL (0.17s)
+      test/integration/Lockstep/LedgerTest.hs:329:
+      create ticket: LedgerUnavailable "stub"
+      Use -p '/Durable ledger/&&/claims and fencing: one winner, reclaim after expiry, stale writes refused and stored, unknown blocks/' to rerun this test only.
+    retry budget 1: not applied twice, then retries-exhausted:                                             FAIL (0.17s)
+      test/integration/Lockstep/LedgerTest.hs:329:
+      create ticket: LedgerUnavailable "stub"
+      Use -p '/Durable ledger/&&/retry budget 1: not applied twice, then retries-exhausted/' to rerun this test only.
+    events, refusals, observations, evidence, schedule decisions and Profile sources are immutable:        FAIL (0.18s)
+      test/integration/Lockstep/LedgerTest.hs:329:
+      create ticket: LedgerUnavailable "stub"
+      Use -p '/Durable ledger/&&/events, refusals, observations, evidence, schedule decisions and Profile sources are immutable/' to rerun this test only.
+
+13 out of 14 tests failed (2.73s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+Completed 2 action(s).
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       
