@@ -1,0 +1,411 @@
+#!/usr/bin/env bash
+# Scenario B1, scripted, against the installed service (C-P2.9; Phase 2 plan §13).
+#
+#   scripts/b1 [OUT_DIR]      default OUT_DIR: docs/gates/B/evidence/b1
+#
+# As scripts/a1: while it runs, everything is written under .local/evidence/b1-<stamp>/
+# (gitignored), and copied to OUT_DIR at the end. Run from a clean checkout of the
+# commit under test, with scripts/db up. It creates a fresh database
+# lockstep_b1_<UTC stamp> on the operator PostgreSQL server (kept afterwards for
+# inspection) and runs the installed service as a separate container (lockstep-b1,
+# port 8200) with provider-CLI sentinel shims first on its PATH. The operator's own
+# database and lockstep-service container are not touched. Every command is recorded
+# with its exit code and output digests; tokens and session values are redacted.
+# Crashes are real (docker kill of a running CLI process); lease ends are waited for.
+set -uo pipefail
+
+cd "$(dirname "$0")/.."
+
+final_out=${1:-docs/gates/B/evidence/b1}
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+out=".local/evidence/b1-$stamp"
+mkdir -p "$out"
+log="$out/b1.log"
+: > "$log"
+db="lockstep_b1_$(echo "$stamp" | tr 'A-Z' 'a-z')"
+port=8200
+base="http://127.0.0.1:$port"
+image=lockstep-dev:p1
+work=".local/b1-$stamp"
+mkdir -p "$work/sentinel/bin"
+: > "$work/sentinel/sentinel.log"
+while IFS= read -r cli; do
+  [ -n "$cli" ] || continue
+  printf '#!/bin/sh\nprintf "%%s %%s\\n" "$(basename "$0")" "$*" >> "${LOCKSTEP_SENTINEL_LOG:-$(dirname "$0")/../sentinel.log}"\nexit 97\n' > "$work/sentinel/bin/$cli"
+  chmod +x "$work/sentinel/bin/$cli"
+done < scripts/lib/provider-clis
+
+export LOCKSTEP_SERVICE_NAME=lockstep-b1
+export LOCKSTEP_SERVICE_CONFIG=".local/config/lockstep-b1.json"
+export LOCKSTEP_SERVICE_SENTINEL_DIR="$work/sentinel"
+token="" session=""
+failures=0
+
+redact() {
+  local text=$1
+  [ -n "$token" ] && text=${text//$token/<TOKEN>}
+  [ -n "$session" ] && text=${text//$session/<SESSION>}
+  printf '%s' "$text" | sed -E -e 's/(lockstep_session=)[A-Za-z0-9_-]{43}/\1<SESSION>/g' -e 's/(token=)[A-Za-z0-9_-]{43}/\1<TOKEN>/g'
+}
+
+note() { echo "## $*" | tee -a "$log"; }
+
+# rec NAME EXPECT-EXIT CMD... : run, record argv, exit, output digests and output.
+rec() {
+  local name=$1 expect=$2; shift 2
+  local outf errf code
+  outf=$(mktemp); errf=$(mktemp)
+  "$@" >"$outf" 2>"$errf"
+  code=$?
+  {
+    echo "### $name"
+    echo "argv: $(redact "$*")"
+    echo "exit: $code (expected $expect)"
+    echo "stdout sha256: $(shasum -a 256 < "$outf" | cut -d' ' -f1)  stderr sha256: $(shasum -a 256 < "$errf" | cut -d' ' -f1)"
+    echo "stdout:"; redact "$(cat "$outf")"; echo
+    echo "stderr:"; redact "$(cat "$errf")"; echo
+  } >> "$log"
+  if [ "$expect" != "any" ] && [ "$code" != "$expect" ]; then
+    echo "B1: $name exited $code, expected $expect" | tee -a "$log" >&2
+    failures=$((failures + 1))
+  fi
+  LAST_OUT=$(cat "$outf"); LAST_ERR=$(cat "$errf"); LAST_CODE=$code
+  rm -f "$outf" "$errf"
+}
+
+# check NAME CONDITION-DESCRIPTION TEST-RESULT(0/1)
+check() {
+  if [ "$3" = 0 ]; then
+    echo "CHECK PASSED: $1: $2" | tee -a "$log"
+  else
+    echo "CHECK FAILED: $1: $2" | tee -a "$log" >&2
+    failures=$((failures + 1))
+  fi
+}
+
+http() { # name, curl args... : status line, selected headers and body digest
+  local name=$1; shift
+  local h b
+  h=$(mktemp); b=$(mktemp)
+  curl -s -D "$h" -o "$b" "$@"
+  HTTP_STATUS=$(head -n 1 "$h" | awk '{print $2}')
+  HTTP_BODY=$(cat "$b")
+  {
+    echo "### $name"
+    echo "request: curl $(redact "$*")"
+    echo "status: $HTTP_STATUS"
+    echo "body sha256: $(shasum -a 256 < "$b" | cut -d' ' -f1) ($(wc -c < "$b" | tr -d ' ') bytes)"
+  } >> "$log"
+  rm -f "$h" "$b"
+}
+
+cli() { # NAME EXPECT ARGS... : the installed binary through scripts/service cli
+  local name=$1 expect=$2; shift 2
+  rec "$name" "$expect" scripts/service cli "$@"
+}
+
+psql_v() { docker exec lockstep-postgres psql -U lockstep -d "$db" -tAc "$1"; }
+
+# The id after a fixed first word in LAST_OUT ("ticket <uuid>", "work-order <uuid>", ...).
+id_of() { printf '%s\n' "$LAST_OUT" | awk -v p="$1" '$1 == p { print $2; exit }'; }
+
+# The operation ids of "intent <op> effect <name>" lines in LAST_OUT, in order.
+ops_of() { printf '%s\n' "$LAST_OUT" | awk '$1 == "intent" { print $2 }'; }
+
+# The installed binary's docker arguments, as scripts/service uses them.
+run_args=(--network host
+  --volume "$PWD/.local/install:/opt/lockstep:ro"
+  --volume "$PWD/$LOCKSTEP_SERVICE_CONFIG:/etc/lockstep/lockstep.json:ro"
+  --env LOCKSTEP_CONFIG=/etc/lockstep/lockstep.json
+  --volume "$PWD/$LOCKSTEP_SERVICE_SENTINEL_DIR:/opt/sentinel"
+  --env PATH="/opt/sentinel/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  --env LOCKSTEP_SENTINEL_LOG=/opt/sentinel/sentinel.log)
+
+ledger_line() { # the ledger line that starts with PREFIX, from a fresh `ledger show`
+  scripts/service cli ledger show 2>/dev/null | grep -F -- "$1" | head -n 1
+}
+
+wait_until() { # DESCRIPTION SECONDS SQL-RETURNING-t : poll the database once a second
+  local what=$1 seconds=$2 query=$3 i
+  for i in $(seq 1 "$seconds"); do
+    [ "$(psql_v "$query")" = t ] && { echo "waited ${i}s: $what" >> "$log"; return 0; }
+    sleep 1
+  done
+  echo "B1: not within ${seconds}s: $what" | tee -a "$log" >&2
+  return 1
+}
+
+# A claimed order for a new ready ticket (priority P, with or without gate evidence): sets T and WO.
+new_order() {
+  local title=$1 priority=$2 with_evidence=$3
+  cli "ticket create ($title)" 0 ticket create "$title"
+  T=$(id_of ticket)
+  cli "ticket accept ($title)" 0 ticket accept "$T" --expected-revision 1
+  cli "work-order create ($title)" 0 work-order create --ticket "$T" --engineer alice --priority "$priority" --path-class source
+  WO=$(id_of work-order)
+  if [ "$with_evidence" = yes ]; then
+    cli "work-order evidence ($title)" 0 work-order evidence "$WO" --artifact impact-assessment --digest "$(printf 'a%.0s' $(seq 1 64))" --verifier human-inspection --approval supervisor
+  fi
+}
+
+note "B1 run $stamp; commit $(git rev-parse HEAD); clean: $([ -z "$(git status --porcelain)" ] && echo yes || echo NO); database $db; port $port"
+
+note "B1-01 clean build: fresh clone + scripts/check --integration"
+clone=".local/b1-clone-$stamp"
+rec "fresh clone" 0 git clone -q . "$clone"
+rec "checkout" 0 git -C "$clone" checkout -q "$(git rev-parse HEAD)"
+( cd "$clone" && scripts/check --integration ) > "$out/check-fresh-clone.log" 2>&1
+code=$?
+echo "scripts/check --integration in $clone: exit $code; log $out/check-fresh-clone.log sha256 $(shasum -a 256 < "$out/check-fresh-clone.log" | cut -d' ' -f1)" >> "$log"
+check AC-B1-01 "scripts/check --integration from a fresh clone exits 0 with all six steps PASSED" \
+  "$([ "$code" = 0 ] && [ "$(grep -c 'PASSED$' "$out/check-fresh-clone.log")" -ge 6 ] && grep -q 'no-live-model guard *PASSED' "$out/check-fresh-clone.log"; echo $?)"
+
+note "B1-02 install the release binary"
+rec "scripts/service install" 0 scripts/service install
+cp .local/install/VERSION "$out/VERSION"
+check AC-B1-02 "installed from a clean checkout of the tested commit" "$(grep -q "^commit $(git rev-parse HEAD)$" .local/install/VERSION && grep -q '^dirty false$' .local/install/VERSION; echo $?)"
+
+note "B1-03 fresh database, migration, readiness"
+rec "create database" 0 docker exec lockstep-postgres psql -U lockstep -d lockstep -c "CREATE DATABASE $db"
+umask 077
+sed -E -e 's/"host":"[^"]*"/"host":"127.0.0.1"/' -e 's/"port":[0-9]+/"port":5433/' -e "s/\"name\":\"[^\"]*\"/\"name\":\"$db\"/" .local/config/lockstep.json > "$LOCKSTEP_SERVICE_CONFIG"
+chmod 600 "$LOCKSTEP_SERVICE_CONFIG"
+umask 022
+cli "db migrate (empty database, no backup needed)" 0 db migrate
+cli "db status (after)" 0 db status
+check AC-B1-03 "a fresh database migrates to revision 11 and reports ready 11" "$(printf '%s' "$LAST_OUT" | grep -q '^readiness ready 11$'; echo $?)"
+
+note "B1-04 start the installed service"
+scripts/service stop >/dev/null 2>&1
+rec "scripts/service start" 0 scripts/service start --port "$port"
+http "health" "$base/api/health_check"
+health=$HTTP_STATUS
+http "readiness" "$base/api/readiness"
+check AC-B1-04 "the installed service answers health 204 and readiness 'ready 11' on 127.0.0.1:$port" "$([ "$health" = 204 ] && [ "$HTTP_STATUS" = 200 ] && [ "$HTTP_BODY" = "ready 11" ]; echo $?)"
+
+note "B1-05 repository exclusivity (repositories exist only inside one container of the installed image)"
+cli "engineer add alice" 0 engineer add alice
+cli "engineer add bob" 0 engineer add bob
+cat > "$work/repositories.sh" <<'SH'
+set -u
+export HOME=/tmp/home GIT_CONFIG_NOSYSTEM=1
+mkdir -p "$HOME"
+git config --global user.name "B1" && git config --global user.email b1@example.invalid
+git config --global init.defaultBranch main && git config --global --add safe.directory '*'
+L=/opt/lockstep/bin/lockstep
+git init -q /repos/alice && git -C /repos/alice commit -q --allow-empty -m first
+$L repository register --engineer alice /repos/alice; echo "exit alice $?"
+ln -s /repos/alice /repos/alias
+$L repository register --engineer bob /repos/alias; echo "exit alias $?"
+git -C /repos/alice worktree add -q /repos/worktree
+$L repository register --engineer bob /repos/worktree; echo "exit worktree $?"
+git init -q /repos/second && git -C /repos/second commit -q --allow-empty -m first
+$L repository register --engineer alice /repos/second; echo "exit second $?"
+SH
+rec "register and collide, in one container" 0 docker run --rm "${run_args[@]}" --volume "$PWD/$work/repositories.sh:/b1/repositories.sh:ro" "$image" sh /b1/repositories.sh
+repos=$LAST_OUT
+cli "repository list" 0 repository list
+check AC-B1-05 "alice owns her repository; bob's alias is repository-already-owned, bob's worktree linked-worktree, alice's second repository engineer-already-owns-repository (each exit 65); one repository is listed" \
+  "$(printf '%s\n' "$repos" | grep -q '^exit alice 0$' \
+    && printf '%s\n' "$repos" | grep -q '^refused repository-already-owned' && printf '%s\n' "$repos" | grep -q '^exit alias 65$' \
+    && printf '%s\n' "$repos" | grep -q '^refused linked-worktree' && printf '%s\n' "$repos" | grep -q '^exit worktree 65$' \
+    && printf '%s\n' "$repos" | grep -q '^refused engineer-already-owns-repository' && printf '%s\n' "$repos" | grep -q '^exit second 65$' \
+    && [ "$(printf '%s\n' "$LAST_OUT" | grep -c '^repository ')" = 1 ]; echo $?)"
+
+note "B1-06 the Profile and the repository default"
+cat > "$work/team-v1.json" <<'JSON'
+{"id":"team","version":1,"gates":[{"id":"impact","stage":"before-execution","artifacts":["impact-assessment"],"verifiers":["human-inspection"],"approval":"supervisor","exception_path":true},{"id":"verify","stage":"before-acceptance","artifacts":["verification-record"],"verifiers":["deterministic-command"],"approval":"none"}]}
+JSON
+rec "profile add team v1" 0 sh -c "scripts/service cli profile add - < '$work/team-v1.json'"
+profile_digest=$(printf '%s' "$LAST_OUT" | grep -oE '[0-9a-f]{64}' | head -n 1)
+cli "repository set-profile" 0 repository set-profile --engineer alice team
+check AC-B1-06 "Profile team v1 registered (digest $profile_digest) and made alice's repository default" "$([ -n "$profile_digest" ] && [ "$LAST_CODE" = 0 ]; echo $?)"
+
+note "B1-07/B1-10 ticket-originated work; deterministic selection with a blocked higher-priority order"
+new_order "B1 blocked, priority 50" 50 no
+wo_blocked=$WO
+new_order "B1 order one" 5 yes
+t1=$T; wo1=$WO
+cli "schedule run-once" 0 schedule run-once
+schedule=$LAST_OUT
+check AC-B1-10 "the lower-priority order with evidence is selected; the higher-priority one is ineligible prerequisite-blocked" \
+  "$(printf '%s\n' "$schedule" | grep -q "^selected $wo1 generation 1$" && printf '%s\n' "$schedule" | grep -q "^ineligible $wo_blocked prerequisite-blocked"; echo $?)"
+cli "work-unit admit (plan-less)" 0 work-unit admit "$wo1"
+unit=$(id_of work-unit)
+plan=$(psql_v "SELECT coalesce(plan_ref, 'NULL') || ' ' || work_order_id || ' ' || ticket_id FROM lockstep_work_units WHERE id = '$unit'")
+check AC-B1-07 "a ticket-originated work order is claimed and a plan-less work unit admitted (plan_ref NULL, linked to its order and ticket)" \
+  "$([ -n "$unit" ] && [ "$plan" = "NULL $wo1 $t1" ]; echo $?)"
+
+note "B1-08 the binding is immutable"
+bound=$(psql_v "SELECT digest FROM lockstep_work_order_profile_sources WHERE work_order_id = '$wo1' AND profile_id = 'team'")
+binding_before=$(ledger_line "work-order $wo1 " | grep -oE 'binding=[0-9a-f]{64}')
+cat > "$work/team-v2.json" <<'JSON'
+{"id":"team","version":2,"gates":[{"id":"impact","stage":"before-execution","artifacts":["impact-assessment"],"verifiers":["human-inspection"],"approval":"supervisor","exception_path":true},{"id":"verify","stage":"before-acceptance","artifacts":["verification-record"],"verifiers":["deterministic-command","independent-review"],"approval":"none"}]}
+JSON
+rec "profile add team v2" 0 sh -c "scripts/service cli profile add - < '$work/team-v2.json'"
+binding_after=$(ledger_line "work-order $wo1 " | grep -oE 'binding=[0-9a-f]{64}')
+echo "bound source digest $bound; binding before v2 $binding_before; after $binding_after" >> "$log"
+check AC-B1-08 "the order's stored Profile source digest is the registered v1 digest, and adding v2 leaves its binding unchanged" \
+  "$([ "$bound" = "$profile_digest" ] && [ -n "$binding_before" ] && [ "$binding_before" = "$binding_after" ]; echo $?)"
+
+note "B1-09 legal and forbidden transitions"
+cli "accept a ready ticket again (illegal)" 65 ticket accept "$t1" --expected-revision 2
+illegal=$LAST_OUT
+cli "accept with a stale revision" 65 ticket accept "$t1" --expected-revision 1
+stale=$LAST_OUT
+cli "ledger show (refusals)" 0 ledger show
+check AC-B1-09 "illegal-transition and stale-revision are refused (exit 65) and listed by ledger show" \
+  "$([ "$illegal" = "refused illegal-transition" ] && [ "$stale" = "refused stale-revision" ] \
+    && printf '%s\n' "$LAST_OUT" | grep -q "^refusal subject=$t1 .*code=illegal-transition" \
+    && printf '%s\n' "$LAST_OUT" | grep -q "^refusal subject=$t1 .*code=stale-revision"; echo $?)"
+
+note "B1-11 atomic events, claims and intents"
+cli "supervisor start (two sandbox effects)" 0 supervisor start "$wo1" --expected-revision 3 --effect sandbox-repeatable --effect sandbox-idempotent:apply-then-hang
+op_a=$(ops_of | sed -n 1p); op_b=$(ops_of | sed -n 2p)
+started=$LAST_OUT
+cli "execute the repeatable effect" 0 supervisor execute-once
+check AC-B1-11 "one decision made the order active with one intent per effect; the repeatable effect is applied and PASSED" \
+  "$(printf '%s\n' "$started" | grep -q "^work-order $wo1 revision 4 state active$" && [ -n "$op_a" ] && [ -n "$op_b" ] \
+    && [ "$LAST_OUT" = "executed $op_a applied applied" ] && ledger_line "  effect $op_a " | grep -q 'status=PASSED'; echo $?)"
+
+note "B1-12 a real crash, a restart, recovery under the same operation id"
+rec "start execute-once (to be killed)" 0 docker run --detach --name lockstep-b1-exec "${run_args[@]}" "$image" /opt/lockstep/bin/lockstep supervisor execute-once --lease-seconds 8 --timeout-ms 7000
+wait_until "the idempotent effect is applied at the sandbox" 30 "SELECT count(*) = 1 FROM lockstep_sandbox_applications WHERE operation_id = '$op_b'"
+rec "kill the executing process (SIGKILL)" 0 docker kill lockstep-b1-exec
+docker rm lockstep-b1-exec >/dev/null 2>&1
+rec "scripts/service restart" 0 scripts/service restart --port "$port"
+after_crash=$(ledger_line "  effect $op_b ")
+echo "after the crash: $after_crash" >> "$log"
+wait_until "the killed claim's lease has ended" 30 "SELECT lease_until <= now() FROM lockstep_effect_intents WHERE operation_id = '$op_b'"
+cli "execute-once recovers the idempotent effect" 0 supervisor execute-once
+recovered=$LAST_OUT
+cli "sandbox show (after recovery)" 0 sandbox show
+check AC-B1-12 "the killed effect was dispatched, not concluded; after the restart and the lease end it is recovered and applied once (sandbox count 1), PASSED" \
+  "$(printf '%s' "$after_crash" | grep -q 'state=dispatched' && [ "$recovered" = "executed $op_b applied applied" ] \
+    && printf '%s\n' "$LAST_OUT" | grep -q "^application $op_b effect sandbox-idempotent count 1$" \
+    && ledger_line "  effect $op_b " | grep -q 'status=PASSED'; echo $?)"
+rev1=$(ledger_line "work-order $wo1 " | grep -oE 'revision=[0-9]+' | cut -d= -f2)
+cli "halt order one (frees the repository)" 0 work-order halt "$wo1" --expected-revision "$rev1" --reason "B1: next order"
+
+note "B1-13 an uncertain queryable effect, reconciled by lookup"
+new_order "B1 order three" 5 yes
+wo3=$WO
+cli "schedule run-once (order three)" 0 schedule run-once
+cli "supervisor start (queryable, hangs)" 0 supervisor start "$wo3" --expected-revision 3 --effect sandbox-queryable:hang
+op_c=$(ops_of | sed -n 1p)
+cli "execute-once (times out)" 0 supervisor execute-once --timeout-ms 3000
+timed_out=$LAST_OUT
+needed=$(ledger_line "  effect $op_c ")
+cli "reconcile-once" 0 supervisor reconcile-once
+reconciled=$LAST_OUT
+fenced=$(psql_v "SELECT outcome FROM lockstep_sandbox_queryable WHERE operation_id = '$op_c'")
+applied_c=$(psql_v "SELECT count(*) FROM lockstep_sandbox_applications WHERE operation_id = '$op_c'")
+check AC-B1-13 "unknown timeout (RECONCILIATION_NEEDED), then the lookup: not-applied lookup: not found; the destination fenced the id and applied nothing" \
+  "$([ "$timed_out" = "executed $op_c unknown timeout" ] && printf '%s' "$needed" | grep -q 'status=RECONCILIATION_NEEDED' \
+    && [ "$reconciled" = "reconciled $op_c not-applied lookup: not found" ] && [ "$fenced" = fenced ] && [ "$applied_c" = 0 ]; echo $?)"
+
+note "B1-14 an uncertain unqueryable effect, resolved by a human"
+new_order "B1 order four" 5 yes
+wo4=$WO
+cli "schedule run-once (order four)" 0 schedule run-once
+cli "supervisor start (unqueryable, applies then hangs)" 0 supervisor start "$wo4" --expected-revision 3 --effect sandbox-unqueryable:apply-then-hang
+op_d=$(ops_of | sed -n 1p)
+rec "start execute-once (to be killed)" 0 docker run --detach --name lockstep-b1-exec "${run_args[@]}" "$image" /opt/lockstep/bin/lockstep supervisor execute-once --lease-seconds 8 --timeout-ms 7000
+wait_until "the unqueryable effect is applied at the sandbox" 30 "SELECT count(*) = 1 FROM lockstep_sandbox_applications WHERE operation_id = '$op_d'"
+rec "kill the executing process (SIGKILL)" 0 docker kill lockstep-b1-exec
+docker rm lockstep-b1-exec >/dev/null 2>&1
+wait_until "the killed claim's lease has ended" 30 "SELECT lease_until <= now() FROM lockstep_effect_intents WHERE operation_id = '$op_d'"
+cli "execute-once (recovery: unknown)" 0 supervisor execute-once
+interrupted=$LAST_OUT
+unknown_line=$(ledger_line "  effect $op_d ")
+halted_line=$(ledger_line "work-order $wo4 ")
+cli "resolve with a stale generation" 65 effects resolve "$op_d" --generation 0 --attest-applied "B1"
+stale_claim=$LAST_OUT
+cli "attest applied" 0 effects resolve "$op_d" --generation 1 --attest-applied "B1: the operator checked the sandbox record"
+attested=$LAST_OUT
+cli "sandbox show (after attestation)" 0 sandbox show
+check AC-B1-14 "unknown dispatch-interrupted, order halted; a stale generation is refused stale-claim; the attestation makes it ATTESTED, never PASSED; applied once" \
+  "$([ "$interrupted" = "executed $op_d unknown dispatch-interrupted: unqueryable effect" ] && printf '%s' "$unknown_line" | grep -q 'status=UNKNOWN' \
+    && printf '%s' "$halted_line" | grep -q "state=halted reason=\"outcome-unknown operation=$op_d\"" \
+    && [ "$stale_claim" = "refused stale-claim" ] && [ "$attested" = "intent $op_d state settled generation 1" ] \
+    && ledger_line "  effect $op_d " | grep -q 'status=ATTESTED' \
+    && printf '%s\n' "$LAST_OUT" | grep -q "^application $op_d effect sandbox-unqueryable count 1$"; echo $?)"
+
+note "B1-15 duplicate ownership: two processes for one pending effect"
+new_order "B1 order five" 5 yes
+wo5=$WO
+cli "schedule run-once (order five)" 0 schedule run-once
+cli "supervisor start (repeatable)" 0 supervisor start "$wo5" --expected-revision 3 --effect sandbox-repeatable
+op_e=$(ops_of | sed -n 1p)
+scripts/service cli supervisor execute-once > "$work/dup-1.out" 2>&1 &
+p1=$!
+scripts/service cli supervisor execute-once > "$work/dup-2.out" 2>&1 &
+p2=$!
+wait "$p1"; c1=$?
+wait "$p2"; c2=$?
+d1=$(head -n 1 "$work/dup-1.out"); d2=$(head -n 1 "$work/dup-2.out")
+echo "### two concurrent execute-once: exit $c1: $d1 | exit $c2: $d2" >> "$log"
+applied_e=$(psql_v "SELECT count(*) FROM lockstep_sandbox_applications WHERE operation_id = '$op_e'")
+executed_count=$(printf '%s\n%s\n' "$d1" "$d2" | grep -c "^executed $op_e applied applied$")
+other=$(printf '%s\n%s\n' "$d1" "$d2" | grep -v "^executed $op_e applied applied$")
+check AC-B1-15 "exactly one process executes the effect; the other is idle or refused claim-held; one application" \
+  "$([ "$executed_count" = 1 ] && { [ "$other" = idle ] || [ "$other" = "refused claim-held" ]; } && [ "$applied_e" = 1 ]; echo $?)"
+
+note "B1-16 durable, inspectable evidence across a restart; the ledger page in a real browser"
+scripts/service cli ledger show > "$out/ledger-before-restart.txt" 2>&1
+rec "scripts/service restart" 0 scripts/service restart --port "$port"
+scripts/service cli ledger show > "$out/ledger-after-restart.txt" 2>&1
+same=$(diff <(tail -n +2 "$out/ledger-before-restart.txt") <(tail -n +2 "$out/ledger-after-restart.txt") >/dev/null && echo yes || echo no)
+uncertain=$(grep -c -E 'status=(UNKNOWN|RECONCILIATION_NEEDED|IN_PROGRESS)' "$out/ledger-after-restart.txt" || true)
+http "ledger page without a session" "$base/operator/ledger"
+no_session=$HTTP_STATUS
+http "command center without a session" "$base/operator/center"
+center_no_session=$HTTP_STATUS
+browser_link=$(scripts/service cli operator sign-in --port "$port" 2>/dev/null)
+token=${browser_link#*token=}
+cat > "$work/browser-steps.json" <<JSON
+[{"op":"open","label":"confirm","url":"$browser_link"},
+ {"op":"click","label":"signin","selector":"form[action=\"/operator/sign-in\"] button"},
+ {"op":"open","label":"ledger","url":"$base/operator/ledger"}]
+JSON
+docker run --rm -i --network host -v "$PWD:/work" -w /work "$image" python3 test/browser/cdp.py < "$work/browser-steps.json" > "$work/browser.out" 2>&1
+browser_code=$?
+bv() { grep "^$1"$'\t' "$work/browser.out" | head -n 1 | cut -f2-; }
+bv ledger.text > "$out/ledger-page-text.txt"
+{ echo "### browser (Chromium via test/browser/cdp.py): sign in, open /operator/ledger"; echo "exit: $browser_code"; redact "$(grep -v '\.text' "$work/browser.out")"; echo; } >> "$log"
+page_text=$(cat "$out/ledger-page-text.txt")
+check AC-B1-16 "ledger show is identical across a restart; no effect is left uncertain; in headless Chromium /operator/ledger shows PASSED, ATTESTED and the refused decisions; without a session it is refused as /operator/center is" \
+  "$([ "$same" = yes ] && [ "$uncertain" = 0 ] && [ "$browser_code" = 0 ] && [ "$(bv done)" = ok ] && [ "$(bv ledger.status)" = 200 ] \
+    && printf '%s' "$page_text" | grep -q 'PASSED' && printf '%s' "$page_text" | grep -q 'ATTESTED' \
+    && printf '%s' "$page_text" | grep -q 'stale-revision' && printf '%s' "$page_text" | grep -q 'illegal-transition' \
+    && [ "$no_session" = "$center_no_session" ] && [ "$no_session" != 200 ]; echo $?)"
+
+note "B1-17 zero live-model calls; no secrets in the recorded output"
+in_container=$(docker exec lockstep-b1 sh -c 'command -v claude' 2>&1)
+docker exec lockstep-b1 sh -c 'LOCKSTEP_SENTINEL_LOG=/tmp/canary.log claude --b1-canary; echo "exit $?"; wc -l < /tmp/canary.log' > "$work/canary.out" 2>&1
+echo "inside lockstep-b1: claude resolves to $in_container; canary: $(tr '\n' ' ' < "$work/canary.out")" >> "$log"
+canary_ok=$([ "$in_container" = /opt/sentinel/bin/claude ] && grep -q '^exit 97$' "$work/canary.out" && [ "$(tail -n 1 "$work/canary.out" | tr -d ' ')" = 1 ]; echo $?)
+rec "scripts/service stop" 0 scripts/service stop
+cp .local/install/last-run.log "$out/service.log"
+password=$(sed -n -E 's/.*"password":"([^"]*)".*/\1/p' .local/config/lockstep.json)
+case "$password" in
+  "" | *"{"*) echo "B1: could not extract the database password from .local/config/lockstep.json" | tee -a "$log" >&2; failures=$((failures + 1)); password="<unextractable>" ;;
+esac
+leaks=$(cat "$log" "$out"/*.txt "$out/service.log" | grep -c -F "$password" || true)
+token_leaks=0
+if [ -n "$token" ]; then
+  token_leaks=$(cat "$out"/*.txt "$out/service.log" | grep -c -F "$token" || true)
+fi
+raw_secrets=$(cat "$log" "$out"/*.txt "$out/service.log" | grep -c -E 'lockstep_session=[A-Za-z0-9_-]{43}|token=[A-Za-z0-9_-]{43}' || true)
+echo "sentinel log: $(wc -c < "$work/sentinel/sentinel.log" | tr -d ' ') bytes; password occurrences: $leaks; sign-in token occurrences: $token_leaks; raw session or token values: $raw_secrets" >> "$log"
+check AC-B1-17 "inside the service container claude resolves to the shim and a canary call is logged (exit 97); the service's sentinel log is empty; no password, token or session value appears in the recorded output" \
+  "$([ "$canary_ok" = 0 ] && [ ! -s "$work/sentinel/sentinel.log" ] && [ "$leaks" = 0 ] && [ "$token_leaks" = 0 ] && [ "$raw_secrets" = 0 ]; echo $?)"
+
+rm -rf "$clone"
+note "B1 result: $failures failing check(s); database $db kept for inspection"
+(cd "$out" && rm -f SHA256SUMS && shasum -a 256 $(ls | grep -v '^SHA256SUMS$') > SHA256SUMS)
+rm -rf "$final_out"
+mkdir -p "$(dirname "$final_out")"
+cp -R "$out" "$final_out"
+echo "B1 evidence copied to $final_out"
+[ "$failures" = 0 ]
