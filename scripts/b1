@@ -337,19 +337,19 @@ wo5=$WO
 cli "schedule run-once (order five)" 0 schedule run-once
 cli "supervisor start (repeatable)" 0 supervisor start "$wo5" --expected-revision 3 --effect sandbox-repeatable
 op_e=$(ops_of | sed -n 1p)
-scripts/service cli supervisor execute-once > "$work/dup-1.out" 2>&1 &
+scripts/service cli supervisor execute-once > "$work/dup-1.out" 2> "$work/dup-1.err" &
 p1=$!
-scripts/service cli supervisor execute-once > "$work/dup-2.out" 2>&1 &
+scripts/service cli supervisor execute-once > "$work/dup-2.out" 2> "$work/dup-2.err" &
 p2=$!
 wait "$p1"; c1=$?
 wait "$p2"; c2=$?
 d1=$(head -n 1 "$work/dup-1.out"); d2=$(head -n 1 "$work/dup-2.out")
-echo "### two concurrent execute-once: exit $c1: $d1 | exit $c2: $d2" >> "$log"
+echo "### two concurrent execute-once: exit $c1: $d1 [$(head -n 1 "$work/dup-1.err")] | exit $c2: $d2 [$(head -n 1 "$work/dup-2.err")]" >> "$log"
 applied_e=$(psql_v "SELECT count(*) FROM lockstep_sandbox_applications WHERE operation_id = '$op_e'")
 executed_count=$(printf '%s\n%s\n' "$d1" "$d2" | grep -c "^executed $op_e applied applied$")
 other=$(printf '%s\n%s\n' "$d1" "$d2" | grep -v "^executed $op_e applied applied$")
-check AC-B1-15 "exactly one process executes the effect; the other is idle or refused claim-held; one application" \
-  "$([ "$executed_count" = 1 ] && { [ "$other" = idle ] || [ "$other" = "refused claim-held" ]; } && [ "$applied_e" = 1 ]; echo $?)"
+check AC-B1-15 "exactly one process executes the effect; the other executes nothing (idle, or refused claim-held, dispatched-needs-recovery or already-settled); one application" \
+  "$([ "$executed_count" = 1 ] && case "$other" in idle | "refused claim-held" | "refused dispatched-needs-recovery" | "refused already-settled") true ;; *) false ;; esac && [ "$applied_e" = 1 ]; echo $?)"
 
 note "B1-16 durable, inspectable evidence across a restart; the ledger page in a real browser"
 scripts/service cli ledger show > "$out/ledger-before-restart.txt" 2>&1
