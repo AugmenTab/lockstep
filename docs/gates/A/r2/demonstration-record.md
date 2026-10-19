@@ -60,3 +60,10 @@ Owner's answer, verbatim: "1, I saw refused_stale on tab B. Don't proceed to pha
 | Findings 1–3 above | carried forward; not blocking Gate A |
 
 Housekeeping update: the service was stopped at the owner's request after the demonstration.
+
+Correction (2026-10-19, 00:14 UTC): the housekeeping note above was incomplete. At the owner's
+request the agent ran `scripts/service cli operator sign-out-all`, which revoked **4** live
+sessions, not 1: those created 2026-10-18 at 17:17:52, 17:38:21, 17:39:25 and 18:54:40 UTC.
+The agent had checked only for the demonstration sessions and did not list every live session
+before writing "one session is still live". Where the three 17:xx sessions came from was not
+established. No live session remains; one 2026-10-17 session is expired but unrevoked.
