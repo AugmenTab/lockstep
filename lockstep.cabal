@@ -47,6 +47,7 @@ library
       Lockstep.Kernel.Identity
       Lockstep.Kernel.Profile
       Lockstep.Kernel.Repository
+      Lockstep.Kernel.Scheduler
       Lockstep.Kernel.Ticket
       Lockstep.Kernel.Transition
       Lockstep.Kernel.WorkOrder
@@ -210,6 +211,9 @@ test-suite lockstep-unit
       Lockstep.Kernel.ProfileTest
       Lockstep.Kernel.RemoteTest
       Lockstep.Kernel.RepositoryTest
+      Lockstep.Kernel.SchedulerFixtures
+      Lockstep.Kernel.SchedulerPropertyTest
+      Lockstep.Kernel.SchedulerTest
       Lockstep.Kernel.TicketTest
       Lockstep.Kernel.TransitionTest
       Lockstep.Kernel.WorkOrderTest
