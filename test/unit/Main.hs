@@ -13,6 +13,7 @@ import Lockstep.Effects.ExecutorTest qualified as ExecutorTest
 import Lockstep.Effects.ReconcilerTest qualified as ReconcilerTest
 import Lockstep.Foundation.CliDbTest qualified as CliDbTest
 import Lockstep.Foundation.CliJobTest qualified as CliJobTest
+import Lockstep.Foundation.CliLedgerTest qualified as CliLedgerTest
 import Lockstep.Foundation.CliOperatorTest qualified as CliOperatorTest
 import Lockstep.Foundation.CliProfileTest qualified as CliProfileTest
 import Lockstep.Foundation.CliRepositoryTest qualified as CliRepositoryTest
@@ -23,6 +24,7 @@ import Lockstep.Foundation.OperatorTokenTest qualified as OperatorTokenTest
 import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
 import Lockstep.Kernel.DeliveryTest qualified as DeliveryTest
 import Lockstep.Kernel.EffectTest qualified as EffectTest
+import Lockstep.Kernel.EffectViewTest qualified as EffectViewTest
 import Lockstep.Kernel.EventCodecTest qualified as EventCodecTest
 import Lockstep.Kernel.IdentityTest qualified as IdentityTest
 import Lockstep.Kernel.LifecyclePropertyTest qualified as LifecyclePropertyTest
@@ -34,6 +36,7 @@ import Lockstep.Kernel.RepositoryTest qualified as RepositoryTest
 import Lockstep.Kernel.SchedulerPropertyTest qualified as SchedulerPropertyTest
 import Lockstep.Kernel.SchedulerTest qualified as SchedulerTest
 import Lockstep.Kernel.TicketTest qualified as TicketTest
+import Lockstep.Kernel.TraceTest qualified as TraceTest
 import Lockstep.Kernel.TransitionTest qualified as TransitionTest
 import Lockstep.Kernel.WorkOrderTest qualified as WorkOrderTest
 import Lockstep.Kernel.WorkUnitLifecycleTest qualified as WorkUnitLifecycleTest
@@ -42,6 +45,7 @@ import Lockstep.Persistence.MigrationTest qualified as MigrationTest
 import Lockstep.Web.ApplicationTest qualified as ApplicationTest
 import Lockstep.Web.CommandCenterViewTest qualified as CommandCenterViewTest
 import Lockstep.Web.CommandRoutesTest qualified as CommandRoutesTest
+import Lockstep.Web.LedgerPageTest qualified as LedgerPageTest
 import Lockstep.Web.LivenessPageTest qualified as LivenessPageTest
 import Lockstep.Web.OperatorRoutesTest qualified as OperatorRoutesTest
 import Lockstep.Web.ReadinessRouteTest qualified as ReadinessRouteTest
@@ -95,4 +99,8 @@ main =
       , ExecutorTest.tests
       , ReconciliationTest.tests
       , ReconcilerTest.tests
+      , EffectViewTest.tests
+      , TraceTest.tests
+      , LedgerPageTest.tests
+      , CliLedgerTest.tests
       ]

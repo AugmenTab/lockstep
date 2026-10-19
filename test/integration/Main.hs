@@ -11,8 +11,10 @@ import Lockstep.DispatcherTest qualified as DispatcherTest
 import Lockstep.ExecutorTest qualified as ExecutorTest
 import Lockstep.FaultPlanTest qualified as FaultPlanTest
 import Lockstep.LedgerTest qualified as LedgerTest
+import Lockstep.LedgerTraceTest qualified as LedgerTraceTest
 import Lockstep.MigrationDbTest qualified as MigrationDbTest
 import Lockstep.OperatorCommandTest qualified as OperatorCommandTest
+import Lockstep.OperatorLedgerTest qualified as OperatorLedgerTest
 import Lockstep.OperatorTrustTest qualified as OperatorTrustTest
 import Lockstep.ProcessTest qualified as ProcessTest
 import Lockstep.ProfileRegistryTest qualified as ProfileRegistryTest
@@ -39,4 +41,6 @@ main =
       , LedgerTest.tests
       , ExecutorTest.tests
       , ReconciliationTest.tests
+      , OperatorLedgerTest.tests
+      , LedgerTraceTest.tests
       ]
