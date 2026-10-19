@@ -180,3 +180,48 @@ Order is never preempted in Phase 2. Emergency interruption is a separate, expli
 | D-5.10 unknown resources | |
 | D-5.11 safe boundaries / preemption | |
 | Decided by / at | |
+
+## Human decision (2026-10-18)
+
+Recorded by the writing agent (Implementer) at the owner's instruction
+(`.local/plans/phase-02_update1.md`). The owner's words, verbatim:
+
+> ### DG-05 — APPROVED WITH CLARIFICATIONS
+>
+> Approve the recommended decisions D-5.1a through D-5.11, including:
+>
+> - Declarative, versioned Profiles with fixed predicate vocabulary.
+> - Universal invariants that Profiles cannot weaken.
+> - Monotonic Profile precedence (D-5.3a).
+> - Explicit human-authorized, work-scoped exceptions, without time-based expiry by default.
+> - Immutable effective Profile bindings and explicit reconciliation after source changes.
+> - Trusted work classification.
+> - Deterministic scheduling by eligibility, human-approved priority, admission order and Work Order ID.
+> - No urgent-rework class or automatic preemption in Phase 2.
+> - Unknown resources block eligibility.
+>
+> Clarifications:
+>
+> 1. Distinguish **prerequisites to execution** from **gates required for subsequent transitions or completion**. Evidence that can only be produced during execution must not prevent initial scheduling.
+> 2. A later Profile layer may strengthen a gate but may not silently weaken its applicability, verifier, required evidence, or approval authority. If strengthening cannot be proven, refuse the composition.
+> 3. Queued work must not be mistaken for an active repository reservation. Retain exclusive ownership wherever an active reservation genuinely exists.
+> 4. A non-behavioural classification cannot be used to evade mandatory tests. Classification must follow the authorized policy and be supported by evidence.
+>
+> Record the decisions and incorporate these clarifications into the appropriate Contracts.
+
+| Field | Value |
+|---|---|
+| D-5.1 schema | D-5.1a ACCEPTED |
+| D-5.2 universal invariants | ACCEPTED; clarification 4 binds the non-behavioural path |
+| D-5.3 precedence | D-5.3a ACCEPTED; clarification 2 (unprovable strengthening is refused) |
+| D-5.4 exceptions (and expiry?) | ACCEPTED; no time-based expiry by default |
+| D-5.5 binding / mid-flight change | ACCEPTED |
+| D-5.6 trusted origin | ACCEPTED |
+| D-5.7 eligibility filters | ACCEPTED; clarifications 1 (execution prerequisites only) and 3 (queued ≠ reserved) |
+| D-5.8 ordering | ACCEPTED |
+| D-5.9 urgent rework | D-5.9a ACCEPTED (no urgency class in Phase 2) |
+| D-5.10 unknown resources | ACCEPTED |
+| D-5.11 safe boundaries / preemption | ACCEPTED (no automatic preemption) |
+| Decided by / at | the human owner, 2026-10-18 |
+
+Status: **ACCEPTED** (with clarifications). C-P2.3 and C-P2.4 incorporate the clarifications.
