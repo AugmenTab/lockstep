@@ -1,0 +1,23 @@
+== git-common-dir | show-toplevel | is-shallow, per spelling ($S = scratch dir)
+orig      $S/orig/.git $S/orig false 
+wt        $S/orig/.git $S/wt false 
+link      $S/orig/.git $S/orig false 
+ORIG      $S/orig/.git $S/orig false 
+orig/sub  $S/orig/.git $S/orig false 
+clone     $S/clone/.git $S/clone false 
+shallow   $S/shallow/.git $S/shallow true 
+== python os.path.realpath('$S/ORIG') (does it normalise case?)
+$S/ORIG
+== device inode of .git
+16777232 14226427 orig/.git
+16777232 14226427 ORIG/.git
+16777232 14226427 link/.git
+16777232 14226521 clone/.git
+== root commits
+orig     a8006f8928b3877f7e4b0443cee8e1be11d7aec6 
+clone    a8006f8928b3877f7e4b0443cee8e1be11d7aec6 
+shallow  8d8a240db4452fa47736eb96d86ffa3cd569a07d 
+== remote URL as configured, and with an insteadOf rewrite
+git@GitHub.com:Owner/Repo.git
+$S/orig
+https://github.com/Owner/Repo.git
