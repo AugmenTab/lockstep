@@ -198,7 +198,7 @@ specTests =
     , testCase "budgets outside 0 to 3 are invalid; D with a budget is unsafe" $ do
         refusedWith "invalid-effect-spec" (mkEffectSpec "step" TermsRepeatable 4)
         refusedWith "invalid-effect-spec" (mkEffectSpec "step" TermsRepeatable (-1))
-        refusedWith "unsafe-retry-budget" (mkEffectSpec "invoke" TermsUnqueryable 1)
+        refusedWith "retry-budget-forbidden" (mkEffectSpec "invoke" TermsUnqueryable 1)
     , testCase "class B needs a positive key lifetime and refusal of changed parameters" $ do
         refusedWith "invalid-effect-spec" (mkEffectSpec "notify" (TermsIdempotent (IdempotencyTerms 0 True)) 1)
         refusedWith "idempotency-undocumented" (mkEffectSpec "notify" (TermsIdempotent (IdempotencyTerms 60 False)) 1)
@@ -440,7 +440,7 @@ codeTests =
           ]
           @?= [ "invalid-effect-spec"
               , "idempotency-undocumented"
-              , "unsafe-retry-budget"
+              , "retry-budget-forbidden"
               , "invalid-effect-key"
               , "invalid-effect-parameters"
               , "duplicate-effect-key"
