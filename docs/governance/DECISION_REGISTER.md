@@ -31,7 +31,7 @@ storage: one ADR per gate under the chosen `docs/adr/` (DG-01b decides the repo)
 | DG-01a | Launchpad revision, reuse and license/redistribution rights | Human owner | P0.1; Launchpad source available | All committed v2 code | P0.2 | **ACCEPTED** 2026-10-16. See `docs/adr/ADR-0001-launchpad-adoption.md` (C1 BSD-3, C2 private/undecided, C3 remove hyperscript+pandoc; C4 checks at P1.1) |
 | DG-01b | v2 repository / branch / history strategy | Human owner | DG-01a | All committed v2 code; artifact placement | P0.3 | **ACCEPTED** 2026-10-16: orphan `v2` branch, one directory, tag `python-v0.1-final`. See `docs/governance/REPOSITORY_STRATEGY.md` |
 | DG-02 | DB boot / backup / migration / deployment packaging | Human owner | P1.1 | Persistent app service | P1.2 | **ACCEPTED** 2026-10-17 as proposed. See `docs/adr/ADR-0002-database-operations.md` (PG 17 container; explicit ordered forward-only migrations via `lockstep db migrate`; typed readiness; backups before migrate) |
-| DG-03 | Stable ownership key for repo aliases/worktrees/remotes | Human owner | P1.7 | Engineer registration, scheduler claims | P2.1 | **EVIDENCE-PREPARED** 2026-10-18: `docs/gates/P2.1/dg-03-decision-request.md` |
+| DG-03 | Stable ownership key for repo aliases/worktrees/remotes | Human owner | P1.7 | Engineer registration, scheduler claims | P2.1 | **ACCEPTED** 2026-10-18 by the owner: D-3.1a, D-3.2a amended, D-3.3d (new), D-3.4, D-3.5a, D-3.6, D-3.7. See `docs/gates/P2.1/dg-03-decision-request.md` (Human decision) |
 | DG-04 | Event, claim, outbox, replay and reconciliation protocol | Human owner | P1.7, P2.2 | Provider/Git execution, safe recovery | P2.5 | OPEN |
 | DG-05 | Profile schema, precedence, exceptions, scheduling order | Human owner | P2.2 | Effective Profile binding/admission | P2.3–P2.4 | OPEN — PRD §5.1 has a proposed default ordering |
 | DG-06 | Test-candidate baseline/RED policy; source-grounded acceptance | Human owner | P3.3–P3.6 | Frozen-test implementation | P3.7 | OPEN — Python regression lessons feed it (P0.3) |
@@ -87,6 +87,11 @@ Gate A owner decisions, 2026-10-18 (`docs/gates/A/r2/decision-packet.md`; record
 - The owner's instruction: do not proceed to Phase 2. Phase 2 has not started.
 
 Phase 2 authorization, 2026-10-18 (`.local/plans/phase-02.md`, the owner's Phase 2 handoff): the handoff restates the Gate A decisions above (same report, digest and tested commit, verified again: `33c8d26a…`) and **authorizes Phase 2** (P2.1–P2.9 and a bounded `lockstep open` increment), superseding the earlier "do not proceed to Phase 2". It authorizes no live model inference, provider action, push, PR or remote access. DG-03, DG-05 and DG-04 remain the owner's decisions before P2.1, P2.3/P2.4 and P2.5.
+
+DG-03 owner decision, 2026-10-18 (`docs/gates/P2.1/dg-03-decision-request.md`; recorded by the writing agent at the owner's instruction):
+
+- **ACCEPTED:** opaque Lockstep-issued `RepositoryId` (D-3.1a); main-worktree-only registration with filesystem-aware canonicalization, no blind case-folding (D-3.2a amended); refuse competing ownership of the same physical Git common directory or the same authoritative remote, while shared ancestry/root commits do not establish identity and forks/template-derived projects stay eligible (D-3.3d, new); remote normalization distinguishing the authoritative remote from upstream/template remotes (D-3.4); one active Engineer per repository and one repository per Engineer (D-3.5a); release/relocation deferred (D-3.6); identity observed from the Engineer's filesystem view (D-3.7).
+- The owner's instruction: resume P2.1 and continue through the Phase 2 handoff; no Phase 3.
 
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.
