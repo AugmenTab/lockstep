@@ -34,6 +34,14 @@ module Lockstep.Application.Ledger
   , abandonIntent
   , StoredObservation (..)
   , intentObservations
+  , claimForExecution
+  , beginDispatch
+  , concludeIntent
+  , recoverDispatched
+  , runnableIntents
+  , recoverableIntents
+  , StoredRecovery (..)
+  , intentRecoveries
   ) where
 
 import Control.Exception (SomeException, throwIO, try)
@@ -120,6 +128,7 @@ import Lockstep.Kernel.Profile
   , renderProfileRefusal
   , resolveProfile
   )
+import Lockstep.Kernel.Recovery (Recovery (..), RecoveryInput (..), recoverIntent, recoveryIntent, recoveryRefusalCode, renderRecovery)
 import Lockstep.Kernel.Repository (Ownership (..))
 import Lockstep.Kernel.Scheduler
   ( ScheduledOrder (..)
@@ -1184,3 +1193,159 @@ intentObservations runtime operation =
           | r <- rows
           ]
       )
+
+-- Execution (C-P2.6) -----------------------------------------------------------
+
+{- | Locks the intent's Work Order, then the intent: the lock order of every
+C-P2.6 write, so no two of them (nor a decision on the order) can deadlock.
+-}
+lockForExecution :: OperationId -> O.Orville (Either LedgerFailure (LoadedOrder, Store.IntentRow, Intent))
+lockForExecution operation = do
+  subject <- Store.intentSubject (oid operation)
+  case subject of
+    Nothing -> pure (refused (T.pack "unknown-intent") "there is no such effect intent")
+    Just s ->
+      case uuidOf s of
+        Left failure -> pure (Left failure)
+        Right u -> do
+          loaded <- lockWorkOrder (WorkOrderId u)
+          case loaded of
+            Left failure -> pure (Left failure)
+            Right l -> fmap (fmap (\(row, intent) -> (l, row, intent))) (lockedIntent operation)
+
+orderActive :: LoadedOrder -> Bool
+orderActive l =
+  case workOrderState (loadedOrder l) of
+    Active _ -> True
+    _ -> False
+
+{- | X5 steps (2) and (3): the C-P2.5 step decides, and an accepted one for an
+order that is not active is refused with nothing written.
+-}
+stepForActive :: OperationId -> (UTCTime -> Command IntentInput) -> O.Orville (Either LedgerFailure Intent)
+stepForActive operation command = do
+  locked <- lockForExecution operation
+  case locked of
+    Left failure -> pure (Left failure)
+    Right (l, row, intent) -> do
+      now <- Store.databaseNow
+      case stepIntent intent (command now) of
+        Left r -> pure (Left (effectRefused r))
+        Right next
+          | not (orderActive l) -> pure (refused (T.pack "subject-not-active") "the work order is not active; nothing may be dispatched for it")
+          | otherwise -> do
+              Store.updateIntent (lifecycleColumns next row)
+              pure (Right next)
+
+claimForExecution :: DatabaseRuntime -> T.Text -> Int -> OperationId -> IO (Either LedgerFailure Intent)
+claimForExecution runtime owner seconds operation
+  | seconds < 1 || seconds > 3600 = pure (refused (T.pack "invalid-record") "a lease lasts 1 to 3600 seconds")
+  | T.null owner || T.any Char.isControl owner = pure (refused (T.pack "invalid-record") "a claim needs an owner")
+  | otherwise =
+      transaction runtime $ \_ ->
+        stepForActive operation (\now -> Command Supervisor (IntentClaim owner now (addUTCTime (fromIntegral seconds) now)))
+
+-- | X5 step (3): the dispatch marker, committed before the adapter runs.
+beginDispatch :: DatabaseRuntime -> OperationId -> Int -> IO (Either LedgerFailure Intent)
+beginDispatch runtime operation generation =
+  transaction runtime $ \_ ->
+    stepForActive operation (Command Supervisor . IntentDispatch generation)
+
+-- | X6: a halt of the order by the Supervisor, when its lifecycle accepts one.
+haltForIntent :: LoadedOrder -> T.Text -> OperationId -> O.Orville ()
+haltForIntent l code operation = do
+  let
+    order = loadedOrder l
+    input = WoHalt (code <> T.pack " operation=" <> oid operation)
+    revision = fromIntegral (Store.subjectRowRevision (loadedSubject l))
+  case (stepWorkOrder order (Command Supervisor input), encodeWorkOrderEvent (WorkOrderStep input)) of
+    (Right next, Right text) -> appendStep (workOrderId order) (revision + 1) Supervisor text next
+    _ -> pure ()
+
+{- | X6: stores the observation (a refused one as evidence), then settles an
+applied one, keeps a not-applied one claimable while a retry is left, and
+halts the order on an unknown outcome or an exhausted budget.
+-}
+concludeIntent :: DatabaseRuntime -> OperationId -> Int -> Observation -> IO (Either LedgerFailure Intent)
+concludeIntent runtime operation generation observation =
+  transaction runtime $ \_ -> do
+    locked <- lockForExecution operation
+    case locked of
+      Left failure -> pure (Left failure)
+      Right (l, row, intent) ->
+        case stepIntent intent (Command Supervisor (IntentObserve generation observation)) of
+          Left r -> do
+            Store.insertObservation (oid operation) (int32 generation) (observationText observation) (Just (effectRefusalCode r))
+            pure (Left (effectRefused r))
+          Right observed -> do
+            Store.insertObservation (oid operation) (int32 generation) (observationText observation) Nothing
+            let
+              exhausted = intentDispatches observed > effectSpecBudget (intentSpec observed)
+              settle = stepIntent observed (Command Supervisor (IntentSettle generation))
+            final <-
+              case intentState observed of
+                IntentApplied _ -> pure settle
+                IntentNotApplied _
+                  | exhausted -> do
+                      haltForIntent l (T.pack "retries-exhausted") operation
+                      pure settle
+                IntentUnknown _ -> do
+                  haltForIntent l (T.pack "outcome-unknown") operation
+                  pure (Right observed)
+                _ -> pure (Right observed)
+            case final of
+              Left r -> pure (Left (effectRefused r))
+              Right next -> do
+                Store.updateIntent (lifecycleColumns next row)
+                pure (Right next)
+
+-- | X8: the Kernel's recovery, written with its record; an unknown result halts the order.
+recoverDispatched :: DatabaseRuntime -> T.Text -> Int -> OperationId -> IO (Either LedgerFailure Intent)
+recoverDispatched runtime owner seconds operation
+  | seconds < 1 || seconds > 3600 = pure (refused (T.pack "invalid-record") "a lease lasts 1 to 3600 seconds")
+  | T.null owner || T.any Char.isControl owner = pure (refused (T.pack "invalid-record") "a recovery needs an owner")
+  | otherwise =
+      transaction runtime $ \_ -> do
+        locked <- lockForExecution operation
+        case locked of
+          Left failure -> pure (Left failure)
+          Right (l, row, intent) -> do
+            now <- Store.databaseNow
+            let
+              input = RecoveryInput owner now (addUTCTime (fromIntegral seconds) now) (orderActive l)
+            case recoverIntent intent (Command Supervisor input) of
+              Left r -> pure (Left (LedgerRefused (recoveryRefusalCode r) (T.pack (show r))))
+              Right recovery -> do
+                let
+                  next = recoveryIntent recovery
+                Store.updateIntent (lifecycleColumns next row)
+                Store.insertRecovery (oid operation) (int32 (intentGeneration intent)) (renderRecovery recovery)
+                case recovery of
+                  RecoverUnknown _ -> haltForIntent l (T.pack "outcome-unknown") operation
+                  RecoverRedispatch _ -> pure ()
+                pure (Right next)
+
+operationsFrom :: [T.Text] -> Either LedgerFailure [OperationId]
+operationsFrom =
+  traverse (fmap OperationId . uuidOf)
+
+runnableIntents :: DatabaseRuntime -> IO (Either LedgerFailure [OperationId])
+runnableIntents runtime =
+  transaction runtime $ \_ -> operationsFrom <$> Store.runnableIntentIds
+
+recoverableIntents :: DatabaseRuntime -> IO (Either LedgerFailure [OperationId])
+recoverableIntents runtime =
+  transaction runtime $ \_ -> operationsFrom <$> Store.recoverableIntentIds
+
+data StoredRecovery
+  = StoredRecovery
+  { recoveredGeneration :: Int
+  , recoveryDecision :: T.Text
+  }
+  deriving (Eq, Show)
+
+intentRecoveries :: DatabaseRuntime -> OperationId -> IO (Either LedgerFailure [StoredRecovery])
+intentRecoveries runtime operation =
+  transaction runtime $ \_ -> do
+    rows <- Store.recoveriesOf (oid operation)
+    pure (Right [StoredRecovery (fromIntegral (Store.recoveryRowGeneration r)) (Store.recoveryRowDecision r) | r <- rows])

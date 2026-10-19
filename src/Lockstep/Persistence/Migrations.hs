@@ -348,4 +348,18 @@ CREATE TRIGGER lockstep_work_order_dependencies_immutable BEFORE UPDATE OR DELET
 CREATE TRIGGER lockstep_work_order_dependencies_no_truncate BEFORE TRUNCATE ON lockstep_work_order_dependencies FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
 |]
       )
+    ,
+      ( [Interpolate.i|effect recovery records|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_effect_recoveries (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  operation_id uuid NOT NULL REFERENCES lockstep_effect_intents (operation_id),
+  generation integer NOT NULL CHECK (generation >= 1),
+  decision text NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TRIGGER lockstep_effect_recoveries_immutable BEFORE UPDATE OR DELETE ON lockstep_effect_recoveries FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_effect_recoveries_no_truncate BEFORE TRUNCATE ON lockstep_effect_recoveries FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+|]
+      )
     ]

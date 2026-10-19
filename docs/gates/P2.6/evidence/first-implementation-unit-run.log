@@ -1,0 +1,682 @@
+lockstep-0.2.0.0: unregistering (local file changes: src/Lockstep/Application/Ledger.hs)
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+[39 of 62] Compiling Lockstep.Application.Ledger [Source file changed]
+Preprocessing test suite 'lockstep-unit' for lockstep-0.2.0.0...
+Building test suite 'lockstep-unit' for lockstep-0.2.0.0...
+[44 of 44] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-unit/lockstep-unit [Library changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-6ggF0AiJnRUCIB81Gsi4xx
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-unit)
+
+lockstep-unit
+  Cli
+    serve with no options binds loopback on the documented default port:                                                     OK
+    the documented default port is 8000:                                                                                     OK
+    --port N sets the port:                                                                                                  OK
+    --port=N sets the port:                                                                                                  OK
+    port bounds 1 and 65535 are accepted:                                                                                    OK
+    --port with no value is a typed error, not the default:                                                                  OK
+    --port= with an empty value is a typed error:                                                                            OK
+    a non-numeric port is rejected:                                                                                          OK
+    a negative port is rejected:                                                                                             OK
+    port 0 is out of range:                                                                                                  OK
+    port 65536 is out of range:                                                                                              OK
+    a repeated --port is refused:                                                                                            OK
+    there is no option to bind a public interface:                                                                           OK
+    an unknown option is refused:                                                                                            OK
+    an extra positional argument is refused:                                                                                 OK
+    an unknown subcommand is refused:                                                                                        OK
+    no subcommand is refused:                                                                                                OK
+    mkPort rejects 0 and 65536 and accepts 8000:                                                                             OK
+  Server
+    the default configuration binds 127.0.0.1 only:                                                                          OK
+    a configured port keeps the loopback host:                                                                               OK
+  Application
+    health
+      GET /api/health_check answers 204 with an empty body:                                                                  OK
+      POST /api/health_check is not a route:                                                                                 OK
+    liveness
+      GET / renders an HTML liveness page:                                                                                   OK
+      the page states liveness only and that database readiness is not checked:                                              OK
+      the page links the Lockstep stylesheet:                                                                                OK
+      the page carries no Pico, hyperscript or Rollbar reference:                                                            OK
+    removed template routes
+      /app is not a route:                                                                                                   OK
+      /app/login is not a route:                                                                                             OK
+      /app/logout is not a route:                                                                                            OK
+      /app/signup is not a route:                                                                                            OK
+      /app/admin/users is not a route:                                                                                       OK
+      /app/account/profile is not a route:                                                                                   OK
+      /api/docs is not a route:                                                                                              OK
+      /api/test_authentication is not a route:                                                                               OK
+      /mobile is not a route:                                                                                                OK
+    static assets
+      /static/lockstep.css is served as CSS:                                                                                 OK
+      the Pico stylesheet is not shipped:                                                                                    OK
+      the hyperscript bundle is not shipped:                                                                                 OK
+      a path outside the asset allowlist is not served:                                                                      OK
+      an unlisted asset name is not served:                                                                                  OK
+  SystemConfig
+    a valid configuration decodes:                                                                                           OK
+    a missing database block is invalid:                                                                                     OK
+    a missing database field is invalid:                                                                                     OK
+    a leftover rollbar block is refused as an unknown key:                                                                   OK
+    an unknown key inside the database block is refused:                                                                     OK
+    port 0 is invalid:                                                                                                       OK
+    port 70000 is invalid:                                                                                                   OK
+    showing a decoded configuration never reveals the password:                                                              OK
+  Cli db
+    db migrate defaults to requiring a backup when migrations are applied:                                                   OK
+    db migrate --backup FILE:                                                                                                OK
+    db migrate --backup=FILE:                                                                                                OK
+    db migrate --no-backup:                                                                                                  OK
+    db migrate --backup without a value is a typed error:                                                                    OK
+    --backup and --no-backup conflict:                                                                                       OK
+    a repeated --backup is refused:                                                                                          OK
+    an unknown db migrate option is refused:                                                                                 OK
+    db status:                                                                                                               OK
+    db status takes no arguments:                                                                                            OK
+    db without a subcommand is refused:                                                                                      OK
+    an unknown db subcommand is refused:                                                                                     OK
+  Migration plan
+    an empty ledger plans every migration in order:                                                                          OK
+    a full ledger plans nothing:                                                                                             OK
+    a ledger prefix plans the remainder:                                                                                     OK
+    a changed applied migration is a checksum mismatch:                                                                      OK
+    an applied id the binary does not know means the database is ahead:                                                      OK
+    a gap in the ledger is refused:                                                                                          OK
+    a list with duplicate ids is invalid:                                                                                    OK
+    a list with decreasing ids is invalid:                                                                                   OK
+    the checksum is the SHA-256 of the SQL text:                                                                             OK (0.01s)
+    mkMigrationId rejects 0 and negatives:                                                                                   OK
+    the production migration list is valid and starts at 1:                                                                  OK
+  Readiness
+    libpq failure classification
+      connection refused is unreachable:                                                                                     OK
+      an unknown host is unreachable:                                                                                        OK
+      a connect timeout is unreachable:                                                                                      OK
+      a password failure is an authentication failure:                                                                       OK
+      a missing database is reported as missing:                                                                             OK
+      anything else is a database error:                                                                                     OK
+    readiness codes
+      ready carries the revision:                                                                                            OK
+      every not-ready reason has its own code:                                                                               OK
+      no not-ready code can be read as ready:                                                                                OK
+  Liveness page readiness
+    not configured says readiness is not checked:                                                                            OK
+    every not-ready reason
+      unreachable:                                                                                                           OK
+      authentication:                                                                                                        OK
+      missing:                                                                                                               OK
+      schema behind:                                                                                                         OK
+      schema invalid:                                                                                                        OK
+      other error:                                                                                                           OK
+    ready shows the revision and the persisted start count:                                                                  OK
+  Readiness route (no database configured)
+    GET /api/readiness answers 503 database_not_configured:                                                                  OK
+    GET /api/health_check still answers 204:                                                                                 OK
+  OperatorToken
+    token
+      a generated token encodes as 43 base64url characters and decodes back:                                                 OK
+      two generated tokens differ:                                                                                           OK
+      decoding a known token gives its 32 bytes (digest vector):                                                             OK
+      the digest is SHA-256 of the raw bytes (all-zero vector):                                                              OK
+      encode is the inverse of decode for a known token:                                                                     OK
+      malformed text is refused
+        empty:                                                                                                               OK
+        42 characters:                                                                                                       OK
+        44 characters:                                                                                                       OK
+        padded:                                                                                                              OK
+        standard base64 '+':                                                                                                 OK
+        standard base64 '/':                                                                                                 OK
+        non-ASCII:                                                                                                           OK
+        space:                                                                                                               OK
+        non-canonical final character:                                                                                       OK
+      show never reveals the token:                                                                                          OK
+    csrf
+      matches a known HMAC-SHA256 vector (all-zero session):                                                                 OK
+      matches a known HMAC-SHA256 vector (counting session):                                                                 OK
+      is deterministic per session and accepted for it:                                                                      OK
+      differs between sessions; another session's value is refused:                                                          OK
+      a wrong, empty, truncated or extended value is refused:                                                                OK
+  RequestGuard
+    Host
+      the exact loopback authority is accepted:                                                                              OK
+      localhost is refused:                                                                                                  OK
+      another port is refused:                                                                                               OK
+      another host is refused (DNS rebinding):                                                                               OK
+      the address without a port is refused when the port is not 80:                                                         OK
+      a trailing-dot form is refused:                                                                                        OK
+      two Host headers are refused:                                                                                          OK
+      a missing Host is tolerated on a public GET [D-1a]:                                                                    OK
+      a missing Host is tolerated on a public HEAD [D-1a]:                                                                   OK
+      a missing Host is refused on an operator route [D-1a]:                                                                 OK
+      a missing Host is refused on a POST, even with the exact Origin [D-1a]:                                                OK
+      a missing Host is refused on a public-class POST [D-1a]:                                                               OK
+      a wrong Host is refused before the Origin is considered:                                                               OK
+    Origin on mutating requests [D-2d]
+      the exact Origin is accepted:                                                                                          OK
+      a missing Origin is refused:                                                                                           OK
+      a foreign Origin is refused:                                                                                           OK
+      another port is refused:                                                                                               OK
+      localhost is refused:                                                                                                  OK
+      https is refused:                                                                                                      OK
+      a trailing slash is refused:                                                                                           OK
+      Origin: null is refused:                                                                                               OK
+      Origin: null is refused even with Sec-Fetch-Site: same-origin (no exception):                                          OK
+      two Origin headers are refused:                                                                                        OK
+      DELETE needs the Origin too:                                                                                           OK
+      a GET needs no Origin:                                                                                                 OK
+      a GET with a foreign Origin is not refused for it (Host decides):                                                      OK
+    port 80 uses the default-port forms [D-1a]
+      Host 127.0.0.1 and Origin http://127.0.0.1 are accepted:                                                               OK
+      Host 127.0.0.1:80 is refused:                                                                                          OK
+      Origin http://127.0.0.1:80 is refused:                                                                                 OK
+  Cli operator
+    operator sign-in defaults to the serve default port:                                                                     OK
+    operator sign-in --port N:                                                                                               OK
+    operator sign-in --port=N:                                                                                               OK
+    operator sign-in validates the port like serve:                                                                          OK
+    there is no option that takes a token:                                                                                   OK
+    operator sign-in takes no positional argument:                                                                           OK
+    operator sign-out-all:                                                                                                   OK
+    operator sign-out-all takes no arguments:                                                                                OK
+    operator without a subcommand is refused:                                                                                OK
+    an unknown operator subcommand is refused:                                                                               OK
+    the P1.1 and P1.2 commands are unchanged:                                                                                OK
+  Operator routes (no database)
+    protected routes
+      GET /operator without a session answers 401 and says how to sign in:                                                   OK
+      POST /operator/sign-out with exact Host and Origin but no session answers 401:                                         OK
+      a malformed Cookie header counts as no session (401, not 500):                                                         OK
+      a session cookie that is not a token counts as no session (401):                                                       OK
+    request guard over the application
+      a foreign Host on GET / answers 403:                                                                                   OK
+      Host: localhost on GET /operator answers 403:                                                                          OK
+      a missing Host on GET /operator answers 403 [D-1a]:                                                                    OK
+      a missing Origin on POST /operator/sign-out answers 403:                                                               OK
+      Origin: null on POST /operator/sign-in answers 403, even with Sec-Fetch-Site: same-origin [D-2d]:                      OK
+      an unrouted operator path answers 404 whatever its headers:                                                            OK
+    sign-in confirm page
+      GET /operator/sign-in with a well-formed token renders a confirm form (200):                                           OK
+      the confirm page is no-store with Referrer-Policy: origin [D-2d] and the E3 CSP:                                       OK
+      the token appears exactly once, in a hidden input named token:                                                         OK
+      the confirm form posts to /operator/sign-in:                                                                           OK
+      the confirm page loads nothing external and links nowhere external:                                                    OK
+      the token is in no response header:                                                                                    OK
+      a malformed token answers 400 without echoing it:                                                                      OK
+      a missing token answers 400:                                                                                           OK
+      POST /operator/sign-in without a database answers 503 without echoing the token:                                       OK
+    P1.1 and P1.2 routes with a browser Host
+      GET / answers 200:                                                                                                     OK
+      GET /api/health_check answers 204:                                                                                     OK
+      GET /static/lockstep.css answers 200:                                                                                  OK
+  Command
+    validation
+      a workspace name is trimmed:                                                                                           OK
+      an empty or whitespace-only name is NameEmpty:                                                                         OK
+      80 characters are accepted, 81 are NameTooLong (characters, not bytes):                                                OK
+      control characters inside the name are NameHasControl:                                                                 OK
+      keys of 16 and 64 base64url characters are accepted:                                                                   OK
+      malformed keys are KeyMalformed:                                                                                       OK
+      a generated key is valid, 22 characters, and two differ:                                                               OK
+    payload digest
+      matches the known vector:                                                                                              OK
+      is 32 bytes and ignores the actor and the key:                                                                         OK
+      differs by name and by expected revision:                                                                              OK
+      the envelope version is 1:                                                                                             OK
+    decide
+      a fresh command at the current revision applies and returns current + 1:                                               OK
+      a fresh command at another revision is refused as stale with the current one:                                          OK
+      the same key and payload replays the prior receipt:                                                                    OK
+      a replay wins over a now-stale revision:                                                                               OK
+      the same key with another payload is a key conflict, even at the current revision:                                     OK
+  Cli workspace
+    workspace show:                                                                                                          OK
+    workspace show takes no arguments:                                                                                       OK
+    workspace rename --expected-revision N NAME:                                                                             OK
+    the = forms and an option after the name:                                                                                OK
+    --idempotency-key K:                                                                                                     OK
+    a missing expected revision is refused:                                                                                  OK
+    a non-numeric expected revision is refused:                                                                              OK
+    a negative expected revision is refused by the parser:                                                                   OK
+    an option without its value is refused:                                                                                  OK
+    a missing name is refused:                                                                                               OK
+    two names are refused:                                                                                                   OK
+    a repeated option is refused:                                                                                            OK
+    an unknown option is refused:                                                                                            OK
+    workspace without a subcommand is refused:                                                                               OK
+    an unknown workspace subcommand is refused:                                                                              OK
+    earlier commands are unchanged:                                                                                          OK
+  Command routes (no database)
+    POST /operator/commands/rename-workspace without a session answers 401:                                                  OK
+    POST /operator/commands/rename-workspace with a missing Origin answers 403:                                              OK
+    POST /operator/commands/rename-workspace with a foreign Host answers 403:                                                OK
+    GET /operator/receipts/1 without a session answers 401:                                                                  OK
+    GET /operator/commands/rename-workspace is not a route:                                                                  OK
+    POST /operator/receipts/1 is not a route:                                                                                OK
+  Queue no-op command
+    spec bounds
+      1 and 20 steps are accepted; 0 and 21 are StepsOutOfRange:                                                             OK
+      0 and 5000 ms are accepted; -1 and 5001 are StepMillisOutOfRange:                                                      OK
+      a failure step must be within 1..steps:                                                                                OK
+      the spec keeps its fields:                                                                                             OK
+    digest
+      differs by each spec field and from a rename:                                                                          OK
+      is equal for equal specs:                                                                                              OK
+    decide
+      queueing at the current revision applies without changing the revision:                                                OK
+      queueing at another revision is refused as stale:                                                                      OK
+  Cli job
+    job queue with defaults: 3 steps, 100 ms, no failure:                                                                    OK
+    job queue with every option, = forms mixed:                                                                              OK
+    a missing expected revision is refused:                                                                                  OK
+    non-numeric values are refused:                                                                                          OK
+    a repeated option is refused:                                                                                            OK
+    job queue takes no positional argument:                                                                                  OK
+    an unknown option is refused:                                                                                            OK
+    job show J:                                                                                                              OK
+    job show needs exactly one numeric id:                                                                                   OK
+    job without a subcommand is refused:                                                                                     OK
+    an unknown job subcommand is refused:                                                                                    OK
+    workspace rename is unchanged:                                                                                           OK
+  EvidenceModel
+    rules
+      a complete, current, matching PASSED stays PASSED:                                                                     OK
+      PASSED without an actual observation is incomplete:                                                                    OK
+      PASSED without evidence is incomplete:                                                                                 OK
+      PASSED without a tested revision is incomplete:                                                                        OK
+      PASSED from a dirty tree is incomplete:                                                                                OK
+      an unavailable evidence locator makes PASSED inconclusive:                                                             OK
+      a changed evidence digest makes PASSED inconclusive:                                                                   OK
+      a stale PASSED is inconclusive:                                                                                        OK
+      a stale FAILED stays FAILED:                                                                                           OK
+      non-PASSED claims keep their claim:                                                                                    OK
+    exhaustive: effective PASSED iff claim PASSED, actual, matching evidence, clean current revision:                        OK
+    aggregate
+      worst required wins: FAILED > BLOCKED > INCONCLUSIVE > NOT_RUN > PASSED:                                               OK
+      non-required rows do not count:                                                                                        OK
+      no required rows is NOT_RUN, never a vacuous PASSED:                                                                   OK
+    labels
+      only PASSED has the PASSED label and class:                                                                            OK
+      labels carry the reason:                                                                                               OK
+      classes:                                                                                                               OK
+  Command center view
+    matrix rendering
+      a non-PASSED effective row never renders the PASSED label or class:                                                    OK
+      a PASSED row renders the PASSED label and class:                                                                       OK
+      a claimed PASSED shown as INCONCLUSIVE is rendered by its effective disposition:                                       OK
+      every row shows criterion, method, expected, actual, label and locator:                                                OK
+      a missing actual observation renders as an em dash:                                                                    OK
+      the matrix is a table with column headers:                                                                             OK
+      rows carry machine-readable criterion and disposition attributes:                                                      OK
+    stylesheet (NFR-12)
+      every disposition class is defined:                                                                                    OK
+      NOT_RUN has a dashed outline:                                                                                          OK
+      each disposition's colors reach 4.5:1 in light and dark themes:                                                        OK
+      the passed (green) tokens are used only by the .ls-passed rule:                                                        OK
+    GET /operator/center without a session answers 401:                                                                      OK
+  Kernel identity (C-P2.1 I1)
+    a canonical lowercase UUID parses and round-trips:                                                                       OK
+    an all-zero UUID is canonical:                                                                                           OK
+    uppercase hex is refused (one canonical spelling):                                                                       OK
+    missing hyphens are refused:                                                                                             OK
+    wrong group lengths are refused:                                                                                         OK
+    non-hex characters are refused:                                                                                          OK
+    empty and surrounding whitespace are refused:                                                                            OK
+    16 bytes render as 36 characters and parse back:                                                                         OK
+    15 and 17 bytes are UuidWrongLength:                                                                                     OK
+    uuidFromWords is total and big-endian:                                                                                   OK
+    identities of one kind compare by their UUID:                                                                            OK
+  Kernel remotes (C-P2.1 I4, I5)
+    parsing and normalization
+      scp, ssh, git+ssh, git and https forms of one GitHub repository are one identity:                                      OK
+      GitLab and Bitbucket paths are lowercased:                                                                             OK
+      another host's path case is kept (no blind case-folding):                                                              OK
+      a different owner or name is a different identity:                                                                     OK
+      file URLs and plain paths are local:                                                                                   OK
+      helpers, unknown schemes, foreign file hosts and empty paths are unsupported:                                          OK
+    authoritative remote selection
+      no remotes: no authoritative remote:                                                                                   OK
+      one remote: it is authoritative:                                                                                       OK
+      two remotes without a choice: ambiguous, names sorted:                                                                 OK
+      a chosen existing remote is authoritative; the others are not identity:                                                OK
+      a chosen missing remote: unknown:                                                                                      OK
+      an unparseable URL of the authoritative remote: unsupported:                                                           OK
+      a remote with no URL at all: unsupported:                                                                              OK
+      fetch and push URLs in different forms of one identity settle:                                                         OK
+      fetch and push to different repositories: inconsistent:                                                                OK
+      two local spellings with one physical identity settle:                                                                 OK
+      local identities compare by physical identity only:                                                                    OK
+      selection refusals have their codes:                                                                                   OK
+  Kernel repository registration (C-P2.1 I6, DG-03 D-3.3d/D-3.5a)
+    an unrelated repository is accepted for an Engineer without one:                                                         OK
+    duplicate physical identity, same Engineer: repository-already-owned:                                                    OK
+    duplicate physical identity, other Engineer: repository-already-owned:                                                   OK
+    symlink or case alias (other display path, same physical identity): repository-already-owned:                            OK
+    same canonical path with a new physical identity (device renumbered): repository-already-owned:                          OK
+    case-sensitive filesystem: Proj and proj are different repositories:                                                     OK
+    duplicate clone (other directory, same authoritative network remote): authoritative-remote-owned:                        OK
+    a clone pushing into the owned repository's common directory: remote-is-owned-repository:                                OK
+    an owned repository pushing into the candidate: owned-repository-pushes-here:                                            OK
+    two clones of one local bare repository: authoritative-remote-owned:                                                     OK
+    a fork (own authoritative remote; owned upstream only as another remote) is eligible:                                    OK
+    shared ancestry alone (remote-less clone in another directory) is eligible:                                              OK
+    a template-derived project is eligible:                                                                                  OK
+    an Engineer who already owns a repository: engineer-already-owns-repository:                                             OK
+    a repository conflict is reported before the Engineer conflict:                                                          OK
+    a reused RepositoryId: repository-id-in-use:                                                                             OK
+    the result does not depend on the order of the owned list:                                                               OK
+    the identity carried by an accepted registration is the requested RepositoryId:                                          OK
+    the observation rendering is deterministic and covers every field:                                                       OK
+    decision refusal codes:                                                                                                  OK
+    observation refusal codes:                                                                                               OK
+  Kernel Work Unit identity (C-P2.1 I7, FR-WRK-01)
+    a Ticket-originated Work Unit with no plan reference is admitted with the owning Engineer:                               OK
+    a plan reference is optional ancestry and is kept when given:                                                            OK
+    a Work Unit for a repository without an active owner is refused:                                                         OK
+    another repository's ownership does not admit it:                                                                        OK
+    plan references: empty, control characters and 201 characters are refused; 200 accepted:                                 OK
+  Cli engineer and repository (C-P2.1 I10)
+    engineer add NAME:                                                                                                       OK
+    engineer add needs exactly one name:                                                                                     OK
+    engineer alone or unknown:                                                                                               OK
+    repository register --engineer E PATH:                                                                                   OK
+    the = forms, an option after the path, and --authoritative-remote:                                                       OK
+    --authoritative-remote R as two words:                                                                                   OK
+    a path that looks like a relative path is kept as given:                                                                 OK
+    a missing --engineer is refused:                                                                                         OK
+    a missing path is refused:                                                                                               OK
+    two paths are refused:                                                                                                   OK
+    a duplicate option is refused:                                                                                           OK
+    an option without its value is refused:                                                                                  OK
+    an unknown option is refused:                                                                                            OK
+    repository list takes no arguments:                                                                                      OK
+    repository alone or unknown:                                                                                             OK
+    earlier commands are unchanged:                                                                                          OK
+  Kernel transitions, replay and evidence (C-P2.2 T2, T3, T8)
+    refusal codes:                                                                                                           OK
+    replay stops at the first refusal and reports its index:                                                                 OK
+    replayTrace continues from the unchanged state after a refusal:                                                          OK
+    replaying the same commands twice gives equal results:                                                                   OK
+    commit ids: 40 lowercase hex only:                                                                                       OK
+    human signoffs: non-empty, no control characters:                                                                        OK
+    end to end: Ticket → Work Order → Work Unit → Delivery → Ready for Signoff → human Done:                                 OK
+    an Agent can never advance any domain, even with valid evidence:                                                         OK
+  Kernel Ticket lifecycle (C-P2.2 §3.1)
+    exhaustive: every state × input × principal matches the table:                                                           OK
+    Done is reachable only by a human signoff from ready-for-signoff:                                                        OK
+    unblock returns to the exact prior state, with its evidence:                                                             OK
+    integration evidence must cover every accepted Work Unit of the Ticket:                                                  OK
+    refusal codes name the reason:                                                                                           OK
+  Kernel Work Order lifecycle (C-P2.2 §3.2)
+    exhaustive: every state × input × principal matches the table (Engineering):                                             OK
+    only Engineering and PR rework may complete with Work Units:                                                             OK
+    non-code kinds must complete with no Work Units:                                                                         OK
+    a claim must match exactly: engineer and generation:                                                                     OK
+    an active or claimed order cannot be canceled before it is halted:                                                       OK
+    a new Work Order is pending and keeps its identity and kind through transitions:                                         OK
+  Kernel Work Unit lifecycle (C-P2.2 §3.3)
+    exhaustive: every state × input × principal matches the table:                                                           OK
+    a full happy path with a gate reaches Accepted and yields accepted evidence:                                             OK
+    a failed check with attempts left goes to rework; at the budget it halts:                                                OK
+    NotRun or Unknown without a failure halts as inconclusive; never Verified:                                               OK
+    a verification of another commit is basis-mismatch:                                                                      OK
+    starting past the attempt budget is attempt-budget-exhausted:                                                            OK
+    review changes requested: rework within the budget:                                                                      OK
+    gates pass one at a time and in any order:                                                                               OK
+    frozen contract validation:                                                                                              OK
+    accepted evidence exists only for an Accepted Work Unit:                                                                 OK
+  Kernel Delivery lifecycle (C-P2.2 §3.4)
+    exhaustive: every state × input × principal matches the table (both modes):                                              OK
+    integration evidence exists only for an Integrated delivery and names its Work Units and commit:                         OK
+    PullRequest mode: integrating without approval is illegal; a push after approval makes it stale:                         OK
+    reconciliation returns to the exact prior state:                                                                         OK
+    pull request references are non-empty:                                                                                   OK
+  Kernel lifecycle properties (C-P2.2 §6; seed 20261018, 2000 cases)
+    Ticket: general invariants; Done only by a human signoff from ready-for-signoff:                                         OK (0.05s)
+      +++ OK, passed 2000 tests.
+    Work Order: general invariants; Completed only from Active; claims always match:                                         OK (0.06s)
+      +++ OK, passed 2000 tests.
+    Work Unit: general invariants; Accepted only with no pending gates; attempts within budget; inconclusive never Verified: OK (0.07s)
+      +++ OK, passed 2000 tests.
+    Delivery: general invariants; PullRequest integration only from Approved with the same commit:                           OK (0.03s)
+      +++ OK, passed 2000 tests.
+  Kernel Profile policy (C-P2.3, DG-05)
+    definitions (F1-F4, D-5.1a, D-5.2)
+      a valid definition is accepted with its gates:                                                                         OK
+      invalid ids, versions and vocabulary are invalid-profile:                                                              OK
+      an invariant exception is refused, including protected-frozen-tests:                                                   OK
+      a gate claiming an invariant id is refused:                                                                            OK
+      clarification 1: a before-execution gate cannot require execution-time evidence:                                       OK
+      artifact kinds are split by when they can be produced:                                                                 OK
+      kind and path-class names:                                                                                             OK
+    canonical rendering and digests (F11)
+      the golden rendering of a definition:                                                                                  OK
+      an absent permission renders as inherit:                                                                               OK
+      a permuted equivalent definition has the same rendering and digest:                                                    OK
+      profileRef carries the hash of the rendering:                                                                          OK
+      sha256Hasher is SHA-256 in lowercase hex:                                                                              OK
+      content digests are 64 lowercase hex characters:                                                                       OK
+      the installation baseline:                                                                                             OK
+    precedence (F5, D-5.3a, clarification 2)
+      a specialization adds a gate and strengthens one on every axis:                                                        OK
+      each single-axis weakening is weakens-gate naming the axis:                                                            OK
+      a weakening is refused even when another axis is strengthened:                                                         OK
+      a stage change cannot be proved stronger:                                                                              OK
+      an identical redefinition is accepted:                                                                                 OK
+      two matching specializations disagreeing on a gate conflict in every order:                                            OK
+      two overrides disagreeing on a gate conflict in both orders:                                                           OK
+      agreeing overrides and a stricter override are accepted:                                                               OK
+      an override weaker than the default is weakens-gate:                                                                   OK
+      overrides are human-approved records:                                                                                  OK
+      re-permitting the non-behavioural path is weakens-profile; forbidding it is accepted:                                  OK
+      an override cannot re-permit the non-behavioural path:                                                                 OK
+      a declared specialization that is not registered is profile-unavailable:                                               OK
+      a specialization that declares specializations is invalid-profile:                                                     OK
+      a specialization that does not match the facts contributes nothing:                                                    OK
+      the latest registered version of a specialization is used:                                                             OK
+      every effective Profile has the nine invariants and the baseline first:                                                OK
+      both matching specializations are sources, by id:                                                                      OK
+      the effective digest is the hash of the rendering and is deterministic:                                                OK
+    facts, trusted origin and non-behavioural work (F6, F7, D-5.6, clarification 4)
+      only a human sets the work facts:                                                                                      OK
+      a non-behavioural basis needs a rationale and an approver:                                                             OK
+      non-behavioural work must be declared docs-only:                                                                       OK
+      a Profile that forbids the path refuses non-behavioural work:                                                          OK
+      permitted non-behavioural work does not require frozen tests, and is checked against observed paths:                   OK
+      behaviour-changing work requires frozen tests and has no path restriction:                                             OK
+      applicability by kind, class and path class:                                                                           OK
+    exceptions (F8, D-5.4)
+      a human receipt for an applicable gate with an exception path excepts it:                                              OK
+      a strengthened gate loses its exception path:                                                                          OK
+      receipts come from a human with a rationale and an approver:                                                           OK
+      scope, digest, gate, applicability and exception path are checked in that order:                                       OK
+      two receipts for one gate are invalid-record:                                                                          OK
+      a Work Unit receipt is admitted only for a unit of the bound order:                                                    OK
+    binding and provenance (F9, D-5.5)
+      a human or the Supervisor binds; the Agent and the Scheduler cannot:                                                   OK
+      the binding records the order, the effective Profile and its digests:                                                  OK
+      receipts are rendered in the binding:                                                                                  OK
+      provenance reproduces from the definitions and nothing else:                                                           OK
+      quoted text is escaped:                                                                                                OK
+    mid-flight Profile change (F10, D-5.5)
+      unchanged sources are fresh:                                                                                           OK
+      a new default version, a new specialization version or another default is profile-changed:                             OK
+      a human confirmation of exactly the current sources restores freshness:                                                OK
+      a confirmation of another binding does not apply:                                                                      OK
+      only a human confirms:                                                                                                 OK
+      a frozen Work Unit Contract built from the old binding is unchanged:                                                   OK
+    gate evaluation and execution prerequisites (F2, F3, clarification 1)
+      review: satisfied, missing, ambiguous, unverified, needs approval:                                                     OK
+      a gate needing two artifacts reports the first missing one:                                                            OK
+      a gate that does not apply is not applicable:                                                                          OK
+      execution prerequisites are the applicable before-execution gates only:                                                OK
+      an execution prerequisite never needs execution-time evidence:                                                         OK
+  Profile documents (C-P2.3 F12, §4)
+    the §4 example decodes:                                                                                                  OK
+    absent optional keys take their defaults:                                                                                OK
+    invariant exceptions are carried to the Kernel, which refuses them:                                                      OK
+    an unknown top-level key is refused:                                                                                     OK
+    an unknown gate key is refused:                                                                                          OK
+    an unknown specialization key is refused:                                                                                OK
+    missing required keys are refused:                                                                                       OK
+    wrong types are refused:                                                                                                 OK
+    invalid JSON is refused:                                                                                                 OK
+  Cli Profile commands (C-P2.3 F14)
+    profile add FILE and profile add -:                                                                                      OK
+    profile add needs exactly one file:                                                                                      OK
+    profile list takes no arguments:                                                                                         OK
+    profile show ID [--version N]:                                                                                           OK
+    profile show refusals:                                                                                                   OK
+    repository set-profile --engineer NAME PROFILE:                                                                          OK
+    repository set-profile refusals:                                                                                         OK
+    profile resolve with every option:                                                                                       OK
+    profile resolve with the minimum:                                                                                        OK
+    profile resolve refusals:                                                                                                OK
+    profile alone or unknown:                                                                                                OK
+    earlier commands are unchanged:                                                                                          OK
+  Work Order scheduler (C-P2.4)
+    fixtures (exercised on their own before the freeze)
+      the fixture world builds:                                                                                              OK
+    priority and resource names (S2, S6)
+      a human sets 0 to 999:                                                                                                 OK
+      only a human sets a priority:                                                                                          OK
+      out-of-range priorities are invalid-priority:                                                                          OK
+      resource names:                                                                                                        OK
+    selection and ordering (S7, D-5.8)
+      one eligible order is selected with its repository's owner:                                                            OK
+      no candidates selects none:                                                                                            OK
+      a blocked highest-priority order is excluded; the eligible lower one is selected:                                      OK
+      higher priority first:                                                                                                 OK
+      equal priority: the oldest admission first:                                                                            OK
+      equal priority and admission: the smallest Work Order id first:                                                        OK
+      the decision is the same for every permutation of every input list:                                                    OK
+    eligibility reasons (S3, D-5.7)
+      an otherwise eligible order has no reasons:                                                                            OK
+      binding-mismatch reports no Profile reasons:                                                                           OK
+      profile-default-unset:                                                                                                 OK
+      profile-changed names the changed Profile; a human confirmation makes it eligible:                                     OK
+      prerequisite-blocked: missing, ambiguous, unverified and under-approved evidence:                                      OK
+      dependencies: completed is satisfied; superseded and canceled are unsatisfiable; others incomplete; absent unknown:    OK
+      repository-not-owned:                                                                                                  OK
+      resources: absent and reported unknown are resource-unknown; unavailable; available:                                   OK
+      source-unknown and source-stale:                                                                                       OK
+      every reason is reported, in the S3 order:                                                                             OK
+      reason and refusal codes:                                                                                              OK
+    DG-05 clarifications 1 and 3 (S4, S5)
+      an unsatisfied before-acceptance gate never blocks scheduling:                                                         OK
+      an excepted before-execution gate does not block:                                                                      OK
+      two queued orders for one repository are both eligible; only the first is selected:                                    OK
+      a claimed, active or waiting order reserves its repository:                                                            OK
+      halted, completed, superseded and canceled orders reserve nothing:                                                     OK
+    context orders (S1, S9)
+      orders in non-candidate states never appear in the decision:                                                           OK
+    input integrity (S8)
+      every duplicate input is conflicting-input:                                                                            OK
+    scheduling commands (S10)
+      mark-eligible for eligible pending, mark-ineligible for ineligible eligible, nothing else:                             OK
+    rendering and digest (S11, §3)
+      the golden rendering of a mixed decision; the digest is its SHA-256:                                                   OK
+      deciding twice gives the same rendering:                                                                               OK
+  Work Order scheduler properties (C-P2.4 §6; seed 20261019, 1000 cases)
+    replay: deciding twice gives the same rendering and digest:                                                              OK (0.06s)
+      +++ OK, passed 1000 tests.
+    permutation: shuffling every input list gives the same rendering:                                                        OK (0.03s)
+      +++ OK, passed 1000 tests.
+    soundness: candidates are eligible xor reasoned; ranking sorted; selection is the head:                                  OK
+      +++ OK, passed 1000 tests.
+    oracle: eligible exactly when an independent predicate says so:                                                          OK
+      +++ OK, passed 1000 tests.
+    commands: each is accepted and leaves exactly the eligible candidates eligible:                                          OK
+      +++ OK, passed 1000 tests.
+  Effect intents (C-P2.5)
+    fixtures (exercised on their own before the freeze)
+      the fixture specs, keys and pending intent build:                                                                      OK
+    effect specs (E1)
+      each class is accepted with budget 0 to 3, D only with 0:                                                              OK
+      budgets outside 0 to 3 are invalid; D with a budget is unsafe:                                                         OK
+      class B needs a positive key lifetime and refusal of changed parameters:                                               OK
+      bad names are invalid:                                                                                                 OK
+      class names:                                                                                                           OK
+    stable intent identity (E2, requirement 1)
+      new intents are pending with the parameters' SHA-256; two keys at one revision stay distinct:                          OK
+      one key twice in a decision is duplicate-effect-key:                                                                   OK
+      parameters: 1 to 4096 characters, no control characters:                                                               OK
+      bad effect keys are invalid-effect-key:                                                                                OK
+    intent lifecycle table (§3, E3)
+      every cell for a repeatable spec:                                                                                      OK
+      a claim records the owner, the next generation and the lease end; a dispatch counts:                                   OK
+      Agent is refused in every state:                                                                                       OK
+      wrong principals are not-authorized; terminal states answer already-settled first:                                     OK
+      every stale generation is stale-claim:                                                                                 OK
+    fencing (E4)
+      a reclaim after the lease ends raises the generation; the old owner's writes are stale:                                OK
+      an observation from the current generation needs no live lease:                                                        OK
+      nothing is dispatched on an expired lease, even exactly at its end:                                                    OK
+    observations (E6)
+      applied, not applied and no answer:                                                                                    OK
+    retry budget (E7)
+      budget 1: one re-dispatch after not-applied, then retries-exhausted:                                                   OK
+      budget 0 is never reclaimed after not-applied, in any class:                                                           OK
+      reclaiming an expired, undispatched claim consumes no budget:                                                          OK
+      an unknown outcome is never claimable:                                                                                 OK
+    codes
+      refusal codes and state names:                                                                                         OK
+  Event codec (C-P2.5 E10, §4)
+    fixtures (exercised on their own before the freeze):                                                                     OK
+    every durable Work Order event round-trips:                                                                              OK
+    golden Work Order texts:                                                                                                 OK
+    complete with Work Units is not durable:                                                                                 OK
+    every durable Ticket event round-trips:                                                                                  OK
+    golden Ticket texts:                                                                                                     OK
+    work-accepted and integrated are not durable:                                                                            OK
+    malformed texts decode to Nothing:                                                                                       OK
+    principals round-trip; agent never parses:                                                                               OK
+  Dispatch recovery (C-P2.6)
+    fixtures
+      the fixtures build through the real C-P2.5 lifecycle:                                                                  OK
+    checks, in order
+      an Agent is agent-assertion, before anything else:                                                                     OK
+      settled and abandoned intents are already-settled, whoever asks:                                                       OK
+      only the Supervisor recovers:                                                                                          OK
+      an intent that is not dispatched has nothing to recover:                                                               OK
+      the lease end gates recovery: one second before is lease-active, equal recovers:                                       OK
+      the order's activity is checked after the lease:                                                                       OK
+    the recovery table (§3)
+      an order that is not active: unknown, for every class:                                                                 OK
+      repeatable and idempotent with a retry left: redispatch under generation + 1:                                          OK
+      repeatable and idempotent without a retry left: unknown:                                                               OK
+      queryable: unknown until a lookup exists (C-P2.7), whatever the budget:                                                OK
+      unqueryable: unknown, never redispatched:                                                                              OK
+      after a redispatch the new generation may dispatch and the old one is stale:                                           OK
+    canonical texts (§4)
+      a redispatch names the new generation and the owner, escaped:                                                          OK
+      an unknown result names its reason:                                                                                    OK
+      every refusal code:                                                                                                    OK
+  Effect adapters (C-P2.6)
+    fixtures
+      a hand-built adapter answers as written:                                                                               OK
+    invocation (X2)
+      valid answers become destination observations:                                                                         OK
+      an empty, control-character or over-long text is malformed-answer:                                                     OK
+      no answer within the timeout is timeout, and the call returns:                                                         OK (0.05s)
+      a throwing adapter is adapter-failed:                                                                                  OK
+      an outer cancellation is not turned into an observation:                                                               OK (0.10s)
+    scripted destinations (X3)
+      steps are taken in order, then every call applies "ok":                                                                OK
+      refuse, hang and fail record nothing:                                                                                  OK (0.10s)
+      apply-then-hang, apply-then-fail and malformed record the application:                                                 OK (0.11s)
+      idempotent: a repeat answers the first result and applies nothing; changed parameters are refused:                     OK
+      idempotent: an application whose answer was lost is deduplicated too:                                                  OK (0.10s)
+      repeatable: every applying call records, even for one operation:                                                       OK
+
+All 550 tests passed (0.87s)
+
+
+
+lockstep> Test suite lockstep-unit passed
+Completed 2 action(s).

@@ -95,6 +95,15 @@ lock, replay, Kernel decision, then the event, the projection and any effect int
 `Kernel.Effect` owns the intent lifecycle and its fencing generations. Leases use the database
 clock. Nothing executes an effect yet (C-P2.6).*
 
+*P2.6 status note (C-P2.6, DG-04 D-4.5): `Application.Executor` executes one intent at a time.
+Each step is its own transaction: claim, dispatch marker, then the adapter, then the conclusion.
+The adapter runs only after the marker commits, and only for an active Work Order. Adapters live
+in `Effects.Executor`, each declaring its exact spec; Phase 2 has only the scripted, in-process
+`Effects.Scripted`. `Kernel.Recovery` decides what may follow an interrupted dispatch, by class:
+a repeatable or idempotent effect may be redispatched within its budget, and anything else is
+an unknown outcome. An unknown outcome or an exhausted budget halts the Work Order. Class-C
+lookup and human resolution are C-P2.7.*
+
 Kernel signature direction, from Bible §37 (conceptual, not final API):
 `decide :: Snapshot -> Observation -> Either Refusal (NonEmpty DomainEvent, [EffectIntent])`.
 Time, ids and randomness enter the Kernel as **inputs**. It never reads a clock.
