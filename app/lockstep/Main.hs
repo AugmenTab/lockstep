@@ -50,6 +50,27 @@ import Lockstep.Application.Database
   , schemaStatus
   )
 import Lockstep.Application.Dispatcher (Job (..), findJob, findJobForReceipt, jobStateCode, requestStop, startDispatcher, stopDispatcher)
+import Lockstep.Application.Executor (Executor (..), RunOutcome (..), executeOnce, noExecutorFaults)
+import Lockstep.Application.Ledger
+  ( LedgerFailure (..)
+  , NewWorkOrder (..)
+  , ScheduleReceipt (..)
+  , WorkOrderView (..)
+  , abandonIntent
+  , admitWorkUnit
+  , createTicket
+  , createWorkOrder
+  , decideTicket
+  , decideWorkOrder
+  , gateEvidenceNamed
+  , noFaults
+  , recordGateEvidence
+  , resolveOutcome
+  , scheduleOnce
+  , showWorkOrder
+  )
+import Lockstep.Application.Ledger qualified as Ledger
+import Lockstep.Application.LedgerView (projectLedger, projectionTimeText, renderProjection)
 import Lockstep.Application.OperatorTrust (issueSignIn, revokeAllSessions, signInUrl)
 import Lockstep.Application.Profiles
   ( AddOutcome (..)
@@ -63,6 +84,7 @@ import Lockstep.Application.Profiles
   , setRepositoryProfile
   , showProfile
   )
+import Lockstep.Application.Reconciler (ReconcileOutcome (..), Reconciliation (..), reconcileOnce)
 import Lockstep.Application.Repositories
   ( EngineerRecord (..)
   , Refused (..)
@@ -72,14 +94,34 @@ import Lockstep.Application.Repositories
   , listRepositories
   , registerRepository
   )
-import Lockstep.Foundation.Cli (BackupPolicy, Command (..), QueueArgs (..), RegisterArgs (..), RenameArgs (..), ResolveArgs (..), parseArgs, renderCliError, usage)
+import Lockstep.Application.Sandbox (sandboxAdapters, sandboxApplications, sandboxReconcilers, sandboxRequest)
+import Lockstep.Foundation.Cli
+  ( BackupPolicy
+  , Command (..)
+  , EffectChoice (..)
+  , EvidenceArgs (..)
+  , ExecuteArgs (..)
+  , QueueArgs (..)
+  , RegisterArgs (..)
+  , RenameArgs (..)
+  , ResolveArgs (..)
+  , WorkOrderArgs (..)
+  , parseArgs
+  , renderCliError
+  , usage
+  )
 import Lockstep.Foundation.Config (Port, ServeConfig (..), bindHostAddress, portNumber)
 import Lockstep.Foundation.SystemConfig
   ( SystemConfig (..)
   , loadSystemConfig
   , renderConfigError
   )
-import Lockstep.Kernel.Identity (EngineerId (..), uuidText)
+import Lockstep.Kernel.Effect (Intent (..), IntentRequest (..), OperationId (..), effectKeyText, intentStateName)
+import Lockstep.Kernel.Identity (EngineerId (..), TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..), parseUuid, uuidText)
+import Lockstep.Kernel.Reconciliation (Resolution (..))
+import Lockstep.Kernel.Ticket qualified as Ticket
+import Lockstep.Kernel.Transition qualified as K
+import Lockstep.Kernel.WorkOrder (Claim (..), WorkOrderInput (..), WorkOrderState (..), parseWorkOrderKind)
 import Lockstep.Persistence.Migrations (migrations)
 import Lockstep.Web.Application (applicationWith)
 import Lockstep.Web.Server (serverSettingsWith)
@@ -127,6 +169,9 @@ main = do
       withRequiredDatabase (repositorySetProfile engineer profileId)
     Right (ProfileResolve resolveArgs) ->
       withRequiredDatabase (profileResolve resolveArgs)
+    Right command ->
+      -- C-P2.8 §5: the ledger commands (every other command is matched above).
+      withRequiredDatabase (ledgerCommand command)
 
 {- | C-P1.7 E4: this build has no fault-injection flag, so a fault plan is
 refused before arguments, configuration or the database are read.
@@ -494,3 +539,186 @@ profileResolve args runtime = do
     Left reason -> notReady reason
     Right (Left failure) -> profileFailure failure
     Right (Right effective) -> rendered effective
+
+-- Ledger commands (C-P2.8 §5) -------------------------------------------------------
+
+-- | Prints the lines, or reports the failure: a refusal exits 65, an integrity failure 70, an unavailable database 69.
+ledgerOutcome :: Either LedgerFailure [String] -> IO ()
+ledgerOutcome result =
+  case result of
+    Right ls -> traverse_ putStrLn ls
+    Left (LedgerRefused code message) -> do
+      putStrLn ("refused " <> T.unpack code)
+      refuse ("refused (" <> T.unpack code <> "): " <> T.unpack message)
+    Left (LedgerIntegrity message) -> do
+      hPutStrLn stderr ("lockstep: integrity failure: " <> T.unpack message)
+      exitWith (ExitFailure 70)
+    Left (LedgerUnavailable code) -> do
+      hPutStrLn stderr ("lockstep: " <> T.unpack code)
+      exitWith (ExitFailure 69)
+
+-- | An id argument; one that is not a UUID is a usage error (exit 64).
+uuidArgument :: String -> IO Uuid
+uuidArgument text =
+  case parseUuid (T.pack text) of
+    Right u -> pure u
+    Left _ -> do
+      hPutStrLn stderr ("lockstep: not an id (a UUID): " <> text)
+      hPutStr stderr usage
+      exitWith (ExitFailure 64)
+
+ledgerCommand :: Command -> DatabaseRuntime -> IO ()
+ledgerCommand command runtime =
+  case command of
+    LedgerShow -> do
+      projected <- projectLedger runtime
+      ledgerOutcome $
+        fmap
+          ( \p ->
+              ("as of " <> T.unpack (projectionTimeText p))
+                : fmap T.unpack (T.lines (renderProjection p))
+          )
+          projected
+    TicketCreate title -> do
+      created <- createTicket runtime (T.pack title)
+      ledgerOutcome (fmap (\(TicketId u) -> ["ticket " <> uuidString u]) created)
+    TicketAccept ticket expected -> do
+      u <- uuidArgument ticket
+      receipt <- decideTicket runtime noFaults (TicketId u) (fromInteger expected) (K.Command K.Human Ticket.TicketAccept)
+      ledgerOutcome (fmap (\r -> ["ticket " <> uuidString u <> receiptText r]) receipt)
+    WorkOrderCreate args -> do
+      u <- uuidArgument (orderTicket args)
+      case parseWorkOrderKind (T.pack (orderKind args)) of
+        Nothing -> ledgerOutcome (Left (LedgerRefused (T.pack "invalid-kind") (T.pack ("no work order kind " <> orderKind args))))
+        Just kind -> do
+          created <-
+            createWorkOrder
+              runtime
+              NewWorkOrder
+                { newTicket = TicketId u
+                , newEngineer = T.pack (orderEngineer args)
+                , newKind = kind
+                , newPriority = fromInteger (orderPriority args)
+                , newDependencies = []
+                , newClasses = fmap T.pack (orderClasses args)
+                , newPathClasses = fmap T.pack (orderPathClasses args)
+                , newNonBehavioural = fmap T.pack (orderNonBehavioural args)
+                }
+          ledgerOutcome (fmap (\(WorkOrderId w) -> ["work-order " <> uuidString w]) created)
+    WorkOrderEvidence args -> do
+      w <- uuidArgument (evidenceWorkOrder args)
+      case gateEvidenceNamed (T.pack (evidenceArtifactName args)) (T.pack (evidenceDigestHex args)) (fmap T.pack (evidenceVerifiers args)) (T.pack (evidenceApprovalName args)) of
+        Left failure -> ledgerOutcome (Left failure)
+        Right gate -> do
+          recorded <- recordGateEvidence runtime K.Human (WorkOrderId w) gate
+          ledgerOutcome (fmap (const ["evidence " <> uuidString w <> " " <> evidenceArtifactName args]) recorded)
+    WorkOrderHalt workOrder expected reason ->
+      orderDecision workOrder expected (K.Command K.Human (WoHalt (T.pack reason)))
+    WorkOrderRequeue workOrder expected ->
+      orderDecision workOrder expected (K.Command K.Human WoRequeue)
+    ScheduleRunOnce -> do
+      scheduled <- scheduleOnce runtime
+      ledgerOutcome $
+        fmap
+          ( \r ->
+              fmap T.unpack (T.lines (scheduleRendering r))
+                <> ["digest " <> T.unpack (scheduleDigestText r)]
+                <> [ case scheduleClaimed r of
+                       Just (WorkOrderId w, c) -> "selected " <> uuidString w <> " generation " <> show (claimGeneration c)
+                       Nothing -> "selected none"
+                   ]
+          )
+          scheduled
+    SupervisorStart workOrder expected effects -> do
+      w <- uuidArgument workOrder
+      case traverse (sandboxRequest . T.pack) effects of
+        Left failure -> ledgerOutcome (Left failure)
+        Right requests -> do
+          shown <- showWorkOrder runtime (WorkOrderId w)
+          case fmap woState shown of
+            Left failure -> ledgerOutcome (Left failure)
+            Right (Claimed c) -> do
+              receipt <- decideWorkOrder runtime noFaults (WorkOrderId w) (fromInteger expected) (K.Command K.Supervisor (WoStart c)) requests
+              ledgerOutcome $
+                fmap
+                  ( \r ->
+                      ("work-order " <> uuidString w <> receiptText r)
+                        : L.zipWith (\(OperationId o) request -> "intent " <> uuidString o <> " effect " <> T.unpack (effectKeyText (requestKey request))) (Ledger.receiptOperations r) requests
+                  )
+                  receipt
+            Right _ -> ledgerOutcome (Left (LedgerRefused (T.pack "work-order-not-claimed") (T.pack "only a claimed work order can be started")))
+    SupervisorExecuteOnce args -> do
+      adapters <- sandboxAdapters runtime
+      let
+        executor = Executor (T.pack (executeOwner args)) (fromInteger (executeLeaseSeconds args)) (fromInteger (executeTimeoutMs args)) adapters
+      executed <- executeOnce runtime executor noExecutorFaults
+      ledgerOutcome $
+        fmap
+          ( \r -> case r of
+              Nothing -> ["idle"]
+              Just (OperationId o, outcome) -> ["executed " <> uuidString o <> " " <> runText outcome]
+          )
+          executed
+    SupervisorReconcileOnce -> do
+      reconcilers <- sandboxReconcilers runtime
+      reconciled <- reconcileOnce runtime (Reconciliation 5000 reconcilers)
+      ledgerOutcome $
+        fmap
+          ( \r -> case r of
+              Nothing -> ["idle"]
+              Just (OperationId o, outcome) -> ["reconciled " <> uuidString o <> " " <> reconcileText outcome]
+          )
+          reconciled
+    WorkUnitAdmit workOrder planRef -> do
+      w <- uuidArgument workOrder
+      admitted <- admitWorkUnit runtime (WorkOrderId w) (fmap T.pack planRef)
+      ledgerOutcome (fmap (\(WorkUnitId u) -> ["work-unit " <> uuidString u]) admitted)
+    EffectsResolve operation generation choice -> do
+      o <- uuidArgument operation
+      let
+        resolution =
+          case choice of
+            ChooseAttestApplied e -> AttestApplied (T.pack e)
+            ChooseAttestNotApplied e -> AttestNotApplied (T.pack e)
+            ChooseRetryAcknowledged -> RetryAcknowledgingDuplication True
+      resolved <- resolveOutcome runtime (OperationId o) (fromInteger generation) resolution
+      ledgerOutcome (fmap (\i -> ["intent " <> uuidString o <> " state " <> T.unpack (intentStateName (intentState i)) <> " generation " <> show (intentGeneration i)]) resolved)
+    EffectsAbandon operation reason -> do
+      o <- uuidArgument operation
+      abandoned <- abandonIntent runtime (OperationId o) (T.pack reason)
+      ledgerOutcome (fmap (\i -> ["intent " <> uuidString o <> " state " <> T.unpack (intentStateName (intentState i))]) abandoned)
+    SandboxShow -> do
+      applications <- sandboxApplications runtime
+      ledgerOutcome (fmap (fmap (\(OperationId o, effect, n) -> "application " <> uuidString o <> " effect " <> T.unpack effect <> " count " <> show n)) applications)
+    _ -> do
+      hPutStr stderr usage
+      exitWith (ExitFailure 64)
+ where
+  orderDecision workOrder expected decision = do
+    w <- uuidArgument workOrder
+    receipt <- decideWorkOrder runtime noFaults (WorkOrderId w) (fromInteger expected) decision []
+    ledgerOutcome (fmap (\r -> ["work-order " <> uuidString w <> receiptText r]) receipt)
+
+uuidString :: Uuid -> String
+uuidString =
+  T.unpack . uuidText
+
+receiptText :: Ledger.Receipt -> String
+receiptText r =
+  " revision " <> show (Ledger.receiptRevision r) <> " state " <> T.unpack (Ledger.receiptState r)
+
+runText :: RunOutcome -> String
+runText outcome =
+  case outcome of
+    RanApplied r -> "applied " <> T.unpack r
+    RanNotApplied r -> "not-applied " <> T.unpack r
+    RanExhausted r -> "exhausted " <> T.unpack r
+    RanUnknown r -> "unknown " <> T.unpack r
+
+reconcileText :: ReconcileOutcome -> String
+reconcileText outcome =
+  case outcome of
+    ReconciledApplied r -> "applied " <> T.unpack r
+    ReconciledNotApplied r -> "not-applied " <> T.unpack r
+    ReconciledExhausted r -> "exhausted " <> T.unpack r
+    StillUnknown r -> "unknown " <> T.unpack r

@@ -378,4 +378,24 @@ CREATE TRIGGER lockstep_effect_resolutions_immutable BEFORE UPDATE OR DELETE ON 
 CREATE TRIGGER lockstep_effect_resolutions_no_truncate BEFORE TRUNCATE ON lockstep_effect_resolutions FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
 |]
       )
+    ,
+      ( [Interpolate.i|sandbox effect destination|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_sandbox_applications (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  operation_id uuid NOT NULL,
+  effect text NOT NULL,
+  parameters text NOT NULL,
+  applied_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE lockstep_sandbox_keys (
+  operation_id uuid PRIMARY KEY,
+  parameters text NOT NULL
+);
+CREATE TABLE lockstep_sandbox_queryable (
+  operation_id uuid PRIMARY KEY,
+  outcome text NOT NULL CHECK (outcome IN ('applied', 'fenced'))
+);
+|]
+      )
     ]

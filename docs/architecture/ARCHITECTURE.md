@@ -114,6 +114,15 @@ observation that contradicts the durable state is a recorded conflict: it halts 
 blocks the intent. `Application.Reconciler` performs the lookup outside any transaction.
 Cross-process contention is tested with real separate processes.*
 
+*P2.8 status note (C-P2.8): `Kernel.EffectView` maps each intent to one display status.
+Only a destination-verified application is `PASSED`. `Application.LedgerView` projects the
+whole ledger read-only, in one transaction; `/operator/ledger` and `lockstep ledger show` present
+it. The operator commands (`ticket`, `work-order`, `schedule`, `supervisor`, `work-unit`,
+`effects`, `sandbox`) drive the ledger through the installed binary, one step at a time. The
+`supervisor` commands run Lockstep's own deterministic steps; there is no daemon.
+`Application.Sandbox` provides one model-free effect per class over durable sandbox tables. The
+adapters write in their own transactions, so killing a process is a real crash.*
+
 Kernel signature direction, from Bible §37 (conceptual, not final API):
 `decide :: Snapshot -> Observation -> Either Refusal (NonEmpty DomainEvent, [EffectIntent])`.
 Time, ids and randomness enter the Kernel as **inputs**. It never reads a clock.
