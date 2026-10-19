@@ -17,9 +17,15 @@ import Lockstep.Foundation.CliWorkspaceTest qualified as CliWorkspaceTest
 import Lockstep.Foundation.EvidenceModelTest qualified as EvidenceModelTest
 import Lockstep.Foundation.OperatorTokenTest qualified as OperatorTokenTest
 import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
+import Lockstep.Kernel.DeliveryTest qualified as DeliveryTest
 import Lockstep.Kernel.IdentityTest qualified as IdentityTest
+import Lockstep.Kernel.LifecyclePropertyTest qualified as LifecyclePropertyTest
 import Lockstep.Kernel.RemoteTest qualified as RemoteTest
 import Lockstep.Kernel.RepositoryTest qualified as RepositoryTest
+import Lockstep.Kernel.TicketTest qualified as TicketTest
+import Lockstep.Kernel.TransitionTest qualified as TransitionTest
+import Lockstep.Kernel.WorkOrderTest qualified as WorkOrderTest
+import Lockstep.Kernel.WorkUnitLifecycleTest qualified as WorkUnitLifecycleTest
 import Lockstep.Kernel.WorkUnitTest qualified as WorkUnitTest
 import Lockstep.Persistence.MigrationTest qualified as MigrationTest
 import Lockstep.Web.ApplicationTest qualified as ApplicationTest
@@ -61,4 +67,10 @@ main =
       , RepositoryTest.tests
       , WorkUnitTest.tests
       , CliRepositoryTest.tests
+      , TransitionTest.tests
+      , TicketTest.tests
+      , WorkOrderTest.tests
+      , WorkUnitLifecycleTest.tests
+      , DeliveryTest.tests
+      , LifecyclePropertyTest.tests
       ]

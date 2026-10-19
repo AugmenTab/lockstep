@@ -40,9 +40,15 @@ library
       Lockstep.Foundation.EvidenceModel
       Lockstep.Foundation.OperatorToken
       Lockstep.Foundation.SystemConfig
+      Lockstep.Kernel.Delivery
+      Lockstep.Kernel.Evidence
       Lockstep.Kernel.Identity
       Lockstep.Kernel.Repository
+      Lockstep.Kernel.Ticket
+      Lockstep.Kernel.Transition
+      Lockstep.Kernel.WorkOrder
       Lockstep.Kernel.WorkUnit
+      Lockstep.Kernel.WorkUnitLifecycle
       Lockstep.Persistence.CommandCenter
       Lockstep.Persistence.Commands
       Lockstep.Persistence.Connection
@@ -190,9 +196,16 @@ test-suite lockstep-unit
       Lockstep.Foundation.EvidenceModelTest
       Lockstep.Foundation.OperatorTokenTest
       Lockstep.Foundation.SystemConfigTest
+      Lockstep.Kernel.DeliveryTest
       Lockstep.Kernel.IdentityTest
+      Lockstep.Kernel.LifecycleFixtures
+      Lockstep.Kernel.LifecyclePropertyTest
       Lockstep.Kernel.RemoteTest
       Lockstep.Kernel.RepositoryTest
+      Lockstep.Kernel.TicketTest
+      Lockstep.Kernel.TransitionTest
+      Lockstep.Kernel.WorkOrderTest
+      Lockstep.Kernel.WorkUnitLifecycleTest
       Lockstep.Kernel.WorkUnitTest
       Lockstep.Persistence.MigrationTest
       Lockstep.Web.ApplicationTest
@@ -209,7 +222,8 @@ test-suite lockstep-unit
       NoImplicitPrelude
   ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T -fplugin-opt=Henforcer:--config=henforcer-tests.toml
   build-depends:
-      base
+      QuickCheck
+    , base
     , brigid
     , bytestring
     , flipstone-prelude
@@ -218,6 +232,7 @@ test-suite lockstep-unit
     , lockstep
     , tasty
     , tasty-hunit
+    , tasty-quickcheck
     , text
     , time
     , wai
