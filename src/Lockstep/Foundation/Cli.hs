@@ -5,6 +5,7 @@ module Lockstep.Foundation.Cli
   , RenameArgs (..)
   , QueueArgs (..)
   , RegisterArgs (..)
+  , ResolveArgs (..)
   , parseArgs
   , renderCliError
   , usage
@@ -40,6 +41,22 @@ data Command
   | EngineerAdd String
   | RepositoryRegister RegisterArgs
   | RepositoryList
+  | ProfileAdd String
+  | ProfileList
+  | ProfileShow String (Maybe Integer)
+  | RepositorySetProfile String String
+  | ProfileResolve ResolveArgs
+  deriving (Eq, Show)
+
+-- | @profile resolve@ options (contract C-P2.3 F14).
+data ResolveArgs
+  = ResolveArgs
+  { resolveEngineer :: String
+  , resolveKind :: String
+  , resolveClasses :: [String]
+  , resolvePathClasses :: [String]
+  , resolveNonBehavioural :: Maybe String
+  }
   deriving (Eq, Show)
 
 -- | @repository register@ options (contract C-P2.1 I10).
@@ -108,6 +125,7 @@ parseArgs args =
     "job" : rest -> parseJobCommand rest
     "engineer" : rest -> parseEngineerCommand rest
     "repository" : rest -> parseRepositoryCommand rest
+    "profile" : rest -> parseProfileCommand rest
     command : _ -> Left (UnknownCommand command)
 
 -- | Contract C-P2.1 I10.
@@ -133,6 +151,7 @@ parseRepositoryCommand args =
     [] -> Left (MissingSubcommand "repository")
     "register" : options -> fmap RepositoryRegister (parseRegisterOptions options)
     "list" : rest -> RepositoryList <$ noMoreArguments rest
+    "set-profile" : options -> parseSetProfileOptions options
     command : _ -> Left (UnknownCommand ("repository " <> command))
 
 engineerOption :: String
@@ -183,6 +202,87 @@ parseRegisterOptions =
                 Nothing -> go acc (Just option) rest
   in
     go [] Nothing
+
+-- | Contract C-P2.3 F14.
+parseProfileCommand :: [String] -> Either CliError Command
+parseProfileCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "profile")
+    ["add"] -> Left (MissingArgument "FILE")
+    ["add", file] -> ProfileAdd file <$ (if file == "-" then Right () else noOption file)
+    "add" : _ : extra : _ -> Left (unexpected extra)
+    "list" : rest -> ProfileList <$ noMoreArguments rest
+    "show" : options -> parseShowOptions options
+    "resolve" : options -> fmap ProfileResolve (parseResolveOptions options)
+    command : _ -> Left (UnknownCommand ("profile " <> command))
+
+{- | Options with values (@--name V@ or @--name=V@) and at most one positional
+argument. Options in @repeatable@ may be given more than once; their values are
+kept in order.
+-}
+parseOptionsAndArgument :: [String] -> [String] -> [String] -> Either CliError ([(String, String)], Maybe String)
+parseOptionsAndArgument names repeatable =
+  let
+    set option value acc =
+      if option `L.notElem` repeatable && option `L.elem` fmap fst acc
+        then Left (DuplicateOption option)
+        else Right (acc <> [(option, value)])
+
+    go acc mbArgument options =
+      case options of
+        [] ->
+          Right (acc, mbArgument)
+        option : rest
+          | option `L.elem` names ->
+              case rest of
+                [] -> Left (MissingOptionValue option)
+                value : rest'
+                  | L.null value -> Left (MissingOptionValue option)
+                  | otherwise -> set option value acc >>= \acc' -> go acc' mbArgument rest'
+          | (name, '=' : value) <- L.break (== '=') option
+          , name `L.elem` names ->
+              if L.null value
+                then Left (MissingOptionValue name)
+                else set name value acc >>= \acc' -> go acc' mbArgument rest
+          | "-" `L.isPrefixOf` option ->
+              Left (UnknownOption option)
+          | otherwise ->
+              case mbArgument of
+                Just _ -> Left (UnexpectedArgument option)
+                Nothing -> go acc (Just option) rest
+  in
+    go [] Nothing
+
+parseShowOptions :: [String] -> Either CliError Command
+parseShowOptions options = do
+  (acc, mbId) <- parseOptionsAndArgument ["--version"] [] options
+  profileId <- maybe (Left (MissingArgument "ID")) Right mbId
+  version <- traverse (parseNumber "--version") (L.lookup "--version" acc)
+  pure (ProfileShow profileId version)
+
+parseSetProfileOptions :: [String] -> Either CliError Command
+parseSetProfileOptions options = do
+  (acc, mbProfile) <- parseOptionsAndArgument [engineerOption] [] options
+  engineer <- maybe (Left (MissingOption engineerOption)) Right (L.lookup engineerOption acc)
+  profile <- maybe (Left (MissingArgument "PROFILE")) Right mbProfile
+  pure (RepositorySetProfile engineer profile)
+
+parseResolveOptions :: [String] -> Either CliError ResolveArgs
+parseResolveOptions options = do
+  let
+    repeatable = ["--class", "--path-class"]
+  (acc, mbArgument) <- parseOptionsAndArgument ([engineerOption, "--kind", "--non-behavioural"] <> repeatable) repeatable options
+  maybe (Right ()) (Left . UnexpectedArgument) mbArgument
+  engineer <- maybe (Left (MissingOption engineerOption)) Right (L.lookup engineerOption acc)
+  kind <- maybe (Left (MissingOption "--kind")) Right (L.lookup "--kind" acc)
+  pure
+    ResolveArgs
+      { resolveEngineer = engineer
+      , resolveKind = kind
+      , resolveClasses = [value | ("--class", value) <- acc]
+      , resolvePathClasses = [value | ("--path-class", value) <- acc]
+      , resolveNonBehavioural = L.lookup "--non-behavioural" acc
+      }
 
 -- | Contract C-P1.5 E6.
 parseJobCommand :: [String] -> Either CliError Command
@@ -470,6 +570,11 @@ usage =
     , "       lockstep engineer add NAME"
     , "       lockstep repository register --engineer NAME [--authoritative-remote REMOTE] PATH"
     , "       lockstep repository list"
+    , "       lockstep repository set-profile --engineer NAME PROFILE"
+    , "       lockstep profile add FILE|-"
+    , "       lockstep profile list"
+    , "       lockstep profile show ID [--version N]"
+    , "       lockstep profile resolve --engineer NAME --kind KIND [--class TAG]... [--path-class CLASS]... [--non-behavioural RATIONALE]"
     , ""
     , "  serve        run the local service on 127.0.0.1 (default port 8000)"
     , "  --port N     listen on port N (1-65535)"
@@ -488,6 +593,11 @@ usage =
     , "                        main worktree is PATH; with several remotes, name the"
     , "                        repository's own with --authoritative-remote"
     , "  repository list       print every owned repository"
+    , "  repository set-profile  make PROFILE the default SDLC Profile of the Engineer's repository"
+    , "  profile add           register a versioned SDLC Profile document (JSON; - reads standard input)"
+    , "  profile list          print every registered Profile version and its digest"
+    , "  profile show          print a Profile's canonical rendering and digest (default: the latest version)"
+    , "  profile resolve       print the effective Profile the Engineer's repository would bind for this work"
     , ""
     , "The database is configured by the file named in LOCKSTEP_CONFIG."
     ]

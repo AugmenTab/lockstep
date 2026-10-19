@@ -1,0 +1,21 @@
+diff --git a/test/integration/Lockstep/ProfileRegistryTest.hs b/test/integration/Lockstep/ProfileRegistryTest.hs
+index 138233f..25b0317 100644
+--- a/test/integration/Lockstep/ProfileRegistryTest.hs
++++ b/test/integration/Lockstep/ProfileRegistryTest.hs
+@@ -165,10 +165,12 @@ tests =
+           team1 <- document sc "team1.json" (teamDocument 1 "supervisor")
+           added sc team1
+           setProfile sc "alice" "team"
+-          adminExecute
+-            (scAdmin sc)
+-            (T.unpack (scDb sc))
+-            "ALTER TABLE lockstep_profiles DISABLE TRIGGER USER; UPDATE lockstep_profiles SET document = replace(document, 'supervisor', 'none'); ALTER TABLE lockstep_profiles ENABLE TRIGGER USER"
++          traverse_
++            (adminExecute (scAdmin sc) (T.unpack (scDb sc)))
++            [ "ALTER TABLE lockstep_profiles DISABLE TRIGGER USER"
++            , "UPDATE lockstep_profiles SET document = replace(document, 'supervisor', 'none')"
++            , "ALTER TABLE lockstep_profiles ENABLE TRIGGER USER"
++            ]
+           (c1, out1, err1) <- lockstep sc ["profile", "show", "team"]
+           c1 @?= ExitFailure 70
+           out1 @?= ""

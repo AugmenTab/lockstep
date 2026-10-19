@@ -78,6 +78,11 @@ check). The Kernel row becomes enforceable when the first Kernel module lands
 including external IO libraries for the Kernel, with negative fixtures checked by
 `scripts/lib/check-kernel-boundary` in the build step.*
 
+*P2.3 status note (C-P2.3): `Kernel.Profile` takes the hash function as a value (`Hasher`), so
+Profile digests are computed without the Kernel importing `Crypto`. Henforcer forbids Foundation
+from importing the Kernel, so the Profile document decoder, which yields the Kernel's
+`RawProfile`, lives in `Application.ProfileDocument`.*
+
 Kernel signature direction, from Bible §37 (conceptual, not final API):
 `decide :: Snapshot -> Observation -> Either Refusal (NonEmpty DomainEvent, [EffectIntent])`.
 Time, ids and randomness enter the Kernel as **inputs**. It never reads a clock.

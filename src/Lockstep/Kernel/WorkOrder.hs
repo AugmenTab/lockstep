@@ -8,6 +8,8 @@ not Ticket completion.
 module Lockstep.Kernel.WorkOrder
   ( WorkOrderKind (..)
   , mayCompleteWithWorkUnits
+  , workOrderKindName
+  , parseWorkOrderKind
   , Claim (..)
   , WorkOrderState (..)
   , WorkOrder (..)
@@ -40,6 +42,23 @@ data WorkOrderKind
 mayCompleteWithWorkUnits :: WorkOrderKind -> Bool
 mayCompleteWithWorkUnits kind =
   kind `L.elem` [Engineering, PrRework]
+
+-- | The kind's stable kebab-case name (C-P2.3 F1).
+workOrderKindName :: WorkOrderKind -> T.Text
+workOrderKindName kind =
+  T.pack $
+    case kind of
+      Engineering -> "engineering"
+      Investigate -> "investigate"
+      PrRework -> "pr-rework"
+      Integrate -> "integrate"
+      Plan -> "plan"
+      PublishReport -> "publish-report"
+      SkillInstall -> "skill-install"
+
+parseWorkOrderKind :: T.Text -> Maybe WorkOrderKind
+parseWorkOrderKind text =
+  L.find ((== text) . workOrderKindName) [minBound .. maxBound]
 
 data Claim
   = Claim

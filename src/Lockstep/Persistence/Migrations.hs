@@ -137,4 +137,47 @@ CREATE TABLE lockstep_identity_decisions (
 );
 |]
       )
+    ,
+      ( [Interpolate.i|profiles, repository default profiles and profile decisions|]
+      , [Interpolate.i|
+CREATE FUNCTION lockstep_refuse_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'lockstep: % rows are immutable', TG_TABLE_NAME;
+END;
+$$;
+CREATE TABLE lockstep_profiles (
+  profile_id text NOT NULL CHECK (profile_id ~ '^[a-z][a-z0-9-]{0,63}$'),
+  version integer NOT NULL CHECK (version >= 1),
+  digest text NOT NULL CHECK (digest ~ '^[0-9a-f]{64}$'),
+  document text NOT NULL,
+  added_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (profile_id, version)
+);
+CREATE TABLE lockstep_repository_profiles (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  repository_id uuid NOT NULL REFERENCES lockstep_repositories (id),
+  profile_id text NOT NULL,
+  set_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE lockstep_profile_decisions (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  operation text NOT NULL CHECK (operation IN ('profile-add', 'repository-set-profile')),
+  profile_id text,
+  version integer,
+  digest text,
+  engineer_name text,
+  repository_id uuid,
+  outcome text NOT NULL CHECK (outcome IN ('accepted', 'unchanged', 'refused')),
+  refusal_code text,
+  decided_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((outcome = 'refused') = (refusal_code IS NOT NULL))
+);
+CREATE TRIGGER lockstep_profiles_immutable BEFORE UPDATE OR DELETE ON lockstep_profiles FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_profiles_no_truncate BEFORE TRUNCATE ON lockstep_profiles FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_repository_profiles_immutable BEFORE UPDATE OR DELETE ON lockstep_repository_profiles FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_repository_profiles_no_truncate BEFORE TRUNCATE ON lockstep_repository_profiles FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_profile_decisions_immutable BEFORE UPDATE OR DELETE ON lockstep_profile_decisions FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_profile_decisions_no_truncate BEFORE TRUNCATE ON lockstep_profile_decisions FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+|]
+      )
     ]

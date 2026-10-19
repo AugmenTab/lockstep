@@ -150,7 +150,12 @@ case "$command" in
     require_install
     args=()
     while IFS= read -r a; do args+=("$a"); done < <(run_args)
-    docker run --rm "${args[@]}" "$image" /opt/lockstep/bin/lockstep "$@"
+    # C-P2.3: standard input reaches the CLI when it is not a terminal (profile add -).
+    if [ -t 0 ]; then
+      docker run --rm "${args[@]}" "$image" /opt/lockstep/bin/lockstep "$@"
+    else
+      docker run --rm --interactive "${args[@]}" "$image" /opt/lockstep/bin/lockstep "$@"
+    fi
     ;;
 
   open)
