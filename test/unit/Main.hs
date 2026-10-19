@@ -25,6 +25,8 @@ import Lockstep.Kernel.LifecyclePropertyTest qualified as LifecyclePropertyTest
 import Lockstep.Kernel.ProfileTest qualified as ProfileTest
 import Lockstep.Kernel.RemoteTest qualified as RemoteTest
 import Lockstep.Kernel.RepositoryTest qualified as RepositoryTest
+import Lockstep.Kernel.SchedulerPropertyTest qualified as SchedulerPropertyTest
+import Lockstep.Kernel.SchedulerTest qualified as SchedulerTest
 import Lockstep.Kernel.TicketTest qualified as TicketTest
 import Lockstep.Kernel.TransitionTest qualified as TransitionTest
 import Lockstep.Kernel.WorkOrderTest qualified as WorkOrderTest
@@ -79,4 +81,6 @@ main =
       , ProfileTest.tests
       , ProfileDocumentTest.tests
       , CliProfileTest.tests
+      , SchedulerTest.tests
+      , SchedulerPropertyTest.tests
       ]
