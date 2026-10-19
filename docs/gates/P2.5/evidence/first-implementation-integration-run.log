@@ -1,0 +1,24 @@
+lockstep> test (suite: lockstep-integration, args: -p "Durable ledger")
+
+lockstep-integration
+  Durable ledger (C-P2.5; real PostgreSQL)
+    scenario setup: migrate, Engineer, repository, Profile and default through the binary:                 OK (0.55s)
+    tickets: create, accept, stale revision, illegal input, revise:                                        OK (0.40s)
+    work order creation from a ready Ticket, and each refusal:                                             OK (0.47s)
+    a decision commits its event and intents together; faults leave neither:                               OK (0.41s)
+    intents with any input but start or resume are refused:                                                OK (0.36s)
+    replay integrity: a tampered projection or Profile source is an integrity failure:                     OK (0.41s)
+    scheduling claims an order with satisfied evidence; the decision is stored with its digest:            OK (0.38s)
+    scheduling leaves an order missing evidence pending, with the reason:                                  OK (0.25s)
+    after a halt and requeue the next claim has generation 2:                                              OK (0.38s)
+    a revised Ticket makes its order source-stale:                                                         OK (0.26s)
+    work unit admission: plan-less for a claimed order; refused for a pending one:                         OK (0.39s)
+    claims and fencing: one winner, reclaim after expiry, stale writes refused and stored, unknown blocks: OK (0.40s)
+    retry budget 1: not applied twice, then retries-exhausted:                                             OK (0.28s)
+    events, refusals, observations, evidence, schedule decisions and Profile sources are immutable:        OK (0.50s)
+
+All 14 tests passed (5.44s)
+
+
+
+lockstep> Test suite lockstep-integration passed
