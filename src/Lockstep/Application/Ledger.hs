@@ -1361,6 +1361,7 @@ stepForActive operation renew command = do
     Left failure -> pure (Left failure)
     Right (l, row, intent) -> do
       now <- Store.databaseClock
+      siblings <- Store.intentsOfSubject (Store.intentRowSubject row)
       case stepIntent intent (command now) of
         Left r -> pure (Left (effectRefused r))
         Right next
@@ -1370,6 +1371,10 @@ stepForActive operation renew command = do
               Store.updateIntent (lifecycleColumns intent {intentState = IntentUnknown keyExpiredReason} row)
               haltForIntent l (T.pack "outcome-unknown") operation
               pure (refused (T.pack "idempotency-key-expired") "the idempotency key's guarantee has ended; the earlier dispatch may still apply, so nothing was sent")
+          -- §4.5 P1: one logical effect, one live intent; neither claimed nor dispatched beside another.
+          | L.any (liveSameKey row) siblings -> do
+              haltForIntent l (T.pack "effect-key-in-use") operation
+              pure (refused (T.pack "effect-key-in-use") "another live intent of this work order has the same effect key; a Human must abandon one of them")
           | otherwise -> do
               let
                 renewed =
@@ -1387,6 +1392,14 @@ stepForActive operation renew command = do
 keyExpiredReason :: T.Text
 keyExpiredReason =
   T.pack "dispatch-interrupted: idempotency key may have expired"
+
+-- | §4.5 P1: another intent of the same order and effect key that is neither abandoned nor settled as not applied.
+liveSameKey :: Store.IntentRow -> Store.IntentRow -> Bool
+liveSameKey row s =
+  Store.intentRowOperation s /= Store.intentRowOperation row
+    && Store.intentRowKey s == Store.intentRowKey row
+    && Store.intentRowState s /= intentStateName (IntentAbandoned T.empty)
+    && Store.intentRowSettledApplied s /= Just False
 
 claimForExecution :: DatabaseRuntime -> T.Text -> Int -> OperationId -> IO (Either LedgerFailure Intent)
 claimForExecution runtime owner seconds operation
@@ -1617,9 +1630,18 @@ resolveOutcome runtime operation generation resolution =
     locked <- lockForExecution operation
     case locked of
       Left failure -> pure (Left failure)
-      Right (_, row, intent) ->
+      Right (_, row, intent) -> do
+        now <- Store.databaseClock
+        let
+          -- §4.5 P3: a retry that the dispatch would only turn back into unknown is refused.
+          retryPastKey =
+            case resolution of
+              RetryAcknowledgingDuplication _ -> intentDispatches intent >= 1 && not (idempotencyHolds (Store.intentRowFirstDispatched row) now intent)
+              _ -> False
         case resolveIntent intent (Command Human (generation, resolution)) of
           Left r -> pure (Left (reconcileRefused r))
+          Right _
+            | retryPastKey -> pure (refused (T.pack "idempotency-key-expired") "the idempotency key's guarantee has ended; attest the outcome or abandon the effect")
           Right next -> do
             Store.updateIntent (lifecycleColumns next row)
             let
@@ -1759,7 +1781,11 @@ readLedger runtime =
 
 -- Carry-forward (C-P2.9-R1 M2, §2.1) -----------------------------------------------------
 
--- | A Human carries an earlier activation's intent into the order's current activation.
+{- | A Human carries an earlier activation's intent into the order's current
+activation. 'carryIntent' and 'carryIntentAs' state no expected activations
+and no acknowledgment: they are library forms used by tests (§4.5 P4). The
+command line uses 'carryIntentChecked'.
+-}
 carryIntent :: DatabaseRuntime -> OperationId -> IO (Either LedgerFailure Intent)
 carryIntent runtime =
   carryIntentAs runtime Human
@@ -1795,15 +1821,9 @@ carryIntentChecked runtime principal operation expected acknowledged =
           source = fromIntegral (Store.intentRowActivation row)
           target = currentActivation l
           input = CarryInput now source target (idempotencyHolds (Store.intentRowFirstDispatched row) now intent)
+          -- §4.5 P1: a live same-key intent of any activation.
           conflict =
-            L.any
-              ( \s ->
-                  Store.intentRowOperation s /= oid operation
-                    && Store.intentRowKey s == Store.intentRowKey row
-                    && Just (fromIntegral (Store.intentRowActivation s)) == target
-                    && Store.intentRowState s /= T.pack "abandoned"
-              )
-              siblings
+            L.any (liveSameKey row) siblings
           request =
             CarryRequest
               { requestInput = input

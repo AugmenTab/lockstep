@@ -1,0 +1,32 @@
+lockstep> test (suite: lockstep-unit, args: -p "third review")
+
+lockstep-unit
+  Gate B remediation, third review (C-P2.9-R1 §4.5)
+    a lapsed claim after a human 'not applied' needs the acknowledgment: FAIL
+      test/unit/Lockstep/Kernel/RemediationThirdReviewTest.hs:40:
+      expected: Left CarryNotAcknowledged
+       but got: Right ()
+      Use -p '/third review/&&/a lapsed claim after a human '\''not applied'\'' needs the acknowledgment/' to rerun this test only.
+    a pending intent with an attestation record needs it too:            FAIL
+      test/unit/Lockstep/Kernel/RemediationThirdReviewTest.hs:44:
+      expected: Left CarryNotAcknowledged
+       but got: Right ()
+      Use -p '/third review/&&/a pending intent with an attestation record needs it too/' to rerun this test only.
+    an attested claim still held is claim-held first:                    OK
+
+2 out of 3 tests failed (0.01s)
+
+
+
+lockstep> Test suite lockstep-unit failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-unit:  exited with: ExitFailure 1
+       Logs printed to console
+       

@@ -21,6 +21,7 @@ import Lockstep.ProfileRegistryTest qualified as ProfileRegistryTest
 import Lockstep.ReconciliationTest qualified as ReconciliationTest
 import Lockstep.RemediationReviewTest qualified as RemediationReviewTest
 import Lockstep.RemediationTest qualified as RemediationTest
+import Lockstep.RemediationThirdReviewTest qualified as RemediationThirdReviewTest
 import Lockstep.RepositoryOwnershipTest qualified as RepositoryOwnershipTest
 import Lockstep.ServiceDbTest qualified as ServiceDbTest
 
@@ -47,4 +48,5 @@ main =
       , LedgerTraceTest.tests
       , RemediationTest.tests
       , RemediationReviewTest.tests
+      , RemediationThirdReviewTest.tests
       ]

@@ -94,10 +94,12 @@ carryChecked intent (Command principal request)
   keyCheck
     | dispatchedBefore && not (carryKeyHolds input) = Left CarryKeyExpired
     | otherwise = Right ()
+  -- §4.5 P2: an attestation record needs the acknowledgment in every carryable state.
   attested =
-    case intentState intent of
-      IntentNotApplied reason -> requestAttested request || T.pack "human-attested: " `T.isPrefixOf` reason
-      _ -> False
+    requestAttested request
+      || case intentState intent of
+        IntentNotApplied reason -> T.pack "human-attested: " `T.isPrefixOf` reason
+        _ -> False
   stateCheck =
     case intentState intent of
       IntentSettled _ -> Left CarryAlreadySettled

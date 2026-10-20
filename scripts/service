@@ -31,13 +31,18 @@ image=lockstep-dev:p1
 name=${LOCKSTEP_SERVICE_NAME:-lockstep-service}
 # C-P2.9-R1 M7: a qualification run installs elsewhere and never replaces the operator's binary.
 install_dir=${LOCKSTEP_SERVICE_INSTALL_DIR:-.local/install}
-# §4.2 finding 10: a relative path inside the checkout, of plain characters only.
+# §4.2 finding 10, §4.5 P4: a directory under .local/, of plain characters only.
 case $install_dir in
-  /* | *..* | *[!A-Za-z0-9._/-]* | '')
-    echo "scripts/service: LOCKSTEP_SERVICE_INSTALL_DIR must be a relative path of letters, digits, '.', '_', '-' and '/'" >&2
-    exit 64
+  *..* | *[!A-Za-z0-9._/-]*)
+    install_ok=false
     ;;
+  .local/?*) install_ok=true ;;
+  *) install_ok=false ;;
 esac
+if [ "$install_ok" != true ]; then
+  echo "scripts/service: LOCKSTEP_SERVICE_INSTALL_DIR must be a directory under .local/ of letters, digits, '.', '_', '-' and '/'" >&2
+  exit 64
+fi
 db_config=.local/config/lockstep.json
 host_config=.local/config/lockstep-host.json
 

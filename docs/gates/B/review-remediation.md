@@ -23,3 +23,19 @@
 | 10 | LOW | (a) A bare session value would not be found by B1's scan. (b) `LOCKSTEP_SERVICE_INSTALL_DIR` is not validated. | (a) **Recorded**: no Lockstep output prints the cookie, and a generic 43-character pattern would match inside the hex digests B1 records. (b) **Fixed**: only a relative path without quotes or spaces is accepted. |
 | 11 | INFO | Some checks prove less than they appear to (the concurrent read; B1-15 and B1-18 can be `idle`). | **Recorded** in the Gate B report. The refusal-under-overlap proof is the integration regression. |
 | 12 | INFO | Queryable recoveries wait for `reconcile-once`. | **Recorded** in the operator guide note. |
+
+## 2. Third independent read-only review (of N1–N8 at `8fce278`)
+
+- Same kind of reviewer: read-only, same model family, **not a human review**.
+- Result: **no HIGH**, 2 MEDIUM, 2 LOW, INFO. It confirmed N1, N3, N5, N7 and N8, and that no
+  frozen file is touched.
+- Fixes: C-P2.9-R1 §4.5 (P1–P4). The tests were run before the fixes and then frozen.
+
+| # | Sev. | Finding (summary) | Disposition |
+|---|---|---|---|
+| 1 | MEDIUM | A restart may create a new intent with the same effect key as an earlier activation's live intent. N6 removed the halt that used to stop the new one. Risk: one effect applied twice under two operation ids. | **Fix P1**: the new intent is never dispatched while a same-key intent is live (`effect-key-in-use`, order halted). Admission refusal was the alternative. It would change the frozen N2 test, so it is offered to the owner instead of applied. |
+| 2 | MEDIUM | N4 is bypassed through the claimed state: an attested intent, claimed, fenced and re-carried, skips the acknowledgment. | **Fix P2**: an attestation record needs the acknowledgment in every carryable state. |
+| 3 | LOW | The N2 conflict only looks at the target activation. | **Fix P1**: a conflict with a live same-key intent of any activation. |
+| 4 | LOW | A human retry after the N1 check is accepted, then turned back into unknown: a loop. | **Fix P3**: the retry is refused with `idempotency-key-expired`. |
+| 5 | INFO | The unchecked carry forms are exported; the install directory accepts `.`, `.git` and `src`. | **Fix P4**: they are documented as library forms, and the directory must lie under `.local/`. |
+| 6 | INFO | N5 rolls back a settle that cannot be reached; the requirement-6 regressions sit in the earlier frozen suites. | **Recorded.** |
