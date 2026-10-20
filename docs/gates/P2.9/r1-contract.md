@@ -252,6 +252,26 @@ against the code **before** P1–P3, and then frozen:
 | `test/unit/Lockstep/Kernel/RemediationThirdReviewTest.hs` | `2514ed5950147cf3551377acdaedecaa20274e2747eb56bb751c616f7b6eb5fe` |
 | `test/integration/Lockstep/RemediationThirdReviewTest.hs` | `e8bda1a1cc54ae8a1712fd6292f412d7443ff4a89aad8fb55ee125c3bc41026c` |
 
+The first post-fix runs (`third-review-first-run.log`, `third-review-integration-run.log`)
+exposed a gap in P1: it refused the dispatch, but the claim before it was already committed.
+The same-key check now applies to the claim as well, so the frozen test is unchanged. In
+`third-review-integration-run2.log`, 175/176 passed. The one failure is the non-loopback
+precondition: the pattern helper does not set it, and `scripts/check` does.
+
+## 4.6 R-P2.9-4 (approved by the human owner, 2026-10-20)
+
+The owner approved R-P2.9-4 as written (`r-p2.9-4-amendment-request.md`;
+`.local/plans/phase-02_update3.md`). Applied exactly: the control assertion
+`checked p request @?= Right ()` became `checked p request {requestAttested = False} @?= Right ()`.
+No other line changed (`git diff` shows 1 insertion, 1 deletion).
+
+| File | Re-frozen SHA-256 |
+|---|---|
+| `test/unit/Lockstep/Kernel/RemediationThirdReviewTest.hs` | `daf50a6d9b7bc8c18e5d1d112881f00f448dea23c6e38180c09402b06244bf1f` (was `2514ed59…`) |
+
+The other frozen files were verified byte-identical on 2026-10-20: §4.1 (`ed16cbf3…`,
+`4e3918ac…`, `58701dc0…`), §4.4 (`c041482e…`, `655bd886…`) and §4.5 integration (`e8bda1a1…`).
+
 ## 5. Frozen tests that must change
 
 Three C-P2.7 cases encode the behaviour M2 and M4 remove. The exact diff is

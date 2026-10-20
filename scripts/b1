@@ -176,7 +176,7 @@ chmod 600 "$LOCKSTEP_SERVICE_CONFIG"
 umask 022
 cli "db migrate (empty database, no backup needed)" 0 db migrate
 cli "db status (after)" 0 db status
-check AC-B1-03 "a fresh database migrates to revision 11 and reports ready 11" "$(printf '%s' "$LAST_OUT" | grep -q '^readiness ready 11$'; echo $?)"
+check AC-B1-03 "a fresh database migrates to revision 12 and reports ready 12" "$(printf '%s' "$LAST_OUT" | grep -q '^readiness ready 12$'; echo $?)"
 
 note "B1-04 start the installed service"
 scripts/service stop >/dev/null 2>&1
@@ -184,7 +184,7 @@ rec "scripts/service start" 0 scripts/service start --port "$port"
 http "health" "$base/api/health_check"
 health=$HTTP_STATUS
 http "readiness" "$base/api/readiness"
-check AC-B1-04 "the installed service answers health 204 and readiness 'ready 11' on 127.0.0.1:$port" "$([ "$health" = 204 ] && [ "$HTTP_STATUS" = 200 ] && [ "$HTTP_BODY" = "ready 11" ]; echo $?)"
+check AC-B1-04 "the installed service answers health 204 and readiness 'ready 12' on 127.0.0.1:$port" "$([ "$health" = 204 ] && [ "$HTTP_STATUS" = 200 ] && [ "$HTTP_BODY" = "ready 12" ]; echo $?)"
 
 note "B1-05 repository exclusivity (repositories exist only inside one container of the installed image)"
 cli "engineer add alice" 0 engineer add alice

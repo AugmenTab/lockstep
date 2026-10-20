@@ -43,7 +43,7 @@ tests =
         p <- pendingOf
         checked p request {requestAttested = True} @?= Left CarryNotAcknowledged
         checked p request {requestAttested = True, requestAcknowledged = True} @?= Right ()
-        checked p request @?= Right ()
+        checked p request {requestAttested = False} @?= Right ()
     , testCase "an attested claim still held is claim-held first" $ do
         c <- attestedThenClaimed
         checked c request {requestInput = (requestInput request) {carryNow = at 80}} @?= Left CarryClaimHeld
