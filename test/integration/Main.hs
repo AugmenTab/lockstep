@@ -19,6 +19,7 @@ import Lockstep.OperatorTrustTest qualified as OperatorTrustTest
 import Lockstep.ProcessTest qualified as ProcessTest
 import Lockstep.ProfileRegistryTest qualified as ProfileRegistryTest
 import Lockstep.ReconciliationTest qualified as ReconciliationTest
+import Lockstep.RemediationFinalReviewTest qualified as RemediationFinalReviewTest
 import Lockstep.RemediationReviewTest qualified as RemediationReviewTest
 import Lockstep.RemediationTest qualified as RemediationTest
 import Lockstep.RemediationThirdReviewTest qualified as RemediationThirdReviewTest
@@ -49,4 +50,5 @@ main =
       , RemediationTest.tests
       , RemediationReviewTest.tests
       , RemediationThirdReviewTest.tests
+      , RemediationFinalReviewTest.tests
       ]

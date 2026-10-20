@@ -64,6 +64,7 @@ data Command
   | WorkUnitAdmit String (Maybe String)
   | EffectsResolve String Integer EffectChoice
   | EffectsAbandon String String
+  | EffectsAbandonAcknowledged String String
   | EffectsCarry String Integer Integer Bool
   | SandboxShow
   deriving (Eq, Show)
@@ -531,9 +532,13 @@ parseEffectsCommand args =
             | otherwise -> ChooseAttestNotApplied <$> required option acc
       pure (EffectsResolve o generation choice)
     "abandon" : options -> do
-      (acc, _, operation) <- parseWithFlags ["--reason"] [] [] options
+      (acc, flags, operation) <- parseWithFlags ["--reason"] [] [acknowledgeOption] options
       o <- argument "OPERATION" operation
-      EffectsAbandon o <$> required "--reason" acc
+      reason <- required "--reason" acc
+      pure $
+        if acknowledgeOption `L.elem` flags
+          then EffectsAbandonAcknowledged o reason
+          else EffectsAbandon o reason
     "carry" : options -> do
       (acc, flags, operation) <- parseWithFlags ["--from-activation", "--to-activation"] [] [acknowledgeOption] options
       o <- argument "OPERATION" operation
@@ -853,7 +858,7 @@ usage =
     , "       lockstep supervisor reconcile-once"
     , "       lockstep work-unit admit WORK-ORDER [--plan-ref REF]"
     , "       lockstep effects resolve OPERATION --generation G (--attest-applied E | --attest-not-applied E | --retry --acknowledge-duplication-risk)"
-    , "       lockstep effects abandon OPERATION --reason TEXT"
+    , "       lockstep effects abandon OPERATION --reason TEXT [--acknowledge-duplication-risk]"
     , "       lockstep effects carry OPERATION --from-activation S --to-activation T [--acknowledge-duplication-risk]"
     , "       lockstep sandbox show"
     , ""

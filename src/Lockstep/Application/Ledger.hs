@@ -33,6 +33,7 @@ module Lockstep.Application.Ledger
   , observeIntent
   , settleIntent
   , abandonIntent
+  , abandonIntentAcknowledged
   , StoredObservation (..)
   , intentObservations
   , claimForExecution
@@ -1263,7 +1264,16 @@ settleIntent runtime operation generation =
 recorded, and its Work Order halts, in one transaction.
 -}
 abandonIntent :: DatabaseRuntime -> OperationId -> T.Text -> IO (Either LedgerFailure Intent)
-abandonIntent runtime operation reason
+abandonIntent runtime operation reason =
+  abandonIntentAcknowledged runtime operation reason False
+
+{- | The abandonment with the Human's duplication-risk acknowledgment, which is
+recorded (C-P2.9-R1 §4.7 F1). An abandoned intent that was dispatched still
+counts as live for its effect key until its abandonment is acknowledged: the
+earlier dispatch may have applied.
+-}
+abandonIntentAcknowledged :: DatabaseRuntime -> OperationId -> T.Text -> Bool -> IO (Either LedgerFailure Intent)
+abandonIntentAcknowledged runtime operation reason acknowledged
   | not (validText reason) = pure (refused (T.pack "invalid-record") "a reason is 1-4096 characters without control characters")
   | otherwise =
       transaction runtime $ \_ -> do
@@ -1275,7 +1285,7 @@ abandonIntent runtime operation reason
               Left r -> pure (Left (effectRefused r))
               Right next -> do
                 Store.updateIntent (lifecycleColumns next row)
-                Store.insertResolution (oid operation) (int32 (intentGeneration intent)) (T.pack "human-abandon") (T.pack "abandoned reason=" <> quotedText reason) False
+                Store.insertResolution (oid operation) (int32 (intentGeneration intent)) (T.pack "human-abandon") (T.pack "abandoned reason=" <> quotedText reason) acknowledged
                 haltForIntentBy Human l (T.pack "abandoned") operation
                 pure (Right next)
 
@@ -1361,7 +1371,7 @@ stepForActive operation renew command = do
     Left failure -> pure (Left failure)
     Right (l, row, intent) -> do
       now <- Store.databaseClock
-      siblings <- Store.intentsOfSubject (Store.intentRowSubject row)
+      holders <- liveSameKey row
       case stepIntent intent (command now) of
         Left r -> pure (Left (effectRefused r))
         Right next
@@ -1372,9 +1382,16 @@ stepForActive operation renew command = do
               haltForIntent l (T.pack "outcome-unknown") operation
               pure (refused (T.pack "idempotency-key-expired") "the idempotency key's guarantee has ended; the earlier dispatch may still apply, so nothing was sent")
           -- §4.5 P1: one logical effect, one live intent; neither claimed nor dispatched beside another.
-          | L.any (liveSameKey row) siblings -> do
+          | not (L.null holders) -> do
               haltForIntent l (T.pack "effect-key-in-use") operation
-              pure (refused (T.pack "effect-key-in-use") "another live intent of this work order has the same effect key; a Human must abandon one of them")
+              pure
+                ( refused
+                    (T.pack "effect-key-in-use")
+                    ( "the same effect key is held by "
+                        <> T.unpack (T.intercalate (T.pack ", ") (fmap Store.intentRowOperation holders))
+                        <> "; abandon one (with --acknowledge-duplication-risk if it was dispatched), requeue without declaring the key again, and carry the other"
+                    )
+                )
           | otherwise -> do
               let
                 renewed =
@@ -1393,13 +1410,27 @@ keyExpiredReason :: T.Text
 keyExpiredReason =
   T.pack "dispatch-interrupted: idempotency key may have expired"
 
--- | §4.5 P1: another intent of the same order and effect key that is neither abandoned nor settled as not applied.
-liveSameKey :: Store.IntentRow -> Store.IntentRow -> Bool
-liveSameKey row s =
-  Store.intentRowOperation s /= Store.intentRowOperation row
-    && Store.intentRowKey s == Store.intentRowKey row
-    && Store.intentRowState s /= intentStateName (IntentAbandoned T.empty)
-    && Store.intentRowSettledApplied s /= Just False
+{- | §4.5 P1, §4.7 F1: the other intents of the order that hold the intent's
+effect key. That is any one not settled as not applied, except an abandoned
+one that was never dispatched or whose abandonment acknowledged the
+duplication risk. A dispatched intent may have applied even after it is
+abandoned.
+-}
+liveSameKey :: Store.IntentRow -> O.Orville [Store.IntentRow]
+liveSameKey row = do
+  siblings <- Store.intentsOfSubject (Store.intentRowSubject row)
+  filterM holds (L.filter same siblings)
+ where
+  same s =
+    Store.intentRowOperation s /= Store.intentRowOperation row
+      && Store.intentRowKey s == Store.intentRowKey row
+      && Store.intentRowSettledApplied s /= Just False
+  holds s
+    | Store.intentRowState s /= intentStateName (IntentAbandoned T.empty) = pure True
+    | Store.intentRowDispatches s < 1 = pure False
+    | otherwise = do
+        resolutions <- Store.resolutionsOf (Store.intentRowOperation s)
+        pure (not (L.any (\r -> Store.resolutionRowBasis r == T.pack "human-abandon" && Store.resolutionRowAcknowledged r) resolutions))
 
 claimForExecution :: DatabaseRuntime -> T.Text -> Int -> OperationId -> IO (Either LedgerFailure Intent)
 claimForExecution runtime owner seconds operation
@@ -1641,7 +1672,7 @@ resolveOutcome runtime operation generation resolution =
         case resolveIntent intent (Command Human (generation, resolution)) of
           Left r -> pure (Left (reconcileRefused r))
           Right _
-            | retryPastKey -> pure (refused (T.pack "idempotency-key-expired") "the idempotency key's guarantee has ended; attest the outcome or abandon the effect")
+            | retryPastKey -> pure (refused (T.pack "idempotency-key-expired") "the idempotency key's guarantee has ended; attest that it applied, or abandon the effect with --acknowledge-duplication-risk (a not-applied attestation would only be refused again at dispatch)")
           Right next -> do
             Store.updateIntent (lifecycleColumns next row)
             let
@@ -1802,9 +1833,10 @@ carryIntentAs runtime principal operation =
 
 {- | C-P2.9-R1 §4.2 N2-N4: the carry as the Human states it, with the
 activations it expects to carry between (@stale-carry@ otherwise) and whether
-it acknowledges the duplication risk of an attested "not applied". A live
-intent with the same effect key in the target activation is
-@carry-conflict@. The acknowledgment is recorded with the carry.
+it acknowledges the duplication risk of an attested intent, in any carryable
+state (§4.5 P2). Another live intent of the order with the same effect key,
+in any activation, is @carry-conflict@ (§4.5 P1, §4.7 F1). The
+acknowledgment is recorded with the carry.
 -}
 carryIntentChecked :: DatabaseRuntime -> Principal -> OperationId -> Maybe (Int, Int) -> Bool -> IO (Either LedgerFailure Intent)
 carryIntentChecked runtime principal operation expected acknowledged =
@@ -1815,15 +1847,15 @@ carryIntentChecked runtime principal operation expected acknowledged =
       Right (l, row, intent) -> do
         now <- Store.databaseClock
         owners <- Store.activeOwners
-        siblings <- Store.intentsOfSubject (Store.intentRowSubject row)
+        holders <- liveSameKey row
         resolutions <- storedResolutions operation
         let
           source = fromIntegral (Store.intentRowActivation row)
           target = currentActivation l
           input = CarryInput now source target (idempotencyHolds (Store.intentRowFirstDispatched row) now intent)
-          -- §4.5 P1: a live same-key intent of any activation.
+          -- §4.5 P1, §4.7 F1: a live same-key intent of any activation.
           conflict =
-            L.any (liveSameKey row) siblings
+            not (L.null holders)
           request =
             CarryRequest
               { requestInput = input

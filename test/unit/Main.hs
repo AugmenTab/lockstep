@@ -12,6 +12,7 @@ import Lockstep.Application.ReadinessTest qualified as ReadinessTest
 import Lockstep.Effects.ExecutorTest qualified as ExecutorTest
 import Lockstep.Effects.ReconcilerTest qualified as ReconcilerTest
 import Lockstep.Foundation.CliDbTest qualified as CliDbTest
+import Lockstep.Foundation.CliFinalReviewTest qualified as CliFinalReviewTest
 import Lockstep.Foundation.CliJobTest qualified as CliJobTest
 import Lockstep.Foundation.CliLedgerTest qualified as CliLedgerTest
 import Lockstep.Foundation.CliOperatorTest qualified as CliOperatorTest
@@ -106,6 +107,7 @@ main =
       , TraceTest.tests
       , LedgerPageTest.tests
       , CliLedgerTest.tests
+      , CliFinalReviewTest.tests
       , RemediationTest.tests
       , RemediationReviewTest.tests
       , RemediationThirdReviewTest.tests

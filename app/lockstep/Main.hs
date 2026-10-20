@@ -56,7 +56,7 @@ import Lockstep.Application.Ledger
   , NewWorkOrder (..)
   , ScheduleReceipt (..)
   , WorkOrderView (..)
-  , abandonIntent
+  , abandonIntentAcknowledged
   , admitWorkUnit
   , carryIntentChecked
   , createTicket
@@ -685,10 +685,8 @@ ledgerCommand command runtime =
             ChooseRetryAcknowledged -> RetryAcknowledgingDuplication True
       resolved <- resolveOutcome runtime (OperationId o) (fromInteger generation) resolution
       ledgerOutcome (fmap (\i -> ["intent " <> uuidString o <> " state " <> T.unpack (intentStateName (intentState i)) <> " generation " <> show (intentGeneration i)]) resolved)
-    EffectsAbandon operation reason -> do
-      o <- uuidArgument operation
-      abandoned <- abandonIntent runtime (OperationId o) (T.pack reason)
-      ledgerOutcome (fmap (\i -> ["intent " <> uuidString o <> " state " <> T.unpack (intentStateName (intentState i))]) abandoned)
+    EffectsAbandon operation reason -> abandon operation reason False
+    EffectsAbandonAcknowledged operation reason -> abandon operation reason True
     EffectsCarry operation from to acknowledged -> do
       o <- uuidArgument operation
       carried <- carryIntentChecked runtime K.Human (OperationId o) (Just (fromInteger from, fromInteger to)) acknowledged
@@ -704,6 +702,10 @@ ledgerCommand command runtime =
       hPutStr stderr usage
       exitWith (ExitFailure 64)
  where
+  abandon operation reason acknowledged = do
+    o <- uuidArgument operation
+    abandoned <- abandonIntentAcknowledged runtime (OperationId o) (T.pack reason) acknowledged
+    ledgerOutcome (fmap (\i -> ["intent " <> uuidString o <> " state " <> T.unpack (intentStateName (intentState i))]) abandoned)
   orderDecision workOrder expected decision = do
     w <- uuidArgument workOrder
     receipt <- decideWorkOrder runtime noFaults (WorkOrderId w) (fromInteger expected) decision []

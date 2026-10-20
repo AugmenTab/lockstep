@@ -31,16 +31,16 @@ image=lockstep-dev:p1
 name=${LOCKSTEP_SERVICE_NAME:-lockstep-service}
 # C-P2.9-R1 M7: a qualification run installs elsewhere and never replaces the operator's binary.
 install_dir=${LOCKSTEP_SERVICE_INSTALL_DIR:-.local/install}
-# §4.2 finding 10, §4.5 P4: a directory under .local/, of plain characters only.
+# §4.2 finding 10, §4.5 P4, §4.7 F4: .local/install or .local/<name>-install, and not a symlink.
 case $install_dir in
-  *..* | *[!A-Za-z0-9._/-]*)
-    install_ok=false
-    ;;
-  .local/?*) install_ok=true ;;
+  .local/install) install_ok=true ;;
+  .local/*/* | .local/.*) install_ok=false ;;
+  .local/*[!a-z0-9-]*-install) install_ok=false ;;
+  .local/?*-install) install_ok=true ;;
   *) install_ok=false ;;
 esac
-if [ "$install_ok" != true ]; then
-  echo "scripts/service: LOCKSTEP_SERVICE_INSTALL_DIR must be a directory under .local/ of letters, digits, '.', '_', '-' and '/'" >&2
+if [ "$install_ok" != true ] || [ -L "$install_dir" ]; then
+  echo "scripts/service: LOCKSTEP_SERVICE_INSTALL_DIR must be .local/install or .local/<name>-install (lower-case letters, digits, '-'), not a symlink" >&2
   exit 64
 fi
 db_config=.local/config/lockstep.json
