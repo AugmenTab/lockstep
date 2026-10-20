@@ -19,6 +19,7 @@ import Lockstep.OperatorTrustTest qualified as OperatorTrustTest
 import Lockstep.ProcessTest qualified as ProcessTest
 import Lockstep.ProfileRegistryTest qualified as ProfileRegistryTest
 import Lockstep.ReconciliationTest qualified as ReconciliationTest
+import Lockstep.RemediationTest qualified as RemediationTest
 import Lockstep.RepositoryOwnershipTest qualified as RepositoryOwnershipTest
 import Lockstep.ServiceDbTest qualified as ServiceDbTest
 
@@ -43,4 +44,5 @@ main =
       , ReconciliationTest.tests
       , OperatorLedgerTest.tests
       , LedgerTraceTest.tests
+      , RemediationTest.tests
       ]

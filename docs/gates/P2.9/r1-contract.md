@@ -1,8 +1,8 @@
 # C-P2.9-R1 — Gate B remediation
 
 - Contract ID: `C-P2.9-R1@v1`
-- Status: **DRAFT**, waiting for R-P2.9-2 (three frozen P2.7 cases, §5). Nothing in §2 is
-  implemented yet.
+- Status: **FROZEN** (2026-10-19; §4.1). R-P2.9-2 was **approved** by the owner (Option A, `carryIntent`), with six
+  carry requirements, which §2.1 incorporates.
 - Authority: `.local/plans/phase-02_update2.md`: bounded remediation of the independent review
   (`docs/gates/B/review.md`), items 1–7. Amendments to earlier Contracts' *text* (C-P2.5 E8,
   C-P2.6 X5/X7/X10, C-P2.8 §3) are made here under that authorization. **Frozen tests are changed
@@ -33,6 +33,59 @@ Close the review's defects without widening Phase 2:
 | M7 | **Isolation.** `scripts/service` accepts `LOCKSTEP_SERVICE_INSTALL_DIR`; `scripts/b1` installs into `.local/b1-install` and never touches `.local/install`. B1 only *creates* its own database on the operator server. The owner's binary, which B1 run 1 overwrote, is restored by rebuilding the Gate A commit `6c2851d` into `.local/install`, with its `VERSION`. B1 run 1 stays as history. | 16 |
 | M8 | **Migration 0012** (forward-only): adds `first_dispatched_at` and `activation_generation` to `lockstep_effect_intents` (existing rows: the generation of their order's first claim, which is the only possibility in a schema without carry-forward), and widens the resolution `basis` check with `human-abandon` and `human-carry`. | 1, 2, 4 |
 
+### 2.1 Carry-forward (the owner's R-P2.9-2 requirements)
+
+`carryIntent` is `carryIntentAs Human`. `carryIntentAs principal op` runs one transaction that
+locks the Work Order, then the intent, and asks the pure `Lockstep.Kernel.Activation.carryDecision`.
+
+Check order (code):
+1. an `Agent` (`agent-assertion`);
+2. anyone but a `Human` (`not-authorized`): no Implementer, Supervisor or agent can carry;
+3. the order not `active` (`subject-not-active`);
+4. the intent already bound to the current activation (`carry-not-needed`; this is also how a
+   duplicate carry is refused);
+5. settled or abandoned (`already-settled`);
+6. `outcome-unknown` (`outcome-unknown`: an unknown effect is carried only after a human resolution;
+   the retry resolution already requires the duplication risk to be acknowledged);
+7. `dispatched` (`dispatched-needs-recovery`);
+8. `claimed` with an active lease (`claim-held`);
+9. `confirmed-applied` (`not-carryable`);
+10. `confirmed-not-applied` with no retry left (`retries-exhausted`);
+11. an `idempotent` intent that was dispatched before, is `pending` after a human retry, and whose
+    key guarantee (M1) no longer holds (`idempotency-key-expired`).
+
+The Ledger also checks that the claiming Engineer still owns the order's repository
+(`repository-not-owned`) and that the intent belongs to that order. A refusal writes nothing.
+
+An accepted carry changes only the intent's activation generation. The operation id,
+parameters, budget, dispatch count, fencing generation, observations, recoveries and earlier
+resolutions are untouched, so no second logical intent exists. It records a resolution with
+basis `human-carry` and decision `carried principal=human from-generation=S to-generation=T`.
+
+A late worker of the earlier activation can neither dispatch (`activation-superseded`) nor make
+the intent runnable again: a late not-applied observation is recorded, and the intent stays
+fenced.
+
+### 2.2 API
+
+```haskell
+-- Lockstep.Kernel.KeyLifetime
+keyMarginSeconds :: Integer -> Integer                     -- max 30 (lifetime `div` 10)
+idempotencyHolds :: Maybe UTCTime -> UTCTime -> Intent -> Bool   -- first dispatch, now; True unless idempotent
+-- Lockstep.Kernel.Activation
+data CarryInput = CarryInput { carryNow :: UTCTime, carrySource :: Int, carryTarget :: Maybe Int, carryKeyHolds :: Bool }
+carryDecision :: Intent -> Command CarryInput -> Either CarryRefusal ()
+data CarryRefusal = CarryAgentAssertion | CarryNotAuthorized Principal | CarrySubjectNotActive | CarryNotNeeded
+  | CarryAlreadySettled | CarryOutcomeUnknown | CarryInFlight | CarryClaimHeld | CarryNotCarryable
+  | CarryRetriesExhausted | CarryKeyExpired
+carryRefusalCode :: CarryRefusal -> Text
+-- Lockstep.Application.Ledger (additions)
+carryIntent :: DatabaseRuntime -> OperationId -> IO (Either LedgerFailure Intent)
+carryIntentAs :: DatabaseRuntime -> Principal -> OperationId -> IO (Either LedgerFailure Intent)
+intentActivation :: DatabaseRuntime -> OperationId -> IO (Either LedgerFailure Int)
+probeIntegrityRollback :: DatabaseRuntime -> IO (Either LedgerFailure ())   -- test seam: writes a refusal row, then fails integrity
+```
+
 ## 3. New tests (frozen before implementation)
 
 - **Unit:** the key-lifetime function (inside and outside the window, at its boundary,
@@ -60,6 +113,43 @@ rules checked. Acceptance:
 - B1 (run 2);
 - a second independent read-only review of the remediation;
 - then the Gate B report and the decision packet.
+
+## 4.1 Freeze record
+
+Frozen 2026-10-19 by the writing agent (manual).
+
+| File | SHA-256 |
+|---|---|
+| `test/unit/Lockstep/Kernel/RemediationTest.hs` | `ed16cbf34d6be27dadab143f416dff1f3ed5115497ba1404a1fbb5f2dd18f271` |
+| `test/integration/Lockstep/RemediationTest.hs` | `4e3918ac06e2ba055e048b93fa852828522ace07ad52496ae68ae50694cdd477` |
+| `test/integration/Lockstep/ReconciliationTest.hs` (R-P2.9-2 applied) | `58701dc0225ae812a14d6d86588ca465071cd55f5b2511bc4dd93b70007d0a99` |
+| `test/unit/Main.hs` (runner, +2 lines) | `ecf54fc2b239bce46959bdd3139576273a8d4ba277cca9d793a544bcc61afcd4` |
+| `test/integration/Main.hs` (runner, +2 lines) | `491953f2b3c9918d16d31170a7a57381ceaca62465ab19a899a3422ff8884d40` |
+
+Pre-freeze verification, against type-only stubs. The stubs: `Kernel.KeyLifetime` (margin 0,
+always holds), `Kernel.Activation` (always `carry-not-needed`), refusing Ledger additions, no
+migration 0012.
+- Build, format and lint are clean, after four hlint hints.
+- **Unit** (`r1-evidence/prefreeze-unit-baseline.log`): 14 of 656 fail, all new. The 640 earlier
+  tests pass. Two new cases pass, because they assert behaviour that exists already: "other
+  classes are unaffected" and "a destination's not-applied answer stays NOT_APPLIED".
+- **Integration** (`r1-evidence/prefreeze-integration-baseline.log`): 12 new failures, and the
+  earlier tests pass apart from the three R-P2.9-2 cases, which now fail as intended. Each
+  failure is at a missing piece: the column, the carry, the abandon halt, the lease renewal,
+  the rollback probe, the attested status.
+
+  Four new cases pass against the stubs:
+  - The setup, which runs the fixture, the restart helper, the destination tables and a real
+    child worker.
+  - "Inside the guarantee", which is existing behaviour.
+  - **The overlap regression.** The claim fencing it proves already exists (C-P2.5/C-P2.6). It is
+    the owner's required evidence that the second worker is refused while the first claim is
+    genuinely active.
+  - **The concurrent-read case.** It is a stress regression that did not hit the
+    READ COMMITTED race in this run. It cannot prove the fix on its own; the fix (M3) is
+    verified by reading. This is recorded as a limitation.
+- Static rules: the new Kernel modules' identifiers, strings and comments were checked against
+  the purity scan; no forbidden facility or provider name appears.
 
 ## 5. Frozen tests that must change
 

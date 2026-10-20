@@ -240,3 +240,16 @@ always answers absent. No migration 0010.
   step passed: no partial function, all paths case-exact.
 - The stubs cannot produce reconciliation behaviour, so every expected state, generation,
   record, text and code was checked against R1–R10 and §3–§4 by reading before the freeze.
+
+### 10.1 Amendment R-P2.9-2 (approved by the human owner, 2026-10-19)
+
+The owner approved R-P2.9-2, Option A (`docs/gates/P2.9/r-p2.9-2-amendment-request.md`). Three
+cases of `ReconciliationTest` were changed exactly as proposed, for activation fencing with an
+explicit Human carry, and for abandonment halting its subject (C-P2.9-R1 M2 and M4).
+
+The scenarios, the application counts and the fencing-generation assertions are unchanged.
+
+Re-frozen digest: `test/integration/Lockstep/ReconciliationTest.hs` →
+`58701dc0225ae812a14d6d86588ca465071cd55f5b2511bc4dd93b70007d0a99` (was `51e5edef…`). The C-P2.7
+behaviour these cases encoded is superseded by C-P2.9-R1: earlier-activation intents no longer
+run after a restart without a carry, and abandonment now halts and is recorded.
