@@ -58,7 +58,7 @@ import Lockstep.Application.Ledger
   , WorkOrderView (..)
   , abandonIntent
   , admitWorkUnit
-  , carryIntent
+  , carryIntentChecked
   , createTicket
   , createWorkOrder
   , decideTicket
@@ -689,9 +689,9 @@ ledgerCommand command runtime =
       o <- uuidArgument operation
       abandoned <- abandonIntent runtime (OperationId o) (T.pack reason)
       ledgerOutcome (fmap (\i -> ["intent " <> uuidString o <> " state " <> T.unpack (intentStateName (intentState i))]) abandoned)
-    EffectsCarry operation -> do
+    EffectsCarry operation from to acknowledged -> do
       o <- uuidArgument operation
-      carried <- carryIntent runtime (OperationId o)
+      carried <- carryIntentChecked runtime K.Human (OperationId o) (Just (fromInteger from, fromInteger to)) acknowledged
       case carried of
         Left failure -> ledgerOutcome (Left failure)
         Right _ -> do

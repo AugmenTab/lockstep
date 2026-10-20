@@ -181,12 +181,18 @@ once, on your request. There is no supervisor daemon.
 
 After a halt and a requeue, the order's earlier effects do not run again by themselves (they
 show `BLOCKED` or are refused `activation-superseded`). To let one run again under its original
-operation id, carry it into the new activation yourself: `lockstep effects carry OP`. A carry is
-refused for an unknown outcome (resolve it first; a retry needs `--acknowledge-duplication-risk`),
-for an effect still in flight, and for an idempotent effect whose key may have expired.
-Abandoning an effect (`effects abandon`) also halts its work order and is recorded. An
-idempotent effect interrupted after its key may have expired is never re-sent: it becomes
-`UNKNOWN`.
+operation id, carry it into the new activation yourself:
+`lockstep effects carry OP --from-activation S --to-activation T`. S and T are the activations
+you expect it to move between. If either has changed, the carry is refused `stale-carry`. A carry
+is refused for an unknown outcome (resolve it first; a retry needs
+`--acknowledge-duplication-risk`), for an effect still in flight, for an idempotent effect whose
+key may have expired, and while the new activation has its own live effect with the same key
+(`carry-conflict`; abandon one of them first). An effect you attested as not applied is carried
+only with `--acknowledge-duplication-risk`, and the acknowledgment is recorded.
+Abandoning an effect (`effects abandon`) also halts its work order, and both are recorded as
+yours. An idempotent effect that was sent before is never sent again once its key may have
+expired, whether by recovery or by a retry: it becomes `UNKNOWN` and its order halts. A
+queryable effect interrupted in flight waits for `supervisor reconcile-once`.
 
 ## 7. Troubleshooting
 

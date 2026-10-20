@@ -56,6 +56,7 @@ module Lockstep.Application.Ledger
   , readLedger
   , carryIntent
   , carryIntentAs
+  , carryIntentChecked
   , intentActivation
   , probeIntegrityRollback
   ) where
@@ -76,7 +77,7 @@ import Lockstep.Application.Database (DatabaseRuntime, checkReadiness, readiness
 import Lockstep.Application.Database qualified as Database
 import Lockstep.Application.Identity (newUuid)
 import Lockstep.Application.Profiles (ProfileFailure (..), loadStoredDefinition, sha256Hasher)
-import Lockstep.Kernel.Activation (CarryInput (..), carryDecision, carryRefusalCode)
+import Lockstep.Kernel.Activation (CarryInput (..), CarryRequest (..), carryChecked, carryRefusalCode)
 import Lockstep.Kernel.Effect
   ( ClassTerms (..)
   , EffectRefusal (..)
@@ -1204,6 +1205,12 @@ loadIntent :: DatabaseRuntime -> OperationId -> IO (Either LedgerFailure Intent)
 loadIntent runtime operation =
   transaction runtime $ \_ -> fmap (fmap snd) (lockedIntent operation)
 
+{- | 'claimIntent', 'dispatchIntent', 'observeIntent' and 'settleIntent' are
+the C-P2.5 single steps. They do not check the order's state, the activation
+or the key guarantee, so they are a test-level API with no product caller
+(C-P2.9-R1 §4.2 N7). The executor uses 'claimForExecution',
+'beginDispatchLeased' and 'concludeIntent'.
+-}
 claimIntent :: DatabaseRuntime -> T.Text -> Int -> OperationId -> IO (Either LedgerFailure Intent)
 claimIntent runtime owner seconds operation
   | seconds < 1 || seconds > 3600 = pure (refused (T.pack "invalid-record") "a lease lasts 1 to 3600 seconds")
@@ -1269,7 +1276,7 @@ abandonIntent runtime operation reason
               Right next -> do
                 Store.updateIntent (lifecycleColumns next row)
                 Store.insertResolution (oid operation) (int32 (intentGeneration intent)) (T.pack "human-abandon") (T.pack "abandoned reason=" <> quotedText reason) False
-                haltForIntent l (T.pack "abandoned") operation
+                haltForIntentBy Human l (T.pack "abandoned") operation
                 pure (Right next)
 
 quotedText :: T.Text -> T.Text
@@ -1343,7 +1350,9 @@ runsHere l row =
 order that is not active is refused, and so is one for an intent of an earlier
 activation (C-P2.9-R1 M2), with nothing written. The step's time is the
 database clock (C-P2.9-R1 M6); a dispatch with a lease length renews the lease
-from it.
+from it. A dispatch of an idempotent intent that was dispatched before needs
+its key guarantee (C-P2.9-R1 §4.2 N1): without it the intent's outcome becomes
+unknown, the order halts, and the dispatch is refused, so nothing is sent.
 -}
 stepForActive :: OperationId -> Maybe Int -> (UTCTime -> Command IntentInput) -> O.Orville (Either LedgerFailure Intent)
 stepForActive operation renew command = do
@@ -1357,6 +1366,10 @@ stepForActive operation renew command = do
         Right next
           | not (orderActive l) -> pure (refused (T.pack "subject-not-active") "the work order is not active; nothing may be dispatched for it")
           | not (runsHere l row) -> pure (refused (T.pack "activation-superseded") "the intent belongs to an earlier activation of its work order; a Human must carry it first")
+          | isDispatch next && intentDispatches intent >= 1 && not (idempotencyHolds (Store.intentRowFirstDispatched row) now intent) -> do
+              Store.updateIntent (lifecycleColumns intent {intentState = IntentUnknown keyExpiredReason} row)
+              haltForIntent l (T.pack "outcome-unknown") operation
+              pure (refused (T.pack "idempotency-key-expired") "the idempotency key's guarantee has ended; the earlier dispatch may still apply, so nothing was sent")
           | otherwise -> do
               let
                 renewed =
@@ -1365,6 +1378,15 @@ stepForActive operation renew command = do
                     _ -> next
               Store.updateIntent (lifecycleColumns renewed row)
               pure (Right renewed)
+ where
+  isDispatch next =
+    case intentState next of
+      IntentDispatched _ -> True
+      _ -> False
+
+keyExpiredReason :: T.Text
+keyExpiredReason =
+  T.pack "dispatch-interrupted: idempotency key may have expired"
 
 claimForExecution :: DatabaseRuntime -> T.Text -> Int -> OperationId -> IO (Either LedgerFailure Intent)
 claimForExecution runtime owner seconds operation
@@ -1388,13 +1410,18 @@ beginDispatchLeased runtime operation generation seconds =
 
 -- | X6: a halt of the order by the Supervisor, when its lifecycle accepts one.
 haltForIntent :: LoadedOrder -> T.Text -> OperationId -> O.Orville ()
-haltForIntent l code operation = do
+haltForIntent =
+  haltForIntentBy Supervisor
+
+-- | The halt as the given principal's event (a Human's abandonment, C-P2.9-R1 §4.2 N8).
+haltForIntentBy :: Principal -> LoadedOrder -> T.Text -> OperationId -> O.Orville ()
+haltForIntentBy principal l code operation = do
   let
     order = loadedOrder l
     input = WoHalt (code <> T.pack " operation=" <> oid operation)
     revision = fromIntegral (Store.subjectRowRevision (loadedSubject l))
-  case (stepWorkOrder order (Command Supervisor input), encodeWorkOrderEvent (WorkOrderStep input)) of
-    (Right next, Right text) -> appendStep (workOrderId order) (revision + 1) Supervisor text next
+  case (stepWorkOrder order (Command principal input), encodeWorkOrderEvent (WorkOrderStep input)) of
+    (Right next, Right text) -> appendStep (workOrderId order) (revision + 1) principal text next
     _ -> pure ()
 
 {- | X6: stores the observation (a refused one as evidence, checked for a
@@ -1431,7 +1458,8 @@ concludeIntent runtime operation generation observation =
                   pure (Right observed)
                 _ -> pure (Right observed)
             case final of
-              Left r -> pure (Left (effectRefused r))
+              -- C-P2.9-R1 §4.2 N5: the observation is written, so a refused settle rolls back.
+              Left r -> pure (integrity ("an observed intent could not be settled: " <> show r))
               Right next -> do
                 Store.updateIntent (lifecycleColumns next row)
                 pure (Right next)
@@ -1452,11 +1480,15 @@ recoverDispatched runtime owner seconds operation
               -- C-P2.9-R1 M2: an earlier activation's intent is never re-dispatched.
               input = RecoveryInput owner now (addUTCTime (fromIntegral seconds) now) (orderActive l && runsHere l row)
               -- C-P2.9-R1 M1: nor an idempotent one whose key guarantee no longer holds.
+              superseded = orderActive l && not (runsHere l row)
               guarded r =
                 case r of
                   RecoverRedispatch _
                     | not (idempotencyHolds (Store.intentRowFirstDispatched row) now intent) ->
-                        RecoverUnknown intent {intentState = IntentUnknown (T.pack "dispatch-interrupted: idempotency key may have expired")}
+                        RecoverUnknown intent {intentState = IntentUnknown keyExpiredReason}
+                  -- §4.2 N6: the order is active, under a later activation.
+                  RecoverUnknown _
+                    | superseded -> RecoverUnknown intent {intentState = IntentUnknown (T.pack "dispatch-interrupted: activation superseded")}
                   _ -> r
             case guarded <$> recoverIntent intent (Command Supervisor input) of
               Left r -> pure (Left (LedgerRefused (recoveryRefusalCode r) (T.pack (show r))))
@@ -1466,8 +1498,9 @@ recoverDispatched runtime owner seconds operation
                 Store.updateIntent (lifecycleColumns next row)
                 Store.insertRecovery (oid operation) (int32 (intentGeneration intent)) (renderRecovery recovery)
                 case recovery of
-                  RecoverUnknown _ -> haltForIntent l (T.pack "outcome-unknown") operation
-                  RecoverRedispatch _ -> pure ()
+                  -- N6: the current activation is not halted for an earlier one's intent.
+                  RecoverUnknown _ | not superseded -> haltForIntent l (T.pack "outcome-unknown") operation
+                  _ -> pure ()
                 pure (Right next)
 
 operationsFrom :: [T.Text] -> Either LedgerFailure [OperationId]
@@ -1571,7 +1604,8 @@ applyLookup runtime operation generation result =
                       pure (Right next)
                     _ -> pure (Right next)
                 case final of
-                  Left r -> pure (Left (effectRefused r))
+                  -- N5: the lookup is recorded, so a refused settle rolls back.
+                  Left r -> pure (integrity ("a looked-up intent could not be settled: " <> show r))
                   Right written -> do
                     Store.updateIntent (lifecycleColumns written row)
                     pure (Right written)
@@ -1738,6 +1772,16 @@ untouched.
 -}
 carryIntentAs :: DatabaseRuntime -> Principal -> OperationId -> IO (Either LedgerFailure Intent)
 carryIntentAs runtime principal operation =
+  carryIntentChecked runtime principal operation Nothing False
+
+{- | C-P2.9-R1 §4.2 N2-N4: the carry as the Human states it, with the
+activations it expects to carry between (@stale-carry@ otherwise) and whether
+it acknowledges the duplication risk of an attested "not applied". A live
+intent with the same effect key in the target activation is
+@carry-conflict@. The acknowledgment is recorded with the carry.
+-}
+carryIntentChecked :: DatabaseRuntime -> Principal -> OperationId -> Maybe (Int, Int) -> Bool -> IO (Either LedgerFailure Intent)
+carryIntentChecked runtime principal operation expected acknowledged =
   transaction runtime $ \_ -> do
     locked <- lockForExecution operation
     case locked of
@@ -1745,17 +1789,36 @@ carryIntentAs runtime principal operation =
       Right (l, row, intent) -> do
         now <- Store.databaseClock
         owners <- Store.activeOwners
+        siblings <- Store.intentsOfSubject (Store.intentRowSubject row)
+        resolutions <- storedResolutions operation
         let
           source = fromIntegral (Store.intentRowActivation row)
           target = currentActivation l
           input = CarryInput now source target (idempotencyHolds (Store.intentRowFirstDispatched row) now intent)
+          conflict =
+            L.any
+              ( \s ->
+                  Store.intentRowOperation s /= oid operation
+                    && Store.intentRowKey s == Store.intentRowKey row
+                    && Just (fromIntegral (Store.intentRowActivation s)) == target
+                    && Store.intentRowState s /= T.pack "abandoned"
+              )
+              siblings
+          request =
+            CarryRequest
+              { requestInput = input
+              , requestExpected = expected
+              , requestAcknowledged = acknowledged
+              , requestAttested = L.any ((== T.pack "human-attested") . resolutionBasis) resolutions
+              , requestConflict = conflict
+              }
           owned =
             case workOrderState (loadedOrder l) of
               Active c ->
                 case claimEngineer c of
                   EngineerId u -> (Store.workOrderRowRepository (loadedRow l), uuidText u) `L.elem` owners
               _ -> True
-        case carryDecision intent (Command principal input) of
+        case carryChecked intent (Command principal request) of
           Left r -> pure (Left (LedgerRefused (carryRefusalCode r) (T.pack (show r))))
           Right ()
             | not owned -> pure (refused (T.pack "repository-not-owned") "the claiming Engineer no longer owns the order's repository")
@@ -1769,7 +1832,7 @@ carryIntentAs runtime principal operation =
                       (int32 (intentGeneration intent))
                       (T.pack "human-carry")
                       (T.pack ("carried principal=" <> T.unpack (principalName principal) <> " from-generation=" <> show source <> " to-generation=" <> show t))
-                      False
+                      acknowledged
                     pure (Right intent)
 
 intentActivation :: DatabaseRuntime -> OperationId -> IO (Either LedgerFailure Int)

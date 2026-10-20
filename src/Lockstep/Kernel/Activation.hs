@@ -8,6 +8,8 @@ history.
 module Lockstep.Kernel.Activation
   ( CarryInput (..)
   , carryDecision
+  , CarryRequest (..)
+  , carryChecked
   , CarryRefusal (..)
   , carryRefusalCode
   ) where
@@ -37,9 +39,41 @@ data CarryInput
   }
   deriving (Eq, Show)
 
--- | §2.1, in its check order.
+-- | §2.1, in its check order: 'carryChecked' with no expected activations, no acknowledgment and no conflict.
 carryDecision :: Intent -> Command CarryInput -> Either CarryRefusal ()
-carryDecision intent (Command principal input)
+carryDecision intent (Command principal input) =
+  carryChecked
+    intent
+    ( Command
+        principal
+        CarryRequest
+          { requestInput = input
+          , requestExpected = Nothing
+          , requestAcknowledged = False
+          , requestAttested = False
+          , requestConflict = False
+          }
+    )
+
+{- | A carry as the Human states it (§4.2 N2-N4): the activations it expects
+to carry between, whether it acknowledges the duplication risk; and what the
+ledger knows: whether the intent's not-applied outcome was attested by a
+Human, and whether the target activation already has a live intent with the
+same effect key.
+-}
+data CarryRequest
+  = CarryRequest
+  { requestInput :: CarryInput
+  , requestExpected :: Maybe (Int, Int)
+  , requestAcknowledged :: Bool
+  , requestAttested :: Bool
+  , requestConflict :: Bool
+  }
+  deriving (Eq, Show)
+
+-- | §2.1 and §4.2, in check order.
+carryChecked :: Intent -> Command CarryRequest -> Either CarryRefusal ()
+carryChecked intent (Command principal request)
   | principal == Agent = Left CarryAgentAssertion
   | principal /= Human = Left (CarryNotAuthorized principal)
   | otherwise =
@@ -47,8 +81,23 @@ carryDecision intent (Command principal input)
         Nothing -> Left CarrySubjectNotActive
         Just target
           | target == carrySource input -> Left CarryNotNeeded
-          | otherwise -> stateCheck
+          | maybe False (/= (carrySource input, target)) (requestExpected request) -> Left CarryStale
+          | otherwise -> do
+              stateCheck
+              when (attested && not (requestAcknowledged request)) (Left CarryNotAcknowledged)
+              when (requestConflict request) (Left CarryConflict)
  where
+  input = requestInput request
+  dispatchedBefore =
+    effectSpecClass (intentSpec intent) == Idempotent && intentDispatches intent >= 1
+  -- N1: a carryable idempotent intent that was dispatched before needs its key guarantee.
+  keyCheck
+    | dispatchedBefore && not (carryKeyHolds input) = Left CarryKeyExpired
+    | otherwise = Right ()
+  attested =
+    case intentState intent of
+      IntentNotApplied reason -> requestAttested request || T.pack "human-attested: " `T.isPrefixOf` reason
+      _ -> False
   stateCheck =
     case intentState intent of
       IntentSettled _ -> Left CarryAlreadySettled
@@ -57,17 +106,12 @@ carryDecision intent (Command principal input)
       IntentDispatched _ -> Left CarryInFlight
       IntentClaimed lease
         | carryNow input < leaseUntil lease -> Left CarryClaimHeld
-        | otherwise -> Right ()
+        | otherwise -> keyCheck
       IntentApplied _ -> Left CarryNotCarryable
       IntentNotApplied _
         | intentDispatches intent > effectSpecBudget (intentSpec intent) -> Left CarryRetriesExhausted
-        | otherwise -> Right ()
-      IntentPending
-        | effectSpecClass (intentSpec intent) == Idempotent
-            && intentDispatches intent >= 1
-            && not (carryKeyHolds input) ->
-            Left CarryKeyExpired
-        | otherwise -> Right ()
+        | otherwise -> keyCheck
+      IntentPending -> keyCheck
 
 data CarryRefusal
   = CarryAgentAssertion
@@ -81,6 +125,9 @@ data CarryRefusal
   | CarryNotCarryable
   | CarryRetriesExhausted
   | CarryKeyExpired
+  | CarryStale
+  | CarryNotAcknowledged
+  | CarryConflict
   deriving (Eq, Show)
 
 carryRefusalCode :: CarryRefusal -> T.Text
@@ -98,3 +145,6 @@ carryRefusalCode refusal =
       CarryNotCarryable -> "not-carryable"
       CarryRetriesExhausted -> "retries-exhausted"
       CarryKeyExpired -> "idempotency-key-expired"
+      CarryStale -> "stale-carry"
+      CarryNotAcknowledged -> "duplication-risk-not-acknowledged"
+      CarryConflict -> "carry-conflict"
