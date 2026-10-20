@@ -35,7 +35,7 @@ install_dir=${LOCKSTEP_SERVICE_INSTALL_DIR:-.local/install}
 case $install_dir in
   .local/install) install_ok=true ;;
   .local/*/* | .local/.*) install_ok=false ;;
-  .local/*[!a-z0-9-]*-install) install_ok=false ;;
+  .local/*[!abcdefghijklmnopqrstuvwxyz0123456789-]*-install) install_ok=false ;;
   .local/?*-install) install_ok=true ;;
   *) install_ok=false ;;
 esac

@@ -200,7 +200,9 @@ If a restart created a new effect with the same key as an earlier one that is st
 new one is never sent, and its order halts with `effect-key-in-use`. The refusal names the
 holding effect. To go on:
 1. Abandon one of the two. If the one you abandon was ever sent, add
-   `--acknowledge-duplication-risk`; until then it still holds the key.
+   `--acknowledge-duplication-risk` in the same command. You cannot add it later: a sent effect
+   abandoned without it holds its key on that work order for good, and the work has to move to
+   a new work order.
 2. Requeue without declaring that key again.
 3. Carry the other one.
 

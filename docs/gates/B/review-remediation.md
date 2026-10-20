@@ -61,3 +61,19 @@
 | 5 | INFO | Stale doc comments. | **Fixed.** |
 | 6 | INFO | No refusal record for P3; untested: a settled-not-applied sibling, a retry inside the key guarantee. | **Tests added** (F3). The `resolveOutcome` refusals write no refusal record, as before: recorded. |
 | 7 | INFO | The install-directory rule accepts `.local/.` and `.local/config`. | **Fix F4**: only `.local/install` or `.local/<name>-install`, and not a symlink. |
+
+## 4. Confirmation read-only review (of F1–F4, `4b6e021..2a8e414`)
+
+- **No HIGH or MEDIUM.** F1 closes the fourth review's MEDIUM:
+  - every claim, dispatch and carry path goes through `liveSameKey`;
+  - only a Human can abandon or acknowledge;
+  - no deadlock, and no evidence lost.
+- The frozen `CliLedgerTest` is still satisfied.
+- Not a human review.
+
+| # | Sev. | Finding | Disposition |
+|---|---|---|---|
+| 1 | LOW | A sent effect abandoned without the acknowledgment can never be acknowledged later, so its key stays blocked on that order for good. Rows abandoned before F1 behave the same way. | **Recorded as a limitation; fails closed.** The guide now says this plainly. A Human-only "acknowledge abandon" command is offered in the decision packet; it was not added now. No pre-F1 abandoned rows exist outside test databases. |
+| 2 | LOW | `[!a-z0-9-]` depends on the locale. | **Fixed**: the characters are listed out. |
+| 3 | INFO | `-L` checks only the last path part; time-of-check gap. | **Recorded**; acceptable for a local operator script. |
+| 4 | INFO | No test of the `Main.hs` flag wiring. | **Recorded**; B1 does not use it. |
