@@ -36,8 +36,8 @@ Nothing in B1 calls a model, a provider or the network beyond loopback.
 |---|---|---|
 | AC-B1-01@v1 | A fresh clone of the tested commit passes `scripts/check --integration`: format, lint and static checks (including the Henforcer negative fixtures), build with the Kernel purity scan, unit (including the property and trace suites), the no-live-model guard, and integration with backup/restore (real PostgreSQL, real crashes, real worker processes). | yes |
 | AC-B1-02@v1 | The release binary is installed from a clean checkout of the tested commit (`VERSION`: that commit, `dirty false`). | yes |
-| AC-B1-03@v1 | A fresh database migrates to revision 11 and reports `readiness ready 11`. | yes |
-| AC-B1-04@v1 | The installed service answers health 204 and readiness `ready 11` on `127.0.0.1:8200`. | yes |
+| AC-B1-03@v1 | A fresh database migrates to revision 12 (migration 0012, C-P2.9-R1 M8) and reports `readiness ready 12`. | yes |
+| AC-B1-04@v1 | The installed service answers health 204 and readiness `ready 12` on `127.0.0.1:8200`. | yes |
 | AC-B1-05@v1 | Repository exclusivity: alice registers a repository. Each of these is refused with exit 65 and its code: bob through a symlinked alias (`repository-already-owned`), bob through a linked worktree (`linked-worktree`), alice a second repository (`engineer-already-owns-repository`). `repository list` shows one repository, owned by alice. | yes |
 | AC-B1-06@v1 | A Profile is registered and made the repository's default; its digest is recorded. | yes |
 | AC-B1-07@v1 | Ticket-originated, plan-less work: a Ticket is created and accepted, a Work Order created from it with gate evidence, claimed by `schedule run-once`, and a Work Unit admitted with no plan reference (`plan_ref` is NULL). | yes |
@@ -81,6 +81,18 @@ The owner approved R-P2.9-1 as written (`r-p2.9-1-amendment-request.md`;
 
 The owner added that this alone does not make Gate B ready. Real overlap is required separately,
 by remediation C-P2.9-R1.
+
+### 6.2 R-P2.9-3 (approved by the human owner, 2026-10-20)
+
+The owner approved R-P2.9-3 as written (`r-p2.9-3-amendment-request.md`;
+`.local/plans/phase-02_update3.md`: "R-P2.9-3 APPROVED as written"). Applied exactly:
+- AC-B1-03 and AC-B1-04 name revision 12 (migration 0012, C-P2.9-R1 M8) instead of 11.
+- The two matching `scripts/b1` expectations change from `ready 11` to `ready 12`.
+
+Every other criterion is unchanged. The owner accepted the bash-3.2 rewrite of the AC-B1-15
+check as a script compatibility repair. Its four permitted outcomes are unchanged, and so is
+the requirement of exactly one execution and one destination application. The `scripts/b1`
+digest after this amendment is recorded in the Gate B report.
 
 ## 7. Stop
 

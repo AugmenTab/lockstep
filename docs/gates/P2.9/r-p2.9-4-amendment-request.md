@@ -1,7 +1,8 @@
 # R-P2.9-4: frozen-test amendment request (C-P2.9-R1 §4.5, unit)
 
 - Prepared by: the writing agent (Implementer), 2026-10-20.
-- Status: `REQUESTED`. Not applied.
+- Status: **APPROVED as written** by the human owner (`.local/plans/phase-02_update3.md`).
+  Applied and re-frozen as C-P2.9-R1 §4.6.
 - File: `test/unit/Lockstep/Kernel/RemediationThirdReviewTest.hs`, frozen as `2514ed59…`.
 
 ## 1. The defect, which is mine

@@ -1,6 +1,8 @@
 # R-P2.9-3 — frozen-criterion amendment request (C-P2.9 AC-B1-03, AC-B1-04)
 
-- Prepared by: the writing agent (Implementer), 2026-10-20. Status: `REQUESTED`. Not applied.
+- Prepared by: the writing agent (Implementer), 2026-10-20.
+- Status: **APPROVED as written** by the human owner (`.local/plans/phase-02_update3.md`).
+  Applied as C-P2.9 §6.2.
 - Evidence: B1 run 2, `docs/gates/B/evidence/b1-run2/`, at `de3ebc5`. 17 of 20 checks passed.
 
 ## 1. What needs your authorization
