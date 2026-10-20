@@ -66,6 +66,10 @@ Migration 0011 (C-P2.8) adds the sandbox destination: three tables
 for the external world of the model-free sandbox effects. They are not evidence. It changes no
 existing table. Migrate with a backup as usual.
 
+Migration 0012 (C-P2.9-R1) adds two columns to `lockstep_effect_intents`: the first dispatch
+time and the activation that authorized the intent. It also allows two more kinds of resolution
+record: a human abandonment and a human carry. Migrate with a backup as usual.
+
 ## 4. The service
 
 | Task | Command |
@@ -174,6 +178,15 @@ killed `execute-once` is a real crash, and the next `execute-once` recovers by t
 class. An effect shows `PASSED` only when its destination answered that it applied; a human
 attestation shows `ATTESTED`. The `supervisor` commands run Lockstep's own deterministic steps
 once, on your request. There is no supervisor daemon.
+
+After a halt and a requeue, the order's earlier effects do not run again by themselves (they
+show `BLOCKED` or are refused `activation-superseded`). To let one run again under its original
+operation id, carry it into the new activation yourself: `lockstep effects carry OP`. A carry is
+refused for an unknown outcome (resolve it first; a retry needs `--acknowledge-duplication-risk`),
+for an effect still in flight, and for an idempotent effect whose key may have expired.
+Abandoning an effect (`effects abandon`) also halts its work order and is recorded. An
+idempotent effect interrupted after its key may have expired is never re-sent: it becomes
+`UNKNOWN`.
 
 ## 7. Troubleshooting
 

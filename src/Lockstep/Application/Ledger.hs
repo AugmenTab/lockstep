@@ -37,6 +37,7 @@ module Lockstep.Application.Ledger
   , intentObservations
   , claimForExecution
   , beginDispatch
+  , beginDispatchLeased
   , concludeIntent
   , recoverDispatched
   , runnableIntents
@@ -53,10 +54,14 @@ module Lockstep.Application.Ledger
   , OrderFacts (..)
   , LedgerFacts (..)
   , readLedger
+  , carryIntent
+  , carryIntentAs
+  , intentActivation
+  , probeIntegrityRollback
   ) where
 
-import Control.Exception (SomeException, throwIO, try)
-import Control.Monad (foldM, unless)
+import Control.Exception (Exception, SomeException, throwIO, try)
+import Control.Monad (filterM, foldM, unless)
 import Data.Char qualified as Char
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List qualified as L
@@ -71,6 +76,7 @@ import Lockstep.Application.Database (DatabaseRuntime, checkReadiness, readiness
 import Lockstep.Application.Database qualified as Database
 import Lockstep.Application.Identity (newUuid)
 import Lockstep.Application.Profiles (ProfileFailure (..), loadStoredDefinition, sha256Hasher)
+import Lockstep.Kernel.Activation (CarryInput (..), carryDecision, carryRefusalCode)
 import Lockstep.Kernel.Effect
   ( ClassTerms (..)
   , EffectRefusal (..)
@@ -109,6 +115,7 @@ import Lockstep.Kernel.EventCodec
   , principalName
   )
 import Lockstep.Kernel.Identity (EngineerId (..), RepositoryId (..), TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..), parseUuid, uuidText)
+import Lockstep.Kernel.KeyLifetime (idempotencyHolds)
 import Lockstep.Kernel.Profile
   ( Approval (..)
   , ArtifactKind (..)
@@ -231,7 +238,9 @@ type Hook = IO () -> O.Orville ()
 
 {- | One transaction, after a readiness check. A hook's exception rolls the
 transaction back and is rethrown to the caller (E11); any other database
-failure is 'LedgerUnavailable'.
+failure is 'LedgerUnavailable'. An integrity failure rolls back whatever the
+transaction wrote before it was found (C-P2.9-R1 M3): only a pure refusal
+commits, with its refusal evidence.
 -}
 transaction :: DatabaseRuntime -> (Hook -> O.Orville (Either LedgerFailure a)) -> IO (Either LedgerFailure a)
 transaction runtime action = do
@@ -240,14 +249,30 @@ transaction runtime action = do
     Database.NotReady _ -> pure (Left (LedgerUnavailable (readinessCode readiness)))
     Database.Ready _ -> do
       fault <- newIORef Nothing
-      result <- withDatabase runtime (O.withTransaction (action (hook fault)))
+      rolledBack <- newIORef Nothing
+      let
+        guarded = do
+          r <- action (hook fault)
+          case r of
+            Left failure@(LedgerIntegrity _) -> liftIO (writeIORef rolledBack (Just failure) >> throwIO RollBack)
+            _ -> pure r
+      result <- withDatabase runtime (O.withTransaction guarded)
       case result of
         Right value -> pure value
         Left reason -> do
           injected <- readIORef fault
-          case injected of
-            Just e -> throwIO e
-            Nothing -> pure (Left (LedgerUnavailable (readinessCode (Database.NotReady reason))))
+          aborted <- readIORef rolledBack
+          case (injected, aborted) of
+            (Just e, _) -> throwIO e
+            (Nothing, Just failure) -> pure (Left failure)
+            (Nothing, Nothing) -> pure (Left (LedgerUnavailable (readinessCode (Database.NotReady reason))))
+
+-- | Aborts a transaction that found an integrity failure after writing.
+data RollBack
+  = RollBack
+  deriving (Show)
+
+instance Exception RollBack
 
 hook :: IORef (Maybe SomeException) -> Hook
 hook fault action =
@@ -701,6 +726,7 @@ decideWorkOrder runtime faults w expected command@(Command principal input) requ
           revision = fromIntegral (Store.subjectRowRevision (loadedSubject l))
           decided = do
             when (revision /= expected) (refused (T.pack "stale-revision") "the work order has moved on; re-read it")
+            unless (validReason input) (refused (T.pack "invalid-record") "a reason is 1-4096 characters without control characters")
             unless (L.null requests || intentsPermitted command) (refused (T.pack "intents-not-authorized") "only a Supervisor's start or resume may authorize effect intents")
             next <- either (\r -> Left (LedgerRefused (transitionRefusalCode r) (T.pack (show r)))) Right (stepWorkOrder (loadedOrder l) command)
             text <- either (Left . LedgerRefused (T.pack "not-durable")) Right (encodeWorkOrderEvent (WorkOrderStep input))
@@ -721,9 +747,29 @@ decideWorkOrder runtime faults w expected command@(Command principal input) requ
             case event of
               Nothing -> pure (integrity "the event insert returned no row")
               Just eventId -> do
-                traverse_ (Store.insertIntent . newIntentRow eventId) intents
+                traverse_ (Store.insertIntent . (\i -> (newIntentRow eventId i) {Store.intentRowActivation = int32 (activationOf input)})) intents
                 run (faultAfterIntents faults)
                 pure (Right (Receipt (revision + 1) name (fmap intentOperation intents)))
+
+-- | C-P2.9-R1 M2: the claim generation of the start or resume that authorizes intents.
+activationOf :: WorkOrderInput -> Int
+activationOf input =
+  case input of
+    WoStart c -> claimGeneration c
+    WoResume c -> claimGeneration c
+    _ -> 1
+
+-- | C-P2.9-R1 M6 (finding 13): a halt or wait reason is one line of 1-4096 characters.
+validReason :: WorkOrderInput -> Bool
+validReason input =
+  case input of
+    WoHalt r -> validText r
+    WoWait _ r -> validText r
+    _ -> True
+
+validText :: T.Text -> Bool
+validText r =
+  not (T.null r) && T.length r <= 4096 && not (T.any Char.isControl r)
 
 -- Gate evidence ----------------------------------------------------------------
 
@@ -1042,6 +1088,8 @@ newIntentRow eventId intent =
         , Store.intentRowLeaseUntil = Nothing
         , Store.intentRowOutcome = Nothing
         , Store.intentRowSettledApplied = Nothing
+        , Store.intentRowActivation = 1
+        , Store.intentRowFirstDispatched = Nothing
         }
 
 -- | The row's lifecycle columns from the intent.
@@ -1204,10 +1252,35 @@ settleIntent runtime operation generation =
   transaction runtime $ \_ ->
     stepStored operation (const (Command Supervisor (IntentSettle generation)))
 
+{- | DG-04 D-4.6 (C-P2.9-R1 M4): a Human abandons the intent, the decision is
+recorded, and its Work Order halts, in one transaction.
+-}
 abandonIntent :: DatabaseRuntime -> OperationId -> T.Text -> IO (Either LedgerFailure Intent)
-abandonIntent runtime operation reason =
-  transaction runtime $ \_ ->
-    stepStored operation (const (Command Human (IntentAbandon reason)))
+abandonIntent runtime operation reason
+  | not (validText reason) = pure (refused (T.pack "invalid-record") "a reason is 1-4096 characters without control characters")
+  | otherwise =
+      transaction runtime $ \_ -> do
+        locked <- lockForExecution operation
+        case locked of
+          Left failure -> pure (Left failure)
+          Right (l, row, intent) ->
+            case stepIntent intent (Command Human (IntentAbandon reason)) of
+              Left r -> pure (Left (effectRefused r))
+              Right next -> do
+                Store.updateIntent (lifecycleColumns next row)
+                Store.insertResolution (oid operation) (int32 (intentGeneration intent)) (T.pack "human-abandon") (T.pack "abandoned reason=" <> quotedText reason) False
+                haltForIntent l (T.pack "abandoned") operation
+                pure (Right next)
+
+quotedText :: T.Text -> T.Text
+quotedText text =
+  T.pack "\"" <> T.concatMap escape text <> T.pack "\""
+ where
+  escape c =
+    case c of
+      '\\' -> T.pack "\\\\"
+      '"' -> T.pack "\\\""
+      _ -> T.singleton c
 
 data StoredObservation
   = StoredObservation
@@ -1254,23 +1327,44 @@ orderActive l =
     Active _ -> True
     _ -> False
 
-{- | X5 steps (2) and (3): the C-P2.5 step decides, and an accepted one for an
-order that is not active is refused with nothing written.
+-- | C-P2.9-R1 M2: the claim generation of the order's current activation, if it is active.
+currentActivation :: LoadedOrder -> Maybe Int
+currentActivation l =
+  case workOrderState (loadedOrder l) of
+    Active c -> Just (claimGeneration c)
+    _ -> Nothing
+
+-- | The intent may run only for an active order, under the activation that authorized it.
+runsHere :: LoadedOrder -> Store.IntentRow -> Bool
+runsHere l row =
+  currentActivation l == Just (fromIntegral (Store.intentRowActivation row))
+
+{- | X5 steps (2) and (3): the C-P2.5 step decides; an accepted one for an
+order that is not active is refused, and so is one for an intent of an earlier
+activation (C-P2.9-R1 M2), with nothing written. The step's time is the
+database clock (C-P2.9-R1 M6); a dispatch with a lease length renews the lease
+from it.
 -}
-stepForActive :: OperationId -> (UTCTime -> Command IntentInput) -> O.Orville (Either LedgerFailure Intent)
-stepForActive operation command = do
+stepForActive :: OperationId -> Maybe Int -> (UTCTime -> Command IntentInput) -> O.Orville (Either LedgerFailure Intent)
+stepForActive operation renew command = do
   locked <- lockForExecution operation
   case locked of
     Left failure -> pure (Left failure)
     Right (l, row, intent) -> do
-      now <- Store.databaseNow
+      now <- Store.databaseClock
       case stepIntent intent (command now) of
         Left r -> pure (Left (effectRefused r))
         Right next
           | not (orderActive l) -> pure (refused (T.pack "subject-not-active") "the work order is not active; nothing may be dispatched for it")
+          | not (runsHere l row) -> pure (refused (T.pack "activation-superseded") "the intent belongs to an earlier activation of its work order; a Human must carry it first")
           | otherwise -> do
-              Store.updateIntent (lifecycleColumns next row)
-              pure (Right next)
+              let
+                renewed =
+                  case (renew, intentState next) of
+                    (Just seconds, IntentDispatched lease) -> next {intentState = IntentDispatched lease {leaseUntil = addUTCTime (fromIntegral seconds) now}}
+                    _ -> next
+              Store.updateIntent (lifecycleColumns renewed row)
+              pure (Right renewed)
 
 claimForExecution :: DatabaseRuntime -> T.Text -> Int -> OperationId -> IO (Either LedgerFailure Intent)
 claimForExecution runtime owner seconds operation
@@ -1278,13 +1372,19 @@ claimForExecution runtime owner seconds operation
   | T.null owner || T.any Char.isControl owner = pure (refused (T.pack "invalid-record") "a claim needs an owner")
   | otherwise =
       transaction runtime $ \_ ->
-        stepForActive operation (\now -> Command Supervisor (IntentClaim owner now (addUTCTime (fromIntegral seconds) now)))
+        stepForActive operation Nothing (\now -> Command Supervisor (IntentClaim owner now (addUTCTime (fromIntegral seconds) now)))
 
 -- | X5 step (3): the dispatch marker, committed before the adapter runs.
 beginDispatch :: DatabaseRuntime -> OperationId -> Int -> IO (Either LedgerFailure Intent)
 beginDispatch runtime operation generation =
   transaction runtime $ \_ ->
-    stepForActive operation (Command Supervisor . IntentDispatch generation)
+    stepForActive operation Nothing (Command Supervisor . IntentDispatch generation)
+
+-- | C-P2.9-R1 M6: the dispatch marker with the lease renewed for the given seconds.
+beginDispatchLeased :: DatabaseRuntime -> OperationId -> Int -> Int -> IO (Either LedgerFailure Intent)
+beginDispatchLeased runtime operation generation seconds =
+  transaction runtime $ \_ ->
+    stepForActive operation (Just seconds) (Command Supervisor . IntentDispatch generation)
 
 -- | X6: a halt of the order by the Supervisor, when its lifecycle accepts one.
 haltForIntent :: LoadedOrder -> T.Text -> OperationId -> O.Orville ()
@@ -1347,10 +1447,18 @@ recoverDispatched runtime owner seconds operation
         case locked of
           Left failure -> pure (Left failure)
           Right (l, row, intent) -> do
-            now <- Store.databaseNow
+            now <- Store.databaseClock
             let
-              input = RecoveryInput owner now (addUTCTime (fromIntegral seconds) now) (orderActive l)
-            case recoverIntent intent (Command Supervisor input) of
+              -- C-P2.9-R1 M2: an earlier activation's intent is never re-dispatched.
+              input = RecoveryInput owner now (addUTCTime (fromIntegral seconds) now) (orderActive l && runsHere l row)
+              -- C-P2.9-R1 M1: nor an idempotent one whose key guarantee no longer holds.
+              guarded r =
+                case r of
+                  RecoverRedispatch _
+                    | not (idempotencyHolds (Store.intentRowFirstDispatched row) now intent) ->
+                        RecoverUnknown intent {intentState = IntentUnknown (T.pack "dispatch-interrupted: idempotency key may have expired")}
+                  _ -> r
+            case guarded <$> recoverIntent intent (Command Supervisor input) of
               Left r -> pure (Left (LedgerRefused (recoveryRefusalCode r) (T.pack (show r))))
               Right recovery -> do
                 let
@@ -1366,9 +1474,23 @@ operationsFrom :: [T.Text] -> Either LedgerFailure [OperationId]
 operationsFrom =
   traverse (fmap OperationId . uuidOf)
 
+-- | X10, without the intents of an earlier activation (C-P2.9-R1 M2).
 runnableIntents :: DatabaseRuntime -> IO (Either LedgerFailure [OperationId])
 runnableIntents runtime =
-  transaction runtime $ \_ -> operationsFrom <$> Store.runnableIntentIds
+  transaction runtime $ \_ -> do
+    candidates <- Store.runnableIntentIds
+    kept <- filterM current candidates
+    pure (operationsFrom kept)
+ where
+  current operation = do
+    rows <- Store.findIntent operation
+    case rows of
+      Just row -> do
+        subject <- Store.subjectRow (Store.intentRowSubject row)
+        case subject of
+          Nothing -> pure False
+          Just s -> either (const False) (`runsHere` row) <$> loadWorkOrder s
+      Nothing -> pure False
 
 recoverableIntents :: DatabaseRuntime -> IO (Either LedgerFailure [OperationId])
 recoverableIntents runtime =
@@ -1537,11 +1659,14 @@ data LedgerFacts
 
 {- | Reads every Ticket and Work Order (replayed: one that does not reproduce
 is an integrity failure), their intents with their evidence, the refusals and
-the latest schedule decision. Nothing is locked or written.
+the latest schedule decision. Nothing is locked or written, and everything comes
+from one consistent snapshot (C-P2.9-R1 M3), so a decision committing during the
+read cannot look like tampering.
 -}
 readLedger :: DatabaseRuntime -> IO (Either LedgerFailure LedgerFacts)
 readLedger runtime =
   transaction runtime $ \_ -> do
+    Store.readOnlySnapshot
     now <- Store.databaseNow
     ticketSubjects <- Store.subjectsOfKind (T.pack "ticket")
     ticketFacts <- traverse ticketFact ticketSubjects
@@ -1597,3 +1722,69 @@ readLedger runtime =
         recoveries <- storedRecoveries (intentOperation intent)
         resolutions <- storedResolutions (intentOperation intent)
         pure (Right (IntentFacts intent observations recoveries resolutions))
+
+-- Carry-forward (C-P2.9-R1 M2, §2.1) -----------------------------------------------------
+
+-- | A Human carries an earlier activation's intent into the order's current activation.
+carryIntent :: DatabaseRuntime -> OperationId -> IO (Either LedgerFailure Intent)
+carryIntent runtime =
+  carryIntentAs runtime Human
+
+{- | §2.1, in one transaction: the Work Order, then the intent, are locked; the
+Kernel decides; the claiming Engineer must still own the order's repository.
+An accepted carry changes only the intent's activation and records the
+decision; the intent itself (operation id, parameters, budget, history) is
+untouched.
+-}
+carryIntentAs :: DatabaseRuntime -> Principal -> OperationId -> IO (Either LedgerFailure Intent)
+carryIntentAs runtime principal operation =
+  transaction runtime $ \_ -> do
+    locked <- lockForExecution operation
+    case locked of
+      Left failure -> pure (Left failure)
+      Right (l, row, intent) -> do
+        now <- Store.databaseClock
+        owners <- Store.activeOwners
+        let
+          source = fromIntegral (Store.intentRowActivation row)
+          target = currentActivation l
+          input = CarryInput now source target (idempotencyHolds (Store.intentRowFirstDispatched row) now intent)
+          owned =
+            case workOrderState (loadedOrder l) of
+              Active c ->
+                case claimEngineer c of
+                  EngineerId u -> (Store.workOrderRowRepository (loadedRow l), uuidText u) `L.elem` owners
+              _ -> True
+        case carryDecision intent (Command principal input) of
+          Left r -> pure (Left (LedgerRefused (carryRefusalCode r) (T.pack (show r))))
+          Right ()
+            | not owned -> pure (refused (T.pack "repository-not-owned") "the claiming Engineer no longer owns the order's repository")
+            | otherwise ->
+                case target of
+                  Nothing -> pure (refused (T.pack "subject-not-active") "the work order is not active")
+                  Just t -> do
+                    Store.setActivation (oid operation) (int32 t)
+                    Store.insertResolution
+                      (oid operation)
+                      (int32 (intentGeneration intent))
+                      (T.pack "human-carry")
+                      (T.pack ("carried principal=" <> T.unpack (principalName principal) <> " from-generation=" <> show source <> " to-generation=" <> show t))
+                      False
+                    pure (Right intent)
+
+intentActivation :: DatabaseRuntime -> OperationId -> IO (Either LedgerFailure Int)
+intentActivation runtime operation =
+  transaction runtime $ \_ -> do
+    row <- Store.findIntent (oid operation)
+    pure (maybe (refused (T.pack "unknown-intent") "there is no such effect intent") (Right . fromIntegral . Store.intentRowActivation) row)
+
+{- | A test seam for C-P2.9-R1 M3: writes a subject and a refusal row, then
+finds an integrity failure. The transaction must roll both back.
+-}
+probeIntegrityRollback :: DatabaseRuntime -> IO (Either LedgerFailure ())
+probeIntegrityRollback runtime = do
+  subject <- newUuid
+  transaction runtime $ \_ -> do
+    Store.insertSubject (uuidText subject) (T.pack "ticket") (T.pack "proposed")
+    Store.insertRefusal (Store.NewRefusal (uuidText subject) 1 (T.pack "human") (T.pack "probe") (T.pack "probe"))
+    pure (integrity "a probe integrity failure after two writes")

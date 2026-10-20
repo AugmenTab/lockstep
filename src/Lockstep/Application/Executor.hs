@@ -24,7 +24,7 @@ import Text.Show (Show)
 import Lockstep.Application.Database (DatabaseRuntime)
 import Lockstep.Application.Ledger
   ( LedgerFailure (..)
-  , beginDispatch
+  , beginDispatchLeased
   , claimForExecution
   , concludeIntent
   , loadIntent
@@ -33,7 +33,7 @@ import Lockstep.Application.Ledger
   , runnableIntents
   )
 import Lockstep.Effects.Executor (EffectAdapter (..), invokeAdapter)
-import Lockstep.Kernel.Effect (Intent (..), IntentState (..), OperationId, Settlement (..), effectSpecName)
+import Lockstep.Kernel.Effect (EffectClass (..), Intent (..), IntentState (..), OperationId, Settlement (..), effectSpecClass, effectSpecName)
 
 data Executor
   = Executor
@@ -130,7 +130,7 @@ recoverAndExecute runtime executor faults operation = do
 -- | X5 steps (3) to (5) under the claimed generation.
 runClaimed :: DatabaseRuntime -> Executor -> ExecutorFaults -> EffectAdapter -> OperationId -> Int -> IO (Either LedgerFailure RunOutcome)
 runClaimed runtime executor faults adapter operation generation = do
-  dispatched <- beginDispatch runtime operation generation
+  dispatched <- beginDispatchLeased runtime operation generation (executorLeaseSeconds executor)
   case dispatched of
     Left failure -> pure (Left failure)
     Right intent -> do
@@ -157,7 +157,7 @@ executeOnce :: DatabaseRuntime -> Executor -> ExecutorFaults -> IO (Either Ledge
 executeOnce runtime executor faults
   | not (validExecutor executor) = pure (refusal "invalid-record" "an executor needs an owner, a lease of 1-3600 s, a timeout below the lease, and one adapter per spec")
   | otherwise = do
-      recoverable <- recoverableIntents runtime >>= firstHandled
+      recoverable <- recoverableIntents runtime >>= traverse (findM recoverableHere)
       case recoverable of
         Left failure -> pure (Left failure)
         Right (Just operation) -> fmap (fmap (Just . (,) operation)) (recoverAndExecute runtime executor faults operation)
@@ -172,6 +172,9 @@ executeOnce runtime executor faults
   handled operation =
     either (const False) (\intent -> effectSpecName (intentSpec intent) `L.elem` names) <$> loadIntent runtime operation
   firstHandled = traverse (findM handled)
+  -- C-P2.9-R1 M6: a queryable effect is left to reconciliation, which may prove its outcome.
+  recoverableHere operation =
+    either (const False) (\intent -> effectSpecName (intentSpec intent) `L.elem` names && effectSpecClass (intentSpec intent) /= Queryable) <$> loadIntent runtime operation
 
 findM :: (a -> IO Bool) -> [a] -> IO (Maybe a)
 findM predicate xs =

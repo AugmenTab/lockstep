@@ -33,6 +33,11 @@ module Lockstep.Persistence.Ledger
   , insertIntent
   , lockIntent
   , intentsOfSubject
+  , findIntent
+  , setActivation
+  , subjectRow
+  , readOnlySnapshot
+  , databaseClock
   , updateIntent
   , insertObservation
   , ObservationRow (..)
@@ -408,12 +413,14 @@ data IntentRow
   , intentRowLeaseUntil :: Maybe UTCTime
   , intentRowOutcome :: Maybe T.Text
   , intentRowSettledApplied :: Maybe Bool
+  , intentRowActivation :: Int32
+  , intentRowFirstDispatched :: Maybe UTCTime
   }
 
 insertIntent :: O.MonadOrville m => IntentRow -> m ()
 insertIntent row =
   O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_effect_intents (operation_id, subject_id, basis_revision, effect_key, event_id, spec_name, effect_class, retry_budget, key_lifetime_seconds, refuses_changed_parameters, lookup_authoritative, lookup_excludes_late_application, parameters, parameters_digest, state, generation, dispatches) VALUES ("
+    sql "INSERT INTO lockstep_effect_intents (operation_id, subject_id, basis_revision, effect_key, event_id, spec_name, effect_class, retry_budget, key_lifetime_seconds, refuses_changed_parameters, lookup_authoritative, lookup_excludes_late_application, parameters, parameters_digest, state, generation, dispatches, activation_generation) VALUES ("
       <> commaSeparated
         [ uuid (intentRowOperation row)
         , uuid (intentRowSubject row)
@@ -432,6 +439,7 @@ insertIntent row =
         , text (intentRowState row)
         , int (intentRowGeneration row)
         , int (intentRowDispatches row)
+        , int (intentRowActivation row)
         ]
       <> sql ")"
 
@@ -439,6 +447,11 @@ insertIntent row =
 lockIntent :: O.MonadOrville m => T.Text -> m (Maybe IntentRow)
 lockIntent operation =
   headMay <$> intentRows (sql "WHERE i.operation_id = " <> uuid operation <> sql " FOR UPDATE OF i")
+
+-- | The intent row, without locking it (C-P2.9-R1 selection).
+findIntent :: O.MonadOrville m => T.Text -> m (Maybe IntentRow)
+findIntent operation =
+  headMay <$> intentRows (sql "WHERE i.operation_id = " <> uuid operation)
 
 -- | A subject's intent rows, oldest first, without locking them (C-P2.8 V2).
 intentsOfSubject :: O.MonadOrville m => T.Text -> m [IntentRow]
@@ -449,7 +462,7 @@ intentRows :: O.MonadOrville m => RawSql.RawSql -> m [IntentRow]
 intentRows condition =
   O.executeAndDecode
     O.SelectQuery
-    ( sql "SELECT i.operation_id::text AS operation_id, i.subject_id::text AS subject_id, s.kind AS subject_kind, i.basis_revision, i.effect_key, i.event_id, i.spec_name, i.effect_class, i.retry_budget, i.key_lifetime_seconds, i.refuses_changed_parameters, i.lookup_authoritative, i.lookup_excludes_late_application, i.parameters, i.parameters_digest, i.state, i.generation, i.dispatches, i.lease_owner, i.lease_until, i.outcome_text, i.settled_applied FROM lockstep_effect_intents i JOIN lockstep_subjects s ON s.id = i.subject_id "
+    ( sql "SELECT i.operation_id::text AS operation_id, i.subject_id::text AS subject_id, s.kind AS subject_kind, i.basis_revision, i.effect_key, i.event_id, i.spec_name, i.effect_class, i.retry_budget, i.key_lifetime_seconds, i.refuses_changed_parameters, i.lookup_authoritative, i.lookup_excludes_late_application, i.parameters, i.parameters_digest, i.state, i.generation, i.dispatches, i.lease_owner, i.lease_until, i.outcome_text, i.settled_applied, i.activation_generation, i.first_dispatched_at FROM lockstep_effect_intents i JOIN lockstep_subjects s ON s.id = i.subject_id "
         <> condition
     )
     ( marshal $
@@ -476,13 +489,43 @@ intentRows condition =
           <*> O.marshallField intentRowLeaseUntil (O.nullableField (O.utcTimestampField "lease_until"))
           <*> O.marshallField intentRowOutcome (O.nullableField (O.unboundedTextField "outcome_text"))
           <*> O.marshallField intentRowSettledApplied (O.nullableField (O.booleanField "settled_applied"))
+          <*> O.marshallField intentRowActivation (O.integerField "activation_generation")
+          <*> O.marshallField intentRowFirstDispatched (O.nullableField (O.utcTimestampField "first_dispatched_at"))
     )
 
--- | Writes the lifecycle columns only; a trigger refuses any change to the identity, spec or parameters.
+-- | C-P2.9-R1 M2: rebinds an intent to the activation a Human carried it into.
+setActivation :: O.MonadOrville m => T.Text -> Int32 -> m ()
+setActivation operation generation =
+  O.executeVoid O.UpdateQuery $
+    sql "UPDATE lockstep_effect_intents SET activation_generation = " <> int generation <> sql ", updated_at = now() WHERE operation_id = " <> uuid operation
+
+-- | An unlocked subject row (C-P2.9-R1 selection).
+subjectRow :: O.MonadOrville m => T.Text -> m (Maybe SubjectRow)
+subjectRow subjectId =
+  headMay <$> O.executeAndDecode O.SelectQuery (sql subjectColumns <> sql "WHERE id = " <> uuid subjectId) subjectMarshaller
+
+-- | C-P2.9-R1 M3: this transaction reads one consistent snapshot and writes nothing. It must be its first statement.
+readOnlySnapshot :: O.MonadOrville m => m ()
+readOnlySnapshot =
+  O.executeVoid O.OtherQuery (sql "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+
+-- | The statement's own time (PostgreSQL @clock_timestamp()@), for checks that must not use the transaction's start (C-P2.9-R1 M6).
+databaseClock :: O.MonadOrville m => m UTCTime
+databaseClock = do
+  rows <- O.executeAndDecode O.SelectQuery (sql "SELECT clock_timestamp() AS v") (marshal (O.marshallField id (O.utcTimestampField "v")))
+  maybe (liftIO (throwIO (userError "lockstep: SELECT clock_timestamp() returned no row"))) pure (headMay rows)
+
+{- | Writes the lifecycle columns only; a trigger refuses any change to the
+identity, spec or parameters. The first time an intent is written as
+dispatched, its first dispatch time is stamped from the database clock and
+never changed again (C-P2.9-R1 M1).
+-}
 updateIntent :: O.MonadOrville m => IntentRow -> m ()
 updateIntent row =
   O.executeVoid O.UpdateQuery $
-    sql "UPDATE lockstep_effect_intents SET state = "
+    sql "UPDATE lockstep_effect_intents SET first_dispatched_at = CASE WHEN "
+      <> text (intentRowState row)
+      <> sql " = 'dispatched' THEN coalesce(first_dispatched_at, clock_timestamp()) ELSE first_dispatched_at END, state = "
       <> text (intentRowState row)
       <> sql ", generation = "
       <> int (intentRowGeneration row)

@@ -58,11 +58,13 @@ import Lockstep.Application.Ledger
   , WorkOrderView (..)
   , abandonIntent
   , admitWorkUnit
+  , carryIntent
   , createTicket
   , createWorkOrder
   , decideTicket
   , decideWorkOrder
   , gateEvidenceNamed
+  , intentActivation
   , noFaults
   , recordGateEvidence
   , resolveOutcome
@@ -687,6 +689,14 @@ ledgerCommand command runtime =
       o <- uuidArgument operation
       abandoned <- abandonIntent runtime (OperationId o) (T.pack reason)
       ledgerOutcome (fmap (\i -> ["intent " <> uuidString o <> " state " <> T.unpack (intentStateName (intentState i))]) abandoned)
+    EffectsCarry operation -> do
+      o <- uuidArgument operation
+      carried <- carryIntent runtime (OperationId o)
+      case carried of
+        Left failure -> ledgerOutcome (Left failure)
+        Right _ -> do
+          activation <- intentActivation runtime (OperationId o)
+          ledgerOutcome (fmap (\g -> ["intent " <> uuidString o <> " carried to activation " <> show g]) activation)
     SandboxShow -> do
       applications <- sandboxApplications runtime
       ledgerOutcome (fmap (fmap (\(OperationId o, effect, n) -> "application " <> uuidString o <> " effect " <> T.unpack effect <> " count " <> show n)) applications)

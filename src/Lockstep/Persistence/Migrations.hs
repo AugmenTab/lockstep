@@ -398,4 +398,14 @@ CREATE TABLE lockstep_sandbox_queryable (
 );
 |]
       )
+    ,
+      ( [Interpolate.i|effect activations, first dispatch times, human abandon and carry records|]
+      , [Interpolate.i|
+ALTER TABLE lockstep_effect_intents ADD COLUMN first_dispatched_at timestamptz;
+ALTER TABLE lockstep_effect_intents ADD COLUMN activation_generation integer NOT NULL DEFAULT 1 CHECK (activation_generation >= 1);
+ALTER TABLE lockstep_effect_resolutions DROP CONSTRAINT lockstep_effect_resolutions_basis_check;
+ALTER TABLE lockstep_effect_resolutions ADD CONSTRAINT lockstep_effect_resolutions_basis_check
+  CHECK (basis IN ('lookup', 'human-attested', 'human-retry', 'late-observation', 'human-abandon', 'human-carry'));
+|]
+      )
     ]
