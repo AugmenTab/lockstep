@@ -49,6 +49,7 @@ import Lockstep.Application.Ledger
   , StoredResolution (..)
   , WorkOrderView (..)
   , abandonIntent
+  , carryIntent
   , claimIntent
   , createTicket
   , createWorkOrder
@@ -158,7 +159,7 @@ tests =
           ok "resolutions" (intentResolutions (lgRuntime lg) (opC ops)) >>= (@?= [StoredResolution 1 "lookup" "found result=\"kept\"" False])
           ok "observations" (intentObservations (lgRuntime lg) (opC ops)) >>= (@?= [StoredObservation 1 "no-answer reason=\"timeout\"" True Nothing])
           haltedFor lg wo ("outcome-unknown operation=" <> opText (opC ops))
-    , testCase "authoritative not found: confirmed not applied, then retried with the same operation id" $
+    , testCase "authoritative not found: confirmed not applied; after a restart it runs again only once a Human carries it, same operation id" $
         withLedger $ \lg -> do
           (wo, ops) <- activeOrder lg
           dest <- newScriptedDestination
@@ -171,6 +172,9 @@ tests =
           intentState i @?= IntentNotApplied "lookup: not found"
           intentGeneration i @?= 2
           restartOrder lg wo
+          refused "activation-superseded" (executeIntent (lgRuntime lg) (exec "w2" adapters) noExecutorFaults (opC ops))
+          carried <- ok "carry" (carryIntent (lgRuntime lg) (opC ops))
+          intentGeneration carried @?= 2
           retried <- ok "execute" (executeIntent (lgRuntime lg) (exec "w2" adapters) noExecutorFaults (opC ops))
           retried @?= RanApplied "ok"
           after <- intentOf lg (opC ops)
@@ -268,7 +272,7 @@ tests =
           _ <- ok "execute" (executeIntent (lgRuntime lg) (exec "w1" adapters) {executorTimeoutMs = 200} noExecutorFaults (opD ops2))
           d <- ok "resolve" (resolveOutcome (lgRuntime lg) (opD ops2) 1 (AttestNotApplied "nothing at the destination"))
           intentState d @?= IntentSettled (SettledNotApplied "human-attested: nothing at the destination")
-    , testCase "human: a retry needs the duplication risk acknowledged; then the same operation id runs again" $
+    , testCase "human: a retry needs the duplication risk acknowledged; after a restart and a Human carry, the same operation id runs again" $
         withLedger $ \lg -> do
           (wo, ops) <- activeOrder lg
           dest <- newScriptedDestination
@@ -280,6 +284,9 @@ tests =
           ok "resolutions" (intentResolutions (lgRuntime lg) (opD ops)) >>= (@?= [StoredResolution 1 "human-retry" "retry duplication-acknowledged" True])
           refused "not-unknown" (resolveOutcome (lgRuntime lg) (opD ops) 1 (RetryAcknowledgingDuplication True))
           restartOrder lg wo
+          refused "activation-superseded" (executeIntent (lgRuntime lg) (exec "w2" adapters) noExecutorFaults (opD ops))
+          carried <- ok "carry" (carryIntent (lgRuntime lg) (opD ops))
+          intentGeneration carried @?= 1
           result <- ok "execute" (executeIntent (lgRuntime lg) (exec "w2" adapters) noExecutorFaults (opD ops))
           result @?= RanApplied "ok"
           after <- intentOf lg (opD ops)
@@ -304,7 +311,7 @@ tests =
             >>= (@?= [StoredResolution 1 "lookup" "not-found" False, StoredResolution 1 "late-observation" "late-application applied result=\"ok\"" False])
           refused "outcome-unknown" (executeIntent (lgRuntime lg) (exec "w2" adapters) noExecutorFaults (opC ops))
           scriptedCount dest (opC ops) >>= (@?= 1)
-    , testCase "abandoned, then applied: a late-application conflict halts the order" $
+    , testCase "abandoned, then applied: the abandonment halts the order and is recorded; the late application is still recorded" $
         withLedger $ \lg -> do
           (wo, ops) <- activeOrder lg
           dest <- newScriptedDestination
@@ -312,9 +319,9 @@ tests =
           let
             abandon = () <$ ok "abandon" (abandonIntent (lgRuntime lg) (opA ops) "operator stop")
           refused "already-settled" (executeIntent (lgRuntime lg) (exec "w1" adapters) noExecutorFaults {faultAfterEffect = abandon} (opA ops))
-          haltedFor lg wo ("late-application operation=" <> opText (opA ops))
+          haltedFor lg wo ("abandoned operation=" <> opText (opA ops))
           ok "resolutions" (intentResolutions (lgRuntime lg) (opA ops))
-            >>= (@?= [StoredResolution 1 "late-observation" "late-application applied result=\"ok\"" False])
+            >>= (@?= [StoredResolution 1 "human-abandon" "abandoned reason=\"operator stop\"" False, StoredResolution 1 "late-observation" "late-application applied result=\"ok\"" False])
     , testCase "resolution records are immutable" $
         withLedger $ \lg -> do
           (_, ops) <- activeOrder lg

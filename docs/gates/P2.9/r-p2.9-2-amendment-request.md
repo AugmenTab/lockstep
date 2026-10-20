@@ -1,6 +1,6 @@
 # R-P2.9-2 — protected-test amendment request (C-P2.7 `ReconciliationTest`)
 
-- Prepared by: the writing agent (Implementer), 2026-10-19. Status: `REQUESTED`. Not applied.
+- Prepared by: the writing agent (Implementer), 2026-10-19. Status: `APPROVED` by the human owner ("R-P2.9-2 APPROVED — Option A (`carryIntent`)"), with six carry requirements (C-P2.9-R1 §2.1). Applied exactly; re-frozen digest `58701dc0…` (C-P2.9-R1 §4.1, C-P2.7 §10.1).
 - File: `test/integration/Lockstep/ReconciliationTest.hs`, frozen at `1730ebd`, SHA-256
   `51e5edef534d007f26c1fd68af12d7703aacba6845b1ac72cf53587b2486aac1`.
 - Cause: remediation items 2 (activation fencing) and 4 (abandonment halts its subject), which
