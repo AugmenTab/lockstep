@@ -33,6 +33,7 @@ import Lockstep.Kernel.ReconciliationTest qualified as ReconciliationTest
 import Lockstep.Kernel.RecoveryTest qualified as RecoveryTest
 import Lockstep.Kernel.RemediationReviewTest qualified as RemediationReviewTest
 import Lockstep.Kernel.RemediationTest qualified as RemediationTest
+import Lockstep.Kernel.RemediationThirdReviewTest qualified as RemediationThirdReviewTest
 import Lockstep.Kernel.RemoteTest qualified as RemoteTest
 import Lockstep.Kernel.RepositoryTest qualified as RepositoryTest
 import Lockstep.Kernel.SchedulerPropertyTest qualified as SchedulerPropertyTest
@@ -107,4 +108,5 @@ main =
       , CliLedgerTest.tests
       , RemediationTest.tests
       , RemediationReviewTest.tests
+      , RemediationThirdReviewTest.tests
       ]

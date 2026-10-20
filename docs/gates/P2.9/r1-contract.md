@@ -219,6 +219,39 @@ is "does not build". The files of §4.1 are byte-identical to their frozen diges
 | `test/unit/Lockstep/Kernel/RemediationReviewTest.hs` | `c041482e10e49fb336ffd3c116522e878fafd182cad0f159a37a1c6a60563230` (unchanged) |
 | `test/integration/Lockstep/RemediationReviewTest.hs` | `655bd8865c9a38eac5962f058edfce07ed0e2506b0e3f7b596b19681bd340354` |
 
+Clean-clone Linux check at `8fce278`: all five steps passed (672/672, 170/170).
+Log: `r1-evidence/addendum-linux-clone.log`.
+
+## 4.5 Second addendum, after the third review (P1–P4; `docs/gates/B/review-remediation.md` §2)
+
+- **P1, from MEDIUM 1 and LOW 1.** A start or resume may still create a new intent with the
+  effect key of an earlier activation's intent. That is admitted, and the frozen N2 test relies
+  on it. But it is never claimed or dispatched while another intent of the order with the same
+  key is live, meaning not abandoned and not settled-not-applied. The step is refused with
+  `effect-key-in-use` and the order halts with `effect-key-in-use operation=<op>`. Nothing is
+  sent; the Human abandons one of the two. A carry is `carry-conflict` against such an intent
+  in **any** activation, not only the target one.
+- **P2, from MEDIUM 2.** After a human attestation, every carryable state needs the
+  acknowledgment, not only `not-applied`.
+- **P3, from LOW 2.** A human retry of an idempotent intent that was dispatched before is
+  refused with `idempotency-key-expired` once its key guarantee has ended. It is never
+  accepted only to be turned back into unknown.
+- **P4, INFO.** `LOCKSTEP_SERVICE_INSTALL_DIR` must lie under `.local/`. The unchecked carry
+  forms are documented as library forms; the CLI uses the checked form.
+
+Tests: `test/unit/Lockstep/Kernel/RemediationThirdReviewTest.hs` and
+`test/integration/Lockstep/RemediationThirdReviewTest.hs`. This time they were built and run
+against the code **before** P1–P3, and then frozen:
+- Integration baseline: 5 of 6 fail at the expected assertion; the control passes.
+  Log: `r1-evidence/third-review-prefreeze-integration-baseline.log`.
+- Unit baseline: 2 of 3 fail; the "claim held first" order case passes.
+  Log: `r1-evidence/third-review-prefreeze-unit-baseline.log`.
+
+| File | Frozen SHA-256 |
+|---|---|
+| `test/unit/Lockstep/Kernel/RemediationThirdReviewTest.hs` | `2514ed5950147cf3551377acdaedecaa20274e2747eb56bb751c616f7b6eb5fe` |
+| `test/integration/Lockstep/RemediationThirdReviewTest.hs` | `e8bda1a1cc54ae8a1712fd6292f412d7443ff4a89aad8fb55ee125c3bc41026c` |
+
 ## 5. Frozen tests that must change
 
 Three C-P2.7 cases encode the behaviour M2 and M4 remove. The exact diff is

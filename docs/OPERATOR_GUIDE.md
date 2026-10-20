@@ -191,7 +191,10 @@ key may have expired, and while the new activation has its own live effect with 
 only with `--acknowledge-duplication-risk`, and the acknowledgment is recorded.
 Abandoning an effect (`effects abandon`) also halts its work order, and both are recorded as
 yours. An idempotent effect that was sent before is never sent again once its key may have
-expired, whether by recovery or by a retry: it becomes `UNKNOWN` and its order halts. A
+expired, whether by recovery or by a retry: it becomes `UNKNOWN` and its order halts. A human
+retry of such an effect is refused with `idempotency-key-expired`: attest its outcome or abandon it. If
+a restart created a new effect with the same key as an earlier one that is still live, the new
+one is never sent. Its order halts with `effect-key-in-use`, and you abandon one of the two. A
 queryable effect interrupted in flight waits for `supervisor reconcile-once`.
 
 ## 7. Troubleshooting
