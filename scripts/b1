@@ -352,7 +352,7 @@ applied_e=$(psql_v "SELECT count(*) FROM lockstep_sandbox_applications WHERE ope
 executed_count=$(printf '%s\n%s\n' "$d1" "$d2" | grep -c "^executed $op_e applied applied$")
 other=$(printf '%s\n%s\n' "$d1" "$d2" | grep -v "^executed $op_e applied applied$")
 check AC-B1-15 "exactly one process executes the effect; the other executes nothing (idle, or refused claim-held, dispatched-needs-recovery or already-settled); one application" \
-  "$([ "$executed_count" = 1 ] && case "$other" in idle | "refused claim-held" | "refused dispatched-needs-recovery" | "refused already-settled") true ;; *) false ;; esac && [ "$applied_e" = 1 ]; echo $?)"
+  "$([ "$executed_count" = 1 ] && { [ "$other" = idle ] || [ "$other" = "refused claim-held" ] || [ "$other" = "refused dispatched-needs-recovery" ] || [ "$other" = "refused already-settled" ]; } && [ "$applied_e" = 1 ]; echo $?)"
 
 note "B1-18 real overlap on the installed service: a second process while the first holds an in-flight effect"
 rev5=$(ledger_line "work-order $wo5 " | grep -oE 'revision=[0-9]+' | cut -d= -f2)
