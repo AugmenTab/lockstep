@@ -39,3 +39,25 @@
 | 4 | LOW | A human retry after the N1 check is accepted, then turned back into unknown: a loop. | **Fix P3**: the retry is refused with `idempotency-key-expired`. |
 | 5 | INFO | The unchecked carry forms are exported; the install directory accepts `.`, `.git` and `src`. | **Fix P4**: they are documented as library forms, and the directory must lie under `.local/`. |
 | 6 | INFO | N5 rolls back a settle that cannot be reached; the requirement-6 regressions sit in the earlier frozen suites. | **Recorded.** |
+
+## 3. Fourth (final) independent read-only review (of P1–P4 at `53ee0d5` plus the approved amendments)
+
+- Same kind of reviewer: read-only, same model family, **not a human review**.
+- Result: **no HIGH**, 1 MEDIUM, 3 LOW, 3 INFO.
+- It confirmed:
+  - no new lock, and no deadlock;
+  - every dispatch path goes through the same-key check, including the claim;
+  - no self-blocking, and no hot loop;
+  - P2 and P3 are correct, and P3 leaves other classes alone;
+  - ownership, fencing and the carry records are unchanged.
+- Fixes: C-P2.9-R1 §4.7 (F1–F4). The new tests were run before the fix, then frozen.
+
+| # | Sev. | Finding (summary) | Disposition |
+|---|---|---|---|
+| 1 | MEDIUM | Abandoning a dispatched or unknown sibling frees the other same-key intent to run, with no duplication-risk acknowledgment. | **Fix F1**: a dispatched intent keeps its key after it is abandoned, until the abandonment acknowledges the risk (`effects abandon … --acknowledge-duplication-risk`; recorded in `human-abandon`). Abandoning while a lease is still held stays allowed: with the acknowledgment, the Human accepts the risk of an effect still in flight. |
+| 2 | LOW | P1 makes the effect key unique per Work Order, not per (subject, revision, key) as C-P2.5 E2 has it. A settled-applied sibling blocks a later intent with the same key forever. | **Recorded as a limitation and a decision for the owner.** This is deliberate: one logical effect, one live intent. The CLI creates intents only on start, so today it shows only after a restart. Refusing at admission is offered in the decision packet. |
+| 3 | LOW | P3's advice "attest the outcome" leads to the loop again through "attest not applied" on an expired idempotent key. | **Fix F2**: the refusal now says "attest that it applied, or abandon with the acknowledgment"; the operator guide says the same. Not changed in code: an attested not-applied with an expired key goes back to unknown at dispatch. That is safe but not useful, and it is recorded as a limitation. |
+| 4 | LOW | The guidance after `effect-key-in-use` is incomplete, and the halt names only one operation. | **Fix F2**: the refusal names the holding operations and gives the steps: abandon one, requeue without the key, carry the other. The halt reason stays as frozen. |
+| 5 | INFO | Stale doc comments. | **Fixed.** |
+| 6 | INFO | No refusal record for P3; untested: a settled-not-applied sibling, a retry inside the key guarantee. | **Tests added** (F3). The `resolveOutcome` refusals write no refusal record, as before: recorded. |
+| 7 | INFO | The install-directory rule accepts `.local/.` and `.local/config`. | **Fix F4**: only `.local/install` or `.local/<name>-install`, and not a symlink. |

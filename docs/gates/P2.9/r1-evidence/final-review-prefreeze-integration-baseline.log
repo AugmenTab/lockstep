@@ -1,0 +1,32 @@
+lockstep> test (suite: lockstep-integration, args: -p "final review")
+
+lockstep-integration
+  Gate B remediation, final review (C-P2.9-R1 §4.7; real PostgreSQL)
+    F1: an abandoned intent that was dispatched still holds its key; the new one is never sent: FAIL (0.29s)
+      test/integration/Lockstep/RemediationFinalReviewTest.hs:252:
+      expected refusal effect-key-in-use
+      Use -p '/final review/&&/F1: an abandoned intent that was dispatched still holds its key; the new one is never sent/' to rerun this test only.
+    F1: the same intent carried into a later activation is a carry conflict:                    FAIL (0.27s)
+      test/integration/Lockstep/RemediationFinalReviewTest.hs:252:
+      expected refusal carry-conflict
+      Use -p '/final review/&&/F1: the same intent carried into a later activation is a carry conflict/' to rerun this test only.
+    F1: with the acknowledgment, which is recorded, the new intent runs once:                   OK (0.27s)
+    F3: a settled-not-applied sibling does not hold the key:                                    OK (0.27s)
+    F3: an idempotent retry inside its key guarantee is accepted:                               OK (0.43s)
+
+2 out of 5 tests failed (1.54s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

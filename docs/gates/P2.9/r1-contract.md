@@ -271,6 +271,43 @@ No other line changed (`git diff` shows 1 insertion, 1 deletion).
 
 The other frozen files were verified byte-identical on 2026-10-20: §4.1 (`ed16cbf3…`,
 `4e3918ac…`, `58701dc0…`), §4.4 (`c041482e…`, `655bd886…`) and §4.5 integration (`e8bda1a1…`).
+At `4b6e021`, `scripts/check --integration` passed all six steps (675/675, 176/176), and so did
+the Linux clean-clone check.
+
+## 4.7 Third addendum, after the fourth review (F1–F4; `docs/gates/B/review-remediation.md` §3)
+
+- **F1.** An abandoned intent with `dispatches ≥ 1` still holds its effect key (§4.5 P1). It
+  holds it until its `human-abandon` record carries the duplication-risk acknowledgment:
+  `abandonIntentAcknowledged`, or `effects abandon OP --reason R --acknowledge-duplication-risk`.
+  The CLI keeps `EffectsAbandon` and adds `EffectsAbandonAcknowledged`, so the frozen
+  `CliLedgerTest` is unchanged.
+- **F2.** The `effect-key-in-use` refusal text names the holding operations and the steps to
+  take. The P3 refusal advises attesting that it applied, or abandoning with the
+  acknowledgment.
+- **F3.** Regressions: a settled-not-applied sibling does not hold the key; an idempotent retry
+  inside its guarantee is accepted.
+- **F4.** `LOCKSTEP_SERVICE_INSTALL_DIR` is `.local/install` or `.local/<name>-install`, and
+  not a symlink.
+
+Tests: `test/unit/Lockstep/Foundation/CliFinalReviewTest.hs` and
+`test/integration/Lockstep/RemediationFinalReviewTest.hs`. The baseline ran before F1, with only
+the abandonment plumbing in place (the acknowledged function and the CLI constructor):
+- integration: 2 of 5 fail at the expected assertion, the two F1 safety cases; the
+  acknowledged-abandon and F3 controls pass;
+- unit: 3 of 3 pass, because the plumbing they test already existed.
+
+Logs: `r1-evidence/final-review-prefreeze-*-baseline.log`.
+
+First full run after F1: step 1 (format) failed on the import order in the runner
+`test/unit/Main.hs`, which is not a frozen file. I fixed it. My rerun overwrote that first log,
+which held only the format diff. The rerun passed all six steps: 678/678 unit, 181/181
+integration, including the non-loopback, headless-Chromium and overlapping-worker cases.
+Log: `r1-evidence/final-review-check-integration.log`.
+
+| File | Frozen SHA-256 |
+|---|---|
+| `test/unit/Lockstep/Foundation/CliFinalReviewTest.hs` | `e9b817a03ac728ebae432a78fa1bbbd10881dd650199e240c61b35877fcf708f` |
+| `test/integration/Lockstep/RemediationFinalReviewTest.hs` | `b11bd9009a0efad963c99f9abc94e7e1162c156a2ab75dd2da4c4ed6c4bd3302` |
 
 ## 5. Frozen tests that must change
 

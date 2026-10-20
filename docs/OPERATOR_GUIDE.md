@@ -192,9 +192,19 @@ only with `--acknowledge-duplication-risk`, and the acknowledgment is recorded.
 Abandoning an effect (`effects abandon`) also halts its work order, and both are recorded as
 yours. An idempotent effect that was sent before is never sent again once its key may have
 expired, whether by recovery or by a retry: it becomes `UNKNOWN` and its order halts. A human
-retry of such an effect is refused with `idempotency-key-expired`: attest its outcome or abandon it. If
-a restart created a new effect with the same key as an earlier one that is still live, the new
-one is never sent. Its order halts with `effect-key-in-use`, and you abandon one of the two. A
+retry of such an effect is refused with `idempotency-key-expired`. Attest that it applied, or
+abandon it with `--acknowledge-duplication-risk`. Attesting "not applied" only leads to another
+refusal at dispatch.
+
+If a restart created a new effect with the same key as an earlier one that is still live, the
+new one is never sent, and its order halts with `effect-key-in-use`. The refusal names the
+holding effect. To go on:
+1. Abandon one of the two. If the one you abandon was ever sent, add
+   `--acknowledge-duplication-risk`; until then it still holds the key.
+2. Requeue without declaring that key again.
+3. Carry the other one.
+
+A key belongs to one logical effect per work order. A
 queryable effect interrupted in flight waits for `supervisor reconcile-once`.
 
 ## 7. Troubleshooting

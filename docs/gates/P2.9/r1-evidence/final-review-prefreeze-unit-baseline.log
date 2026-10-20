@@ -1,0 +1,13 @@
+lockstep> test (suite: lockstep-unit, args: -p "effects abandon and the acknowledgment")
+
+lockstep-unit
+  effects abandon and the acknowledgment (C-P2.9-R1 §4.7)
+    without the flag it is the plain abandonment:       OK
+    with the flag, in any position, it is acknowledged: OK
+    the flag once, and a reason, are required:          OK
+
+All 3 tests passed (0.00s)
+
+
+
+lockstep> Test suite lockstep-unit passed

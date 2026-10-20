@@ -57,9 +57,9 @@ carryDecision intent (Command principal input) =
 
 {- | A carry as the Human states it (§4.2 N2-N4): the activations it expects
 to carry between, whether it acknowledges the duplication risk; and what the
-ledger knows: whether the intent's not-applied outcome was attested by a
-Human, and whether the target activation already has a live intent with the
-same effect key.
+ledger knows: whether a Human attested the intent's outcome (§4.5 P2), and
+whether another live intent of the order, in any activation, holds the same
+effect key (§4.5 P1, §4.7 F1).
 -}
 data CarryRequest
   = CarryRequest
