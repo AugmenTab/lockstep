@@ -29,7 +29,8 @@ cd "$(dirname "$0")/.."
 
 image=lockstep-dev:p1
 name=${LOCKSTEP_SERVICE_NAME:-lockstep-service}
-install_dir=.local/install
+# C-P2.9-R1 M7: a qualification run installs elsewhere and never replaces the operator's binary.
+install_dir=${LOCKSTEP_SERVICE_INSTALL_DIR:-.local/install}
 db_config=.local/config/lockstep.json
 host_config=.local/config/lockstep-host.json
 
@@ -79,7 +80,7 @@ case "$command" in
     docker build --quiet --tag "$image" . >/dev/null
     mkdir -p "$install_dir/bin"
     docker run --rm --volume "$PWD:/work" --volume lockstep-stack-root:/stack-root --workdir /work "$image" \
-      sh -c 'stack build --copy-bins --local-bin-path .local/install/bin >/dev/null 2>&1'
+      sh -c "stack build --copy-bins --local-bin-path '$install_dir/bin' >/dev/null 2>&1"
     commit=$(git rev-parse HEAD)
     dirty=false
     [ -z "$(git status --porcelain)" ] || dirty=true
@@ -120,9 +121,9 @@ case "$command" in
     if docker container inspect "$name" >/dev/null 2>&1; then
       docker stop --time 10 "$name" >/dev/null
       code=$(docker container inspect --format '{{.State.ExitCode}}' "$name")
-      docker logs "$name" > ".local/install/last-run.log" 2>&1 || true
+      docker logs "$name" > "$install_dir/last-run.log" 2>&1 || true
       docker rm "$name" >/dev/null
-      echo "stopped $name (exit $code); log saved to .local/install/last-run.log"
+      echo "stopped $name (exit $code); log saved to $install_dir/last-run.log"
     else
       echo "$name is not running"
     fi

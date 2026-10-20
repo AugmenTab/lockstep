@@ -1,8 +1,8 @@
 {- | The display status of an effect intent (contract C-P2.8 V1, §3; DG-04
 binding requirement 6). One status per intent, by the first matching row of
 the table. Only an application settled from the destination's own answer is
-PASSED: a human attestation is ATTESTED, and an unknown or in-flight outcome is
-never PASSED. The facts that are not in the intent itself (the time, whether
+PASSED: a human attestation is ATTESTED, applied or not (C-P2.9-R1 M4), and an
+unknown or in-flight outcome is never PASSED. The facts that are not in the intent itself (the time, whether
 its Work Order is active, whether a human attested it) are inputs.
 -}
 module Lockstep.Kernel.EffectView
@@ -64,9 +64,11 @@ statusRow facts intent =
   case intentState intent of
     IntentAbandoned r -> (StatusAbandoned, T.pack "abandoned: " <> r)
     IntentSettled (SettledApplied r)
-      | factsHumanAttested facts -> (StatusAttested, T.pack "attested by a human, not observed: " <> r)
+      | attested r -> (StatusAttested, byHuman r)
       | otherwise -> (StatusPassed, T.pack "applied: " <> r)
-    IntentSettled (SettledNotApplied r) -> (StatusNotApplied, T.pack "not applied: " <> r)
+    IntentSettled (SettledNotApplied r)
+      | attested r -> (StatusAttested, byHuman r)
+      | otherwise -> (StatusNotApplied, T.pack "not applied: " <> r)
     IntentApplied r -> (StatusInProgress, T.pack "applied, not yet settled: " <> r)
     IntentUnknown r
       | queryable -> (StatusReconciliationNeeded, T.pack "outcome unknown, a lookup may resolve it: " <> r)
@@ -74,6 +76,9 @@ statusRow facts intent =
     IntentDispatched lease
       | factsNow facts >= leaseUntil lease -> (StatusReconciliationNeeded, holder "dispatched by " lease <> T.pack "; its lease ended without an answer")
       | otherwise -> (StatusInProgress, holder "dispatched by " lease)
+    -- C-P2.9-R1 M4: a human's "not applied" is never shown like a destination's, nor hidden as BLOCKED.
+    IntentNotApplied r
+      | attested r -> (StatusAttested, byHuman r <> retryNote)
     _ | not (factsOrderActive facts) -> (StatusBlocked, T.pack "the work order is not active")
     IntentClaimed lease
       | factsNow facts < leaseUntil lease -> (StatusClaimed, holder "claimed by " lease)
@@ -83,6 +88,12 @@ statusRow facts intent =
       | intentDispatches intent <= effectSpecBudget (intentSpec intent) -> (StatusNotApplied, T.pack "not applied, a retry is left: " <> r)
       | otherwise -> (StatusNotApplied, T.pack "not applied, no retry left: " <> r)
  where
+  -- C-P2.9-R1 M4: the attestation record, or an outcome a human attested (either is enough).
+  attested r = factsHumanAttested facts || T.pack "human-attested: " `T.isPrefixOf` r
+  byHuman r = T.pack "attested by a human, not observed: " <> r
+  retryNote
+    | intentDispatches intent <= effectSpecBudget (intentSpec intent) = T.pack "; a retry is left"
+    | otherwise = T.pack "; no retry left"
   queryable = effectSpecClass (intentSpec intent) == Queryable
   holder prefix lease =
     T.pack prefix <> leaseOwner lease <> T.pack (" (generation " <> show (leaseGeneration lease) <> ")")

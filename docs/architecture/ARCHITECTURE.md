@@ -123,6 +123,16 @@ it. The operator commands (`ticket`, `work-order`, `schedule`, `supervisor`, `wo
 `Application.Sandbox` provides one model-free effect per class over durable sandbox tables. The
 adapters write in their own transactions, so killing a process is a real crash.*
 
+*Gate B remediation note (C-P2.9-R1):
+- Intents are bound to the activation (claim generation) that authorized them. Only a Human
+  carry (`Kernel.Activation`) lets one run in a later activation.
+- A class-B re-dispatch requires its key guarantee (`Kernel.KeyLifetime`: first dispatch +
+  lifetime − margin).
+- Ledger reads are one REPEATABLE READ snapshot, and an integrity failure rolls back the whole
+  transaction.
+- Abandoning an intent halts its order.
+- A human attestation, applied or not, always shows as `ATTESTED`.*
+
 Kernel signature direction, from Bible §37 (conceptual, not final API):
 `decide :: Snapshot -> Observation -> Either Refusal (NonEmpty DomainEvent, [EffectIntent])`.
 Time, ids and randomness enter the Kernel as **inputs**. It never reads a clock.

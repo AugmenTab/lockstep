@@ -36,15 +36,18 @@ while IFS= read -r cli; do
 done < scripts/lib/provider-clis
 
 export LOCKSTEP_SERVICE_NAME=lockstep-b1
+# C-P2.9-R1 M7: B1 installs into its own directory; the operator's .local/install is never touched.
+export LOCKSTEP_SERVICE_INSTALL_DIR=.local/b1-install
+install=$LOCKSTEP_SERVICE_INSTALL_DIR
+operator_binary_before=$( { cat .local/install/VERSION 2>/dev/null; shasum -a 256 .local/install/bin/lockstep 2>/dev/null; } | shasum -a 256 | cut -d' ' -f1)
 export LOCKSTEP_SERVICE_CONFIG=".local/config/lockstep-b1.json"
 export LOCKSTEP_SERVICE_SENTINEL_DIR="$work/sentinel"
-token="" session=""
+token=""
 failures=0
 
 redact() {
   local text=$1
   [ -n "$token" ] && text=${text//$token/<TOKEN>}
-  [ -n "$session" ] && text=${text//$session/<SESSION>}
   printf '%s' "$text" | sed -E -e 's/(lockstep_session=)[A-Za-z0-9_-]{43}/\1<SESSION>/g' -e 's/(token=)[A-Za-z0-9_-]{43}/\1<TOKEN>/g'
 }
 
@@ -114,7 +117,7 @@ ops_of() { printf '%s\n' "$LAST_OUT" | awk '$1 == "intent" { print $2 }'; }
 
 # The installed binary's docker arguments, as scripts/service uses them.
 run_args=(--network host
-  --volume "$PWD/.local/install:/opt/lockstep:ro"
+  --volume "$PWD/$install:/opt/lockstep:ro"
   --volume "$PWD/$LOCKSTEP_SERVICE_CONFIG:/etc/lockstep/lockstep.json:ro"
   --env LOCKSTEP_CONFIG=/etc/lockstep/lockstep.json
   --volume "$PWD/$LOCKSTEP_SERVICE_SENTINEL_DIR:/opt/sentinel"
@@ -162,8 +165,8 @@ check AC-B1-01 "scripts/check --integration from a fresh clone exits 0 with all 
 
 note "B1-02 install the release binary"
 rec "scripts/service install" 0 scripts/service install
-cp .local/install/VERSION "$out/VERSION"
-check AC-B1-02 "installed from a clean checkout of the tested commit" "$(grep -q "^commit $(git rev-parse HEAD)$" .local/install/VERSION && grep -q '^dirty false$' .local/install/VERSION; echo $?)"
+cp "$install/VERSION" "$out/VERSION"
+check AC-B1-02 "installed from a clean checkout of the tested commit, into $install (not the operator's .local/install)" "$(grep -q "^commit $(git rev-parse HEAD)$" "$install/VERSION" && grep -q '^dirty false$' "$install/VERSION"; echo $?)"
 
 note "B1-03 fresh database, migration, readiness"
 rec "create database" 0 docker exec lockstep-postgres psql -U lockstep -d lockstep -c "CREATE DATABASE $db"
@@ -351,6 +354,31 @@ other=$(printf '%s\n%s\n' "$d1" "$d2" | grep -v "^executed $op_e applied applied
 check AC-B1-15 "exactly one process executes the effect; the other executes nothing (idle, or refused claim-held, dispatched-needs-recovery or already-settled); one application" \
   "$([ "$executed_count" = 1 ] && case "$other" in idle | "refused claim-held" | "refused dispatched-needs-recovery" | "refused already-settled") true ;; *) false ;; esac && [ "$applied_e" = 1 ]; echo $?)"
 
+note "B1-18 real overlap on the installed service: a second process while the first holds an in-flight effect"
+rev5=$(ledger_line "work-order $wo5 " | grep -oE 'revision=[0-9]+' | cut -d= -f2)
+cli "halt order five (frees the repository)" 0 work-order halt "$wo5" --expected-revision "$rev5" --reason "B1: next order"
+new_order "B1 order six" 5 yes
+wo6=$WO
+cli "schedule run-once (order six)" 0 schedule run-once
+cli "supervisor start (idempotent, applies then hangs)" 0 supervisor start "$wo6" --expected-revision 3 --effect sandbox-idempotent:apply-then-hang
+op_f=$(ops_of | sed -n 1p)
+rec "start execute-once (holds the effect)" 0 docker run --detach --name lockstep-b1-exec "${run_args[@]}" "$image" /opt/lockstep/bin/lockstep supervisor execute-once --lease-seconds 15 --timeout-ms 14000
+wait_until "the held effect is applied at the sandbox" 30 "SELECT count(*) = 1 FROM lockstep_sandbox_applications WHERE operation_id = '$op_f'"
+cli "a second execute-once while the first holds it" 0 supervisor execute-once
+second=$LAST_OUT
+first_running=$(docker container inspect --format '{{.State.Running}}' lockstep-b1-exec 2>/dev/null)
+held=$(psql_v "SELECT state || ' ' || (lease_until > now())::text || ' ' || lease_owner FROM lockstep_effect_intents WHERE operation_id = '$op_f'")
+echo "during the overlap: second process: $second; first process running: $first_running; intent: $held" >> "$log"
+rec "kill the holding process (SIGKILL)" 0 docker kill lockstep-b1-exec
+docker rm lockstep-b1-exec >/dev/null 2>&1
+wait_until "the held claim's lease has ended" 30 "SELECT lease_until <= now() FROM lockstep_effect_intents WHERE operation_id = '$op_f'"
+cli "execute-once recovers the held effect" 0 supervisor execute-once
+recovered_f=$LAST_OUT
+applied_f=$(psql_v "SELECT count(*) FROM lockstep_sandbox_applications WHERE operation_id = '$op_f'")
+check AC-B1-18 "while the first process was still running and held the dispatched effect (lease active), the second executed nothing; after the kill and the lease end, recovery applied it with one application in all" \
+  "$([ "$second" = idle ] && [ "$first_running" = true ] && [ "$held" = "dispatched true supervisor" ] \
+    && [ "$recovered_f" = "executed $op_f applied applied" ] && [ "$applied_f" = 1 ]; echo $?)"
+
 note "B1-16 durable, inspectable evidence across a restart; the ledger page in a real browser"
 scripts/service cli ledger show > "$out/ledger-before-restart.txt" 2>&1
 rec "scripts/service restart" 0 scripts/service restart --port "$port"
@@ -386,7 +414,7 @@ docker exec lockstep-b1 sh -c 'LOCKSTEP_SENTINEL_LOG=/tmp/canary.log claude --b1
 echo "inside lockstep-b1: claude resolves to $in_container; canary: $(tr '\n' ' ' < "$work/canary.out")" >> "$log"
 canary_ok=$([ "$in_container" = /opt/sentinel/bin/claude ] && grep -q '^exit 97$' "$work/canary.out" && [ "$(tail -n 1 "$work/canary.out" | tr -d ' ')" = 1 ]; echo $?)
 rec "scripts/service stop" 0 scripts/service stop
-cp .local/install/last-run.log "$out/service.log"
+cp "$install/last-run.log" "$out/service.log"
 password=$(sed -n -E 's/.*"password":"([^"]*)".*/\1/p' .local/config/lockstep.json)
 case "$password" in
   "" | *"{"*) echo "B1: could not extract the database password from .local/config/lockstep.json" | tee -a "$log" >&2; failures=$((failures + 1)); password="<unextractable>" ;;
@@ -394,12 +422,16 @@ esac
 leaks=$(cat "$log" "$out"/*.txt "$out/service.log" | grep -c -F "$password" || true)
 token_leaks=0
 if [ -n "$token" ]; then
-  token_leaks=$(cat "$out"/*.txt "$out/service.log" | grep -c -F "$token" || true)
+  token_leaks=$(cat "$log" "$out"/*.txt "$out/service.log" | grep -c -F "$token" || true)
 fi
 raw_secrets=$(cat "$log" "$out"/*.txt "$out/service.log" | grep -c -E 'lockstep_session=[A-Za-z0-9_-]{43}|token=[A-Za-z0-9_-]{43}' || true)
 echo "sentinel log: $(wc -c < "$work/sentinel/sentinel.log" | tr -d ' ') bytes; password occurrences: $leaks; sign-in token occurrences: $token_leaks; raw session or token values: $raw_secrets" >> "$log"
 check AC-B1-17 "inside the service container claude resolves to the shim and a canary call is logged (exit 97); the service's sentinel log is empty; no password, token or session value appears in the recorded output" \
   "$([ "$canary_ok" = 0 ] && [ ! -s "$work/sentinel/sentinel.log" ] && [ "$leaks" = 0 ] && [ "$token_leaks" = 0 ] && [ "$raw_secrets" = 0 ]; echo $?)"
+
+operator_binary_after=$( { cat .local/install/VERSION 2>/dev/null; shasum -a 256 .local/install/bin/lockstep 2>/dev/null; } | shasum -a 256 | cut -d' ' -f1)
+echo "operator install (.local/install VERSION + binary) digest before $operator_binary_before, after $operator_binary_after" >> "$log"
+check AC-B1-19 "the operator's installed binary (.local/install) is unchanged by the run" "$([ "$operator_binary_before" = "$operator_binary_after" ]; echo $?)"
 
 rm -rf "$clone"
 note "B1 result: $failures failing check(s); database $db kept for inspection"

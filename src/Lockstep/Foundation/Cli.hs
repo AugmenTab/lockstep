@@ -64,6 +64,7 @@ data Command
   | WorkUnitAdmit String (Maybe String)
   | EffectsResolve String Integer EffectChoice
   | EffectsAbandon String String
+  | EffectsCarry String
   | SandboxShow
   deriving (Eq, Show)
 
@@ -533,6 +534,9 @@ parseEffectsCommand args =
       (acc, _, operation) <- parseWithFlags ["--reason"] [] [] options
       o <- argument "OPERATION" operation
       EffectsAbandon o <$> required "--reason" acc
+    "carry" : options -> do
+      (_, _, operation) <- parseWithFlags [] [] [] options
+      EffectsCarry <$> argument "OPERATION" operation
     command : _ -> Left (UnknownCommand ("effects " <> command))
 
 parseSandboxCommand :: [String] -> Either CliError Command
@@ -847,6 +851,7 @@ usage =
     , "       lockstep work-unit admit WORK-ORDER [--plan-ref REF]"
     , "       lockstep effects resolve OPERATION --generation G (--attest-applied E | --attest-not-applied E | --retry --acknowledge-duplication-risk)"
     , "       lockstep effects abandon OPERATION --reason TEXT"
+    , "       lockstep effects carry OPERATION"
     , "       lockstep sandbox show"
     , ""
     , "  serve        run the local service on 127.0.0.1 (default port 8000)"
