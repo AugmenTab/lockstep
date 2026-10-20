@@ -125,9 +125,12 @@ adapters write in their own transactions, so killing a process is a real crash.*
 
 *Gate B remediation note (C-P2.9-R1):
 - Intents are bound to the activation (claim generation) that authorized them. Only a Human
-  carry (`Kernel.Activation`) lets one run in a later activation.
-- A class-B re-dispatch requires its key guarantee (`Kernel.KeyLifetime`: first dispatch +
-  lifetime − margin).
+  carry (`Kernel.Activation`) lets one run in a later activation. The carry names the
+  activations it expects. It is refused when the new activation already has a live intent with
+  the same effect key, and for an attested "not applied" without the duplication-risk
+  acknowledgment.
+- Every class-B re-dispatch requires its key guarantee (`Kernel.KeyLifetime`: first dispatch +
+  lifetime − margin), whether by recovery, by retry, or after a carry.
 - Ledger reads are one REPEATABLE READ snapshot, and an integrity failure rolls back the whole
   transaction.
 - Abandoning an intent halts its order.

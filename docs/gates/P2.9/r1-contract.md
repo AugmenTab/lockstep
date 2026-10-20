@@ -151,6 +151,74 @@ migration 0012.
 - Static rules: the new Kernel modules' identifiers, strings and comments were checked against
   the purity scan; no forbidden facility or provider name appears.
 
+## 4.2 Addendum after the second review (N1–N8; `docs/gates/B/review-remediation.md`)
+
+Within the owner's carry requirements 2–4 and DG-04 requirement 2:
+
+- **N1.** A dispatch of an `idempotent` intent with `dispatches ≥ 1` requires its key guarantee
+  (M1). Otherwise the intent becomes unknown `dispatch-interrupted: idempotency key may have
+  expired`, the order halts, and the dispatch is refused `idempotency-key-expired`; nothing is
+  sent. This is conservative: it also applies after a destination's own not-applied answer.
+  The carry's key check (§2.1 item 11) applies to every carryable state.
+- **N2.** `carry-conflict` when the target activation already has an intent with the same
+  effect key that is not abandoned.
+- **N3.** `carryIntentChecked runtime principal op expected acknowledged`. Its `expected` is
+  `Just (from, to)` activations, and a mismatch is `stale-carry`. `carryIntentAs p` is
+  `carryIntentChecked p Nothing False`. CLI: `effects carry OP --from-activation S
+  --to-activation T [--acknowledge-duplication-risk]`.
+- **N4.** A `confirmed-not-applied` intent whose outcome is human-attested is carried only with
+  the acknowledgment (`duplication-risk-not-acknowledged`).
+- **N5.** In `concludeIntent` and `applyLookup`, a settle refused after writing is an
+  integrity failure, so it rolls back.
+- **N6.** Recovery of a superseded intent: reason `dispatch-interrupted: activation superseded`;
+  the current activation is not halted.
+- **N7.** The C-P2.5 unchecked intent functions are documented as test-level API.
+- **N8.** The abandonment halt is the Human's event.
+
+New tests: `test/integration/Lockstep/RemediationReviewTest.hs` and
+`test/unit/Lockstep/Kernel/RemediationReviewTest.hs`, frozen before their implementation
+(§4.3). The frozen files of §4.1 are unchanged.
+
+## 4.3 Freeze record for the addendum
+
+**A withdrawn first record (disclosed).** I recorded the digests below before N1–N8 were
+implemented. I recorded them without compiling the files, which goes against my practice of
+running a test before freezing it. The first build then refused the integration file: an
+unused record field `opC` failed `-Werror=unused-top-binds`. No test had run against that
+record. I withdrew it and made the one change shown. No assertion changed. Owner, you may
+reject this re-freeze.
+
+```diff
+   { opA :: OperationId
+   , opB :: OperationId
+-  , opC :: OperationId
+   }
+-    [a, b, c'] -> pure (wo, Ops a b c')
++    [a, b, _] -> pure (wo, Ops a b)
+```
+
+| File | Withdrawn SHA-256 |
+|---|---|
+| `test/unit/Lockstep/Kernel/RemediationReviewTest.hs` | `c041482e10e49fb336ffd3c116522e878fafd182cad0f159a37a1c6a60563230` |
+| `test/integration/Lockstep/RemediationReviewTest.hs` | `87eedee0945c061a868c2fa36cf1fe7febfa7e70335ee57ba304675817df50ff` |
+
+The re-freeze follows the first full run (§4.4).
+
+## 4.4 First run and re-freeze
+
+The first full run with the fixes in place was `scripts/check --integration` on `d094190` plus
+the working tree. All six steps passed: 672/672 unit and 170/170 integration, with
+backup/restore. Log: `r1-evidence/addendum-first-run.log`.
+
+The new files cannot compile against the code before N1–N8. They need `carryIntentChecked`,
+`CarryRequest`, `carryChecked` and the four-field `EffectsCarry`, so their failing-first state
+is "does not build". The files of §4.1 are byte-identical to their frozen digests.
+
+| File | Frozen SHA-256 |
+|---|---|
+| `test/unit/Lockstep/Kernel/RemediationReviewTest.hs` | `c041482e10e49fb336ffd3c116522e878fafd182cad0f159a37a1c6a60563230` (unchanged) |
+| `test/integration/Lockstep/RemediationReviewTest.hs` | `655bd8865c9a38eac5962f058edfce07ed0e2506b0e3f7b596b19681bd340354` |
+
 ## 5. Frozen tests that must change
 
 Three C-P2.7 cases encode the behaviour M2 and M4 remove. The exact diff is

@@ -31,6 +31,7 @@ import Lockstep.Kernel.LifecyclePropertyTest qualified as LifecyclePropertyTest
 import Lockstep.Kernel.ProfileTest qualified as ProfileTest
 import Lockstep.Kernel.ReconciliationTest qualified as ReconciliationTest
 import Lockstep.Kernel.RecoveryTest qualified as RecoveryTest
+import Lockstep.Kernel.RemediationReviewTest qualified as RemediationReviewTest
 import Lockstep.Kernel.RemediationTest qualified as RemediationTest
 import Lockstep.Kernel.RemoteTest qualified as RemoteTest
 import Lockstep.Kernel.RepositoryTest qualified as RepositoryTest
@@ -105,4 +106,5 @@ main =
       , LedgerPageTest.tests
       , CliLedgerTest.tests
       , RemediationTest.tests
+      , RemediationReviewTest.tests
       ]
