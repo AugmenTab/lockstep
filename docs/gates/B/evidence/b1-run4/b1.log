@@ -1,0 +1,738 @@
+## B1 run 20261025T162130Z; commit 6ba66f59f46c04f32982a5e4b96f1ac13017853c; clean: yes; database lockstep_b1_20261025t162130z; port 8200
+## B1-01 clean build: fresh clone + scripts/check --integration
+### fresh clone
+argv: git clone -q . .local/b1-clone-20261025T162130Z
+exit: 0 (expected 0)
+stdout sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+
+stderr:
+
+### checkout
+argv: git -C .local/b1-clone-20261025T162130Z checkout -q 6ba66f59f46c04f32982a5e4b96f1ac13017853c
+exit: 0 (expected 0)
+stdout sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+
+stderr:
+
+scripts/check --integration in .local/b1-clone-20261025T162130Z: exit 0; log .local/evidence/b1-20261025T162130Z/check-fresh-clone.log sha256 2777e6ec313c9896183144ef9ddfa3b9d9c5be40e8a3e79ec961ba89d1b61300
+CHECK PASSED: AC-B1-01: scripts/check --integration from a fresh clone exits 0 with all six steps PASSED
+## B1-02 install the release binary
+### scripts/service install
+argv: scripts/service install
+exit: 0 (expected 0)
+stdout sha256: 4b5f8a262a0bccb175123dd1334d2512e81f9a804f5fa30bb47cdfb68adc8e3a  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+commit 6ba66f59f46c04f32982a5e4b96f1ac13017853c
+dirty false
+sha256 02ad756814a22d043b80cd9c80ec0c92b04fdc1e7b736a1a216f2e5bc57c8aeb
+installed_at 2026-10-25T16:26:43Z
+stderr:
+
+CHECK PASSED: AC-B1-02: installed from a clean checkout of the tested commit, into .local/b1-install (not the operator's .local/install)
+## B1-03 fresh database, migration, readiness
+### create database
+argv: docker exec lockstep-postgres psql -U lockstep -d lockstep -c CREATE DATABASE lockstep_b1_20261025t162130z
+exit: 0 (expected 0)
+stdout sha256: 691e4b64d448c6cffd680247056c2f445e4fbf2dcbc9be821934064e906d1ce7  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+CREATE DATABASE
+stderr:
+
+### db migrate (empty database, no backup needed)
+argv: scripts/service cli db migrate
+exit: 0 (expected 0)
+stdout sha256: ec2c3d95adcd18c837b1eaba523500158d4c090ca9cfad663596f3c7f402a47a  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+applied migrations: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
+stderr:
+
+### db status (after)
+argv: scripts/service cli db status
+exit: 0 (expected 0)
+stdout sha256: c20918d474defae2d381b263d1567eed8e77f6f6ae1171a3fb511b5d9ff7398b  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+readiness ready 12
+revision 12
+pending 0
+stderr:
+
+CHECK PASSED: AC-B1-03: a fresh database migrates to revision 12 and reports ready 12
+## B1-04 start the installed service
+### scripts/service start
+argv: scripts/service start --port 8200
+exit: 0 (expected 0)
+stdout sha256: c5b0c88a4a9222d1bb05b2d78b00e55679d3030de97d3433e76bf66a28ec8816  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+started lockstep-b1: http://127.0.0.1:8200/ (6ba66f59f46c04f32982a5e4b96f1ac13017853c)
+stderr:
+
+### health
+request: curl http://127.0.0.1:8200/api/health_check
+status: 204
+body sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 (0 bytes)
+### readiness
+request: curl http://127.0.0.1:8200/api/readiness
+status: 200
+body sha256: 9cf152236606a67cacda111c18f5a4a9315db8405d8ae1e1668158f468e34a08 (8 bytes)
+CHECK PASSED: AC-B1-04: the installed service answers health 204 and readiness 'ready 12' on 127.0.0.1:8200
+## B1-05 repository exclusivity (repositories exist only inside one container of the installed image)
+### engineer add alice
+argv: scripts/service cli engineer add alice
+exit: 0 (expected 0)
+stdout sha256: 30ca7f70c233634a96fb182e1b48aac6f8d41bd6bbd18bc56a572fc74382e9b8  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+engineer 450b27f3-c341-432d-82b7-c3330d9d9da3 alice
+stderr:
+
+### engineer add bob
+argv: scripts/service cli engineer add bob
+exit: 0 (expected 0)
+stdout sha256: f6da4c4f36f1c9e8ee11658e4cbf56d9a03cdeb2bf9c1aae2bf7c832e0ff31f6  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+engineer 8e0e189d-be3a-44aa-a77a-56cc2b49ce9b bob
+stderr:
+
+### register and collide, in one container
+argv: docker run --rm --network host --volume /Users/tab/personal/lockstep/.local/b1-install:/opt/lockstep:ro --volume /Users/tab/personal/lockstep/.local/config/lockstep-b1.json:/etc/lockstep/lockstep.json:ro --env LOCKSTEP_CONFIG=/etc/lockstep/lockstep.json --volume /Users/tab/personal/lockstep/.local/b1-20261025T162130Z/sentinel:/opt/sentinel --env PATH=/opt/sentinel/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --env LOCKSTEP_SENTINEL_LOG=/opt/sentinel/sentinel.log --volume /Users/tab/personal/lockstep/.local/b1-20261025T162130Z/repositories.sh:/b1/repositories.sh:ro lockstep-dev:p1 sh /b1/repositories.sh
+exit: 0 (expected 0)
+stdout sha256: fe2f2b535b7e112d83471eceacd2e4c157ee84c903ac564e2b2953a7b5780e46  stderr sha256: ea715764c49515735e33e94a3d42659e2d1e1ff00ee7f81cecd2006876cb1728
+stdout:
+repository e019faa8-5036-4dbd-b37e-24bcefaeee02 owner alice authoritative none common-dir /repos/alice/.git
+exit alice 0
+refused repository-already-owned decision 4
+exit alias 65
+refused linked-worktree decision 5
+exit worktree 65
+refused engineer-already-owns-repository decision 6
+exit second 65
+stderr:
+lockstep: refused (repository-already-owned): this repository is already owned (repository e019faa8-5036-4dbd-b37e-24bcefaeee02)
+lockstep: refused (linked-worktree): the path is a linked worktree; register the repository's main worktree
+lockstep: refused (engineer-already-owns-repository): the Engineer already owns repository e019faa8-5036-4dbd-b37e-24bcefaeee02
+### repository list
+argv: scripts/service cli repository list
+exit: 0 (expected 0)
+stdout sha256: 23bbea0f421d51ac5bdcea41d6f3c33014bf0a793a6411cc7b8c6fbaabc21707  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+repository e019faa8-5036-4dbd-b37e-24bcefaeee02 owner alice authoritative none common-dir /repos/alice/.git
+stderr:
+
+CHECK PASSED: AC-B1-05: alice owns her repository; bob's alias is repository-already-owned, bob's worktree linked-worktree, alice's second repository engineer-already-owns-repository (each exit 65); one repository is listed
+## B1-06 the Profile and the repository default
+### profile add team v1
+argv: sh -c scripts/service cli profile add - < '.local/b1-20261025T162130Z/team-v1.json'
+exit: 0 (expected 0)
+stdout sha256: 32a793e93f2d7ec1f322bd039234462f2d1968d9166468e9dd85df013ceef1f7  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+profile team version 1 digest 96029c2ae89a7635114f9e826aa34216cc3918497a170b1cbe5fa3f19f05999d added
+stderr:
+
+### repository set-profile
+argv: scripts/service cli repository set-profile --engineer alice team
+exit: 0 (expected 0)
+stdout sha256: 456fbea5ffe2132d01d333f507263c470bc6ff8b33d18233b748884bb6c5b26a  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+repository e019faa8-5036-4dbd-b37e-24bcefaeee02 default-profile team
+stderr:
+
+CHECK PASSED: AC-B1-06: Profile team v1 registered (digest 96029c2ae89a7635114f9e826aa34216cc3918497a170b1cbe5fa3f19f05999d) and made alice's repository default
+## B1-07/B1-10 ticket-originated work; deterministic selection with a blocked higher-priority order
+### ticket create (B1 blocked, priority 50)
+argv: scripts/service cli ticket create B1 blocked, priority 50
+exit: 0 (expected 0)
+stdout sha256: bfa932726843e51cecb4e0f0935e94176d99017e88d7220ca42f55a325eebd0f  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+ticket 584179b7-37c0-4ff3-9db6-bdce6df10a13
+stderr:
+
+### ticket accept (B1 blocked, priority 50)
+argv: scripts/service cli ticket accept 584179b7-37c0-4ff3-9db6-bdce6df10a13 --expected-revision 1
+exit: 0 (expected 0)
+stdout sha256: ca7782dd0d70471988cef558ad9e7df5026ab41eae01e59f2bfe09c4703c2aed  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+ticket 584179b7-37c0-4ff3-9db6-bdce6df10a13 revision 2 state ready
+stderr:
+
+### work-order create (B1 blocked, priority 50)
+argv: scripts/service cli work-order create --ticket 584179b7-37c0-4ff3-9db6-bdce6df10a13 --engineer alice --priority 50 --path-class source
+exit: 0 (expected 0)
+stdout sha256: 275ffcf943af44333a97a8e962f3ac0a0440ccbefdda2f177a11955c4f19e65c  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+work-order 9ef464d0-d7f9-4365-9b6a-dd77c7d7720d
+stderr:
+
+### ticket create (B1 order one)
+argv: scripts/service cli ticket create B1 order one
+exit: 0 (expected 0)
+stdout sha256: 1380eb7de4f613defff56edac9b5d7fe28dace954a74d53ee9d3524bfc80760c  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+ticket 183cee44-758e-47ff-acd9-ccd1a085751c
+stderr:
+
+### ticket accept (B1 order one)
+argv: scripts/service cli ticket accept 183cee44-758e-47ff-acd9-ccd1a085751c --expected-revision 1
+exit: 0 (expected 0)
+stdout sha256: 01894fe6d3d8b0752f7ef0f039c7805344319fe6e758dc8859102180041259a9  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+ticket 183cee44-758e-47ff-acd9-ccd1a085751c revision 2 state ready
+stderr:
+
+### work-order create (B1 order one)
+argv: scripts/service cli work-order create --ticket 183cee44-758e-47ff-acd9-ccd1a085751c --engineer alice --priority 5 --path-class source
+exit: 0 (expected 0)
+stdout sha256: c23d9752bcd6766dffe98876af6173829581e3fa1aea451a90d424c6aff198c7  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+work-order 739a13b4-c557-4ce6-afb9-7f5b19cc5271
+stderr:
+
+### work-order evidence (B1 order one)
+argv: scripts/service cli work-order evidence 739a13b4-c557-4ce6-afb9-7f5b19cc5271 --artifact impact-assessment --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --verifier human-inspection --approval supervisor
+exit: 0 (expected 0)
+stdout sha256: d89f68561df73ddc7ea691717c89a1688194548144aa62f726b581b756a94497  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+evidence 739a13b4-c557-4ce6-afb9-7f5b19cc5271 impact-assessment
+stderr:
+
+### schedule run-once
+argv: scripts/service cli schedule run-once
+exit: 0 (expected 0)
+stdout sha256: 6c40e60a9802a2eaaabb909bb9b7cf950d6fce5801750c50284484f9cd139fae  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+lockstep-schedule 1
+selected 739a13b4-c557-4ce6-afb9-7f5b19cc5271 engineer 450b27f3-c341-432d-82b7-c3330d9d9da3
+eligible 1 739a13b4-c557-4ce6-afb9-7f5b19cc5271 priority=5 admitted-at=2026-10-25T16:26:51.015286Z
+ineligible 9ef464d0-d7f9-4365-9b6a-dd77c7d7720d prerequisite-blocked impact missing-artifact impact-assessment
+digest c669a2584394140641c0685937fdf3db8681029983577df737ccae947773f9b7
+selected 739a13b4-c557-4ce6-afb9-7f5b19cc5271 generation 1
+stderr:
+
+CHECK PASSED: AC-B1-10: the lower-priority order with evidence is selected; the higher-priority one is ineligible prerequisite-blocked
+### work-unit admit (plan-less)
+argv: scripts/service cli work-unit admit 739a13b4-c557-4ce6-afb9-7f5b19cc5271
+exit: 0 (expected 0)
+stdout sha256: cb11cb4fe4595e345aa1d9c64b236f9a565864be7ca4f681fb368726a68b43f2  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+work-unit b6ab23a7-738a-4d00-93b2-5515df060d4a
+stderr:
+
+CHECK PASSED: AC-B1-07: a ticket-originated work order is claimed and a plan-less work unit admitted (plan_ref NULL, linked to its order and ticket)
+## B1-08 the binding is immutable
+### profile add team v2
+argv: sh -c scripts/service cli profile add - < '.local/b1-20261025T162130Z/team-v2.json'
+exit: 0 (expected 0)
+stdout sha256: faeb5501a7c4c4337f541bda11a903baaa4d73e5542a98a0571efcba665f0e3e  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+profile team version 2 digest 651cb080ba3332030157cc10326b49d57bf3b469f5b8443f90534464cbac9bda added
+stderr:
+
+bound source digest 96029c2ae89a7635114f9e826aa34216cc3918497a170b1cbe5fa3f19f05999d; binding before v2 binding=69c00a2cdefe26813a71682fcf49feaa5eca0bd314104cb664502d86a1d882dd; after binding=69c00a2cdefe26813a71682fcf49feaa5eca0bd314104cb664502d86a1d882dd
+CHECK PASSED: AC-B1-08: the order's stored Profile source digest is the registered v1 digest, and adding v2 leaves its binding unchanged
+## B1-09 legal and forbidden transitions
+### accept a ready ticket again (illegal)
+argv: scripts/service cli ticket accept 183cee44-758e-47ff-acd9-ccd1a085751c --expected-revision 2
+exit: 65 (expected 65)
+stdout sha256: bc0cc74bdd9ad92943b4498e5fc8deee79696d04fe1d3950532c421beed7497b  stderr sha256: 107aacc223da5936c820c1441ed705b5e5c23b60095ce389cc3754419ba53de2
+stdout:
+refused illegal-transition
+stderr:
+lockstep: refused (illegal-transition): IllegalTransition "ready" "accept"
+### accept with a stale revision
+argv: scripts/service cli ticket accept 183cee44-758e-47ff-acd9-ccd1a085751c --expected-revision 1
+exit: 65 (expected 65)
+stdout sha256: 505b0b24dfd8bdbd0472fc2cf94cc1792d18e4870b34dd2deddc24e6e8dd620d  stderr sha256: 9d842f68c05c195e2c3ed2c7763c062ee8b8f84e8f1c5e6fe2a017e9585b55a0
+stdout:
+refused stale-revision
+stderr:
+lockstep: refused (stale-revision): the ticket has moved on; re-read it
+### ledger show (refusals)
+argv: scripts/service cli ledger show
+exit: 0 (expected 0)
+stdout sha256: f7855c33d03fe69625a2aecf95e19d4e01fcb1211e688ebf52059b2eee4da005  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+as of 2026-10-25T16:26:54Z
+ticket 584179b7-37c0-4ff3-9db6-bdce6df10a13 state=ready revision=2 title="B1 blocked, priority 50"
+ticket 183cee44-758e-47ff-acd9-ccd1a085751c state=ready revision=2 title="B1 order one"
+work-order 9ef464d0-d7f9-4365-9b6a-dd77c7d7720d ticket=584179b7-37c0-4ff3-9db6-bdce6df10a13 state=pending revision=1 binding=58d6304d69dd5f2435f96f6c86c6561a80fbe2412a748df2ab00f449f383baef
+work-order 739a13b4-c557-4ce6-afb9-7f5b19cc5271 ticket=183cee44-758e-47ff-acd9-ccd1a085751c state=claimed revision=3 binding=69c00a2cdefe26813a71682fcf49feaa5eca0bd314104cb664502d86a1d882dd
+refusal subject=183cee44-758e-47ff-acd9-ccd1a085751c expected=2 principal=human code=illegal-transition command="accept"
+refusal subject=183cee44-758e-47ff-acd9-ccd1a085751c expected=1 principal=human code=stale-revision command="accept"
+schedule digest=c669a2584394140641c0685937fdf3db8681029983577df737ccae947773f9b7
+stderr:
+
+CHECK PASSED: AC-B1-09: illegal-transition and stale-revision are refused (exit 65) and listed by ledger show
+## B1-11 atomic events, claims and intents
+### supervisor start (two sandbox effects)
+argv: scripts/service cli supervisor start 739a13b4-c557-4ce6-afb9-7f5b19cc5271 --expected-revision 3 --effect sandbox-repeatable --effect sandbox-idempotent:apply-then-hang
+exit: 0 (expected 0)
+stdout sha256: 84ab0173f69070b95b0b7a19522d7771598eeee56ba9351a1aa6deb6ca348760  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+work-order 739a13b4-c557-4ce6-afb9-7f5b19cc5271 revision 4 state active
+intent 40ec2e6d-bac2-435c-ab5c-1dd4f9c9fffe effect sandbox-repeatable
+intent ee7fd5a9-a98b-45cc-b174-8d7a0fb71fda effect sandbox-idempotent
+stderr:
+
+### execute the repeatable effect
+argv: scripts/service cli supervisor execute-once
+exit: 0 (expected 0)
+stdout sha256: 00746b5983842e8b17d873a47f62794167240c7e038f59ffe4dae2a38f5e2eb3  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+executed 40ec2e6d-bac2-435c-ab5c-1dd4f9c9fffe applied applied
+stderr:
+
+CHECK PASSED: AC-B1-11: one decision made the order active with one intent per effect; the repeatable effect is applied and PASSED
+## B1-12 a real crash, a restart, recovery under the same operation id
+### start execute-once (to be killed)
+argv: docker run --detach --name lockstep-b1-exec --network host --volume /Users/tab/personal/lockstep/.local/b1-install:/opt/lockstep:ro --volume /Users/tab/personal/lockstep/.local/config/lockstep-b1.json:/etc/lockstep/lockstep.json:ro --env LOCKSTEP_CONFIG=/etc/lockstep/lockstep.json --volume /Users/tab/personal/lockstep/.local/b1-20261025T162130Z/sentinel:/opt/sentinel --env PATH=/opt/sentinel/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --env LOCKSTEP_SENTINEL_LOG=/opt/sentinel/sentinel.log lockstep-dev:p1 /opt/lockstep/bin/lockstep supervisor execute-once --lease-seconds 8 --timeout-ms 7000
+exit: 0 (expected 0)
+stdout sha256: 52b91cfc38aa75f25c1a1dc1a903a432cee07c2d315c94d0df9c982646cef84f  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+2ab8eab2e13f99d67b2b71c73b661ef7377eaa7f0b134578b09b69dac595ad21
+stderr:
+
+waited 1s: the idempotent effect is applied at the sandbox
+### kill the executing process (SIGKILL)
+argv: docker kill lockstep-b1-exec
+exit: 0 (expected 0)
+stdout sha256: a1f3cdcc0238ae47368cbd67f8a2ec6a0d239e2ea1968e6df2ac4bcdf9392edb  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+lockstep-b1-exec
+stderr:
+
+### scripts/service restart
+argv: scripts/service restart --port 8200
+exit: 0 (expected 0)
+stdout sha256: 8863abe06e9ea6fad5f114498c50fdb3a8e4929c53a65a8d91733c9bb1a0f5b4  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+stopped lockstep-b1 (exit 0); log saved to .local/b1-install/last-run.log
+started lockstep-b1: http://127.0.0.1:8200/ (6ba66f59f46c04f32982a5e4b96f1ac13017853c)
+stderr:
+
+after the crash:   effect ee7fd5a9-a98b-45cc-b174-8d7a0fb71fda key=sandbox-idempotent spec=sandbox-idempotent class=idempotent state=dispatched generation=1 dispatches=1 budget=1 status=IN_PROGRESS reason="dispatched by supervisor (generation 1)"
+waited 7s: the killed claim's lease has ended
+### execute-once recovers the idempotent effect
+argv: scripts/service cli supervisor execute-once
+exit: 0 (expected 0)
+stdout sha256: 4f7fb25f45cb0e8aafa6daaf2ed01e8069f89e69f69b7ee4d8188aff71d5160e  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+executed ee7fd5a9-a98b-45cc-b174-8d7a0fb71fda applied applied
+stderr:
+
+### sandbox show (after recovery)
+argv: scripts/service cli sandbox show
+exit: 0 (expected 0)
+stdout sha256: 0ec6f2d71436727daf5801d0a8991ba6b6cd6d4bb96478f2acacd9ab236778c2  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+application 40ec2e6d-bac2-435c-ab5c-1dd4f9c9fffe effect sandbox-repeatable count 1
+application ee7fd5a9-a98b-45cc-b174-8d7a0fb71fda effect sandbox-idempotent count 1
+stderr:
+
+CHECK PASSED: AC-B1-12: the killed effect was dispatched, not concluded; after the restart and the lease end it is recovered and applied once (sandbox count 1), PASSED
+### halt order one (frees the repository)
+argv: scripts/service cli work-order halt 739a13b4-c557-4ce6-afb9-7f5b19cc5271 --expected-revision 4 --reason B1: next order
+exit: 0 (expected 0)
+stdout sha256: 359f352fa333f37e10e804b5b9960680b1f70cce0b7dfe42504877fbc2b875cf  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+work-order 739a13b4-c557-4ce6-afb9-7f5b19cc5271 revision 5 state halted
+stderr:
+
+## B1-13 an uncertain queryable effect, reconciled by lookup
+### ticket create (B1 order three)
+argv: scripts/service cli ticket create B1 order three
+exit: 0 (expected 0)
+stdout sha256: 93fffe410d999fd2e9ba9f0d36a832a93737244b28c781021e1464219a274436  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+ticket 4c21c770-e9f3-40ca-bdd8-bb08dcfa3d1b
+stderr:
+
+### ticket accept (B1 order three)
+argv: scripts/service cli ticket accept 4c21c770-e9f3-40ca-bdd8-bb08dcfa3d1b --expected-revision 1
+exit: 0 (expected 0)
+stdout sha256: 9e39a3b9846018da107d711834bb65fa100c32b4986859310efa08db6162e787  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+ticket 4c21c770-e9f3-40ca-bdd8-bb08dcfa3d1b revision 2 state ready
+stderr:
+
+### work-order create (B1 order three)
+argv: scripts/service cli work-order create --ticket 4c21c770-e9f3-40ca-bdd8-bb08dcfa3d1b --engineer alice --priority 5 --path-class source
+exit: 0 (expected 0)
+stdout sha256: 1a59b55a0ae13f63fdb6b1610ee1cbb50d5c0e8684ff350fd5eee46b9d447dc1  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+work-order 9ce3f45b-6ad4-4fff-8d9d-3f8612a51b93
+stderr:
+
+### work-order evidence (B1 order three)
+argv: scripts/service cli work-order evidence 9ce3f45b-6ad4-4fff-8d9d-3f8612a51b93 --artifact impact-assessment --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --verifier human-inspection --approval supervisor
+exit: 0 (expected 0)
+stdout sha256: 5907a84174134381ff91cd0f927f38d1b4dc5f713c86b455386e5466158520c9  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+evidence 9ce3f45b-6ad4-4fff-8d9d-3f8612a51b93 impact-assessment
+stderr:
+
+### schedule run-once (order three)
+argv: scripts/service cli schedule run-once
+exit: 0 (expected 0)
+stdout sha256: e30c72ed0854a3281f8931ab0971a2c903e8fcfcd9201d55f37a0ca2c4daa589  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+lockstep-schedule 1
+selected 9ce3f45b-6ad4-4fff-8d9d-3f8612a51b93 engineer 450b27f3-c341-432d-82b7-c3330d9d9da3
+eligible 1 9ce3f45b-6ad4-4fff-8d9d-3f8612a51b93 priority=5 admitted-at=2026-10-25T16:27:08.155185Z
+ineligible 9ef464d0-d7f9-4365-9b6a-dd77c7d7720d profile-changed team
+ineligible 9ef464d0-d7f9-4365-9b6a-dd77c7d7720d prerequisite-blocked impact missing-artifact impact-assessment
+digest b8f55930662d5b08e44b61ac67b09c6d2577512095cdf1bfebf34cfbab538009
+selected 9ce3f45b-6ad4-4fff-8d9d-3f8612a51b93 generation 1
+stderr:
+
+### supervisor start (queryable, hangs)
+argv: scripts/service cli supervisor start 9ce3f45b-6ad4-4fff-8d9d-3f8612a51b93 --expected-revision 3 --effect sandbox-queryable:hang
+exit: 0 (expected 0)
+stdout sha256: 6c80856b075abfb8061b81222feacfbb45084bd22e7b54817868cdeea8b3610c  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+work-order 9ce3f45b-6ad4-4fff-8d9d-3f8612a51b93 revision 4 state active
+intent b10d9d5b-629d-4531-833c-cbb487d81097 effect sandbox-queryable
+stderr:
+
+### execute-once (times out)
+argv: scripts/service cli supervisor execute-once --timeout-ms 3000
+exit: 0 (expected 0)
+stdout sha256: 2bfaa8f41c15b19b13ca66d63142deb0f43b6465fa6794f9f795d687e06ca03e  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+executed b10d9d5b-629d-4531-833c-cbb487d81097 unknown timeout
+stderr:
+
+### reconcile-once
+argv: scripts/service cli supervisor reconcile-once
+exit: 0 (expected 0)
+stdout sha256: b47f841a553a9e873a184ca21ac42d0d3d52c63e1e129a9f40faccaa6e593169  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+reconciled b10d9d5b-629d-4531-833c-cbb487d81097 not-applied lookup: not found
+stderr:
+
+CHECK PASSED: AC-B1-13: unknown timeout (RECONCILIATION_NEEDED), then the lookup: not-applied lookup: not found; the destination fenced the id and applied nothing
+## B1-14 an uncertain unqueryable effect, resolved by a human
+### ticket create (B1 order four)
+argv: scripts/service cli ticket create B1 order four
+exit: 0 (expected 0)
+stdout sha256: 63dece8fdab7f302a3d0597035dd213f9f5e7bad809cf9abf509e1a5574636c4  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+ticket 484f13bf-773a-4aa6-9b14-e74ff63dcae8
+stderr:
+
+### ticket accept (B1 order four)
+argv: scripts/service cli ticket accept 484f13bf-773a-4aa6-9b14-e74ff63dcae8 --expected-revision 1
+exit: 0 (expected 0)
+stdout sha256: d5920fc35fa2bd681396986ce5c999d3d4488b614f511e2643da8a66404cf50b  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+ticket 484f13bf-773a-4aa6-9b14-e74ff63dcae8 revision 2 state ready
+stderr:
+
+### work-order create (B1 order four)
+argv: scripts/service cli work-order create --ticket 484f13bf-773a-4aa6-9b14-e74ff63dcae8 --engineer alice --priority 5 --path-class source
+exit: 0 (expected 0)
+stdout sha256: 813c0a25f8e1f0d84d2de240574127ab14c0d7bf2f7f93c618cd7c4ec8e7cc2a  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+work-order c9b62864-0e1c-40d7-8fd3-a3e21b89cae1
+stderr:
+
+### work-order evidence (B1 order four)
+argv: scripts/service cli work-order evidence c9b62864-0e1c-40d7-8fd3-a3e21b89cae1 --artifact impact-assessment --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --verifier human-inspection --approval supervisor
+exit: 0 (expected 0)
+stdout sha256: 49c3f93b1d5c1ef424f3354bf075794e0d67b8d3640bb8f3e3a83589102b2cf2  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+evidence c9b62864-0e1c-40d7-8fd3-a3e21b89cae1 impact-assessment
+stderr:
+
+### schedule run-once (order four)
+argv: scripts/service cli schedule run-once
+exit: 0 (expected 0)
+stdout sha256: 334893cd2ec8091a83f18639b19fb8965d99d2f82c7547be785119a256cd662f  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+lockstep-schedule 1
+selected c9b62864-0e1c-40d7-8fd3-a3e21b89cae1 engineer 450b27f3-c341-432d-82b7-c3330d9d9da3
+eligible 1 c9b62864-0e1c-40d7-8fd3-a3e21b89cae1 priority=5 admitted-at=2026-10-25T16:27:15.217865Z
+ineligible 9ef464d0-d7f9-4365-9b6a-dd77c7d7720d profile-changed team
+ineligible 9ef464d0-d7f9-4365-9b6a-dd77c7d7720d prerequisite-blocked impact missing-artifact impact-assessment
+digest aa0d08f756401d5309bac3c6918093a8b7a75d5d97f66d8a51e66199dd2c39ea
+selected c9b62864-0e1c-40d7-8fd3-a3e21b89cae1 generation 1
+stderr:
+
+### supervisor start (unqueryable, applies then hangs)
+argv: scripts/service cli supervisor start c9b62864-0e1c-40d7-8fd3-a3e21b89cae1 --expected-revision 3 --effect sandbox-unqueryable:apply-then-hang
+exit: 0 (expected 0)
+stdout sha256: 333981df1a23bdb83ad4606f3244e984f857fa8a73b5d703d4752382db4b5ccd  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+work-order c9b62864-0e1c-40d7-8fd3-a3e21b89cae1 revision 4 state active
+intent 3ce5c9ab-c7ea-46a3-a022-a0d20c8be924 effect sandbox-unqueryable
+stderr:
+
+### start execute-once (to be killed)
+argv: docker run --detach --name lockstep-b1-exec --network host --volume /Users/tab/personal/lockstep/.local/b1-install:/opt/lockstep:ro --volume /Users/tab/personal/lockstep/.local/config/lockstep-b1.json:/etc/lockstep/lockstep.json:ro --env LOCKSTEP_CONFIG=/etc/lockstep/lockstep.json --volume /Users/tab/personal/lockstep/.local/b1-20261025T162130Z/sentinel:/opt/sentinel --env PATH=/opt/sentinel/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --env LOCKSTEP_SENTINEL_LOG=/opt/sentinel/sentinel.log lockstep-dev:p1 /opt/lockstep/bin/lockstep supervisor execute-once --lease-seconds 8 --timeout-ms 7000
+exit: 0 (expected 0)
+stdout sha256: 18a726b19f670ba3eb86f45c2939bc87fb7335b3629a6cadca5f9fb85e398c72  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+b120355a9ffdc1b51ad2c328c051361019fc440696066efa53c2dd9af004f09a
+stderr:
+
+waited 1s: the unqueryable effect is applied at the sandbox
+### kill the executing process (SIGKILL)
+argv: docker kill lockstep-b1-exec
+exit: 0 (expected 0)
+stdout sha256: a1f3cdcc0238ae47368cbd67f8a2ec6a0d239e2ea1968e6df2ac4bcdf9392edb  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+lockstep-b1-exec
+stderr:
+
+waited 8s: the killed claim's lease has ended
+### execute-once (recovery: unknown)
+argv: scripts/service cli supervisor execute-once
+exit: 0 (expected 0)
+stdout sha256: 49e2a75846d31a3385d13016eadacdd27a565c83d1d1b243d8f83cde94816294  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+executed 3ce5c9ab-c7ea-46a3-a022-a0d20c8be924 unknown dispatch-interrupted: unqueryable effect
+stderr:
+
+### resolve with a stale generation
+argv: scripts/service cli effects resolve 3ce5c9ab-c7ea-46a3-a022-a0d20c8be924 --generation 0 --attest-applied B1
+exit: 65 (expected 65)
+stdout sha256: 57a2f20ae8e06ae41b396832246c972b0f90ba14cea18439f8e27ecb505cc31e  stderr sha256: 1f060c4d6843ad500044ff75c7b1d8faaabf5594ccf6b61da9fcd1def23d7abc
+stdout:
+refused stale-claim
+stderr:
+lockstep: refused (stale-claim): ReconcileStaleClaim
+### attest applied
+argv: scripts/service cli effects resolve 3ce5c9ab-c7ea-46a3-a022-a0d20c8be924 --generation 1 --attest-applied B1: the operator checked the sandbox record
+exit: 0 (expected 0)
+stdout sha256: a4b5e75e7619146b8bc0bdc0969e234713016e90d8db1112b7a4a75ab1413bf5  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+intent 3ce5c9ab-c7ea-46a3-a022-a0d20c8be924 state settled generation 1
+stderr:
+
+### sandbox show (after attestation)
+argv: scripts/service cli sandbox show
+exit: 0 (expected 0)
+stdout sha256: dd700f5352468e85aae3dee5c85e2cf5f824a3ea81c0a6f09c69b77435d2f84a  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+application 40ec2e6d-bac2-435c-ab5c-1dd4f9c9fffe effect sandbox-repeatable count 1
+application ee7fd5a9-a98b-45cc-b174-8d7a0fb71fda effect sandbox-idempotent count 1
+application 3ce5c9ab-c7ea-46a3-a022-a0d20c8be924 effect sandbox-unqueryable count 1
+stderr:
+
+CHECK PASSED: AC-B1-14: unknown dispatch-interrupted, order halted; a stale generation is refused stale-claim; the attestation makes it ATTESTED, never PASSED; applied once
+## B1-15 duplicate ownership: two processes for one pending effect
+### ticket create (B1 order five)
+argv: scripts/service cli ticket create B1 order five
+exit: 0 (expected 0)
+stdout sha256: 3468afcfcbe545214d24d49bed10cb5a102c6fd7ce9f9bc873c61b7bff494425  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+ticket 834bda86-34b5-4e92-8b62-c7bed7d37896
+stderr:
+
+### ticket accept (B1 order five)
+argv: scripts/service cli ticket accept 834bda86-34b5-4e92-8b62-c7bed7d37896 --expected-revision 1
+exit: 0 (expected 0)
+stdout sha256: 8a23117040efa2743d03ec464482a41898d8e9a333e4288ba81f7bec3d049ea8  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+ticket 834bda86-34b5-4e92-8b62-c7bed7d37896 revision 2 state ready
+stderr:
+
+### work-order create (B1 order five)
+argv: scripts/service cli work-order create --ticket 834bda86-34b5-4e92-8b62-c7bed7d37896 --engineer alice --priority 5 --path-class source
+exit: 0 (expected 0)
+stdout sha256: 459f62ff7bb0f61b6cb45101285b771c994c486ddd80d99e0c979a92ab064d28  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+work-order b17822ff-2b9a-4f8d-bb7a-d0ede9c58561
+stderr:
+
+### work-order evidence (B1 order five)
+argv: scripts/service cli work-order evidence b17822ff-2b9a-4f8d-bb7a-d0ede9c58561 --artifact impact-assessment --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --verifier human-inspection --approval supervisor
+exit: 0 (expected 0)
+stdout sha256: 4b64a624e027d8344e7cb0bf66735781ad846e4b88006f2b8df7402ec89349d8  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+evidence b17822ff-2b9a-4f8d-bb7a-d0ede9c58561 impact-assessment
+stderr:
+
+### schedule run-once (order five)
+argv: scripts/service cli schedule run-once
+exit: 0 (expected 0)
+stdout sha256: f12b63255c96f98cb2bc54dc7a00088d0a5964b2d4229a0aedebecfbfb3d5245  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+lockstep-schedule 1
+selected b17822ff-2b9a-4f8d-bb7a-d0ede9c58561 engineer 450b27f3-c341-432d-82b7-c3330d9d9da3
+eligible 1 b17822ff-2b9a-4f8d-bb7a-d0ede9c58561 priority=5 admitted-at=2026-10-25T16:27:29.144174Z
+ineligible 9ef464d0-d7f9-4365-9b6a-dd77c7d7720d profile-changed team
+ineligible 9ef464d0-d7f9-4365-9b6a-dd77c7d7720d prerequisite-blocked impact missing-artifact impact-assessment
+digest 78dc35ebe5a37ecfac08600a584bf91a72adea931788c48eb00ce44948792d0c
+selected b17822ff-2b9a-4f8d-bb7a-d0ede9c58561 generation 1
+stderr:
+
+### supervisor start (repeatable)
+argv: scripts/service cli supervisor start b17822ff-2b9a-4f8d-bb7a-d0ede9c58561 --expected-revision 3 --effect sandbox-repeatable
+exit: 0 (expected 0)
+stdout sha256: c4d30fab7586adfd63fb55394f55f4fd3a1f4dcc74e0e88242f7c2964cea36c2  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+work-order b17822ff-2b9a-4f8d-bb7a-d0ede9c58561 revision 4 state active
+intent 5ca8ba08-4ad4-4dc9-87c6-ca8b21fd8124 effect sandbox-repeatable
+stderr:
+
+### two concurrent execute-once: exit 65: refused dispatched-needs-recovery [lockstep: refused (dispatched-needs-recovery): DispatchedNeedsRecovery] | exit 0: executed 5ca8ba08-4ad4-4dc9-87c6-ca8b21fd8124 applied applied []
+CHECK PASSED: AC-B1-15: exactly one process executes the effect; the other executes nothing (idle, or refused claim-held, dispatched-needs-recovery or already-settled); one application
+## B1-18 real overlap on the installed service: a second process while the first holds an in-flight effect
+### halt order five (frees the repository)
+argv: scripts/service cli work-order halt b17822ff-2b9a-4f8d-bb7a-d0ede9c58561 --expected-revision 4 --reason B1: next order
+exit: 0 (expected 0)
+stdout sha256: 0b42cdbf3f16e01a1186e3b7eae5d5ec3f7f9d1f378afbf1f990dab9c0bec1ac  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+work-order b17822ff-2b9a-4f8d-bb7a-d0ede9c58561 revision 5 state halted
+stderr:
+
+### ticket create (B1 order six)
+argv: scripts/service cli ticket create B1 order six
+exit: 0 (expected 0)
+stdout sha256: 9c37825ebfa12c01daad3fd1cfdfe62e3dec26243f1d834dca1425f3850fe9dd  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+ticket 257871f3-a152-4ab3-a446-3a5da342fd2e
+stderr:
+
+### ticket accept (B1 order six)
+argv: scripts/service cli ticket accept 257871f3-a152-4ab3-a446-3a5da342fd2e --expected-revision 1
+exit: 0 (expected 0)
+stdout sha256: c2dd1d2be6e34b11fda5b9231a1aca3582b38a517add803325e33df992e0141d  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+ticket 257871f3-a152-4ab3-a446-3a5da342fd2e revision 2 state ready
+stderr:
+
+### work-order create (B1 order six)
+argv: scripts/service cli work-order create --ticket 257871f3-a152-4ab3-a446-3a5da342fd2e --engineer alice --priority 5 --path-class source
+exit: 0 (expected 0)
+stdout sha256: 04e755204ebaf1ee317274e31b763bc1b8683597ae9bb9cfc2cc556f9bdacc09  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+work-order 64072ae7-4db3-4c03-8cda-1e46fb7ae273
+stderr:
+
+### work-order evidence (B1 order six)
+argv: scripts/service cli work-order evidence 64072ae7-4db3-4c03-8cda-1e46fb7ae273 --artifact impact-assessment --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --verifier human-inspection --approval supervisor
+exit: 0 (expected 0)
+stdout sha256: 14db5a863d40d701c1e8187bd0eb75460dd9c815c324787b2394f3c1164e008c  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+evidence 64072ae7-4db3-4c03-8cda-1e46fb7ae273 impact-assessment
+stderr:
+
+### schedule run-once (order six)
+argv: scripts/service cli schedule run-once
+exit: 0 (expected 0)
+stdout sha256: d4e3a4d75de9749ef1b4c538e0a7b8a95e771292e72cce5e88b88eb87eb35538  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+lockstep-schedule 1
+selected 64072ae7-4db3-4c03-8cda-1e46fb7ae273 engineer 450b27f3-c341-432d-82b7-c3330d9d9da3
+eligible 1 64072ae7-4db3-4c03-8cda-1e46fb7ae273 priority=5 admitted-at=2026-10-25T16:27:33.257956Z
+ineligible 9ef464d0-d7f9-4365-9b6a-dd77c7d7720d profile-changed team
+ineligible 9ef464d0-d7f9-4365-9b6a-dd77c7d7720d prerequisite-blocked impact missing-artifact impact-assessment
+digest cb4d2a343f58d670ca9421fa5c048d8b975ce0a3688114a45401e0d0215738b9
+selected 64072ae7-4db3-4c03-8cda-1e46fb7ae273 generation 1
+stderr:
+
+### supervisor start (idempotent, applies then hangs)
+argv: scripts/service cli supervisor start 64072ae7-4db3-4c03-8cda-1e46fb7ae273 --expected-revision 3 --effect sandbox-idempotent:apply-then-hang
+exit: 0 (expected 0)
+stdout sha256: 6be9c955cb986b7b5a8bc5f955158a79a144cd3d7c27b6df5605e6d653c0948f  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+work-order 64072ae7-4db3-4c03-8cda-1e46fb7ae273 revision 4 state active
+intent 7c3588e8-264f-4b0b-93a5-29c10f7a99fd effect sandbox-idempotent
+stderr:
+
+### start execute-once (holds the effect)
+argv: docker run --detach --name lockstep-b1-exec --network host --volume /Users/tab/personal/lockstep/.local/b1-install:/opt/lockstep:ro --volume /Users/tab/personal/lockstep/.local/config/lockstep-b1.json:/etc/lockstep/lockstep.json:ro --env LOCKSTEP_CONFIG=/etc/lockstep/lockstep.json --volume /Users/tab/personal/lockstep/.local/b1-20261025T162130Z/sentinel:/opt/sentinel --env PATH=/opt/sentinel/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --env LOCKSTEP_SENTINEL_LOG=/opt/sentinel/sentinel.log lockstep-dev:p1 /opt/lockstep/bin/lockstep supervisor execute-once --lease-seconds 15 --timeout-ms 14000
+exit: 0 (expected 0)
+stdout sha256: dd61545f5eed3e555fbed4092cc278e5a340b8f795902404bd14a05fa9e8e03f  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+7d6373aa787530ee617b69af981e8a4dd1bbbdf58bd082d3f03ccc481d7cb6a6
+stderr:
+
+waited 1s: the held effect is applied at the sandbox
+### a second execute-once while the first holds it
+argv: scripts/service cli supervisor execute-once
+exit: 0 (expected 0)
+stdout sha256: 514ee2d3370fe0a6aa64c9c049fe9fccff5da08f5c6a215e26f379d3ca2a6b27  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+idle
+stderr:
+
+during the overlap: second process: idle; first process running: true; intent: dispatched true supervisor
+### kill the holding process (SIGKILL)
+argv: docker kill lockstep-b1-exec
+exit: 0 (expected 0)
+stdout sha256: a1f3cdcc0238ae47368cbd67f8a2ec6a0d239e2ea1968e6df2ac4bcdf9392edb  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+lockstep-b1-exec
+stderr:
+
+waited 14s: the held claim's lease has ended
+### execute-once recovers the held effect
+argv: scripts/service cli supervisor execute-once
+exit: 0 (expected 0)
+stdout sha256: fc23adfa5b382c1c0037c56cdc49aadd7c5e9b08d83922885ec6b98a09786099  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+executed 7c3588e8-264f-4b0b-93a5-29c10f7a99fd applied applied
+stderr:
+
+CHECK PASSED: AC-B1-18: while the first process was still running and held the dispatched effect (lease active), the second executed nothing; after the kill and the lease end, recovery applied it with one application in all
+## B1-16 durable, inspectable evidence across a restart; the ledger page in a real browser
+### scripts/service restart
+argv: scripts/service restart --port 8200
+exit: 0 (expected 0)
+stdout sha256: 8863abe06e9ea6fad5f114498c50fdb3a8e4929c53a65a8d91733c9bb1a0f5b4  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+stopped lockstep-b1 (exit 0); log saved to .local/b1-install/last-run.log
+started lockstep-b1: http://127.0.0.1:8200/ (6ba66f59f46c04f32982a5e4b96f1ac13017853c)
+stderr:
+
+### ledger page without a session
+request: curl http://127.0.0.1:8200/operator/ledger
+status: 401
+body sha256: 0f62f1ff839901be100a80130d0e264686ff4bcff997c89ac58c57cebb4f6cd0 (403 bytes)
+### command center without a session
+request: curl http://127.0.0.1:8200/operator/center
+status: 401
+body sha256: 0f62f1ff839901be100a80130d0e264686ff4bcff997c89ac58c57cebb4f6cd0 (403 bytes)
+### browser (Chromium via test/browser/cdp.py): sign in, open /operator/ledger
+exit: 0
+browser.version	Chrome/155.0.8059.79
+confirm.url	http://127.0.0.1:8200/operator/sign-in?token=<TOKEN>
+confirm.status	200
+confirm.referrer_policy	origin
+confirm.csp	default-src 'none'; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'
+confirm.x_frame_options	DENY
+signin.post.url	http://127.0.0.1:8200/operator/sign-in
+signin.post.origin	http://127.0.0.1:8200
+signin.post.referer	http://127.0.0.1:8200/
+signin.post.sec_fetch_site	same-origin
+signin.post.status	303
+signin.post.location	/operator
+signin.url	http://127.0.0.1:8200/operator
+signin.status	200
+signin.referrer_policy	origin
+signin.csp	frame-ancestors 'none'
+signin.x_frame_options	DENY
+ledger.url	http://127.0.0.1:8200/operator/ledger
+ledger.status	200
+ledger.referrer_policy	no-referrer
+ledger.csp	frame-ancestors 'none'
+ledger.x_frame_options	DENY
+done	ok
+CHECK PASSED: AC-B1-16: ledger show is identical across a restart; no effect is left uncertain; in headless Chromium /operator/ledger shows PASSED, ATTESTED and the refused decisions; without a session it is refused as /operator/center is
+## B1-17 zero live-model calls; no secrets in the recorded output
+inside lockstep-b1: claude resolves to /opt/sentinel/bin/claude; canary: exit 97 1 
+### scripts/service stop
+argv: scripts/service stop
+exit: 0 (expected 0)
+stdout sha256: 248d9afff4af1ab3d57b519bc3706d71946041cbb47a061d19c15e8336932aaf  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+stopped lockstep-b1 (exit 0); log saved to .local/b1-install/last-run.log
+stderr:
+
+sentinel log: 0 bytes; password occurrences: 0; sign-in token occurrences: 0; raw session or token values: 0
+CHECK PASSED: AC-B1-17: inside the service container claude resolves to the shim and a canary call is logged (exit 97); the service's sentinel log is empty; no password, token or session value appears in the recorded output
+operator install (.local/install VERSION + binary) digest before 83dca4c8683a6ae6345a057ea1edbbd9476e719a06ec9a488fa60b7ae15a4bd7, after 83dca4c8683a6ae6345a057ea1edbbd9476e719a06ec9a488fa60b7ae15a4bd7
+CHECK PASSED: AC-B1-19: the operator's installed binary (.local/install) is unchanged by the run
+## B1 result: 0 failing check(s); database lockstep_b1_20261025t162130z kept for inspection
