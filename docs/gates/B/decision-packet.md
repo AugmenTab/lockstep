@@ -3,6 +3,12 @@
 For the human owner. This packet links the canonical artifacts and asks only for your
 decisions. Nothing in it is decided, and Gate B is not recorded as accepted.
 
+**Status: DEFERRED by the owner, 2026-10-25.** During the web review the owner found the launch
+and upgrade experience unacceptable and paused all forward progress; a change of focus comes
+before Gate B is reviewed again. When it is, the report (r2, tested commit `6ba66f5`) will need
+re-verification against whatever has changed by then. Awareness note for the Planner:
+`.local/retros/awareness-launch-experience.md` (local, gitignored).
+
 ## What to decide
 
 1. **Gate B** for `docs/gates/B/gate-report.md`, revision **r2**,
