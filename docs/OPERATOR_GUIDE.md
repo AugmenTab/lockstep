@@ -80,6 +80,7 @@ record: a human abandonment and a human carry. Migrate with a backup as usual.
 | State | `scripts/service status` |
 | Log | `scripts/service logs` (the last run's log is kept in `.local/install/last-run.log`) |
 | Any CLI command against the same database | `scripts/service cli <command…>` |
+| The same for a qualification install (e.g. B1's) | `scripts/lockstep --instance b1 open`, `scripts/service --instance b1 <command…>` |
 
 Health: `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/api/health_check` → `204`.
 Readiness: `curl -s http://127.0.0.1:8000/api/readiness` → `ready 5`.
