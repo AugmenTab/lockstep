@@ -106,6 +106,21 @@ Phase 2 acceptance, Gate B disposition and Phase 3 authorization, 2026-10-25 (`.
 - **Revised Phase 3 authorized** (P3.1–P3.11, "The Usable Product Foundation"; exit: revised Gate C — Usability and Operator Readiness), by the owner's explicit change of the gate sequence. The original Phase 3 engineering-execution scope becomes the phase after Gate C, with its safety requirements intact. It authorizes no live model inference, AI-written production code, autonomous Git commit/push/merge, remote access, email approval or external integration (handoff §8).
 - Not decided by the handoff and still open: the Gate B packet's effect-key rule (3), unacknowledged abandonment (4), authority by command (5) and the operator installation (6).
 
+DR-P3.1 owner decision, 2026-10-25 (`docs/gates/P3.1/owner-decision.md`; Planner disposition `.local/plans/phase-03_update1.md`; recorded by the writing agent at the owner's instruction):
+
+- **Bootstrap architecture APPROVED:** a containerized control pane without the Docker socket; a narrow host helper running as the invoking OS user, with a private authenticated channel, a fixed versioned allowlist, replay protection, serialized execution, bounded timeouts and durable results. The helper is a **narrow exception** to the earlier no-new-daemon preference, not a general privileged service.
+- **Browser authentication for the control pane:** one-time fragment token, per-origin header session credential (no cookie), digests only on the server; exact Host/Origin, CSP and cross-origin protections kept. Migration of the main application is **deferred to P3.4**.
+- **Existing cookie pages and their frozen tests preserved**; their retirement is planned at P3.4 through separately authorized frozen-test amendments. Their mechanism is not used for bootstrap management.
+- One-time terminal bootstrap build; PATH change only with explicit consent and the user's actual shell; automatic start only of already-compatible services; new root `lockstep` launcher with frozen scripts preserved; minimal first-party JavaScript in P3.1 (pinned HTMX later).
+- PRD v0.3 §8 names this decision **DG-15** (P3.1 only).
+
+Governing documents v0.3 and Bible alignment, 2026-10-25 (approval record `LS-V2-DOCS-0.3-APPROVE-2026-10-25`; recorded by the writing agent at the owner's instruction):
+
+- **APPROVED by the owner:** Implementation PRD v0.3 (sha256 `519348e1…a6175bfd`), Dependency-Aware Plan v0.3 (`d017a29d…74b10b42`) and the Bible amendment **LS-BIBLE-2.2-ALIGN-01** (PRD v0.3 §2). The ratified Bible v2.2 (`bbaddf28…6ebb018f`) is the current constitution. Repository records: `docs/PROJECT_BIBLE.md`, `docs/prd/`, `docs/plans/`; registers: `SOURCE_REGISTER.md`.
+- Phase 3 exits at **Gate C-UX** (scenarios UX-C1 … UX-C9); the former Phase 3 ticket-to-code transaction is **Phase 4 / Gate C-EXEC** (old C1/C2/C3 keep their meaning there). DG-06 and DG-07 now apply to Phase 4.
+- New gates recorded as defined in PRD v0.3 §4 and §8: **DG-14** (email approval authentication; OPEN, before any email action authorization), **DG-15** (= DR-P3.1, ACCEPTED above), **DG-16** (Phase 3 browser-managed effects: verified helper protocol and authorization, privilege separation, operation locks, durable results, no shell injection; to be met by P3.2–P3.3 Contracts), **DG-17** (Phase 4 live coding confinement; OPEN, hard precondition to live consequential work).
+- The approval authorizes no agent code execution and asserts no gate passed.
+
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.
 

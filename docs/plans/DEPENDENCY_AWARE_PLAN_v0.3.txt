@@ -1,0 +1,1168 @@
+        Lockstep V2
+DEPENDENCY_AWARE_PLAN v0.3
+        APPROVED
+
+
+LOCKSTEP V2 — PHASE-
+ORDERED, DEPENDENCY-AWARE
+IMPLEMENTATION PLAN
+
+Revision 0.3 · UI-first local operation and
+accelerated single-Engineer value
+Document ID: LS-V2-DAP
+Date: 25 October 2026
+Approval record: LS-V2-DOCS-0.3-APPROVE-2026-10-25 — human
+product-owner approval of the paired v0.3 PRD/plan and the narrowly
+scoped LS-BIBLE-2.2-ALIGN-01 amendment in the Lockstep project
+conversation. No repository commit, digest, gate acceptance, or
+implementation result is asserted by this file.
+Status: APPROVED BY HUMAN OWNER, companion to approved
+Implementation PRD v0.3
+Highest authority: Project Bible v2.2 (final, ratified 25 October 2026)
+Preservation: v0.2’s accepted engineering invariants, FR/NFR IDs,
+historical Contracts, and actual Phase 0–2 evidence are not rewritten.
+
+     Scope reconciliation: The ratified Bible’s original Phase 3 / Gate
+     C wording refers to the old first coding transaction. The human
+     owner approved the narrow LS-BIBLE-2.2-ALIGN-01 amendment
+     (PRD v0.3 §2) on 25 October 2026, directing a UI-first Phase 3 and
+     moving that transaction to Phase 4. Incorporate the amendment
+      into canonical repository documents with provenance; leave
+      historical PDF and test receipts intact. Existing P3.1 authorization
+      is independently established.
+
+
+1. Strategic intent and current frontier
+Do not change direction again. Deliver one usable local command
+pane and make the first genuinely autonomous single-repository
+engineering transaction work as soon as its non-negotiable
+dependencies are met. This is not permission to bypass the human/
+agent privilege boundary, objective verification, frozen tests, or
+recovery.
+
+The current sequence is intentionally UI-first but thin, with vertical
+demonstrations throughout. The entire future UI does not need to be
+perfected before testing useful local workflows, but unfinished
+required Gate C-UX acceptance criteria must be recorded explicitly
+rather than silently waived.
+
+Known evidence at time of planning: Gate A human acceptance
+recorded previously; Phase 2 P2.1–P2.9 engineering work has been
+accepted by the human owner. Gate B machine evidence is recorded in
+its r2 report at tested commit 6ba66f5, while the owner’s Gate B
+browser walkthrough is NOT_RUN / DEFERRED. Gate B is not
+retrospectively marked fully passed. The Implementer has requested
+and received authorization for the P3.1 amended trust model; a formal
+P3.1 Contract and real implementation must still be proven by their
+own receipts. This plan does not assert subsequent work is completed.
+
+Exit priorities:
+
+ 1. One command opens a secure UI even when the DB is not ready.
+ 2. The UI can bring the installation to a safe state and organize one
+    local project and task.
+ 3. The UI can show real status, evidence, and supported human
+    decisions.
+ 4. A bounded Planner → test freeze → one Implementer → verification
+    → independent Reviewer → Supervisor Git commit loop operates
+    locally in that project.
+ 5. Only then broaden multi-project, PR, tracker, skills, Red Team and
+    unattended features.
+1.1 Non-negotiable execution protocol
+
+ • One code-writing Implementer for a repository at any instant. No
+   write swarms, even when a DAG shows possible independence;
+   read-only independent review or bounded internal advice is
+   permitted only within explicit permissions.
+ • Every behavior-changing increment: source-linked Contract,
+   correctly exercised test setup, baseline classification, required pre-
+   freeze semantic challenge, freeze, single writer, deterministic
+   checks, independent semantic review, bounded retries, Supervisor-
+   owned accepted Git commit. Legitimate document-only changes
+   follow an explicitly evidence-bearing non-code exception, never
+   fake red tests.
+ • An agent cannot create additional authority with its words.
+   Supervisor validates scopes and frozen artifacts; unknown side
+   effects halt for reconciliation; human signoff remains exact and
+   revocable within recorded policy.
+ • Tests are model-free by default, and integrated with real
+   PostgreSQL/processes/Git where those boundaries are what the test
+   claims to prove. Live CLI sessions require separate human
+   authorization and bounded resources.
+ • No privileged web command runner. Every management action
+   must originate in an authenticated, typed, allowlisted, auditable
+   capability channel.
+ • Every completed sub-phase leaves the application in a buildable
+   green state, with actual evidence and a continued normal launch
+   path.
+ • Use one retrospective per actual development phase (for current
+   work, .local/retros/retro-03.md); do not fabricate approvals or
+   backdate test evidence.
+
+
+2. Phase map and gate meaning
+
+                  Revised            Hard
+Phase                                                  Exit proof
+                  deliverable        predecessors
+                  Decisions,
+                                                       Historical
+                  Launchpad          v2 design
+P0                                                     accepted
+                  audit, v2          authority
+                                                       prerequisite
+                  foundation
+                  Running
+                  Haskell/                             A, historically
+P1                                   P0
+                  PostgreSQL app                       accepted
+        Revised            Hard
+Phase                                        Exit proof
+        deliverable        predecessors
+        and typed
+        commands
+        Pure
+        ownership/                           B engineering
+        scheduler/                           accepted;
+                           P1; accepted
+P2      Profiles,                            browser
+                           DG-03/04/05
+        durable effect                       review
+        protocol and                         deferred
+        evidence
+        Trusted local
+        bootstrap,
+        installation UX,
+        permanent
+        command            P2; DR-P3.1 +
+                                             C-UX, new
+        center, project/   approved
+P3                                           human
+        task setup,        phase
+                                             usability gate
+        human              realignment
+        decisions and
+        evidence,
+        novice
+        usability
+        First real
+        single
+        Engineer no-
+        plan bug fix       Minimal
+        with confined      production-
+        provider CLIs,     ready P3
+        frozen tests,      control/intake/   C-EXEC,
+P4
+        independent        evidence/auth,    former Gate C
+        semantic           DG-06/07,
+        challenge/         confinement
+        review,            security DG-17
+        Supervisor Git
+        and human
+        Done
+        Personal plan/
+        backlog parity,
+                           P4; UI
+        fuller Human
+P5                         primitives P3;    D
+        Inbox, phase
+                           DG-08
+        approvals,
+        Scribe and
+        Revised            Hard
+Phase                                         Exit proof
+        deliverable        predecessors
+        improvement
+        proposals
+        Multiple
+        Engineers over
+        independently
+                           P4 + scheduling
+P6      owned                                 E1
+                           P5
+        repositories,
+        quotas and
+        isolation
+        GitHub branch/
+                           P4, P6
+        PR publishing,
+                           ownership/
+        review
+P7                         credential         E2
+        corrections,
+                           guarantees;
+        authorized
+                           DG-09
+        integration
+        Shortcut/
+        external ticket
+                           P5 queue and
+        intake, priority
+P8                         P7 PR lifecycle;   E3
+        sync, delivery
+                           DG-10
+        state
+        reconciliation
+        Versioned
+        Skills Library,
+        human-
+        approved
+                           P5 evidence/
+P9      evaluation,                           F1
+                           Scribe; DG-11
+        sharing and
+        controlled
+        process
+        learning
+        Optional           P4/5 evidence,
+        restricted Red     P6 isolation for   F2 for Red
+        Team and first     Red Team, P4.3     Team; email
+P10     bidirectional      conversations +    transport
+        email channel      DG-14 for          qualified
+        (independent       actionable         separately
+        branches)          email
+        Scribe morning     Appropriate
+P11     briefings, full    P6–P10 safety      F3
+        resilience,        and comms,
+                   Revised           Hard
+ Phase                                                 Exit proof
+                   deliverable       predecessors
+                   Vacation Day
+                   Test,             predeclared F3
+                   packaging/        criteria
+                   rollout
+
+Gate nomenclature rule: Old v0.2 Gate C evidence criteria C1/C2/C3
+still mean real code execution and map to C-EXEC. New C-UX
+acceptance IDs are UX-C1–UX-C9; do not reuse or overwrite historical
+Gate C identifiers. Gates A/B and historical work records retain their
+original meaning.
+
+
+2.1 Critical path (one writer, sequential code changes)
+
+P0 → P1 → P2 [engineering accepted]
+            ↓
+ P3.1 trusted bootstrap / browser authentication
+            ↓
+ P3.2 status & host lifecycle → P3.3 safe install / upgrade
+            ↓
+ P3.4 shell → P3.5 project registration → P3.6 task intake
+            ↓
+ P3.7 Profile/scheduler visibility → P3.8 human decisions
+            ↓
+ P3.9 evidence → P3.10 actual usability → P3.11 C-UX review
+            ↓
+ P4.1-2 provider-process foundation → P4.4-17 real coding loop
+            ↓
+ First authorized, reviewed local accepted code change (C-EXEC)
+
+Early value checkpoint: As soon as P3.5–P3.6 are green, run a real
+browser dogfood that launches Lockstep, registers one existing
+repository, and creates one source-linked task. It is not Gate C-UX
+acceptance or agent execution, but is a valuable deliverable. P3.7–P3.11
+should be lean and reuse existing Phase 2 views and typed operations
+rather than rebuilding them. Avoid deluxe dashboards, generic project
+management, distributed workers, or arbitrary remote deployment
+before the first local code change.
+
+P4.3’s durable conversation foundation can be built when its
+dependencies are ready; full multi-turn/email transport is not a
+hard predecessor to the first code transaction. The minimum
+bounded human escalation in P4.15 is mandatory. If an approved
+phase Contract says all numbered subphases must run in order, keep
+P4.3 bounded to its persistent schema/interfaces and avoid expanding
+it into email or an LLM chat product.
+
+
+3. Document-and-decision gates (do not
+repeat settled design debates)
+
+                                               Current authority
+ Gate                   Applies                or minimum
+                                               requirement
+                                               Retain historical
+                                               accepted Launchpad,
+ DG-01/02               P0/P1                  packaging,
+                                               PostgreSQL, backup
+                                               evidence
+                                               Accepted ownership
+                                               key, typed effect
+                                               classes/retry/fencing,
+ DG-03/04/05            P2 onward
+                                               Profile and
+                                               deterministic queue
+                                               precedence
+                                               Owner-approved
+                                               amended S-a/L-a/B-a/
+                                               R/P/A/N/H design:
+                                               single-use URL-
+                                               fragment token, per-
+                                               origin non-cookie
+                                               header session,
+                                               narrow host helper,
+                                               no unrestricted DB
+ DG-15 / DR-P3.1        P3.1                   credentials or Docker
+                                               socket in pane,
+                                               coexistence with old
+                                               cookie pages until
+                                               governed P3.4
+                                               changes; default
+                                               browser, consentful
+                                               PATH, compatible
+                                               service autostart, no
+                                               automatic migration
+ DG-16                  P3.2–P3.3
+                                   Current authority
+Gate       Applies                 or minimum
+                                   requirement
+                                   Authenticated,
+                                   versioned,
+                                   allowlisted serialized
+                                   host operations with
+                                   replay/parameter
+                                   protection and
+                                   durable outcomes;
+                                   backed-up migration
+                                   UX
+                                   Baselines, source-
+                                   grounded candidate
+DG-06      P4 test freeze          tests, allowed
+                                   corrections, RED vs
+                                   invalid setup
+                                   Independent pre/post
+                                   falsification of
+           P4 semantic             inadequate tests,
+DG-07
+           challenge               typed dispositions,
+                                   bounded cost and
+                                   human escalation
+                                   Mechanically
+                                   enforced confined
+                                   agent process, tool/
+                                   filesystem/network
+                                   permissions,
+DG-17      P4 first live coding    credential
+                                   boundaries, test/Git
+                                   freeze and provider
+                                   adapter contract;
+                                   prompts are not a
+                                   security boundary
+                                   Original v0.2 human
+                                   plan, PR, Shortcut,
+DG-08–12   P5–10                   Skill trust, and Red
+                                   Team target
+                                   decisions unchanged
+                                   Explicit sender
+                                   identity/
+DG-14      P10.2 email decisions
+                                   authenticated
+                                                  Current authority
+ Gate                       Applies               or minimum
+                                                  requirement
+                                                  decision classes/
+                                                  revocation;
+                                                  forwarded and
+                                                  quoted content
+                                                  untrusted
+                                                  Mercury experiment
+                                                  can never block the
+ DG-13                      Optional
+                                                  accepted Haskell
+                                                  path
+                                                  Narrow phase/gate
+ LS-BIBLE-2.2-              P3/P4 document
+                                                  wording correction;
+ ALIGN-01                   ratification
+                                                  see PRD v0.3 §2
+
+The already approved P3.1 design is not a permission to build P3.2/P3.3
+work prematurely. Only a concrete security blocker warrants another
+stop. No “we might prefer another framework someday” escalations.
+
+
+4. Phase P3 — the usable local product (C-
+UX)
+General acceptance: A nontechnical user can launch the pane,
+prepare the local installation through safe guided UI operations, create
+or import one project, create a task, see eligibility and evidence, and
+apply supported human decisions without typing internal scripts or
+understanding Git/Docker/PostgreSQL. The owner performs the
+deferred Gate B real-browser review separately. Model execution
+remains not authorized by Phase 3.
+
+         Bounded                           Verification /
+                              Hard
+ ID      contract                          refusal            PRD trace
+                              dependencies
+         outcome                           evidence
+         Root lockstep,                      Real
+         one-time                            Chromium/
+         optional                            Firefox,
+         bootstrap build,                    default-         UX-01/02,
+ P3.1                         P2 + DG-15
+         browser control                     browser          NFR-16
+         pane                                owner check
+         operational                         later, hostile
+       Bounded                         Verification /
+                          Hard
+ID     contract                        refusal              PRD trace
+                          dependencies
+       outcome                         evidence
+                                           origin, token
+       without DB;
+                                           replay,
+       approved
+                                           invalid Host/
+       fragment token/
+                                           Origin, XSS,
+       header session;
+                                           wrong-user,
+       isolated helper
+                                           helper
+       communication;
+                                           forgery, two
+       preserve frozen
+                                           launches, DB
+       legacy scripts
+                                           absent
+                                           Actual service
+                                           stopped/
+                                           started;
+       System status
+                                           interrupted
+       and typed Start/
+                                           and
+       Stop/Restart
+                                           concurrent
+P3.2   controls with      P3.1                              UX-02/03
+                                           lifecycle;
+       truthful state
+                                           refusal of
+       and failure
+                                           arbitrary
+       detail
+                                           commands;
+                                           DB not ready
+                                           page
+                                           Real upgrade
+                                           with backup;
+       UI install/
+                                           backup
+       upgrade/
+                                           corrupt,
+       migrate/
+                                           migration
+       recovery,          P3.2, existing
+                                           crash, db-       UX-03,
+P3.3   automatic          backup/effect
+                                           ahead,           NFR-17
+       verified backup,   primitives
+                                           concurrent
+       staged clean
+                                           upgrades,
+       build and safe
+                                           qualification
+       activation
+                                           instance
+                                           isolation
+       Permanent                           Focus,
+       authenticated                       mobile/
+       Brigid/HTMX        P3.1–3.3;        narrow
+       application        frozen           screen,          UX-04,
+P3.4
+       shell; nav         amendments       logout/          APP-05–09
+       Home/Projects/     as needed        reentry, stale
+       Tasks/Decisions/                    CSRF, cross-
+       Bounded                          Verification /
+                           Hard
+ID     contract                         refusal             PRD trace
+                           dependencies
+       outcome                          evidence
+       Activity/
+       Settings/
+       Advanced;                          origin tests;
+       govern                             no inert
+       migration from                     controls
+       old cookie
+       pages
+       Guided project
+                                          New and
+       create/import,
+                                          existing repo,
+       Repository/
+                                          alias/fork
+       Engineer
+                                          identity,
+       binding and
+                                          invalid paths
+       safe defaults;                                       UX-05,
+P3.5                       P3.4, P2.1     and
+       distinguish                                          WRK-01/02
+                                          ownership,
+       organized
+                                          no remote
+       project from
+                                          publication,
+       execution-
+                                          safe partial
+       enabled
+                                          setup
+       Engineer
+       Basic task                         Real browser
+       CRUD, priority/                    + DB restart;
+       dependency                         stale edit,
+       editing, honest     P3.5, P2       blocked high-
+                                                            UX-06,
+P3.6   readiness,          scheduling/    priority task,
+                                                            WRK-03/04/09
+       persisted           model          duplicate
+       changes; no                        receipt, no
+       execution on                       implicit
+       Ticket creation                    execution
+                                          Strengthening
+       Human-friendly
+                                          and refusal
+       Profile defaults,
+                           P3.5–3.6,      tests; frozen     UX-07,
+P3.7   gate checklist
+                           P2.3/4         profile digest;   WRK-05
+       and scheduler
+                                          blocked ≠
+       reason view
+                                          active
+       Authenticated                      Stale,
+       typed human                        replayed,
+       decisions for                      forged,           UX-08, FR-
+P3.8                       P3.4, P3.6–7
+       currently                          duplicate,        HUM-02
+       supported                          unauthorized
+       actions with                       action; no
+         Bounded                         Verification /
+                            Hard
+ ID      contract                        refusal            PRD trace
+                            dependencies
+         outcome                         evidence
+                                           agent/human
+         exact subject/
+                                           identity
+         revision/receipt
+                                           confusion
+                                           PASSED vs
+         Activity/                         ATTESTED vs
+         evidence UI                       UNKNOWN
+         projected from                    vs NOT_RUN;
+         persisted Phase                   restart and      UX-09,
+ P3.9                       P3.6–8, P2.8
+         2 events;                         late             APP-09
+         failures and                      observations;
+         recovery                          source
+         instructions                      evidence
+                                           links
+                                           Keyboard,
+         UX/accessibility                  small screen,
+         hardening and                     accessible
+         real-novice test                  labels, first-   UX-10,
+ P3.10                      P3.1–9
+         procedure; real                   time task        NFR-15/18
+         participants                      flow, record
+         where available                   assistance
+                                           honestly
+                                           UX-C1…UX-C9
+                                           with full
+                                           clean clone,
+         New C-UX
+                                           PostgreSQL,
+         qualification,
+                                           browser,
+         Gate B deferred-
+                                           security and     UX-01…10,
+ P3.11   browser            P3.1–10
+                                           human            NFR-15…18
+         walkthrough
+                                           evidence;
+         and human
+                                           unresolved
+         decision packet
+                                           participant
+                                           checks
+                                           NOT_RUN
+
+
+4.1 P3.1 architectural boundary is fixed
+
+The approved plan is not permission to add a general-purpose
+privilege service. The app-facing pane may be containerized; the per-
+user host helper has an allowlisted, versioned typed protocol,
+authenticated peers, request IDs, replay resistance, exclusive operation
+locking, constrained args/paths and durable records. The control pane
+has no Docker socket and no unrestricted DB credentials. Bootstrap
+sign-in uses a single-use fragment and an explicitly supplied non-
+cookie header credential. A strong CSP and escaping tests are
+necessary, but do not prove XSS impossible. Old Phase 1/2 cookie routes
+remain temporarily with their previously documented limitation; new
+protected management routes may not reuse their port-shared cookie.
+
+Until their exact frozen amendments are approved, preserve existing
+scripts/service, scripts/lockstep, browser security tests and B1
+scripts. The new root launcher is separate. A missing database is a
+normal diagnosable state, not a reason to use unauthenticated routes.
+
+
+4.2 Gate C-UX report package
+
+Must include selected tested Git commit, branch, artifact digests, exact
+operator install/binary/schema identity, model-free tests, browser
+reports and refusal cases, historical Gate B browser test separately
+marked, usability participant evidence (if actually performed), and
+open limitations. The owner alone accepts C-UX. Automation passing
+cannot manufacture human observations.
+
+
+5. Phase P4 — first real one-Engineer coding
+transaction (C-EXEC)
+This is the former P3.1–P3.16 objective, preserved with one additional
+scoped conversation primitive motivated by Bible v2.2. It is the next
+product-value target once trustworthy local UI intake and authority
+boundaries exist. It must be safe to run from the normal UI and
+achieve an accepted local Git change before adding multi-Engineer or
+external adapters.
+
+                  Source /
+                                     Hard              Crucial
+ New ID           bounded
+                                     dependencies      verification
+                  outcome
+                  old P3.1:
+                  configure one
+                                                       No PhaseId,
+                  repository-
+                                                       valid
+ P4.1             bound Engineer     P3.5–7, P2
+                                                       ownership, one
+                  and no-plan bug
+                                                       author
+         Source /
+                            Hard             Crucial
+New ID   bounded
+                            dependencies     verification
+         outcome
+         Ticket under
+         Bug Profile
+         old P3.2: finite
+         subprocess/
+         process-group                       Force-kill,
+         runner,                             output limit,
+                            P4.1, P2.7,
+P4.2     timeouts,                           cancellation, no
+                            DG-17
+         captured                            arbitrary host
+         outputs,                            mutation
+         bounded
+         credentials
+         v2.2 §13.3:                         Crash/restart,
+         minimal                             order, identity,
+         durable Human                       clarification is
+         Request /                           not an
+         Conversation       P3.8, P4.1, P2   approval; not
+P4.3
+         store and typed    event store      required to
+         revision-bound                      build
+         clarification                       generalized
+         envelope                            chat before
+         without email                       execution
+         old P3.3:                           Dirty repo,
+         canonical local                     invalid path,
+P4.4     Git worktree       P4.2, P2.1       duplicate
+         and identity                        writer, stale
+         rules                               basis refuse
+         old P3.4:
+                                             Model-free
+         scripted and
+                                             protocol tests,
+         configured real
+                            P4.2, P2.8,      CLI partial/
+P4.5     provider role
+                            DG-17            invalid output,
+         adapters with
+                                             injection,
+         bounded
+                                             timeout
+         credentials
+         old P3.5: Bug
+         Profile                             Missing
+         discovery/                          reproduction
+P4.6                        P4.1/5, P2.3
+         reproduction                        and scope
+         and input                           constraint block
+         evidence
+         Source /
+                            Hard            Crucial
+New ID   bounded
+                            dependencies    verification
+         outcome
+         old P3.6: pre-
+                                            Deliberately
+         freeze
+                                            inadequate tests
+P4.7     independent        P4.5–6, DG-07
+                                            falsified with
+         semantic
+                                            counterexample
+         challenger
+         old P3.7:
+         Planner
+                                            Source-
+         Contract and
+                                            grounded
+         acceptance test
+P4.8                        P4.4–7, DG-06   criteria, setup
+         candidate
+                                            exercised
+         authoring,
+                                            before freeze
+         baseline
+         classification
+                                            No
+         old P3.8:
+                                            Implementer
+         Supervisor
+                                            override,
+P4.9     freezes and        P4.8
+                                            correct Git
+         commits
+                                            commit
+         protected tests
+                                            authority
+                                            Forbidden
+         old P3.9: one                      write/test edit/
+         confined           P4.5, P4.9,     network/
+P4.10
+         Implementer        DG-17           credentials
+         invocation only                    refused
+                                            mechanically
+         old P3.10:
+                                            Real subprocess
+         deterministic
+                                            and Git, no
+P4.11    compile/tests/     P4.10
+                                            green from
+         verification/
+                                            partial results
+         effect receipt
+         old P3.11: post-
+                                            Wrong-but-
+         implementation
+                                            green fixture
+P4.12    independent        P4.7, P4.11
+                                            blocks
+         semantic
+                                            acceptance
+         falsification
+         old P3.12:                         Reviewer
+         independent                        cannot mutate
+P4.13    read-only          P4.11–12
+                                            code or bless
+                                            own corrections
+                 Source /
+                                     Hard             Crucial
+ New ID          bounded
+                                     dependencies     verification
+                 outcome
+                 Reviewer with
+                 typed verdict
+                                                      No
+                 old P3.13:
+                                                      implementer
+                 Supervisor-
+                                                      commit, branch
+ P4.14           owned accepted      P4.4, P4.13
+                                                      identity and
+                 local green Git
+                                                      accepted
+                 commit
+                                                      evidence
+                                                      Stale/replayed
+                                                      answers and
+                 old P3.14: finite
+                                                      ambiguous
+                 human
+                                                      provider effects
+                 question/
+ P4.15                               P3.8, P4.10–14   fail closed;
+                 answer/halt/
+                                                      durable
+                 resume with
+                                                      conversation
+                 exact basis
+                                                      can expand
+                                                      separately
+                 old P3.15: UI                        Actual tested
+                 Work Unit detail                     commit, not-
+ P4.16           and criterion-to-   P3.9, P4.14–15   run, raw
+                 method-to-                           evidence and
+                 evidence link                        human Done
+                 old P3.16: C-
+                 EXEC one real
+                                                      Deterministic
+                 no-plan bug
+                                                      full scenarios
+                 Ticket through
+                                                      and a
+                 local accepted
+                                     P4.1–16,         separately
+ P4.17           implementation,
+                                     DG-06/07/17      consented finite
+                 semantic
+                                                      real provider
+                 challenge,
+                                                      smoke; owner
+                 review, fault
+                                                      gate decision
+                 recovery,
+                 human Done
+
+P4.3 dependency note: Bible v2.2 names persistent conversations
+prospectively at P4.3. Implement the narrow durable core, not a full
+inbox/email product. Its presence must not turn human-led unlimited
+conversation into unbounded model calls, nor turn clarifications into
+binding permissions. The exact sequencing of P4.3 relative to other P4
+coding increments can follow satisfied dependencies without parallel
+writers; no model-backed chat UI need block P4.4’s Git tests.
+
+First local acceptance demo: from the browser select one repo + one
+bug, authorize the frozen Contract, invoke the configured Planner and
+Implementer, observe real Git/test results, inspect independent
+Reviewer findings, record a Supervisor accepted local commit, and
+request human Done. The demo is false if executed purely through
+private test harness scripts, or if the accepted code is merely a canned
+simulated fixture. Deterministic qualification of orchestration
+separately does use scripted role adapters.
+
+
+6. Phase P5 — personal work parity and
+human continuity (D)
+
+ ID                      Outcome                  Hard predecessors
+                         old P4.1: first-class
+                         internal backlog,
+ P5.1                                             P3.6, P4.17
+                         stable Ticket/Work
+                         Order mapping
+                         old P4.2: full multi-
+                         run personal
+ P5.2                                             P3.4/9, P4.17
+                         command center,
+                         safe controls
+                         old P4.3 expanded:
+                         Human Inbox,
+                         durable multi-turn
+ P5.3                    human/Planner            P4.3/15, P5.2
+                         clarification across
+                         revisions; no email
+                         required
+                         old P4.4: Master Plan/
+                         PRD import and
+ P5.4                                             P5.3, DG-08
+                         human-controlled
+                         freeze
+                         old P4.5:
+                         dependency-ready
+ P5.5                                             P5.1/4
+                         plan/work queue
+                         parity
+ P5.6                                             P2.3, P5.4/5
+ ID                      Outcome                  Hard predecessors
+                         old P4.6: Greenfield/
+                         brownfield Profiles
+                         and gates
+                         old P4.7: Phase
+                         integration/approval
+ P5.7                                             P4.14, P5.5/6
+                         and green repository
+                         state
+                         old P4.8: evidence-
+ P5.8                    linked read-only         P5.2/7
+                         Scribe baseline
+                         old P4.9: human-
+                         approved typed           P5.8, semantic
+ P5.9
+                         improvement              challenge P4.12
+                         proposals
+                         old P4.10: Gate D
+ P5.10                   plan and Ticket          P5.1–9
+                         parity scenarios
+
+Important: The full conversation semantics must bind to canonical
+HumanRequestId, stable ordering, authenticated sender evidence, exact
+revision, typed authorization and idempotent completion. A Planner
+clarification is a new finite read-only invocation with curated context,
+not an approval; neither the stored conversation nor an email
+transport should become the authoritative source of allowed effects.
+
+
+7. Phases P6–P11 — remaining capability
+map (preserve all original work)
+
+P6 — multiple independently owned repositories (E1)
+
+Original P5.1–P5.5 remap to P6.1–P6.5: persistent Engineer identities,
+per-Engineer provider accounts and isolation, quota/availability state,
+deterministic global Scheduler, and real two-repo E1 test. One writer
+per repository, distinct repo ownership, no authority leakage. UNKNOWN
+quotas remain unknown.
+P7 — GitHub delivery and human review loop (E2)
+
+Original P6.1–P6.9 remap to P7.1–P7.9: branch/PR mapping DG-09,
+authorized push, PR create/update idempotency, review event inbox,
+correction Work Order, re-verification, local/repository-managed
+integration, and distinct ACCEPTED, PUBLISHED, INTEGRATED, DONE. Never
+merge on a stale approval or silently push an unconfigured remote.
+
+
+P8 — Shortcut and tracker workflows (E3)
+
+Original P7.1–P7.5 remap to P8.1–P8.5: real field ownership DG-10,
+authenticated story intake and priority/blocker rules, reconciliation/
+outbox, Scribe tracker updates and actual E3 loop. Reuse the same
+Work Unit engine; do not require Shortcut for personal use.
+
+
+P9 — Skills, prompt audits and human-controlled
+learning (F1)
+
+Original P8.1–P8.5 remap to P9.1–P9.5: versioned scope-aware skills,
+approve/install/rollback, privacy/license-safe sharing and prompt/
+profile audits with controlled evaluation, never automatic global
+promotion.
+
+
+P10 — restricted Red Team and bidirectional email (F2 +
+communications)
+
+  • P10.1 — Red Team permission envelope/target policy (original
+    P9.1), DG-12: exact target, rates, duration, permitted probes and
+    disclosure.
+  • P10.2 — Ratified v2.2 bidirectional email adapter: notification,
+    reply intake, canonical request correlation, transport receipts,
+    deduplication, privacy and replay checks. Human authorization
+    from email requires DG-14; until DG-14 closes, reply content can
+    inform but must not authorize higher-risk side effects. No remote
+    browser/public endpoint is necessary.
+  • P10.3 — Red Team isolated worker (original P9.2), no production
+    code write authority.
+  • P10.4 — finding validation/deduplication with restrictive handling
+    (original P9.3).
+  • P10.5 — original P9.4: staging-target F2 demo, safe publication
+    rules.
+The email branch and Red Team branch are dependency-
+independent; a DAG may admit different order, but no parallel code-
+writing transactions in one repository. First live agent coding does not
+depend on either.
+
+
+P11 — resilience, packaging and Vacation Day Test (F3)
+
+  • P11.1 — original P10.1: complete Scribe morning briefing,
+    authoritative evidence, privacy-controlled publication.
+  • P11.2 — original P10.2 notification integration extended to work
+    with the new P10.2 bidirectional email channel and Human
+    Request/Conversation state; no unauthorized approval.
+  • P11.3 — original P10.3: provider/quota exhaustion, restart and
+    expiry handling.
+  • P11.4 — original P10.4: additional GitHub Issues and dependency
+    alert adapters.
+  • P11.5 — original P10.5 full bounded multi-repo fault-injection and
+    ratified Vacation Day Test: 2–4 Engineers, real predeclared full-
+    day interval, < 5 substantive human email replies including
+    clarifications, no UI/terminal rescue, demonstrable meaningful
+    verified progress, transparent errors/alerts, human-appropriate
+    completion evidence. Do not design quantitative success thresholds
+    after results are observed.
+  • P11.6 — original P10.6 packaging/distribution, repeatable fresh
+    install and upgrade qualification. The P3 bootstrap already supplies
+    operator UX; packaging here closes distributable release
+    guarantees.
+
+Remote single-host access, organization-wide authenticated multi-
+human operation, distributed workers, public SaaS and arbitrary non-
+code business agents remain future gated scopes, not implied by the
+ratified Bible or this v0.3 implementation plan.
+
+
+8. Negative tests and evidence matrix
+(continuous)
+
+ Boundary                            Mandatory negative proof
+                                     Same-host foreign origin/cookie
+                                     leakage, invalid Host/Origin,
+ Bootstrap/browser                   CSRF, replay, stolen/expired
+                                     session, XSS output, DNS
+Boundary                Mandatory negative proof
+                        rebinding protections as
+                        applicable
+                        Forged peer, duplicate request,
+                        unknown operation, argument/
+                        path traversal, symlink attack,
+Host helper
+                        parallel lifecycle commands,
+                        timeout/cancellation, partial
+                        operation receipt
+                        No backup/corrupt backup,
+                        unsupported schema downgrade,
+Install and migration   interrupted activation, shared
+                        qualification install and operator
+                        state collision
+                        Same repo under alias/worktree,
+                        fork vs root ancestry false
+Repository ownership    collision, unauthorized Engineer
+                        claim, simultaneous conflicting
+                        Implementers
+                        Weakening override, missing
+                        gate, ineligible high-priority task,
+Profile/Scheduler
+                        stale policy digest, lack of
+                        scheduling proof
+                        Class-B expired idempotency key,
+                        old activation carry without real
+                        human principal, operation ID
+Effects
+                        mismatch, multiple effect keys,
+                        duplicate dispatch, crash after
+                        effect
+                        Fake/partial/malicious model
+                        response, timeout, usage limit,
+Provider invocation     leaked secret, forbidden write/
+                        network, advisor elevated into
+                        implementer/reviewer authority
+                        Unfrozen baseline, bad frozen
+                        fixture, Implementer modifies
+Tests and Git           protected test, Reviewer attempts
+                        mutation, mismatched Git
+                        commit, branch conflict
+                        Wrong-but-green fixture,
+Semantic quality        unsupported citation,
+ Boundary                             Mandatory negative proof
+                                      inconclusive finding mislabeled
+                                      PASSED, wrong review principal
+                                      Stale/duplicate human decision,
+                                      forwarded/spoofed email, quoted
+ Human communication                  instructions, unproven principal,
+                                      clarification treated as
+                                      authorization
+                                      Not-run displayed as passing,
+                                      human-attested misreported
+ Evidence/UX                          verified, stale UI state, failed
+                                      browser startup, no available
+                                      keyboard alternative
+                                      Silent no-op, more than five
+                                      replies, suppressed safety alert,
+ Overnight                            forced manual rescue,
+                                      unreported quota/restart
+                                      ambiguity
+
+A test that checks only the command syntax, fake HTTP stub or
+rendered HTML does not prove its claimed effect. Real boundaries and
+qualification requirements are explicit in Contracts. Negative tests and
+full clean-clone suite continue to run model-free by construction; live
+provider/real-user trials are separately labeled and never pretended.
+
+
+9. Historical-to-current plan crosswalk
+
+ v0.2 location           v0.3 location            Notes
+                                                  Historical accepted
+ P0.* / Gate A           P0.* / Gate A
+                                                  work, unchanged
+                                                  Historical accepted
+ P1.* / Gate A           P1.* / Gate A
+                                                  work, unchanged
+                                                  Engineering
+ P2.1–P2.9 / Gate B      Same                     accepted, browser
+                                                  review deferred
+ NEW P3.1–P3.11 / C-                              UI-first launch and
+                         P3.1–P3.11
+ UX                                               operator experience
+                                                  Engineer admission,
+ Original P3.1–P3.2      P4.1–P4.2
+                                                  process runner
+                         P4.3
+ v0.2 location            v0.3 location             Notes
+                                                    No email/indefinite
+ NEW Bible v2.2
+                                                    invocation
+ conversation core
+                                                    requirement
+                                                    First real ticket-to-
+ Original P3.3–P3.16      P4.4–P4.17                code, local Git,
+                                                    semantic review
+                                                    Human Inbox/plan
+ Original P4.1–P4.10      P5.1–P5.10                parity, expanded P5.3
+                                                    conversations
+                                                    Independent multi-
+ Original P5.1–P5.5       P6.1–P6.5
+                                                    repository E1
+ Original P6.1–P6.9       P7.1–P7.9                 GitHub E2
+ Original P7.1–P7.5       P8.1–P8.5                 Shortcut E3
+ Original P8.1–P8.5       P9.1–P9.5                 Skills F1
+                                                    Red Team F2, email
+ Original P9.1–P9.4       P10.1 / P10.3–P10.5
+                                                    inserted at P10.2
+                                                    F3 operations;
+                                                    original P10.2
+ Original P10.1–P10.6     P11.1–P11.6
+                                                    notification
+                                                    expanded by email
+
+No historical Contract ID is bulk-renamed. The crosswalk affects
+proposed future scope, not accepted Git/event identity. If an agent
+encounters P3.14 in ratified v2.2, it is a legacy original-plan identifier,
+not an invitation to rewrite frozen past work.
+
+
+10. Work Unit handoff and progression
+discipline
+Each Contract records exact repository basis, accepted owner, scoped
+files, preexisting requirements, new FR/NFR, prerequisite gates, test
+fixtures and test-freeze digest, effect class, permitted agent capabilities,
+expected positive and negative evidence, manual browser scenarios
+where applicable, controlled fault injections, and stop conditions.
+Implementers do not make human security decisions, change
+protected tests, or raise their own budgets.
+The current Implementer should:
+
+ 1. Read the ratified v2.2 Bible and both approved v0.3 documents,
+    applying the owner-approved LS-BIBLE-2.2-ALIGN-01 phase-
+    wording alignment; keep the already-approved P3.1 design and its
+    amendments intact.
+ 2. Update canonical repository docs with preserved provenance and
+    human authorization. Avoid silent replacement of ratified Bible
+    wording; attach LS-BIBLE-2.2-ALIGN-01 as an approved, traceable
+    amendment, preserving the original PDF and historical wording.
+ 3. Implement P3.1 only, using the previously owner-approved
+    amended design; do not reopen architecture debates without an
+    actionable conflict.
+ 4. Continue sequentially through necessary P3 dependencies after
+    actual green evidence; dogfood the browser with one real
+    project by P3.6, not only at P3.11.
+ 5. At the C-UX owner gate, disclose remaining human/novice and
+    historical Gate B browser checks as actual results; do not
+    manufacture a PASS.
+ 6. Move directly to the shortest qualified P4 one-repo coding loop.
+    Confine provider processes before permitting consequential real
+    writes, and use a bounded real-provider test as actual proof.
+ 7. Record one consolidated retrospective per phase; preserve
+    machine, reviewer and human authority distinctions.
+
+Desired first real success metric: an owner-authorized local bug fix
+completed by one Engineer against one real repository, independently
+challenged and reviewed, proven green and accepted with a
+Supervisor-owned Git commit and readable UI evidence. The product
+remains for nontechnical users; this urgent dogfood outcome keeps the
+project from becoming perpetually self-referential infrastructure
+work.
+
+Approval recorded: The human owner approved the paired PRD/plan
+v0.3 and LS-BIBLE-2.2-ALIGN-01 on 25 October 2026. Actual completion
+evidence still controls what can be claimed implemented.
+

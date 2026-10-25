@@ -1,6 +1,8 @@
 # DR-P3.1 — Bootstrap trust model: security-design decision request
 
-- Status: **AWAITING THE OWNER.** Nothing below is decided, and no P3.1 Contract is frozen.
+- Status: **DECIDED by the owner, 2026-10-25** — see `owner-decision.md` (Planner disposition
+  `.local/plans/phase-03_update1.md`, approved with the owner's text). The text below is the
+  request as submitted; where it differs, `owner-decision.md` governs.
 - From: the writing agent (Implementer), 2026-10-25, on branch `phase-3`.
 - Authority for the stop: Phase 3 handoff (`.local/plans/phase-03.md`, sha256 `d6dafdf2…d0c8`)
   §4.1 ("document and test the concrete trust model … stop with a specific security-design
@@ -168,12 +170,12 @@ P3.1 freeze. That is why L-a is recommended for P3.1, with retirement proposed a
 
 | Decision | Choice |
 |---|---|
-| S — browser credential (a / b / c) | |
-| L — existing cookie pages (a / b) | |
-| B — where the pane runs (a / b / c) | |
-| R — first run (recommended / alternative) | |
-| P — PATH (recommended / alternative) | |
-| A — automatic start (recommended / alternative) | |
-| N — new launcher file (recommended / alternative) | |
-| H — HTMX (recommended / alternative) | |
-| Decided by / at | |
+| S — browser credential (a / b / c) | (a) amended: T1–T7 for the control pane; T8 deferred to P3.4 |
+| L — existing cookie pages (a / b) | (a) |
+| B — where the pane runs (a / b / c) | (a) amended (authenticated channel, versioned allowlist, replay protection, serialized, bounded timeouts, durable results) |
+| R — first run (recommended / alternative) | recommended |
+| P — PATH (recommended / alternative) | recommended, amended (detect the actual shell) |
+| A — automatic start (recommended / alternative) | recommended |
+| N — new launcher file (recommended / alternative) | recommended |
+| H — HTMX (recommended / alternative) | alternative: first-party JavaScript in P3.1 |
+| Decided by / at | the owner, 2026-10-25 (`owner-decision.md`) |
