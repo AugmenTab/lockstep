@@ -1,0 +1,24 @@
+lockstep> test (suite: lockstep-integration, args: -p /fragment/)
+
+lockstep-integration
+  control pane in a real browser (headless Chromium)
+    fragment sign-in, status from the helper, hostile origins refused, markup shown as text, sign-out: FAIL (199.27s)
+      test/integration/Lockstep/ControlBrowserTest.hs:165:
+      browser driver error: RuntimeError('no element matches #sign-out')
+
+1 out of 1 tests failed (199.27s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       
