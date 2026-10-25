@@ -32,6 +32,16 @@ Per Bible v2.1 "Document charter" and PRD v0.2 §13:
 | Dependency-aware plan | LS-V2-PLAN | 0.2 | 2026-10-16 | "proposed for human review"; "PROVISIONAL ENTIRELY" | 29 | `.local/LOCKSTEP_V2_DEPENDENCY_AWARE_PLAN_v0.2.pdf` | `ae85b482d17d43e2fec106e1a857ef2f68f7d1b0c1eb7d0021ecfc64dbfe6345` |
 | Phase 0 handoff | (none) | — | 2026-10-16 | Human-issued execution instruction | — | `.local/plans/phase-00.md` | `23265ae4ff42b494790b50e01960b3d5bac4c33aa21ebbe78a68a089102e5ac0` |
 | Phase 3 handoff (revised, UI-first) | (none) | — | 2026-10-25 | Human-approved revised Phase 3 direction; amends the plan's build order (`AMENDMENT-01-UI-FIRST-PHASE-3.md`) | — | `.local/plans/phase-03.md` | `d6dafdf2b985b55895007504ecb9b49529bee07dc08c4cd948cdbfc1a513d0c8` |
+| Planner disposition of DR-P3.1 | (none) | — | 2026-10-25 | Planner recommendation; approved with the owner's text (`docs/gates/P3.1/owner-decision.md`) | — | `.local/plans/phase-03_update1.md` | `dae9e472ec50ddb76f506cffb6eb1ba80a90b5e2f9841489de3775b009754185` |
+| **Project Bible** | LS-BIBLE-2.2-RATIFY-2026-10-25 | **2.2** | 2026-10-25 | "Final / Ratified"; amended by LS-BIBLE-2.2-ALIGN-01 | 75 | `.local/LOCKSTEP_PROJECT_BIBLE_v2.2_FINAL.pdf` | `bbaddf281b4da6af97f341ff8aba5f794df41d781aa23e67082f26e96ebb018f` |
+| **Implementation PRD** | LS-V2-PRD | **0.3** | 2026-10-25 | "APPROVED BY HUMAN OWNER" (LS-V2-DOCS-0.3-APPROVE-2026-10-25) | 15 | `.local/LOCKSTEP_V2_IMPLEMENTATION_PRD_v0.3_APPROVED.pdf` | `519348e131eea2077ac50f8bb1e4157f5b370a9f48c850388261961a6f175bfd` |
+| **Dependency-aware plan** | LS-V2-DAP | **0.3** | 2026-10-25 | "APPROVED BY HUMAN OWNER" (LS-V2-DOCS-0.3-APPROVE-2026-10-25) | 24 | `.local/LOCKSTEP_V2_DEPENDENCY_AWARE_PLAN_v0.3_APPROVED.pdf` | `d017a29dc7d7ab55ca0110227b48b2ef12ec742dce50790fd0c34cad74b10b42` |
+
+**Current governing set (from 2026-10-25):** Bible v2.2 + LS-BIBLE-2.2-ALIGN-01, PRD v0.3 (read
+with v0.2 for unchanged text) and Plan v0.3. Bible v2.1, PRD v0.2 and Plan v0.2 remain the
+historical authority for everything recorded under them. Repository records with verbatim text:
+`docs/PROJECT_BIBLE.md`, `docs/prd/IMPLEMENTATION_PRD_v0.3.md`,
+`docs/plans/DEPENDENCY_AWARE_PLAN_v0.3.md`. The PDFs stay in ignored `.local/`, as before.
 
 Verification command (re-run to confirm identity):
 

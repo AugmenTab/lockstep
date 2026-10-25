@@ -8,6 +8,9 @@
   not amend Bible v2.1 (`62196658…640ff`) or PRD v0.2 (`bbd407fd…17dfe`) requirement text.
 - Not ratified by this amendment: **the Project Bible v2.2 corrected draft.** It is reference
   material only until the owner ratifies it separately (handoff §0).
+- **Update 2026-10-25:** the owner later ratified Bible v2.2 and approved PRD v0.3, Plan v0.3 and
+  LS-BIBLE-2.2-ALIGN-01 (`docs/PROJECT_BIBLE.md`). Those now govern; this amendment remains the
+  record of the UI-first direction as given in the handoff.
 
 ## 1. The direction
 
@@ -52,23 +55,27 @@ handoff §8.
 the Gate B human browser walkthrough, deferred on 2026-10-25 (`DECISION_REGISTER.md`). The
 Implementer may report the Gate C package ready; only the owner accepts Gate C.
 
+**Superseding names (2026-10-25, PRD/Plan v0.3):** this gate is **Gate C-UX** and its scenarios
+are **UX-C1 … UX-C9** (the handoff's C1–C9, same order). The old Gate C criteria C1/C2/C3 keep
+their meaning under **Gate C-EXEC** (Phase 4).
+
 ## 3. Old-to-new milestone mapping
 
-| Before this amendment (Plan v0.2) | After |
-|---|---|
-| Gate B (end of Phase 2) | Not passed as a whole; machine qualification results kept; its browser walkthrough moves to Gate C (C8) |
-| Phase 3 (engineering execution: the first real engineering Work Unit) | Becomes **the phase after the revised Gate C**, with its original safety requirements intact (handoff §9) |
-| Phase 4 and later | Not addressed by the handoff: content and relative order unchanged; any renumbering is the owner's or the Planner's to settle |
-| Gate C (as defined in Plan v0.2) | The handoff names the new gate "revised Gate C". How the original Gate C criteria attach to the rescheduled engineering-execution phase is to be confirmed when the plan is read (§4) |
+Settled by the owner-approved Plan v0.3 §9 crosswalk and PRD v0.3 §7
+(`docs/plans/DEPENDENCY_AWARE_PLAN_v0.3.md`, `docs/prd/IMPLEMENTATION_PRD_v0.3.md`):
 
-The item-by-item mapping of the original Phase 3 sub-phases, and the check that none of their
-requirements is lost (handoff §9 items 3 and 5), are in §4.
+| Before (Plan v0.2) | After (Plan v0.3) |
+|---|---|
+| Gate B (end of Phase 2) | Engineering accepted; machine qualification kept; browser walkthrough is UX-C8 |
+| — | P3.1–P3.11, Gate C-UX |
+| Phase 3 (P3.1–P3.16), Gate C | Phase 4 (P4.1–P4.2 = old P3.1–P3.2; new P4.3 conversation core; P4.4–P4.17 = old P3.3–P3.16), Gate C-EXEC |
+| Phases 4–10 | Phases 5–11, content kept (email inserted at P10.2) |
 
 ## 4. Traceability and requirement preservation
 
-**Pending: the Plan and PRD PDFs could not be read in this session** (the PDF reader needs
-`poppler`, which is not installed on this Mac; recorded in `.local/retros/retro-03.md`). Until
-they are read, this section makes no claim about which FR/NFR or which original Phase 3 item maps
-where. The decision gates that the register ties to the original Phase 3 stay as recorded and
-unchanged: DG-06 (P3.3–P3.6 → P3.7) and DG-07 (P3.4–P3.5 → P3.6) now refer to the rescheduled
-engineering-execution phase, not to the revised P3.x numbers above.
+Done by the owner-approved documents, not by this amendment: PRD v0.3 §1 keeps all 57 FRs and 14
+NFRs with their identifiers and v0.2 text by incorporation, and §7 maps every original family to
+its new milestone ("milestone moves, not deprecations"); the original Phase 3 requirements
+(FR-WRK-06, FR-EXE-03–09, FR-SEM-01–04, FR-DEL-01) go to Phase 4 / C-EXEC intact. DG-06 and DG-07
+apply to Phase 4 (PRD v0.3 §8). An earlier draft of this section said the plan could not be
+read; Plan/PRD v0.2 were later read, and the owner then supplied v0.3, which governs.

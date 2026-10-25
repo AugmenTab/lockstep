@@ -1,0 +1,607 @@
+           Lockstep V2
+     IMPLEMENTATION_PRD v0.3
+           APPROVED
+
+
+LOCKSTEP V2 —
+IMPLEMENTATION PRD
+
+Revision 0.3 · Ratified Bible v2.2 alignment
+and UI-first delivery
+Document ID: LS-V2-PRD
+Date: 25 October 2026
+Approval record: LS-V2-DOCS-0.3-APPROVE-2026-10-25 — human
+product-owner approval of the paired v0.3 PRD/plan and the narrowly
+scoped LS-BIBLE-2.2-ALIGN-01 amendment in the Lockstep project
+conversation. No repository commit, digest, gate acceptance, or
+implementation result is asserted by this file.
+Status: APPROVED BY HUMAN OWNER — revision of v0.2; normative
+specification, not an execution receipt
+Product authority: Lockstep Project Bible v2.2 — Final / Ratified, 25
+October 2026
+Companion: Lockstep v2 — Dependency-Aware Implementation Plan
+v0.3 (approved)
+Scope of revision: Phase 2 disposition, an operator-first Phase 3, faster
+path to the first real local engineering transaction, preservation of
+original requirements, and requirements arising from the nine ratified
+v2.2 inserts.
+
+      Authority note. The ratified Bible v2.2 remains the product
+      constitution. Its older Phase 3 / Gate C references are superseded
+      only to the extent specified by human-approved amendment LS-
+      BIBLE-2.2-ALIGN-01 in §2. The historical v2.2 PDF remains
+      unchanged; the amendment must be incorporated into canonical
+      repository documents with an explicit provenance record.
+      Previous P3.1 implementation authorization remains a separate
+      decision.
+
+
+1. Document control and what survives
+Revision 0.3 preserves all 57 functional requirements and 14
+nonfunctional requirements of v0.2, with their stable identifiers and
+original universal safeguards. Where not expressly amended here,
+v0.2’s normative requirement text remains in force by incorporation.
+This revision is therefore read with v0.2 for unchanged details; it is not
+a destructive renumbering or a declaration that unimplemented
+features are complete.
+
+The human owner accepted Phase 2’s engineering foundation after
+machine qualification; the Gate B human web/browser walkthrough
+was not performed and remains deferred. The accepted machine
+evidence, code bases, approval history, and protected Contracts remain
+authoritative. The later Gate B r2 report names tested commit 6ba66f5;
+verify report identity and digest from repository records before
+carrying a receipt into the decision register. Do not treat the report’s r2
+publication commit as itself the tested revision.
+
+Evidence vocabulary: ACCEPTED_ENGINEERING_FOUNDATION,
+MACHINE_VERIFIED, DEFERRED, NOT_RUN, PASSED, FAILED, INCONCLUSIVE,
+BLOCKED, and UNKNOWN must not be collapsed into a single green status. A
+reviewer agent is not a human reviewer.
+
+
+1.1 Non-negotiable constitution
+
+  • Human leadership and final Done remain sovereign; ordinary
+    preauthorized operations need not generate needless approval
+    requests.
+  • Exactly one production-code-writing Implementer per repository/
+    owned Engineer transaction. No parallel Implementer swarms or
+    competing worktrees against one canonical repository.
+    Independent read-only advice or review is allowed under bounded
+    permissions; optional internal Implementer advice never
+    substitutes for mandatory independent challenge.
+  • Kernel, Scheduler, and Supervisor enforce typed authority, policy,
+    ownership, test freezes, canonical Git changes, effect intent,
+    reconciliation, and halts. Neither prompts nor UI routes can
+    impersonate them.
+  • Agents are disposable; canonical decisions, Work Orders, Work
+    Units, Git objects, frozen Contracts, evidence, and human messages
+    are durable. A lost response or uncertain effect does not authorize
+    blind replay.
+  • Model-free CI remains compulsory. Real-provider smoke tests are
+    separately authorized, finitely budgeted, and clearly distinguished
+    from scripted-role protocol tests.
+  • One local operator and a single-host, loopback-first baseline are
+    mandatory before enterprise or remote deployment expansion.
+    Corporate and personal installations are separate trust domains.
+  • Phase 2’s DG-03/DG-04/DG-05 decisions, effect-class safety,
+    ownership fencing, and the protected-test amendment protocol
+    remain effective.
+
+
+2. Governing phase reconciliation (owner-
+approved amendment)
+Conflict A: v2.2 ratification guide, printed page 2, states that “Phase 3
+and Gate C remain bounded to the existing single-Engineer ticket-to-
+code milestone.” This preserves the old meaning. The owner later
+accepted Phase 2 engineering work, explicitly deferred the Gate B
+browser review, and directed the new Phase 3 to deliver a browser-
+first usable product, pushing ticket-to-code execution into the next
+phase.
+
+Conflict B: v2.2 §13.3 uses legacy identifiers P3.14, P4.3, and P10.2; v2.2
+§39’s Milestone C describes real bug-fix execution. A plan-only
+renumbering must not silently change a ratified constitutional
+reference.
+
+APPROVED narrowly bounded Bible-alignment decision, LS-
+BIBLE-2.2-ALIGN-01:
+
+ 1. Update the introductory phase/gate guardrail to: “The Phase 2
+    engineering foundation may be accepted while its human Gate B
+    walkthrough remains deferred. A separately human-authorized
+    Phase 3 establishes secure UI-first local operation and human
+    usability (new Gate C-UX). The former Phase 3 single-Engineer
+    ticket-to-code acceptance becomes Phase 4 (Gate C-EXEC), without
+    weakening its protected tests, semantic review, Git authority or
+    recovery. The Bible’s statements are product requirements, not
+    implementation evidence.”
+ 2. Read §39 original Milestone C as C-EXEC (Phase 4); add C-UX
+    (Phase 3) for trusted bootstrap, onboarding, project/task
+    organization, decisions, status and human browser walkthrough.
+    Keep Milestone D plan parity and E/F objectives unchanged.
+ 3. Treat the P3.14 human answer/resume reference in §13.3 as the
+    legacy Phase 3 acceptance requirement now mapped to the Phase 4
+    bounded execution loop. Reserve durable multi-turn conversation
+    requirements for the mapped later subphase and email for P10.2 in
+    the revised plan; retain the specific non-goal that arbitrary multi-
+    turn email is not a prerequisite for first ticket-to-code.
+ 4. Do not otherwise amend §3.1, §3.2, confinement, approval
+    authority, F3 Vacation Day criteria, personal/professional
+    segregation, remote topology or any completed receipts.
+
+The human owner approved this conforming amendment together
+with PRD v0.3 and the paired dependency plan on 25 October 2026.
+Apply it as a traceable, narrow Bible addendum; do not silently replace
+or redate the original ratified PDF. The amendment changes future
+milestone interpretation, not prior evidence, accepted Contracts, or
+existing P3.1 authority.
+
+
+3. Revised product intent and accessibility
+FR-UX-01 — One-entry local control pane (P3.1). Running lockstep
+launches or reconnects to the intended authenticated local control
+pane from outside the source checkout. It must load useful diagnostics
+when the PostgreSQL/application service is unavailable; no operator is
+forced to copy ports, variables, tokens or container names for ordinary
+startup. No implicit upgrade/migration merely from starting the
+launcher.
+
+FR-UX-02 — Host-side management boundary (P3.1–P3.3). A narrow
+trusted bootstrap helper and web pane support typed, allowlisted
+lifecycle operations, not arbitrary Docker/shell commands. Explicit per-
+user authorization, replay resistance, session revocation, exact Host/
+Origin protections, negative browser-origin tests, durable outcomes,
+path validation and serialized operations are required. Do not grant
+the pane Docker socket or unrestricted application database
+credentials.
+FR-UX-03 — Truthful system/installation UX (P3.2–P3.3). Show
+observed installed version, schema compatibility, running state,
+missing prerequisites, failures and available recovery actions in plain
+language. Start existing compatible services automatically; require
+explicit human review for install, upgrade, migration and restore.
+Stage/review the replacement; verify backup before migration; detect
+database-ahead and interrupted state; preserve operator installation
+and qualification evidence.
+
+FR-UX-04 — Nontechnical application shell (P3.4). Home, Projects,
+Tasks, Decisions, Activity, Settings and Advanced provide a consistent
+keyboard-usable navigation model. Present goals and next actions
+before internal engineering jargon; retain discoverable exact technical
+evidence. A browser shell must never counterfeit ready, working or
+complete states.
+
+FR-UX-05 — Guided project setup (P3.5). A user can name an
+initiative, describe its intended outcome, create or select a local
+project, accept safe defaults and see accurate setup status without
+knowing Git. The internal Repository/Engineer relationship must obey
+accepted DG-03 identity and ownership, and no remote repository may
+be created or pushed without separately authorized policy.
+
+FR-UX-06 — Work intake and organization (P3.6). A user can create,
+inspect, edit and prioritize project tasks, describe acceptance intent
+and blockers, and understand dependency/readiness states without
+Work Order terminology. A Ticket is not an authorization to execute
+code. Stale edits, duplicates and side effects must use durable typed
+application operations. A work item can be organized before an
+execution-capable Engineer is configured.
+
+FR-UX-07 — Policy and eligibility visibility (P3.7). Human-friendly
+Profile choices and advanced effective Profile identity/version/digest,
+immutable gates and exceptions. Display priority distinct from
+eligibility; higher-priority blocked work remains blocked. No
+dropdown silently weakens immutable universal requirements.
+
+FR-UX-08 — Browser human decisions (P3.8). Show authenticated
+decision requests with source, subject, evidence, allowed actions,
+expected revision and consequences. Apply exact legal typed
+commands with idempotent durable receipts, rejecting stale, replayed
+or agent-originated authorizations. No faux approvals for an engine
+not yet executable.
+FR-UX-09 — Evidence, errors and recovery (P3.9). Activity and
+evidence projection from canonical data, with honest PASSED, ATTESTED,
+FAILED, BLOCKED, UNKNOWN, INCONCLUSIVE, and NOT_RUN distinctions; raw
+artifact access and meaningful remediation guidance. Browser
+disconnect or restart must not misstate durable state.
+
+FR-UX-10 — Usability qualification (P3.10–P3.11). Actual browser
+tests plus owner review and real nontechnical participant test. A
+successful automated Chromium run is not evidence that a real novice
+succeeded. Record assistance, confusion, incomplete trials and reasons;
+no simulation of human studies.
+
+NFR-15 — First-use comprehension. An operator unfamiliar with Git,
+Docker, PostgreSQL or model orchestration can launch, set up, create a
+project and task, inspect blockers, and perform supported decisions
+through the UI; internal commands are not required for the ordinary
+path.
+
+NFR-16 — Local bootstrap least privilege. The bootstrap plane is
+usable without application readiness, but only a narrowly
+authenticated user-context helper can perform allowed host lifecycle
+effects. Protect against local web-origin forgery, forged/replayed helper
+messages, XSS credential extraction, symlink traversal, concurrent
+management requests, and malicious input.
+
+NFR-17 — Controlled startup latency and upgrade. No gratuitous
+reinstall, migration, test suite or provider call on ordinary launch.
+Longer user-authorized operations show truthful state and preserve
+diagnostic/recovery records after browser disconnect.
+
+NFR-18 — Release usability and accessibility. Browser navigation,
+focus, labels, text state, narrow screens and keyboard alternatives are
+acceptance properties. Human participant observations are preserved
+separately from machine qualification.
+
+
+4. Requirements introduced or clarified by
+ratified Bible v2.2
+The following stable extension identifiers are introduced to make
+ratified product direction testable. They are future requirements
+unless a listed phase and Contract authorizes implementation.
+                                      Scheduled
+ID          Requirement
+                                      acceptance
+            Allow optional
+            stronger
+            Implementer advice
+            and read-only
+            exploratory helpers
+            inside one parent
+            transaction, within       Phase 4 execution
+FR-AUX-01   inherited finite file/    contract; negative
+            network/process/          capability tests
+            usage limits; prohibit
+            production writes,
+            test edits, canonical
+            commits, and treating
+            assistance as
+            independent review
+            Enforce process/tool/
+            filesystem/network
+            boundaries
+            mechanically;
+            CLAUDE.md and
+            prompts are               Before first live agent
+NFR-19
+            guidance, not a           work, Phase 4
+            sandbox; fail closed
+            on unauthorized
+            operations and still
+            deliver safety-critical
+            notifications
+            Durable
+            HumanRequestId-linked
+            conversation with
+            ordered human and
+            Planner clarification
+                                      P4.3 scoped
+            messages,
+FR-HUM-01                             persistence,
+            authenticated
+                                      expanded later
+            principal evidence,
+            revisions and
+            channel receipts;
+            clarification is not
+            authorization
+            Binding human
+FR-HUM-02
+            decision must match
+                                    Scheduled
+ID          Requirement
+                                    acceptance
+            principal, request
+            identity, revision,
+            Contract, capability,   Phase 3 browser
+            idempotency/replay      controls; expanded
+            identity; same typed    in later phases
+            command from UI or
+            channel
+            Channel-independent
+            Notification /
+            Conversation /
+            Channel Adapter /       Later
+FR-COM-01   Authorization           communication
+            separation; no          phases
+            channel directly
+            changes Supervisor
+            state
+            Bidirectional email
+            with durable send/
+            receive receipts,
+            stable request
+            correlation,            P10.2, not before first
+FR-COM-02
+            conservative            coding transaction
+            threading, duplicate/
+            forwarded-content
+            defenses and replies
+            without remote UI
+            Email approval
+            authentication policy
+            must specify
+            allowable risk
+            classes, identity
+            evidence, revocation    Before any email
+DG-14
+            and stronger            action authorization
+            confirmation, with
+            high-risk outcomes
+            failing closed when
+            authenticity is
+            insufficient
+            Future multi-human
+                                    Future scope
+FR-ORG-01   organization mode:
+                                    revision, not P3–P10
+            principal/team
+                                                   Scheduled
+ ID                      Requirement
+                                                   acceptance
+                         ownership, delegated
+                         supervisory scope,
+                         revocation/separation
+                         of duties and
+                         personal/professional
+                         isolation
+                         Future dedicated
+                         single-host
+                         authenticated remote
+                         access needs its own
+                         network/transport/
+ FR-DEP-01                                         Future decision only
+                         session/origin/
+                         authorization
+                         security gate;
+                         distributed workers
+                         have separate scope
+                         Vacation Day Test:
+                         2–4 independent
+                         Engineers,
+                         prespecified full-day
+                         duration, meaningful
+                         verified progress,        Future Gate F3, after
+ FR-F3-01                operator absent           email and isolation
+                         except email, no          readiness
+                         more than five
+                         substantive human
+                         replies including
+                         clarification, truthful
+                         final briefing
+
+The tenets of the Vacation Day Test are not merely a quiet notification
+test. A silent nonproductive system fails; so does a system requiring a
+terminal/UI rescue or deliberately hiding safety alerts to stay under the
+reply budget. Exact workload, thresholds, duration and evidence are
+frozen before running the test.
+5. Revised acceptance gates and verification
+stories
+
+                    Human-observable         What does not
+Gate
+                    exit                     follow
+                    Haskell local service,
+                    PostgreSQL
+                                             Autonomous code
+A (historical)      migration, typed
+                                             execution
+                    operator action and
+                    secure initial shell
+                    Deterministic
+                    identities, Profiles,
+                    Work Orders, claims,
+                                             Claim that unfinished
+B (engineering      outbox/
+                                             human browser
+accepted)           reconciliation, effect
+                                             review passed
+                    protocol; machine
+                    qualification
+                    retained
+                    One-command
+                    bootstrap, truthful
+                    install/manage/
+                    recover, onboarding,
+                    project/task
+                                             Real Planner/
+                    organization,
+C-UX / new Gate C                            Implementer/
+                    supported decisions/
+                                             Reviewer transaction
+                    evidence; real-
+                    browser human
+                    qualification and
+                    deferred Gate B
+                    walkthrough
+                    One authorized no-
+                    plan local bug Ticket
+                    leads to frozen tests,
+                    single Implementer,
+                    real Git,                Multiple Engineers
+C-EXEC / Gate for
+                    deterministic checks,    or remote
+Phase 4
+                    independent              publication
+                    semantic challenge/
+                    review, controlled
+                    crash recovery and
+                    explicit human Done
+                       Human-observable        What does not
+Gate
+                       exit                    follow
+                       Plan-driven work
+                       and tickets share the
+                       engine; Human
+                                               Workplace PR/
+D                      Inbox, phase
+                                               Shortcut automation
+                       approval, bounded
+                       Scribe and Profile
+                       parity
+                       Independent
+                       repositories; then
+                                               Distributed agents or
+                       GitHub review/
+E1/E2/E3                                       multi-human org
+                       rework/integration;
+                                               runtime
+                       then Shortcut tracker
+                       loop
+                       Skills evaluation/
+                       sharing; authorized     AI management
+                       Red Team; bounded       hierarchy or
+F1/F2/F3
+                       unattended Vacation     unqualified
+                       Day Test and fault      autonomy
+                       qualification
+
+
+C-UX acceptance scenarios (P3.11)
+
+ • UX-C1: One invocation of lockstep opens the intended pane
+   through the default browser, with the application database absent
+   or stopped.
+ • UX-C2: An ordinary returning launch connects without
+   unnecessary rebuild/migrate; honest startup failures remain
+   inspectable.
+ • UX-C3: The UI completes a compatible installation and an
+   authorized backed-up upgrade; fault-injected backup, migration,
+   crash and database-ahead paths fail closed.
+ • UX-C4: A novice creates or imports a project with correct
+   repository ownership and no surprise external publication.
+ • UX-C5: A task can be created, edited, prioritized, blocked/unblocked
+   under policy, and viewed after restart.
+ • UX-C6: An authorized human decision applies once; stale request,
+   duplicate submission and forged cross-origin authorization are
+   refused.
+ • UX-C7: Evidence UI matches persisted ledger and shows
+   meaningful uncertainty, human attestation and not-run status.
+  • UX-C8: The owner conducts and records the formerly deferred
+    Gate B browser review against the appropriate installed tested
+    application.
+  • UX-C9: Real nontechnical users complete defined first-run
+    journeys; all assistance and non-completions are recorded.
+
+
+C-EXEC minimum useful local coding scenario
+
+The human selects one existing repository and authorized bug Ticket
+from the UI. Lockstep chooses the effective Bug Profile, creates a
+bounded source-linked Contract, independently challenges candidate
+tests before freeze, freezes protected tests, runs one Implementer
+against confined allowed paths, verifies real compilation/tests and Git
+state, performs an independent read-only review and semantic
+challenge, commits only through Supervisor authority, and exposes the
+exact evidence and human Done choice. Fault injection proves safe
+recovery without duplicate mutation. No remote push, PR, Shortcut,
+multi-repo, or full Master Plan is required.
+
+A model-free suite is required, using scripted role adapters against
+real PostgreSQL, subprocess/Git and effect boundaries. Real provider
+CLI capability and model quality require a separately authorized, finite
+dogfood trial before saying Lockstep performs real human-equivalent
+coding work. Do not call simulated success a real model
+demonstration.
+
+
+6. Critical path and permitted deferrals
+The urgent product objective is to get Lockstep useful on one local
+repository, not finish optional provider, deployment, Skills or
+workplace integrations first. Complete P3’s UI-first control-plane core,
+then the C-EXEC engine and live provider proof. P3.1 must not
+metastasize into a generalized deployment platform. P3.3 safe install/
+upgrade is required for Gate C-UX but its implementation should reuse
+Phase 1/2 scripts and tested primitives behind an allowlisted authority
+boundary rather than introduce a second orchestration kernel.
+
+Nontechnical usability remains a product acceptance obligation; a thin
+initial vertical slice is an engineering checkpoint within Phase 3, not a
+false acceptance of the entire Gate C. If the owner later chooses to
+advance C-EXEC while some non-safety UI polish is still unfinished,
+record a named, explicit gate deferral; do not silently waive security,
+persistence or evidence prerequisites.
+7. Legacy requirement traceability and
+moved milestones
+All original IDs remain stable. The following are milestone moves, not
+deprecations:
+
+ Original v0.2 requirement
+                                    Revised primary milestone
+ family
+                                    A and current P3 bootstrap
+ FR-APP-01–05 (foundation)
+                                    compatibility
+ FR-APP-06–09 (operator views/      P3 (C-UX), extended at P4 (C-
+ actions/evidence)                  EXEC)
+ FR-WRK-01–05 (identity,
+                                    P2 accepted; UI projection P3
+ scheduling, policy)
+ FR-WRK-06, FR-EXE-03–09, FR-       P4 (C-EXEC), original C
+ SEM-01–04, FR-DEL-01               requirement intact
+ FR-WRK-07–10, FR-EXE-10, FR-       P5 (D), with limited CRUD/UX
+ SEM-05, FR-KNW-01–02               parts implemented in P3
+ FR-WRK-11                          P6 (E1)
+ FR-DEL-02–06, 08                   P7 (E2)
+ FR-DEL-07, 10                      P8 (E3)
+ FR-KNW-03–05                       P9 (F1)
+ FR-KNW-06–07                       P10 (F2)
+ FR-KNW-08, FR-WRK-12, FR-          P11 (F3), or earlier only if safe
+ DEL-09                             and separately authorized
+                                    Preserved across all applicable
+ FR-EXE-01/02/12; NFR-01–14
+                                    phases
+
+Unchanged FR wording and original acceptance columns are retained
+in PRD v0.2. An Implementer preparing a Work Unit must trace both
+the baseline and the new/changed obligations; this revision is not
+permission to invent missing requirement details.
+8. Design gates and authority
+Existing DG-01–13 retain their original decisions and statuses.
+DG-03/04/05 were accepted in Phase 2; DG-06/07 remain relevant to C-
+EXEC and cannot be casually waived; DG-08–12 remain gated at their
+respective later scopes; optional DG-13 Mercury research is not on the
+critical path.
+
+DG-15 (P3.1 local bootstrap) is the owner-approved amended P3.1
+design: single-use fragment-based sign-in, origin-scoped non-cookie
+bearer session, strict Host/Origin and XSS controls, temporary
+coexistence with frozen cookie pages, a containerized pane without
+unrestricted DB/Docker authority, and an authenticated allowlisted
+host-user helper. Consentful PATH installation, compatible automatic
+start, explicit upgrade/migrate decisions and first-party P3.1 JavaScript
+are part of that decision. It authorizes only P3.1, not the whole future
+deployment plane.
+
+DG-16 (Phase 3 browser-managed effects) requires verified helper
+protocol and authorization, privilege separation, operation locks,
+durable results and no host shell command injection. A new UI route
+doesn’t create an exemption from the original DG-04 effect guarantees.
+
+DG-17 (Phase 4 live coding) requires concrete agent process
+confinement, provider CLI permissions, secrets separation, model
+family adapter and real Git boundary verification. This is a hard
+precondition to live consequential work, not a later UX enhancement.
+
+Human decisions and qualified read-only reviewer reports must be
+distinguished. Approval of a design/Contract is not a receipt for
+executing it.
+
+
+9. Documentation and publication
+Update the canonical repository source documents using a traceable
+revision record: docs/PROJECT_BIBLE.md with exact ratified v2.2 text,
+docs/prd/ for this PRD, docs/plans/ for the paired plan. Do not claim
+these files were published or tests were run merely by creating this
+approved PDF/Markdown source. Record human approval, commits
+and digests after actual repository operations. The original PDF
+remains the immutable source for historical text, especially where a
+v0.3 mapping supersedes a milestone number.
+Approval recorded: On 25 October 2026, the human owner approved
+this v0.3 PRD, its paired v0.3 plan, and the exact LS-BIBLE-2.2-ALIGN-01
+alignment defined in §2. The already authorized P3.1 work continues
+against its approved design. Neither this approval nor the Bible
+amendment authorizes unapproved agent code execution or asserts an
+incomplete acceptance gate passed.
+
