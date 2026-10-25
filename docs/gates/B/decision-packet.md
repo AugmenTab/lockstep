@@ -9,6 +9,10 @@ before Gate B is reviewed again. When it is, the report (r2, tested commit `6ba6
 re-verification against whatever has changed by then. Awareness note for the Planner:
 `.local/retros/awareness-launch-experience.md` (local, gitignored).
 
+**Later the same day, the owner decided** (recorded below, "Your decision"): P2.1–P2.9
+engineering implementation accepted; Gate B not passed as a whole, its browser walkthrough
+deferred into the revised Gate C; revised Phase 3 authorized.
+
 ## What to decide
 
 1. **Gate B** for `docs/gates/B/gate-report.md`, revision **r2**,
@@ -70,12 +74,22 @@ re-verification against whatever has changed by then. Awareness note for the Pla
 
 ## Your decision (to be filled in by you)
 
+Recorded by the writing agent (Implementer) at the owner's instruction, 2026-10-25, from the
+owner's revised Phase 3 handoff (`.local/plans/phase-03.md` §1, SHA-256
+`d6dafdf2b985b55895007504ecb9b49529bee07dc08c4cd948cdbfc1a513d0c8`). These are the owner's
+decisions, not the agent's. The report identity was checked before recording:
+`shasum -a 256 docs/gates/B/gate-report.md` gave
+`3170fa2c058e16070649e8da2825b1308501f646c72b6b310668e720c5fcd91f` (r2), tested commit
+`6ba66f5` exists. The report itself is unchanged, and so is every earlier report, review, finding
+and evidence file.
+
 | Field | Value |
 |---|---|
-| Gate B (report r2, `3170fa2c…`) | |
-| P2.1 / P2.2 / `lockstep open` / P2.3 / P2.4 / P2.5 / P2.6 / P2.7 / P2.8 / P2.9 | |
-| Effect-key rule (3a / 3b) | |
-| Unacknowledged abandonment (4a / 4b / 4c) | |
-| Authority by command | |
-| Operator installation | |
-| Decided by / at | |
+| Gate B (report r2, `3170fa2c058e16070649e8da2825b1308501f646c72b6b310668e720c5fcd91f`, tested commit `6ba66f5`) | **Not passed as a whole, and not to be represented as passed.** The machine qualification keeps its recorded results (B1 run 4, 19/19). The human browser walkthrough is **DEFERRED / NOT_RUN**; it becomes scenario C8 of the revised Gate C. Phase 3 proceeds by the owner's explicit authorization to change the gate sequence, not by a Gate B acceptance. |
+| P2.1 / P2.2 / P2.3 / P2.4 / P2.5 / P2.6 / P2.7 / P2.8 / P2.9 | **Engineering implementation ACCEPTED by the owner** (handoff §1: "P2.1–P2.9: engineering implementation accepted by the human owner"), at the commits in report §3 and the r2 evidence. |
+| `lockstep open` | Not named separately in the handoff. It was authorized as part of the Phase 2 handoff; the owner's default-browser check is part of the deferred walkthrough (C8). |
+| Effect-key rule (3a / 3b) | Not decided by the handoff; stays open. As built, (a) applies. |
+| Unacknowledged abandonment (4a / 4b / 4c) | Not decided by the handoff; stays open. As built, it fails closed. |
+| Authority by command | Not decided by the handoff; stays a recorded Phase 2 limitation (report §5.1). |
+| Operator installation | Not decided by the handoff. The handoff requires that tests never overwrite the operator's installation or database (§10); it is untouched: `.local/install` holds the rebuild of `6c2851d`, database at schema 5. |
+| Decided by / at | the human owner, 2026-10-25 (revised Phase 3 handoff) |

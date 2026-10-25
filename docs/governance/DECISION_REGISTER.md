@@ -99,6 +99,13 @@ DG-05 and DG-04 owner decisions, 2026-10-18 (`.local/plans/phase-02_update1.md`;
 - **DG-04 ACCEPTED with binding safety requirements** (`docs/gates/P2.5/dg-04-decision-request.md`): D-4.1 through D-4.9 as the foundation, subject to requirements 1–8 recorded there. The Phase 1 no-op dispatcher stays unchanged; its lease rule does not authorize external-effect replay.
 - The owner's instruction: proceed sequentially through P2.3–P2.9; keep `lockstep open`; no remote access; no Phase 3.
 
+Phase 2 acceptance, Gate B disposition and Phase 3 authorization, 2026-10-25 (`.local/plans/phase-03.md` §1, sha256 `d6dafdf2…d0c8`; recorded in `docs/gates/B/decision-packet.md` by the writing agent at the owner's instruction):
+
+- **P2.1–P2.9 engineering implementation ACCEPTED** by the owner, against Gate B report r2 (sha256 `3170fa2c058e16070649e8da2825b1308501f646c72b6b310668e720c5fcd91f`, verified before recording) and tested commit `6ba66f5`.
+- **Gate B is not passed as a whole.** The machine qualification keeps its recorded results (B1 run 4, 19/19); the human browser walkthrough is **DEFERRED / NOT_RUN** and moves into the revised Gate C as scenario C8. Every earlier Gate B report, review, finding and evidence file is kept unchanged.
+- **Revised Phase 3 authorized** (P3.1–P3.11, "The Usable Product Foundation"; exit: revised Gate C — Usability and Operator Readiness), by the owner's explicit change of the gate sequence. The original Phase 3 engineering-execution scope becomes the phase after Gate C, with its safety requirements intact. It authorizes no live model inference, AI-written production code, autonomous Git commit/push/merge, remote access, email approval or external integration (handoff §8).
+- Not decided by the handoff and still open: the Gate B packet's effect-key rule (3), unacknowledged abandonment (4), authority by command (5) and the operator installation (6).
+
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.
 

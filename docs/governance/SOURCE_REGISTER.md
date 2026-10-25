@@ -31,6 +31,7 @@ Per Bible v2.1 "Document charter" and PRD v0.2 §13:
 | Implementation PRD | LS-V2-PRD | 0.2 | 2026-10-16 | "proposed for human review"; "Design and acceptance contract draft" | 20 | `.local/LOCKSTEP_V2_IMPLEMENTATION_PRD_v0.2.pdf` | `bbd407fd57285ac6d8da6deee3995a5771c9c111a5c0b62e2df81730ebc17dfe` |
 | Dependency-aware plan | LS-V2-PLAN | 0.2 | 2026-10-16 | "proposed for human review"; "PROVISIONAL ENTIRELY" | 29 | `.local/LOCKSTEP_V2_DEPENDENCY_AWARE_PLAN_v0.2.pdf` | `ae85b482d17d43e2fec106e1a857ef2f68f7d1b0c1eb7d0021ecfc64dbfe6345` |
 | Phase 0 handoff | (none) | — | 2026-10-16 | Human-issued execution instruction | — | `.local/plans/phase-00.md` | `23265ae4ff42b494790b50e01960b3d5bac4c33aa21ebbe78a68a089102e5ac0` |
+| Phase 3 handoff (revised, UI-first) | (none) | — | 2026-10-25 | Human-approved revised Phase 3 direction; amends the plan's build order (`AMENDMENT-01-UI-FIRST-PHASE-3.md`) | — | `.local/plans/phase-03.md` | `d6dafdf2b985b55895007504ecb9b49529bee07dc08c4cd948cdbfc1a513d0c8` |
 
 Verification command (re-run to confirm identity):
 
