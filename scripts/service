@@ -10,6 +10,8 @@
 #   scripts/service cli ARGS...        run the installed binary with the same config
 #   scripts/service open [--port N]    start if needed and open the sign-in page in this
 #                                      host's browser (C-OPEN; also: scripts/lockstep open)
+#   scripts/service --instance NAME COMMAND...
+#                                      the same for a qualification install, e.g. b1
 #
 # The binary binds 127.0.0.1 only. The container uses host networking; on this
 # Mac's Docker runtime (OrbStack, Docker Engine 29.4) that loopback listener is
@@ -26,6 +28,22 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+# --instance NAME: container lockstep-NAME, install .local/NAME-install, config
+# .local/config/lockstep-NAME.json (as scripts/b1 leaves them). Exported so the nested
+# start/stop of restart and open use the same instance.
+if [ "${1:-}" = --instance ]; then
+  instance=${2:-}
+  case $instance in
+    "" | service | *[!abcdefghijklmnopqrstuvwxyz0123456789-]*)
+      echo "scripts/service: --instance takes lower-case letters, digits and '-' (not 'service')" >&2
+      exit 64 ;;
+  esac
+  shift 2
+  [ -f ".local/config/lockstep-$instance.json" ] || { echo "scripts/service: instance $instance has no config" >&2; exit 66; }
+  export LOCKSTEP_SERVICE_NAME="lockstep-$instance"
+  export LOCKSTEP_SERVICE_INSTALL_DIR=".local/$instance-install"
+  export LOCKSTEP_SERVICE_CONFIG=".local/config/lockstep-$instance.json"
+fi
 
 image=lockstep-dev:p1
 name=${LOCKSTEP_SERVICE_NAME:-lockstep-service}
@@ -47,7 +65,7 @@ db_config=.local/config/lockstep.json
 host_config=.local/config/lockstep-host.json
 
 usage() {
-  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 64
 }
 
@@ -112,6 +130,10 @@ case "$command" in
     esac
     if docker container inspect "$name" >/dev/null 2>&1; then
       echo "scripts/service: $name already exists; use stop or restart" >&2
+      exit 75
+    fi
+    if curl -s -o /dev/null "http://127.0.0.1:$port/api/health_check"; then
+      echo "scripts/service: something already answers on 127.0.0.1:$port; pass --port N" >&2
       exit 75
     fi
     args=()
