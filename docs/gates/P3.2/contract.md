@@ -76,7 +76,7 @@ takes `--service-port N` (the launcher passes `LOCKSTEP_SERVICE_PORT`, default 8
 | `scripts/check --integration` | PASSED all six steps: 724 unit, 253 integration | `check-integration.log` |
 | `scripts/lib/check-lifecycle` (real Docker, instance `p32c`) | 13 PASS, 0 FAIL; the operator's service, pane and database untouched | `check-lifecycle-results.txt` |
 | `scripts/lib/check-control` rerun (the launcher changed) | 53 PASS, 0 FAIL | `check-control-rerun-results.txt` |
-| Linux clean clone | after the commit | `linux-clone.log` |
+| Linux clean clone of `767731b` | PASSED: format, lint, build, unit (724), integration (253) | `linux-clone.log` |
 
 ## 5. Freeze record
 
