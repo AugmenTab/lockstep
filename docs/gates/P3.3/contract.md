@@ -59,6 +59,26 @@ database upgrade(s)"; `#apply-review` → "Lockstep will: back up the database �
 `#restore-review` → "Lockstep will: … restore the database backup …"; `#restore-previous`; "Done:
 the previous version is back."
 
+## 3a. Verification record (after implementation)
+
+| Check | Result | Evidence |
+|---|---|---|
+| Frozen files (P3.3, P3.2, P3.1) | digests unchanged | §4 |
+| P3.3 groups (unit 11, integration 25 incl. 2 browser) | PASSED on the first implementation run | `check-integration.log` |
+| `scripts/check --integration` | PASSED all six steps: 735 unit, 278 integration | `check-integration.log` |
+| `scripts/lib/check-upgrade` (real Docker, build, backup, migration, restore; instance `p33c`) | 19 PASS, 0 FAIL: schema 5 (`6c2851d`) → failed start after migration → recovery restored schema 5 and the old version → upgrade to HEAD `614f56c` ready; the operator's installation, service, pane, database and backup folder untouched | `check-upgrade-results.txt` |
+| Linux clean clone of `614f56c` | PASSED: format, lint, build, unit (735), integration (278) | `linux-clone.log` |
+
+Implementation notes (decisions within the design, recorded here):
+
+- The migration step does not call `scripts/service cli db migrate --backup FILE`: the installed
+  CLI runs in a container that cannot see the host's backup path, so the binary's own backup
+  check (C-P1.2 E6) would refuse it. The helper runs one fixed `docker run` of the candidate
+  binary with only that verified backup mounted read-only at `/backup/<name>`, and passes that
+  path, so the binary's own check still applies.
+- `apply-candidate` while an earlier upgrade still needs recovery is refused with the code
+  `recovery-needed` (an addition to U4b).
+
 ## 4. Freeze record
 
 Frozen 2026-10-26 by the writing agent (manual), before install and upgrade were implemented.
