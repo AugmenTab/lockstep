@@ -5,6 +5,7 @@ module Lockstep.Foundation.Config
   , mkPort
   , portNumber
   , defaultPort
+  , defaultControlPort
   , ServeConfig (..)
   , defaultServeConfig
   , loopbackAuthority
@@ -45,6 +46,11 @@ portNumber (Port n) =
 defaultPort :: Port
 defaultPort =
   Port 8000
+
+-- | The control pane's default port (contract C-P3.1 L3).
+defaultControlPort :: Port
+defaultControlPort =
+  Port 8100
 
 data ServeConfig
   = ServeConfig

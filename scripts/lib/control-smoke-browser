@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Browser stand-in for scripts/lib/check-control (C-P3.1 §5). Called by the
+# launcher with the control pane's sign-in address as its only argument, it
+# drives a real headless Chromium (test/browser/control_driver.py in the dev
+# image, host network): open the address, wait until the pane shows the state
+# of the computer, and record what the page shows.
+#
+# The address is passed to the driver on stdin, never as an argument, and is
+# never written anywhere: the summary in $LOCKSTEP_SMOKE_OUT holds only the path
+# the browser ended on, whether the status appeared, and the page text, which
+# the pane fills only with status words.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+out=${LOCKSTEP_SMOKE_OUT:?LOCKSTEP_SMOKE_OUT must name the summary file}
+link=$1
+case "$link" in
+  http://127.0.0.1:[0-9]*/sign-in#*) ;;
+  *) printf 'unexpected address\n' > "$out"; exit 1 ;;
+esac
+steps='[{"op":"open","label":"pane","url":"'"$link"'"},{"op":"wait_text","label":"status","text":"Database","timeout":"90"},{"op":"eval","label":"url","expression":"location.pathname + location.hash"}]'
+link=""
+raw=$(printf '%s' "$steps" | docker run -i --rm --network host --log-driver none \
+  --volume "$PWD/test/browser:/browser:ro" lockstep-dev:p1 python3 /browser/control_driver.py) || {
+  printf 'driver failed\n' > "$out"
+  exit 1
+}
+steps=""
+value() { printf '%s\n' "$raw" | awk -F '\t' -v k="$1" '$1 == k { print $2; exit }'; }
+{
+  printf 'url=%s\n' "$(value url.value)"
+  printf 'status.found=%s\n' "$(value status.found)"
+  printf 'status.text=%s\n' "$(value status.text)"
+} > "$out"

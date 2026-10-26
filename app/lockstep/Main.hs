@@ -126,6 +126,7 @@ import Lockstep.Kernel.Transition qualified as K
 import Lockstep.Kernel.WorkOrder (Claim (..), WorkOrderInput (..), WorkOrderState (..), parseWorkOrderKind)
 import Lockstep.Persistence.Migrations (migrations)
 import Lockstep.Web.Application (applicationWith)
+import Lockstep.Web.Control (runControlPane)
 import Lockstep.Web.Server (serverSettingsWith)
 
 main :: IO ()
@@ -171,6 +172,9 @@ main = do
       withRequiredDatabase (repositorySetProfile engineer profileId)
     Right (ProfileResolve resolveArgs) ->
       withRequiredDatabase (profileResolve resolveArgs)
+    Right (ControlServe port state) ->
+      -- C-P3.1: the control pane reads no database configuration.
+      runControlPane port state
     Right command ->
       -- C-P2.8 §5: the ledger commands (every other command is matched above).
       withRequiredDatabase (ledgerCommand command)

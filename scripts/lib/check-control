@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+# Verification of the root launcher and the control pane on the host (C-P3.1 §5).
+# Needs Docker and the operator PostgreSQL server (scripts/db up); it never
+# touches the operator's installation, control pane, service or database.
+#
+# Everything runs as instance p31c: state .local/control-p31c (its own pane
+# build), install .local/p31c-install, config .local/config/lockstep-p31c.json,
+# containers lockstep-control-p31c and lockstep-p31c, databases
+# lockstep_p31c_<stamp>*, pane port 18100, service port 18110. All of it is
+# removed at the end. The browser is scripts/lib/control-smoke-browser (real
+# headless Chromium). Results: .local/evidence/control-<stamp>/results.txt
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+
+instance=p31c
+state=.local/control-$instance
+install=.local/$instance-install
+config=.local/config/lockstep-$instance.json
+pane=lockstep-control-$instance
+service=lockstep-$instance
+squatter=lockstep-control-squatter-$instance
+pane_port=18100
+service_port=18110
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+db=lockstep_${instance}_$stamp
+work=.local/evidence/control-$stamp
+mkdir -p "$work"
+results=$work/results.txt
+: > "$results"
+: > "$work/all-output"
+failures=0
+
+record() { # STATUS DESCRIPTION
+  printf '%s %s\n' "$1" "$2" | tee -a "$results"
+  if [ "$1" != PASS ]; then failures=$((failures + 1)); fi
+}
+expect() { # DESCRIPTION CONDITION...
+  local description=$1
+  shift
+  if "$@"; then record PASS "$description"; else record FAIL "$description"; fi
+}
+
+if ! docker container inspect --format '{{.State.Running}}' lockstep-postgres 2>/dev/null | grep -q true; then
+  echo "NOT_RUN: the operator PostgreSQL (lockstep-postgres) is not running; run scripts/db up" >&2
+  exit 2
+fi
+for p in $pane_port $((pane_port + 1)) $service_port; do
+  if curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$p/"; then
+    echo "NOT_RUN: something already answers on 127.0.0.1:$p" >&2
+    exit 2
+  fi
+done
+if [ -e "$state" ] || [ -e "$install" ] || [ -e "$config" ]; then
+  echo "NOT_RUN: $state, $install or $config already exists (a previous run did not clean up)" >&2
+  exit 2
+fi
+
+cleanup() {
+  LOCKSTEP_CONTROL_PORT=$pane_port ./lockstep --instance $instance stop >/dev/null 2>&1 || true
+  docker rm -f "$pane" "$service" "$squatter" >/dev/null 2>&1 || true
+  for d in "$db" "${db}_missing"; do
+    docker exec lockstep-postgres psql -q -U lockstep -d lockstep -c "DROP DATABASE IF EXISTS $d WITH (FORCE)" >/dev/null 2>&1 || true
+  done
+  rm -rf "$state" "$install"
+  rm -f "$config"
+}
+trap cleanup EXIT
+
+write_config() { # DATABASE-NAME
+  (
+    umask 077
+    sed -E -e 's/"host":"[^"]*"/"host":"127.0.0.1"/' -e 's/"port":[0-9]+/"port":5433/' \
+      -e "s/\"name\":\"[^\"]*\"/\"name\":\"$1\"/" .local/config/lockstep.json > "$config"
+  )
+}
+
+code=0
+run() { # runs a command with the instance environment; keeps output; sets code
+  set +e
+  LOCKSTEP_CONTROL_PORT=$pane_port LOCKSTEP_SERVICE_PORT=$service_port "$@" > "$work/out" 2>&1 < /dev/null
+  code=$?
+  set -e
+  cat "$work/out" >> "$work/all-output"
+}
+launch() { # SMOKE-FILE
+  LOCKSTEP_BROWSER=scripts/lib/control-smoke-browser LOCKSTEP_SMOKE_OUT=$1 run ./lockstep --instance $instance
+}
+smoke_has() { grep -sqF -- "$2" "$1"; }
+smoke_lacks() { ! grep -sqF -- "$2" "$1"; }
+running() { docker container inspect --format '{{.State.Running}}' "$1" 2>/dev/null | grep -q true; }
+absent() { ! docker container inspect "$1" >/dev/null 2>&1; }
+started_at() { docker container inspect --format '{{.State.StartedAt}}' "$1" 2>/dev/null || echo none; }
+helper_count() { pgrep -f "control-helper --state $PWD/$state" | wc -l | tr -d ' '; }
+mtime() { if [ -e "$1" ]; then ls -l -T "$1" 2>/dev/null || ls -l --time-style=full-iso "$1"; else echo none; fi; }
+unchanged() { [ "$1" != none ] && [ "$1" = "$2" ]; } # an existing value that did not change
+revision() { docker exec lockstep-postgres psql -X -q -t -A -U lockstep -d "$db" -c "SELECT to_regclass('public.lockstep_schema_migrations') IS NOT NULL" 2>/dev/null; }
+
+# A: first launch, nothing built, nothing installed, the database missing
+write_config "${db}_missing"
+launch "$work/smoke-a"
+expect "first launch exits 0" test "$code" = 0
+expect "first launch said it prepares Lockstep once" grep -q "first use" "$work/out"
+expect "first launch built the pane binary with a VERSION" test -x "$state/install/bin/lockstep" -a -f "$state/install/VERSION"
+expect "first launch: the pane container is running" running "$pane"
+expect "first launch: one helper" test "$(helper_count)" = 1
+expect "first launch: the real browser signed in and saw the status (fragment gone)" smoke_has "$work/smoke-a" 'url="/"'
+expect "first launch: the status appeared" smoke_has "$work/smoke-a" "status.found=yes"
+expect "first launch: the page says the application is not installed" smoke_has "$work/smoke-a" "Not installed"
+expect "first launch: no service container was started" absent "$service"
+build_stamp=$(mtime "$state/install/bin/lockstep")
+pane_start=$(started_at "$pane")
+
+# B: installed, database missing: reconnects, no rebuild, nothing started
+mkdir -p "$install/bin"
+cp "$state/install/bin/lockstep" "$install/bin/lockstep" 2>/dev/null || record FAIL "the instance installation could be copied from the pane build"
+cp "$state/install/VERSION" "$install/VERSION" 2>/dev/null || true
+launch "$work/smoke-b"
+expect "second launch exits 0" test "$code" = 0
+expect "second launch did not rebuild" unchanged "$build_stamp" "$(mtime "$state/install/bin/lockstep")"
+expect "second launch did not say first use" bash -c "! grep -q 'first use' '$work/out'"
+expect "second launch reused the pane (start time unchanged)" unchanged "$pane_start" "$(started_at "$pane")"
+expect "second launch: still one helper" test "$(helper_count)" = 1
+expect "database missing: the page says the database is not ready" smoke_has "$work/smoke-b" "Not ready"
+expect "database missing: the page says installed" smoke_has "$work/smoke-b" "Installed"
+expect "database missing: no service started" absent "$service"
+
+# C: database present but behind the binary: not started, not migrated
+docker exec lockstep-postgres psql -q -U lockstep -d lockstep -c "CREATE DATABASE $db" >/dev/null
+write_config "$db"
+launch "$work/smoke-c"
+expect "schema behind: launch exits 0" test "$code" = 0
+expect "schema behind: no service started" absent "$service"
+expect "schema behind: nothing was migrated" test "$(revision)" = f
+expect "schema behind: the page says the database is not ready" smoke_has "$work/smoke-c" "Not ready"
+
+# D: compatible and stopped: started automatically
+scripts/service --instance $instance cli db migrate > "$work/migrate.out" 2>&1 || record FAIL "the instance database could be migrated for the compatible case"
+launch "$work/smoke-d"
+expect "compatible: launch exits 0" test "$code" = 0
+expect "compatible: the service was started" running "$service"
+expect "compatible: the page says ready" smoke_has "$work/smoke-d" "Ready"
+expect "compatible: the page says the service is running" smoke_has "$work/smoke-d" "Running"
+service_start=$(started_at "$service")
+
+# E: the pane container's authority
+mounts=$(docker container inspect --format '{{range .Mounts}}{{.Destination}}:{{.RW}} {{end}}' "$pane" 2>/dev/null || true)
+expect "pane mounts exactly the install (read-only) and the pane state (read-write)" \
+  test "$(printf '%s\n' $mounts | sort | tr '\n' ' ')" = "/opt/lockstep-control:false /state:true "
+expect "pane has no Docker socket" bash -c "docker container inspect '$pane' >/dev/null 2>&1 && ! docker container inspect '$pane' | grep -q docker.sock"
+expect "pane root filesystem is read-only" test "$(docker container inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$pane" 2>/dev/null || true)" = true
+expect "pane drops all capabilities" bash -c "docker container inspect --format '{{.HostConfig.CapDrop}}' '$pane' | grep -q ALL"
+expect "pane runs as this user" test "$(docker container inspect --format '{{.Config.User}}' "$pane" 2>/dev/null || true)" = "$(id -u):$(id -g)"
+expect "pane has no database configuration in its environment" bash -c "docker container inspect '$pane' >/dev/null 2>&1 && ! docker container inspect --format '{{.Config.Env}}' '$pane' | grep -q LOCKSTEP_CONFIG"
+
+# F: stop ends the pane and the helper, not the service
+run ./lockstep --instance $instance stop
+expect "stop exits 0" test "$code" = 0
+expect "stop removed the pane container" absent "$pane"
+expect "stop ended the helper" test "$(helper_count)" = 0
+expect "stop removed the channel keys" test ! -e "$state/pane/channel.key" -a ! -e "$state/helper/channel.key"
+expect "stop left the service running" unchanged "$service_start" "$(started_at "$service")"
+expect "stop says the service keeps running" grep -qi "service" "$work/out"
+
+# G: two launches at once: one pane, one helper
+( launch "$work/smoke-g1" ) &
+first=$!
+sleep 0.3
+LOCKSTEP_BROWSER=scripts/lib/control-smoke-browser LOCKSTEP_SMOKE_OUT=$work/smoke-g2 \
+  LOCKSTEP_CONTROL_PORT=$pane_port LOCKSTEP_SERVICE_PORT=$service_port ./lockstep --instance $instance > "$work/out-g2" 2>&1 < /dev/null || true
+wait "$first" || true
+cat "$work/out-g2" >> "$work/all-output"
+expect "simultaneous launches: one pane container" test "$(docker ps --filter "name=^${pane}\$" --format '{{.Names}}' | wc -l | tr -d ' ')" = 1
+expect "simultaneous launches: one helper" test "$(helper_count)" = 1
+expect "simultaneous launches: both browsers saw the status" bash -c "grep -q status.found=yes '$work/smoke-g1' && grep -q status.found=yes '$work/smoke-g2'"
+
+# H: a squatter on the pane port is never given a sign-in link
+run ./lockstep --instance $instance stop
+docker run -d --name "$squatter" --network host lockstep-dev:p1 python3 -m http.server $pane_port --bind 127.0.0.1 >/dev/null
+for _ in $(seq 1 50); do curl -s -o /dev/null "http://127.0.0.1:$pane_port/" && break; sleep 0.2; done
+launch "$work/smoke-h"
+expect "squatter: launch exits 0" test "$code" = 0
+expect "squatter: the pane moved to the next port" test "$(cat "$state/port" 2>/dev/null)" = $((pane_port + 1))
+expect "squatter: the browser reached the real pane" smoke_has "$work/smoke-h" "status.found=yes"
+docker logs "$squatter" > "$work/squatter.log" 2>&1 || true
+expect "squatter: received no sign-in request" bash -c "! grep -q 'sign-in' '$work/squatter.log'"
+docker rm -f "$squatter" >/dev/null 2>&1 || true
+
+# I: browser failures
+LOCKSTEP_BROWSER=false run ./lockstep --instance $instance
+expect "browser fails: exit 70" test "$code" = 70
+LOCKSTEP_BROWSER=/nonexistent/browser run ./lockstep --instance $instance
+expect "no browser launcher: exit 70" test "$code" = 70
+
+# J: everything else goes to scripts/lockstep
+run ./lockstep --instance $instance workspace show
+expect "forwarding: workspace show exits 0" test "$code" = 0
+expect "forwarding: workspace show prints the workspace" grep -q "^name: " "$work/out"
+
+# K: no sign-in link anywhere, and no question asked without a terminal
+docker logs "$pane" > "$work/pane.log" 2>&1 || true
+expect "no output contains a sign-in link" bash -c "! grep -q 'sign-in#' '$work/all-output'"
+expect "the pane log contains no sign-in link" bash -c "! grep -q 'sign-in#' '$work/pane.log'"
+expect "the helper log contains no sign-in link" bash -c "! grep -q 'sign-in#' '$state/helper/helper.log'"
+expect "the smoke summaries contain no sign-in link" bash -c "! cat '$work'/smoke-* | grep -q 'sign-in#'"
+expect "no launch asked a question without a terminal" bash -c "! grep -q '\[y/N\]' '$work/all-output'"
+
+echo
+echo "check-control: $failures failure(s); results in $results"
+[ "$failures" -eq 0 ]

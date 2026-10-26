@@ -86,6 +86,19 @@ a 12-hour session cookie. Both commands need a ready database (exit 69 if not).
 Every request must be addressed to `127.0.0.1:<port>` exactly (not
 `localhost`), and every form submission must come from a page of the service.
 
+## Opening Lockstep (C-P3.1)
+
+```sh
+./lockstep            # or `lockstep` anywhere, after `./lockstep setup-path`
+./lockstep stop
+```
+
+Opens the local control pane in the default browser, already signed in (one-time token in the
+URL fragment, header session, no cookie). It works while the database or service is down and
+shows why. The first run builds the pane once; already-compatible services are started; nothing
+is installed, upgraded or migrated. Any other arguments go to `scripts/lockstep`. See
+`docs/OPERATOR_GUIDE.md` §1a.
+
 ## Opening the command center (C-OPEN)
 
 ```sh

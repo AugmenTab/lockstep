@@ -1,0 +1,11 @@
+lockstep> test (suite: lockstep-integration, args: -p /fragment/)
+
+lockstep-integration
+  control pane in a real browser (headless Chromium)
+    fragment sign-in, status from the helper, hostile origins refused, markup shown as text, sign-out: OK (72.98s)
+
+All 1 tests passed (72.98s)
+
+
+
+lockstep> Test suite lockstep-integration passed
