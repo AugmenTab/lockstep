@@ -148,7 +148,7 @@ consent, `./lockstep` with the default browser on this Mac.
 | `scripts/check --integration` | PASSED all six steps: 712 unit, 230 integration, guard, backup/restore (working tree before the implementation commit) | `evidence/check-integration.log` |
 | Browser test alone | PASSED (73 s) | `evidence/browser-run.log` |
 | `scripts/lib/check-control` (host, real Docker, instance `p31c`) | 53 PASS, 0 FAIL, cleaned up | `evidence/check-control-results.txt` |
-| Linux clean clone | see below | `evidence/linux-clone.log` |
+| Linux clean clone of `9584454` (case-sensitive filesystem) | PASSED: format, lint, build, unit (712), integration (230) | `evidence/linux-clone.log` |
 | `./lockstep` with this Mac's default browser, by hand | NOT_RUN — needs the owner's consent (it opens the owner's browser) | — |
 
 ## 6. Exposure that remains (stated, not hidden)
