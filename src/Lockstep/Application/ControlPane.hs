@@ -14,10 +14,12 @@ module Lockstep.Application.ControlPane
   , endSession
   , SubmitError (..)
   , submitRequest
+  , submitLifecycle
   , ResultView (..)
   , readResult
   ) where
 
+import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
 import Control.Exception (IOException, try)
 import Crypto.Random (getRandomBytes)
 import Data.Bits ((.&.))
@@ -28,6 +30,7 @@ import Data.Char qualified as Char
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List qualified as L
 import Data.Map.Strict qualified as Map
+import Data.Maybe (isNothing)
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
@@ -61,6 +64,7 @@ import Lockstep.Foundation.ControlProtocol
   , requestIdText
   , signInDigestHex
   )
+import Lockstep.Foundation.LifecycleProtocol (LifecycleOp, LifecycleRequest (..), encodeLifecycleRequest, expectedFor)
 import Lockstep.Foundation.OperatorToken (decodeToken, encodeToken, generateToken, tokenDigest)
 
 data PaneRuntime
@@ -72,6 +76,8 @@ data PaneRuntime
   -- ^ session digest → absolute expiry (unix seconds)
   , paneIssued :: IORef (Set.Set T.Text)
   -- ^ request ids this pane wrote
+  , paneLifecycle :: MVar (Maybe (T.Text, Integer))
+  -- ^ the last lifecycle request and when it was written (C-P3.2 M6); held while one is written
   }
 
 data PaneError
@@ -127,7 +133,8 @@ openPane dir = do
                 [] -> do
                   sessions <- newIORef Map.empty
                   issued <- newIORef Set.empty
-                  pure (Right (PaneRuntime dir i sessions issued))
+                  lifecycle <- newMVar Nothing
+                  pure (Right (PaneRuntime dir i sessions issued lifecycle))
 
 readIdentity :: FilePath -> IO (Maybe BS.ByteString)
 readIdentity path = do
@@ -232,13 +239,43 @@ readKey runtime = do
 data SubmitError
   = HelperUnavailable
   | RequestNotWritten
+  | LifecycleBusy
   deriving (Eq, Show)
 
 {- | Writes one signed request for an allowlisted operation (C-P3.1 L7): a
 temporary name, then a rename, so the helper never sees a partial file.
 -}
 submitRequest :: PaneRuntime -> ControlOp -> IO (Either SubmitError RequestId)
-submitRequest runtime op = do
+submitRequest runtime op =
+  writeSigned runtime ".req" (\key rid now -> encodeRequest key (ControlRequest rid now op ExpectAny))
+
+-- | How long a lifecycle request without a result blocks the next one.
+lifecycleWindow :: Integer
+lifecycleWindow =
+  600
+
+{- | Writes one signed lifecycle request (C-P3.2 M1, M6) with the operation's
+expected state, unless the previous one still has no result.
+-}
+submitLifecycle :: PaneRuntime -> LifecycleOp -> IO (Either SubmitError RequestId)
+submitLifecycle runtime op =
+  modifyMVar (paneLifecycle runtime) $ \previous -> do
+    now <- currentSeconds
+    busy <- case previous of
+      Just (rid, at) | now - at < lifecycleWindow -> do
+        status <- lstat (paneDirectory runtime <> "/results/" <> T.unpack rid <> ".res")
+        pure (isNothing status)
+      _ -> pure False
+    if busy
+      then pure (previous, Left LifecycleBusy)
+      else do
+        written <- writeSigned runtime ".lreq" (\key rid t -> encodeLifecycleRequest key (LifecycleRequest rid t op (expectedFor op)))
+        pure $ case written of
+          Right rid -> (Just (requestIdText rid, now), written)
+          Left _ -> (previous, written)
+
+writeSigned :: PaneRuntime -> String -> (ChannelKey -> RequestId -> Integer -> BS.ByteString) -> IO (Either SubmitError RequestId)
+writeSigned runtime suffix encode = do
   mbKey <- readKey runtime
   case mbKey of
     Nothing -> pure (Left HelperUnavailable)
@@ -255,9 +292,9 @@ submitRequest runtime op = do
           written <-
             try
               ( do
-                  BS.writeFile tmp (encodeRequest key (ControlRequest rid now op ExpectAny))
+                  BS.writeFile tmp (encode key rid now)
                   setFileMode tmp 0o600
-                  renameFile tmp (dir <> name <> ".req")
+                  renameFile tmp (dir <> name <> suffix)
               ) ::
               IO (Either IOException ())
           case written of

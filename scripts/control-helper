@@ -20,19 +20,25 @@ here=$(cd "$(dirname "$0")" && pwd -P)
 root=$(dirname "$here")
 
 usage() {
-  echo "usage: scripts/control-helper --state DIR [--instance NAME]" >&2
+  echo "usage: scripts/control-helper --state DIR [--instance NAME] [--service-port N]" >&2
   exit 64
 }
 
 state=""
 instance=""
+service_port=8000
 while [ $# -gt 0 ]; do
   case $1 in
     --state) [ $# -ge 2 ] || usage; state=$2; shift 2 ;;
     --instance) [ $# -ge 2 ] || usage; instance=$2; shift 2 ;;
+    --service-port) [ $# -ge 2 ] || usage; service_port=$2; shift 2 ;;
     *) usage ;;
   esac
 done
+case $service_port in
+  "" | *[!0-9]*) usage ;;
+esac
+if [ "$service_port" -lt 1 ] || [ "$service_port" -gt 65535 ]; then usage; fi
 [ -n "$state" ] || usage
 case $state in
   /*) ;;
@@ -200,18 +206,58 @@ refuse() { # ID OP REASON
   write_result "$1" "$2" refused "$3" "$now" "$now" "" || true
 }
 
-# The status operation (C-P3.1 L9). Its standard output is the result's field
-# lines, one "name value" per line, then "detail TEXT" if there is something to say.
-op_status() {
-  local install service present=no commit=unknown dirty=unknown state server readiness=unknown
-  local reason=unknown revision=unknown pending=unknown out code first word
-  if [ -n "$instance" ]; then
-    install=$root/.local/$instance-install
-    service=lockstep-$instance
+if [ -n "$instance" ]; then
+  install=$root/.local/$instance-install
+  service=lockstep-$instance
+  service_cmd=("$root/scripts/service" --instance "$instance")
+else
+  install=$root/.local/install
+  service=lockstep-service
+  service_cmd=("$root/scripts/service")
+fi
+
+service_state() { # running | stopped | absent | unknown
+  local s
+  if s=$(docker container inspect --format '{{.State.Status}}' "$service" 2>/dev/null); then
+    case $s in
+      running) echo running ;;
+      created | exited | dead | paused | restarting | removing) echo stopped ;;
+      *) echo unknown ;;
+    esac
   else
-    install=$root/.local/install
-    service=lockstep-service
+    echo absent
   fi
+}
+
+database_state() { # running | stopped | absent | unknown | not-managed
+  local s
+  if [ -n "$instance" ]; then
+    echo not-managed
+  elif s=$(docker container inspect --format '{{.State.Running}}' lockstep-postgres 2>/dev/null); then
+    case $s in
+      true) echo running ;;
+      false) echo stopped ;;
+      *) echo unknown ;;
+    esac
+  else
+    echo absent
+  fi
+}
+
+db_status_output() { # the installed CLI's `db status`, stdout and stderr
+  "${service_cmd[@]}" cli db status < /dev/null 2>&1
+}
+
+answers_on() { # PORT
+  curl -s -o /dev/null --max-time 3 "http://127.0.0.1:$1/api/health_check" 2>/dev/null
+}
+
+# The status operation (C-P3.1 L9, C-P3.2 M7). Its standard output is the result's
+# field lines, one "name value" per line, then "detail TEXT" if there is something to say.
+op_status() {
+  local present=no commit=unknown dirty=unknown state server readiness=unknown
+  local reason=unknown revision=unknown pending=unknown out code first word
+  local health=no-answer port=unknown exit_code=none docker_server=unknown git_present=no
   [ -x "$install/bin/lockstep" ] && present=yes
   if [ -f "$install/VERSION" ]; then
     word=$(grep -E '^commit [0-9a-f]{40}$' "$install/VERSION" | head -n 1 | cut -d ' ' -f 2)
@@ -219,32 +265,27 @@ op_status() {
     if grep -qx 'dirty true' "$install/VERSION"; then dirty=true; fi
     if grep -qx 'dirty false' "$install/VERSION"; then dirty=false; fi
   fi
-  if state=$(docker container inspect --format '{{.State.Status}}' "$service" 2>/dev/null); then
-    case $state in
-      running) state=running ;;
-      created | exited | dead | paused | restarting | removing) state=stopped ;;
-      *) state=unknown ;;
+  state=$(service_state)
+  server=$(database_state)
+  if [ "$state" = running ]; then
+    word=$(docker container inspect --format '{{range .Args}}{{.}} {{end}}' "$service" 2>/dev/null | sed -n 's/.*--port \([0-9][0-9]*\).*/\1/p')
+    port=${word:-unknown}
+    if answers_on "${word:-$service_port}"; then health=answers; fi
+  elif [ "$state" = stopped ]; then
+    word=$(docker container inspect --format '{{.State.ExitCode}}' "$service" 2>/dev/null)
+    case $word in
+      "" | *[!0-9]*) exit_code=unknown ;;
+      *) exit_code=$word ;;
     esac
-  else
-    state=absent
   fi
-  if [ -n "$instance" ]; then
-    server=not-managed
-  elif server=$(docker container inspect --format '{{.State.Running}}' lockstep-postgres 2>/dev/null); then
-    case $server in
-      true) server=running ;;
-      false) server=stopped ;;
-      *) server=unknown ;;
-    esac
-  else
-    server=absent
-  fi
+  word=$(docker version --format '{{.Server.Version}}' 2>/dev/null | head -n 1)
+  case $word in
+    "" | *[!A-Za-z0-9.:-]*) ;;
+    *) [ ${#word} -le 40 ] && docker_server=$word ;;
+  esac
+  command -v git >/dev/null 2>&1 && git_present=yes
   if [ "$present" = yes ]; then
-    if [ -n "$instance" ]; then
-      out=$("$root/scripts/service" --instance "$instance" cli db status < /dev/null 2>&1)
-    else
-      out=$("$root/scripts/service" cli db status < /dev/null 2>&1)
-    fi
+    out=$(db_status_output)
     code=$?
     first=$(printf '%s\n' "$out" | head -n 1)
     case $first in
@@ -273,7 +314,102 @@ op_status() {
   printf 'service.state %s\ndatabase.server %s\n' "$state" "$server"
   printf 'database.readiness %s\ndatabase.reason %s\n' "$readiness" "$reason"
   printf 'database.revision %s\ndatabase.pending %s\n' "$revision" "$pending"
+  printf 'service.health %s\nservice.port %s\nservice.exitcode %s\n' "$health" "$port" "$exit_code"
+  printf 'docker.server %s\ngit.present %s\n' "$docker_server" "$git_present"
   printf 'helper.protocol 1\n'
+}
+
+# ---------------------------------------------------------------- lifecycle (C-P3.2)
+
+compatible() { # the installation is present and the schema matches it
+  [ -x "$install/bin/lockstep" ] || return 1
+  case $(db_status_output | head -n 1) in
+    "readiness ready "[0-9]*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Checks the expected state (M2, M4). Prints a refusal code, or nothing if the operation may run.
+lifecycle_refusal() { # OP
+  local svc db
+  svc=$(service_state)
+  case $1 in
+    service-start)
+      case $svc in stopped | absent) ;; *) echo state-changed; return ;; esac
+      compatible || echo not-compatible
+      ;;
+    service-stop)
+      [ "$svc" = running ] || echo state-changed
+      ;;
+    service-restart)
+      [ "$svc" = running ] || { echo state-changed; return; }
+      compatible || echo not-compatible
+      ;;
+    database-start)
+      [ -z "$instance" ] || { echo not-managed; return; }
+      db=$(database_state)
+      case $db in stopped | absent) ;; *) echo state-changed ;; esac
+      ;;
+    database-stop)
+      [ -z "$instance" ] || { echo not-managed; return; }
+      db=$(database_state)
+      if [ "$svc" = running ] || [ "$db" != running ]; then echo state-changed; fi
+      ;;
+  esac
+}
+
+# The fixed commands (M3). Everything they print goes to standard output.
+lifecycle_action() {
+  case $lifecycle_op in
+    service-start)
+      if [ "$(service_state)" = stopped ]; then
+        "${service_cmd[@]}" restart --port "$service_port" < /dev/null 2>&1
+      else
+        "${service_cmd[@]}" start --port "$service_port" < /dev/null 2>&1
+      fi
+      ;;
+    service-stop) "${service_cmd[@]}" stop < /dev/null 2>&1 ;;
+    service-restart) "${service_cmd[@]}" restart --port "$service_port" < /dev/null 2>&1 ;;
+    database-start) "$root/scripts/db" up < /dev/null 2>&1 ;;
+    database-stop) "$root/scripts/db" down < /dev/null 2>&1 ;;
+  esac
+}
+
+# Observes the result again (M4): ok only if the intended state now holds.
+lifecycle_holds() { # OP
+  case $1 in
+    service-start | service-restart) [ "$(service_state)" = running ] && answers_on "$service_port" ;;
+    service-stop) [ "$(service_state)" != running ] ;;
+    database-start) [ "$(database_state)" = running ] ;;
+    database-stop) [ "$(database_state)" != running ] ;;
+  esac
+}
+
+execute_lifecycle() { # ID OP
+  local id=$1 op=$2 started finished out detail refusal
+  refusal=$(lifecycle_refusal "$op")
+  if [ -n "$refusal" ]; then
+    refuse "$id" "$op" "$refusal"
+    return
+  fi
+  started=$(date +%s)
+  journal "start $id $op"
+  out=$helper/.out.$id
+  lifecycle_op=$op
+  run_bounded "$out" lifecycle_action
+  if [ "$run_outcome" = ok ] && ! lifecycle_holds "$op"; then
+    run_outcome=failed
+  fi
+  finished=$(date +%s)
+  detail=""
+  if [ "$run_outcome" != ok ]; then
+    detail=$(cat "$out" "$out.err" 2>/dev/null | tail -c 600 | clean_detail)
+    [ -n "$detail" ] || detail="the operation did not reach the intended state"
+  fi
+  rm -f "$out" "$out.err"
+  write_result "$id" "$op" "$run_outcome" - "$started" "$finished" "$detail" || true
+  journal "end $id $run_outcome"
+  log "$op $id: $run_outcome"
 }
 
 stopping=0
@@ -348,24 +484,33 @@ execute() { # ID OP
 }
 
 re_header='^lockstep-control-request ([^ ]+)$'
+re_lifecycle_header='^lockstep-lifecycle-request ([^ ]+)$'
 re_id='^id ([0-9a-f]{32})$'
 re_issued='^issued ([0-9]{1,18})$'
 re_op='^op ([^ ].*)$'
 re_expect='^expect ([^ ].*)$'
 re_mac='^mac ([0-9a-f]{64})$'
 
-# Checks one request file (§4) and runs it if every check passes.
+# Checks one request file (C-P3.1 §4, C-P3.2 §3) and runs it if every check passes.
+# A .req file is a status request; a .lreq file is a lifecycle request.
 handle() { # NAME
-  local name=$1 path=$requests/$1 id size lines line mac version issued op expect now
+  local name=$1 path=$requests/$1 id kind size lines line mac version issued op expect now header
   case $name in
     .*) return ;;
   esac
-  if [[ ! $name =~ ^[0-9a-f]{32}\.req$ ]]; then
+  if [[ $name =~ ^[0-9a-f]{32}\.req$ ]]; then
+    kind=status
+    id=${name%.req}
+    header=$re_header
+  elif [[ $name =~ ^[0-9a-f]{32}\.lreq$ ]]; then
+    kind=lifecycle
+    id=${name%.lreq}
+    header=$re_lifecycle_header
+  else
     rm -f -- "$path"
     log "removed a file that is not a request: name not allowed"
     return
   fi
-  id=${name%.req}
   if [ -L "$path" ]; then rm -f -- "$path"; refuse "$id" unknown not-regular-file; return; fi
   if [ ! -f "$path" ]; then rmdir -- "$path" 2>/dev/null; refuse "$id" unknown not-regular-file; return; fi
   if [ ! -O "$path" ]; then rm -f -- "$path"; refuse "$id" unknown not-owner; return; fi
@@ -389,7 +534,7 @@ handle() { # NAME
     rm -f -- "$path"; refuse "$id" unknown bad-mac; return
   fi
   rm -f -- "$path"
-  if [[ ! ${lines[0]} =~ $re_header ]]; then refuse "$id" unknown malformed; return; fi
+  if [[ ! ${lines[0]} =~ $header ]]; then refuse "$id" unknown malformed; return; fi
   version=${BASH_REMATCH[1]}
   [ "$version" = 1 ] || { refuse "$id" unknown bad-version; return; }
   if [[ ! ${lines[1]} =~ $re_id ]] || [ "${BASH_REMATCH[1]}" != "$id" ]; then refuse "$id" unknown malformed; return; fi
@@ -399,14 +544,26 @@ handle() { # NAME
   op=${BASH_REMATCH[1]}
   if [[ ! ${lines[4]} =~ $re_expect ]]; then refuse "$id" unknown malformed; return; fi
   expect=${BASH_REMATCH[1]}
-  case $op in
-    status) ;;
-    *) refuse "$id" unknown unknown-op; return ;;
-  esac
-  case "$op $expect" in
-    "status any") ;;
-    *) refuse "$id" "$op" bad-expect; return ;;
-  esac
+  if [ "$kind" = status ]; then
+    case $op in
+      status) ;;
+      *) refuse "$id" unknown unknown-op; return ;;
+    esac
+    case "$op $expect" in
+      "status any") ;;
+      *) refuse "$id" "$op" bad-expect; return ;;
+    esac
+  else
+    case $op in
+      service-start | service-stop | service-restart | database-start | database-stop) ;;
+      *) refuse "$id" unknown unknown-op; return ;;
+    esac
+    case "$op $expect" in
+      "service-start not-running" | "service-stop running" | "service-restart running" | \
+        "database-start not-running" | "database-stop service-not-running") ;;
+      *) refuse "$id" "$op" bad-expect; return ;;
+    esac
+  fi
   if grep -qxF "$id" "$helper/seen" 2>/dev/null; then
     journal "refused $id replayed"
     log "refused $id: replayed"
@@ -418,7 +575,11 @@ handle() { # NAME
     return
   fi
   echo "$id" >> "$helper/seen"
-  execute "$id" "$op"
+  if [ "$kind" = status ]; then
+    execute "$id" "$op"
+  else
+    execute_lifecycle "$id" "$op"
+  fi
 }
 
 # An operation that started and never ended was interrupted (the helper stopped).

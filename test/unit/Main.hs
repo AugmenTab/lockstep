@@ -23,6 +23,7 @@ import Lockstep.Foundation.CliTest qualified as CliTest
 import Lockstep.Foundation.CliWorkspaceTest qualified as CliWorkspaceTest
 import Lockstep.Foundation.ControlProtocolTest qualified as ControlProtocolTest
 import Lockstep.Foundation.EvidenceModelTest qualified as EvidenceModelTest
+import Lockstep.Foundation.LifecycleProtocolTest qualified as LifecycleProtocolTest
 import Lockstep.Foundation.OperatorTokenTest qualified as OperatorTokenTest
 import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
 import Lockstep.Kernel.DeliveryTest qualified as DeliveryTest
@@ -115,4 +116,5 @@ main =
       , RemediationThirdReviewTest.tests
       , ControlProtocolTest.tests
       , CliControlTest.tests
+      , LifecycleProtocolTest.tests
       ]

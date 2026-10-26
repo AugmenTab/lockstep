@@ -38,10 +38,12 @@ import Lockstep.Application.ControlPane
   , paneIdentity
   , readResult
   , renderPaneError
+  , submitLifecycle
   , submitRequest
   )
 import Lockstep.Foundation.Config (BindHost (Loopback), Port, ServeConfig (..), portNumber)
 import Lockstep.Foundation.ControlProtocol (ControlResult (..), outcomeName, parseOp, requestIdText)
+import Lockstep.Foundation.LifecycleProtocol (LifecycleOp, expectedFor, parseLifecycleExpect, parseLifecycleOp)
 import Lockstep.Web.RequestGuard (RouteClass (..), guardRequest)
 import Lockstep.Web.Server (serverSettings)
 import Lockstep.Web.Static (StaticAsset (..), lookupAsset)
@@ -142,6 +144,7 @@ data Route
   | Session
   | SignOut
   | Requests
+  | Lifecycle
   | RequestResult T.Text
   | Preflight
 
@@ -174,6 +177,9 @@ matchRoute method path =
         | options -> Just Preflight
       ["api", "requests"]
         | post -> Just Requests
+        | options -> Just Preflight
+      ["api", "lifecycle"]
+        | post -> Just Lifecycle
         | options -> Just Preflight
       ["api", "requests", rid]
         | get && T.length rid == 32 && T.all (\c -> Char.isDigit c || (c >= 'a' && c <= 'f')) rid -> Just (RequestResult rid)
@@ -220,8 +226,15 @@ controlApplication port runtime request respond =
             submitted <- submitRequest runtime op
             respond $ case submitted of
               Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
-              Left HelperUnavailable -> errorJson HTTP.status503 "helper-unavailable"
-              Left RequestNotWritten -> errorJson HTTP.status503 "request-not-written"
+              Left err -> submitError err
+      Lifecycle -> withBody $ \bytes -> withSession $
+        case parseLifecycleBody (TE.decodeUtf8With TEE.lenientDecode bytes) of
+          Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
+          Just op -> do
+            submitted <- submitLifecycle runtime op
+            respond $ case submitted of
+              Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
+              Left err -> submitError err
       RequestResult rid -> withSession $ do
         view <- readResult runtime rid
         respond $ case view of
@@ -230,6 +243,25 @@ controlApplication port runtime request respond =
           ResultUntrusted -> jsonResponse HTTP.status200 "{\"state\":\"untrusted\"}"
           ResultDone result -> jsonResponse HTTP.status200 (resultJson result)
       Preflight -> respond (errorJson HTTP.status405 "method-not-allowed")
+
+submitError :: SubmitError -> Wai.Response
+submitError err =
+  case err of
+    HelperUnavailable -> errorJson HTTP.status503 "helper-unavailable"
+    RequestNotWritten -> errorJson HTTP.status503 "request-not-written"
+    LifecycleBusy -> errorJson HTTP.status409 "busy"
+
+{- | @<operation> <expected state>@, exactly two words separated by one space,
+where the expectation is the operation's own (C-P3.2 M2, M6).
+-}
+parseLifecycleBody :: T.Text -> Maybe LifecycleOp
+parseLifecycleBody body =
+  case T.splitOn " " body of
+    [opText, expectText] -> do
+      op <- parseLifecycleOp opText
+      expect <- parseLifecycleExpect expectText
+      if expect == expectedFor op then Just op else Nothing
+    _ -> Nothing
 
 resultJson :: ControlResult -> T.Text
 resultJson result =

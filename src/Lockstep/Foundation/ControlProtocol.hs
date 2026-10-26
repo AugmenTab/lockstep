@@ -27,6 +27,10 @@ module Lockstep.Foundation.ControlProtocol
   , hmacHex
   , signInDigestHex
   , maxRequestBytes
+  , signBody
+  , decodeSignedKind
+  , lineValue
+  , decimal
   ) where
 
 import Control.Monad (unless)
@@ -198,6 +202,35 @@ line key value =
 signed :: ChannelKey -> BS.ByteString -> BS.ByteString
 signed key body =
   body <> line "mac" (hmacHex key body)
+
+-- | A body followed by its @mac@ line (for other request kinds, C-P3.2 M1).
+signBody :: ChannelKey -> BS.ByteString -> BS.ByteString
+signBody =
+  signed
+
+{- | For another request kind with its own header (C-P3.2 M1): the same size,
+character, line and MAC checks as a status request; returns the version after
+the header and the remaining body lines.
+-}
+decodeSignedKind :: BS.ByteString -> ChannelKey -> BS.ByteString -> Either ProtocolError (BS.ByteString, [BS.ByteString])
+decodeSignedKind header key bytes = do
+  (ls, body, macHex) <- splitSigned maxRequestBytes bytes
+  case ls of
+    first : rest -> do
+      version <- maybe (Left Malformed) Right (BS.stripPrefix header first)
+      verify key body macHex
+      Right (version, rest)
+    [] -> Left Malformed
+
+-- | The value of a line @key value@ (exactly one space, non-empty value).
+lineValue :: String -> BS.ByteString -> Either ProtocolError T.Text
+lineValue =
+  valueOf
+
+-- | A non-negative decimal of at most 18 digits.
+decimal :: T.Text -> Either ProtocolError Integer
+decimal =
+  number
 
 encodeRequest :: ChannelKey -> ControlRequest -> BS.ByteString
 encodeRequest key request =

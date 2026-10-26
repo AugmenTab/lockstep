@@ -16,6 +16,9 @@ import Lockstep.FaultPlanTest qualified as FaultPlanTest
 import Lockstep.LauncherTest qualified as LauncherTest
 import Lockstep.LedgerTest qualified as LedgerTest
 import Lockstep.LedgerTraceTest qualified as LedgerTraceTest
+import Lockstep.LifecycleBrowserTest qualified as LifecycleBrowserTest
+import Lockstep.LifecycleHelperTest qualified as LifecycleHelperTest
+import Lockstep.LifecyclePaneTest qualified as LifecyclePaneTest
 import Lockstep.MigrationDbTest qualified as MigrationDbTest
 import Lockstep.OperatorCommandTest qualified as OperatorCommandTest
 import Lockstep.OperatorLedgerTest qualified as OperatorLedgerTest
@@ -59,4 +62,7 @@ main =
       , ControlHelperTest.tests
       , ControlBrowserTest.tests
       , LauncherTest.tests
+      , LifecycleHelperTest.tests
+      , LifecyclePaneTest.tests
+      , LifecycleBrowserTest.tests
       ]
