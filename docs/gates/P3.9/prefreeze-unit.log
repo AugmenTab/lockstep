@@ -1,0 +1,18 @@
+lockstep> test (suite: lockstep-unit, args: -p /C-P3.9/)
+
+lockstep-unit
+  C-P3.9 plain words for activity
+    every status has a meaning in plain words, with and without a retry left:                 OK
+    only PASSED says the destination confirmed it:                                            OK
+    ATTESTED says a person said so and Lockstep did not check it:                             OK
+    Failed is said only of a step the destination refused with no try left:                   OK
+    attention is needed exactly for unknown, reconciliation needed, blocked and failed steps: OK
+    every step that needs attention has a next step; an unknown one points to Decisions:      OK
+    every state of a piece of work has its own plain words:                                   OK
+    refused requests have plain words, and an unknown code has general ones:                  OK
+
+All 8 tests passed (0.01s)
+
+
+
+lockstep> Test suite lockstep-unit passed
