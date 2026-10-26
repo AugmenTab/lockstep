@@ -15,6 +15,7 @@ module Lockstep.Application.ControlPane
   , SubmitError (..)
   , submitRequest
   , submitLifecycle
+  , submitInstall
   , ResultView (..)
   , readResult
   ) where
@@ -64,6 +65,7 @@ import Lockstep.Foundation.ControlProtocol
   , requestIdText
   , signInDigestHex
   )
+import Lockstep.Foundation.InstallProtocol (InstallExpect, InstallOp, InstallRequest (..), encodeInstallRequest)
 import Lockstep.Foundation.LifecycleProtocol (LifecycleOp, LifecycleRequest (..), encodeLifecycleRequest, expectedFor)
 import Lockstep.Foundation.OperatorToken (decodeToken, encodeToken, generateToken, tokenDigest)
 
@@ -259,6 +261,17 @@ expected state, unless the previous one still has no result.
 -}
 submitLifecycle :: PaneRuntime -> LifecycleOp -> IO (Either SubmitError RequestId)
 submitLifecycle runtime op =
+  submitExclusive runtime ".lreq" (\key rid t -> encodeLifecycleRequest key (LifecycleRequest rid t op (expectedFor op)))
+
+{- | Writes one signed install request (C-P3.3 U1), under the same
+one-at-a-time rule as lifecycle requests.
+-}
+submitInstall :: PaneRuntime -> InstallOp -> InstallExpect -> IO (Either SubmitError RequestId)
+submitInstall runtime op expect =
+  submitExclusive runtime ".ireq" (\key rid t -> encodeInstallRequest key (InstallRequest rid t op expect))
+
+submitExclusive :: PaneRuntime -> String -> (ChannelKey -> RequestId -> Integer -> BS.ByteString) -> IO (Either SubmitError RequestId)
+submitExclusive runtime suffix encode =
   modifyMVar (paneLifecycle runtime) $ \previous -> do
     now <- currentSeconds
     busy <- case previous of
@@ -269,7 +282,7 @@ submitLifecycle runtime op =
     if busy
       then pure (previous, Left LifecycleBusy)
       else do
-        written <- writeSigned runtime ".lreq" (\key rid t -> encodeLifecycleRequest key (LifecycleRequest rid t op (expectedFor op)))
+        written <- writeSigned runtime suffix encode
         pure $ case written of
           Right rid -> (Just (requestIdText rid, now), written)
           Left _ -> (previous, written)

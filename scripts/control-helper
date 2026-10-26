@@ -316,6 +316,7 @@ op_status() {
   printf 'database.revision %s\ndatabase.pending %s\n' "$revision" "$pending"
   printf 'service.health %s\nservice.port %s\nservice.exitcode %s\n' "$health" "$port" "$exit_code"
   printf 'docker.server %s\ngit.present %s\n' "$docker_server" "$git_present"
+  install_status_fields
   printf 'helper.protocol 1\n'
 }
 
@@ -417,8 +418,8 @@ trap 'stopping=1' TERM INT
 
 # Runs one operation in its own process group, bounded by the timeout.
 # Sets run_outcome to ok, failed or timed-out; the output is in $1.
-run_bounded() { # OUTPUT-FILE FUNCTION
-  local out=$1 fn=$2 pid watchdog marker rc
+run_bounded() { # OUTPUT-FILE FUNCTION [LIMIT-SECONDS]
+  local out=$1 fn=$2 limit=${3:-$timeout} pid watchdog marker rc
   marker=$helper/.timeout.$$
   rm -f "$marker"
   set -m
@@ -426,7 +427,7 @@ run_bounded() { # OUTPUT-FILE FUNCTION
   pid=$!
   set +m
   (
-    sleep "$timeout"
+    sleep "$limit"
     : > "$marker"
     kill -TERM -- "-$pid" 2>/dev/null
     sleep 2
@@ -483,7 +484,262 @@ execute() { # ID OP
   log "$op $id: $run_outcome"
 }
 
+# ---------------------------------------------------------------- install and upgrade (C-P3.3)
+
+if [ -n "$instance" ]; then
+  staging_rel=.local/$instance-staging-install
+  backups=$root/.local/$instance-backups
+  config_file=$root/.local/config/lockstep-$instance.json
+  host_config=$config_file
+else
+  staging_rel=.local/staging-install
+  backups=$root/.local/backups
+  config_file=$root/.local/config/lockstep.json
+  host_config=$root/.local/config/lockstep-host.json
+fi
+staging=$root/$staging_rel
+record=$helper/upgrade.current
+
+config_value() { # KEY -> the value of "KEY":"..." in the database configuration, if plain
+  local v
+  v=$(sed -n "s/.*\"$1\":\"\\([^\"]*\\)\".*/\\1/p" "$config_file" 2>/dev/null | head -n 1)
+  case $v in
+    "" | *[!abcdefghijklmnopqrstuvwxyz0123456789_]*) echo "" ;;
+    *) echo "$v" ;;
+  esac
+}
+db_name=$(config_value name)
+db_name=${db_name:-lockstep}
+db_user=$(config_value username)
+db_user=${db_user:-lockstep}
+
+long_timeout=${LOCKSTEP_HELPER_LONG_TIMEOUT:-1800}
+case $long_timeout in
+  "" | *[!0-9]*) long_timeout=1800 ;;
+esac
+if [ "$long_timeout" -lt 1 ] || [ "$long_timeout" -gt 7200 ]; then long_timeout=1800; fi
+
+# The scripts/service command for the staged candidate (the same instance's config).
+staged_service() {
+  if [ -n "$instance" ]; then
+    LOCKSTEP_SERVICE_INSTALL_DIR=$staging_rel LOCKSTEP_SERVICE_CONFIG=.local/config/lockstep-$instance.json \
+      LOCKSTEP_SERVICE_NAME=lockstep-$instance "$root/scripts/service" "$@"
+  else
+    LOCKSTEP_SERVICE_INSTALL_DIR=$staging_rel "$root/scripts/service" "$@"
+  fi
+}
+
+candidate_digest() { # 16 hex characters of the staged binary's SHA-256, or nothing
+  [ -x "$staging/bin/lockstep" ] || return 0
+  sha256 < "$staging/bin/lockstep" | cut -c 1-16
+}
+
+# The upgrade record: key/value lines, rewritten whole (U3, U6).
+record_get() { # KEY
+  sed -n "s/^$1 //p" "$record" 2>/dev/null | head -n 1
+}
+record_set() { # KEY VALUE ... (all other keys kept)
+  local tmp key
+  tmp=$(mktemp "$helper/.record.XXXXXX")
+  if [ -f "$record" ]; then cp "$record" "$tmp"; fi
+  while [ $# -ge 2 ]; do
+    key=$1
+    grep -v "^$key " "$tmp" > "$tmp.new" || true
+    printf '%s %s\n' "$key" "$2" >> "$tmp.new"
+    mv "$tmp.new" "$tmp"
+    shift 2
+  done
+  mv -f "$tmp" "$record"
+}
+upgrade_state() { # none | recovery-needed | interrupted
+  case $(record_get status) in
+    recovery-needed) echo recovery-needed ;;
+    interrupted) echo interrupted ;;
+    *) echo none ;;
+  esac
+}
+
+# Fields for the status operation (U8).
+install_status_fields() {
+  local digest commit pending=unknown out word
+  digest=$(candidate_digest)
+  if [ -n "$digest" ]; then
+    commit=$(grep -E '^commit [0-9a-f]{40}$' "$staging/VERSION" 2>/dev/null | head -n 1 | cut -d ' ' -f 2)
+    out=$(staged_service cli db status < /dev/null 2>&1)
+    word=$(printf '%s\n' "$out" | grep -E '^pending [0-9]{1,18}$' | head -n 1 | cut -d ' ' -f 2)
+    [ -n "$word" ] && pending=$word
+    printf 'candidate.present yes\ncandidate.commit %s\ncandidate.digest %s\ncandidate.pending %s\n' "${commit:-unknown}" "$digest" "$pending"
+  else
+    printf 'candidate.present no\n'
+  fi
+  printf 'upgrade.state %s\n' "$(upgrade_state)"
+  if [ "$(upgrade_state)" != none ]; then
+    printf 'upgrade.id %s\nupgrade.step %s\n' "$(record_get id)" "$(record_get step)"
+  fi
+  if [ -x "$install.previous/bin/lockstep" ]; then printf 'previous.present yes\n'; else printf 'previous.present no\n'; fi
+}
+
+install_refusal() { # OP EXPECT
+  local digest
+  digest=$(candidate_digest)
+  case $1 in
+    prepare-candidate)
+      case $2 in
+        candidate-none) [ -z "$digest" ] || { echo state-changed; return; } ;;
+        *) [ "$2" = "candidate-$digest" ] || { echo state-changed; return; } ;;
+      esac
+      if ! command -v git >/dev/null 2>&1 || [ -n "$(git -C "$root" status --porcelain 2>/dev/null)" ]; then
+        echo dirty-checkout
+      fi
+      ;;
+    apply-candidate)
+      [ -n "$digest" ] && [ "$2" = "candidate-$digest" ] || { echo state-changed; return; }
+      [ "$(upgrade_state)" = none ] || { echo recovery-needed; return; }
+      case $(staged_service cli db status < /dev/null 2>&1 | head -n 1) in
+        "readiness not_ready schema_invalid unknown_applied_migration"*) echo database-ahead ;;
+      esac
+      ;;
+    restore-previous)
+      [ "$(upgrade_state)" != none ] && [ "$2" = "recovery-$(record_get id)" ] || echo state-changed
+      ;;
+  esac
+}
+
+prepare_action() {
+  rm -rf "$staging"
+  if ! LOCKSTEP_SERVICE_INSTALL_DIR=$staging_rel "$root/scripts/service" install < /dev/null 2>&1; then
+    rm -rf "$staging"
+    return 1
+  fi
+  [ -x "$staging/bin/lockstep" ] || { rm -rf "$staging"; return 1; }
+}
+
+verify_backup() { # FILE
+  local file=$1 want got
+  [ -s "$file" ] || { echo "the backup file is empty or missing"; return 1; }
+  want=$(cut -d ' ' -f 1 "$file.sha256" 2>/dev/null)
+  got=$(sha256 < "$file")
+  [ -n "$want" ] && [ "$want" = "$got" ] || { echo "the backup's digest does not match"; return 1; }
+  docker exec -i lockstep-postgres pg_restore --list < "$file" > /dev/null 2>&1 || { echo "the backup cannot be read back"; return 1; }
+}
+
+# The migration with the candidate binary, the verified backup mounted read-only at a fixed path.
+migrate_with_candidate() { # BACKUP-FILE (empty: none needed)
+  local -a args=(--network host
+    --volume "$staging:/opt/lockstep:ro"
+    --volume "$host_config:/etc/lockstep/lockstep.json:ro"
+    --env LOCKSTEP_CONFIG=/etc/lockstep/lockstep.json)
+  if [ -n "$1" ]; then
+    args+=(--volume "$1:/backup/$(basename "$1"):ro")
+    docker run --rm "${args[@]}" lockstep-dev:p1 /opt/lockstep/bin/lockstep db migrate --backup "/backup/$(basename "$1")" < /dev/null 2>&1
+  else
+    docker run --rm "${args[@]}" lockstep-dev:p1 /opt/lockstep/bin/lockstep db migrate < /dev/null 2>&1
+  fi
+}
+
+ready_and_answering() {
+  case $(db_status_output | head -n 1) in
+    "readiness ready "[0-9]*) answers_on "$service_port" ;;
+    *) return 1 ;;
+  esac
+}
+
+# U3: the upgrade, step by step; each step is in the record before it starts.
+apply_action() {
+  local backup="" status_line
+  status_line=$(staged_service cli db status < /dev/null 2>&1 | grep -E '^revision ' | head -n 1)
+  if [ -x "$install/bin/lockstep" ] || [ "$status_line" != "revision none" ]; then
+    record_set step backup
+    mkdir -p "$backups"
+    backup=$(LOCKSTEP_DB_NAME=$db_name LOCKSTEP_DB_USER=$db_user LOCKSTEP_BACKUP_DIR=$backups "$root/scripts/db" backup < /dev/null 2>&1 | tail -n 1)
+    case $backup in
+      /*) ;;
+      *) echo "the backup could not be created: $backup"; record_set status failed; return 1 ;;
+    esac
+    verify_backup "$backup" || { record_set status failed; return 1; }
+    record_set backup "$backup"
+  fi
+  record_set step stop
+  if [ "$(service_state)" != absent ]; then
+    "${service_cmd[@]}" stop < /dev/null 2>&1 || { record_set status failed; "${service_cmd[@]}" start --port "$service_port" < /dev/null 2>&1; return 1; }
+  fi
+  record_set step migrate migrated attempted
+  if ! migrate_with_candidate "$backup"; then
+    record_set status recovery-needed
+    return 1
+  fi
+  record_set step activate migrated yes
+  rm -rf "$install.previous"
+  if [ -d "$install" ]; then mv "$install" "$install.previous" || { record_set status recovery-needed; return 1; }; fi
+  mv "$staging" "$install" || { record_set status recovery-needed; return 1; }
+  record_set activated yes step start
+  "${service_cmd[@]}" start --port "$service_port" < /dev/null 2>&1 || { record_set status recovery-needed; return 1; }
+  record_set step verify
+  ready_and_answering || { echo "the new version did not become ready and answer"; record_set status recovery-needed; return 1; }
+  record_set status done step done
+}
+
+# U4: put the database and the previous version back.
+restore_action() {
+  local backup migrated activated
+  backup=$(record_get backup)
+  migrated=$(record_get migrated)
+  activated=$(record_get activated)
+  if [ "$(service_state)" != absent ]; then "${service_cmd[@]}" stop < /dev/null 2>&1 || true; fi
+  if [ -n "$migrated" ]; then
+    [ -n "$backup" ] || { echo "there is no backup to restore"; return 1; }
+    verify_backup "$backup" || return 1
+    docker exec lockstep-postgres psql -q -U "$db_user" -d "$db_name" -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;' < /dev/null 2>&1 || return 1
+    LOCKSTEP_DB_NAME=$db_name LOCKSTEP_DB_USER=$db_user "$root/scripts/db" restore "$backup" < /dev/null 2>&1 || return 1
+  fi
+  if [ "$activated" = yes ] && [ -x "$install.previous/bin/lockstep" ]; then
+    rm -rf "$install"
+    mv "$install.previous" "$install" || return 1
+  fi
+  "${service_cmd[@]}" start --port "$service_port" < /dev/null 2>&1 || return 1
+  ready_and_answering || { echo "the previous version did not become ready and answer"; return 1; }
+}
+
+execute_install() { # ID OP EXPECT
+  local id=$1 op=$2 expect=$3 started finished out detail refusal
+  refusal=$(install_refusal "$op" "$expect")
+  if [ -n "$refusal" ]; then
+    refuse "$id" "$op" "$refusal"
+    return
+  fi
+  started=$(date +%s)
+  journal "start $id $op"
+  out=$helper/.out.$id
+  case $op in
+    prepare-candidate) run_bounded "$out" prepare_action "$long_timeout" ;;
+    apply-candidate)
+      printf 'id %s\nstatus running\nstep check\n' "$id" > "$record"
+      run_bounded "$out" apply_action "$long_timeout"
+      if [ "$run_outcome" != ok ]; then
+        case $(record_get status) in
+          running) [ "$(record_get migrated)" = "" ] && record_set status failed || record_set status recovery-needed ;;
+        esac
+      fi
+      ;;
+    restore-previous)
+      run_bounded "$out" restore_action "$long_timeout"
+      [ "$run_outcome" = ok ] && record_set status restored step done
+      ;;
+  esac
+  finished=$(date +%s)
+  detail=""
+  if [ "$run_outcome" != ok ]; then
+    detail=$(cat "$out" "$out.err" 2>/dev/null | tail -c 600 | clean_detail)
+    [ -n "$detail" ] || detail="the operation did not reach the intended state"
+  fi
+  rm -f "$out" "$out.err"
+  write_result "$id" "$op" "$run_outcome" - "$started" "$finished" "$detail" || true
+  journal "end $id $run_outcome"
+  log "$op $id: $run_outcome"
+}
+
 re_header='^lockstep-control-request ([^ ]+)$'
+re_install_header='^lockstep-install-request ([^ ]+)$'
 re_lifecycle_header='^lockstep-lifecycle-request ([^ ]+)$'
 re_id='^id ([0-9a-f]{32})$'
 re_issued='^issued ([0-9]{1,18})$'
@@ -506,6 +762,10 @@ handle() { # NAME
     kind=lifecycle
     id=${name%.lreq}
     header=$re_lifecycle_header
+  elif [[ $name =~ ^[0-9a-f]{32}\.ireq$ ]]; then
+    kind=install
+    id=${name%.ireq}
+    header=$re_install_header
   else
     rm -f -- "$path"
     log "removed a file that is not a request: name not allowed"
@@ -553,7 +813,7 @@ handle() { # NAME
       "status any") ;;
       *) refuse "$id" "$op" bad-expect; return ;;
     esac
-  else
+  elif [ "$kind" = lifecycle ]; then
     case $op in
       service-start | service-stop | service-restart | database-start | database-stop) ;;
       *) refuse "$id" unknown unknown-op; return ;;
@@ -563,6 +823,15 @@ handle() { # NAME
         "database-start not-running" | "database-stop service-not-running") ;;
       *) refuse "$id" "$op" bad-expect; return ;;
     esac
+  else
+    case $op in
+      prepare-candidate | apply-candidate | restore-previous) ;;
+      *) refuse "$id" unknown unknown-op; return ;;
+    esac
+    if [[ ! "$op $expect" =~ ^(prepare-candidate\ candidate-(none|[0-9a-f]{16})|apply-candidate\ candidate-[0-9a-f]{16}|restore-previous\ recovery-[0-9a-f]{32})$ ]]; then
+      refuse "$id" "$op" bad-expect
+      return
+    fi
   fi
   if grep -qxF "$id" "$helper/seen" 2>/dev/null; then
     journal "refused $id replayed"
@@ -575,12 +844,18 @@ handle() { # NAME
     return
   fi
   echo "$id" >> "$helper/seen"
-  if [ "$kind" = status ]; then
-    execute "$id" "$op"
-  else
-    execute_lifecycle "$id" "$op"
-  fi
+  case $kind in
+    status) execute "$id" "$op" ;;
+    lifecycle) execute_lifecycle "$id" "$op" ;;
+    install) execute_install "$id" "$op" "$expect" ;;
+  esac
 }
+
+# An upgrade that was running when the helper stopped is interrupted at its step (U6).
+if [ "$(record_get status)" = running ]; then
+  record_set status interrupted
+  log "the upgrade $(record_get id) was interrupted at step $(record_get step)"
+fi
 
 # An operation that started and never ended was interrupted (the helper stopped).
 if [ -f "$helper/journal" ]; then
