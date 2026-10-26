@@ -738,7 +738,57 @@ execute_install() { # ID OP EXPECT
   log "$op $id: $run_outcome"
 }
 
+# ---------------------------------------------------------------- hand-over (C-P3.4 A3)
+
+running_port() { # the port the running service was started with, else the fixed one
+  local p
+  p=$(docker container inspect --format '{{range .Args}}{{.}} {{end}}' "$service" 2>/dev/null | sed -n 's/.*--port \([0-9][0-9]*\).*/\1/p')
+  echo "${p:-$service_port}"
+}
+
+# Issues a one-time application sign-in with the fixed CLI command and leaves it
+# only in pane/handover/<id> (0600). Nothing it prints contains the token.
+session_action() {
+  local port out token tmp dest re
+  port=$(running_port)
+  out=$("${service_cmd[@]}" cli operator sign-in --port "$port" < /dev/null 2>/dev/null) || { echo "the sign-in could not be issued"; return 1; }
+  re='^http://127\.0\.0\.1:[0-9]+/operator/sign-in\?token=([A-Za-z0-9_-]{43})$'
+  [[ $out =~ $re ]] || { out=""; echo "the sign-in command answered unexpectedly"; return 1; }
+  token=${BASH_REMATCH[1]}
+  out=""
+  dest=$pane/handover/$session_id
+  mkdir -p "$pane/handover"
+  chmod 700 "$pane/handover"
+  if [ -e "$dest" ] || [ -L "$dest" ]; then token=""; echo "a hand-over already exists"; return 1; fi
+  tmp=$(mktemp "$pane/handover/.h.XXXXXX")
+  printf 'port %s\ntoken %s\n' "$port" "$token" > "$tmp"
+  token=""
+  chmod 600 "$tmp"
+  place "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
+}
+
+execute_session() { # ID
+  local id=$1 started finished out detail
+  if [ "$(service_state)" != running ] || ! answers_on "$(running_port)"; then
+    refuse "$id" open-application state-changed
+    return
+  fi
+  started=$(date +%s)
+  journal "start $id open-application"
+  out=$helper/.out.$id
+  session_id=$id
+  run_bounded "$out" session_action
+  finished=$(date +%s)
+  detail=""
+  [ "$run_outcome" = ok ] || detail=$(cat "$out" "$out.err" 2>/dev/null | tail -c 300 | clean_detail)
+  rm -f "$out" "$out.err"
+  write_result "$id" open-application "$run_outcome" - "$started" "$finished" "$detail" "service.port $(running_port)" || true
+  journal "end $id $run_outcome"
+  log "open-application $id: $run_outcome"
+}
+
 re_header='^lockstep-control-request ([^ ]+)$'
+re_session_header='^lockstep-session-request ([^ ]+)$'
 re_install_header='^lockstep-install-request ([^ ]+)$'
 re_lifecycle_header='^lockstep-lifecycle-request ([^ ]+)$'
 re_id='^id ([0-9a-f]{32})$'
@@ -766,6 +816,10 @@ handle() { # NAME
     kind=install
     id=${name%.ireq}
     header=$re_install_header
+  elif [[ $name =~ ^[0-9a-f]{32}\.sreq$ ]]; then
+    kind=session
+    id=${name%.sreq}
+    header=$re_session_header
   else
     rm -f -- "$path"
     log "removed a file that is not a request: name not allowed"
@@ -823,6 +877,9 @@ handle() { # NAME
         "database-start not-running" | "database-stop service-not-running") ;;
       *) refuse "$id" "$op" bad-expect; return ;;
     esac
+  elif [ "$kind" = session ]; then
+    [ "$op" = open-application ] || { refuse "$id" unknown unknown-op; return; }
+    [ "$expect" = service-running ] || { refuse "$id" "$op" bad-expect; return; }
   else
     case $op in
       prepare-candidate | apply-candidate | restore-previous) ;;
@@ -848,6 +905,7 @@ handle() { # NAME
     status) execute "$id" "$op" ;;
     lifecycle) execute_lifecycle "$id" "$op" ;;
     install) execute_install "$id" "$op" "$expect" ;;
+    session) execute_session "$id" ;;
   esac
 }
 

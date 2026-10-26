@@ -211,6 +211,46 @@
     return null;
   }
 
+  // ---- Open Lockstep (C-P3.4 A3). The helper asks the running service for a
+  // one-time sign-in; the pane hands its address to this page once.
+
+  async function openApplication() {
+    lifecycleButtons.forEach(function (b) { b.disabled = true; });
+    var working = node('p', 'ls-notice', 'Opening Lockstep…');
+    app.insertBefore(working, app.children[1] || null);
+    var response = await api('POST', '/api/open-application', '');
+    if (response.status === 401) { forgetSession(); renderSignedOut(); return; }
+    if (!response.ok) {
+      afterNotice = response.status === 409
+        ? 'Another operation is still running. Wait for it to finish, then try again.'
+        : 'Lockstep could not send that request to this computer.';
+      await check();
+      return;
+    }
+    var body = await response.json();
+    var result = await waitForResult(body.id, 60000);
+    if (result === 'signed-out') { return; }
+    if (result && result.outcome === 'ok') {
+      var handover = await api('GET', '/api/handover/' + body.id);
+      if (handover.status === 401) { forgetSession(); renderSignedOut(); return; }
+      if (handover.ok) {
+        var target = await handover.json();
+        if (typeof target.url === 'string' && /^http:\/\/127\.0\.0\.1:[0-9]+\/app\/sign-in#[A-Za-z0-9_-]+$/.test(target.url)) {
+          window.location.assign(target.url);
+          return;
+        }
+      }
+      afterNotice = 'Lockstep could not open its window. Try again.';
+    } else if (!result) {
+      afterNotice = 'Lockstep did not answer in time. Try again in a moment.';
+    } else if (result.outcome === 'refused' && result.reason === 'state-changed') {
+      afterNotice = 'Lockstep is not running or not answering, so it cannot be opened. Start it first.';
+    } else {
+      afterNotice = failureText(result);
+    }
+    await check();
+  }
+
   // ---- Install, upgrade and recovery (C-P3.3). Every change is reviewed, then confirmed.
 
   async function runInstall(op, expect, doneText) {
@@ -342,6 +382,16 @@
     if (afterNotice) {
       app.appendChild(node('p', 'ls-notice', afterNotice));
       afterNotice = null;
+    }
+    if (f['service.state'] === 'running' && f['service.health'] === 'answers') {
+      var openRow = node('div', 'ls-actions');
+      var open = node('button', 'ls-primary', 'Open Lockstep');
+      open.id = 'open-application';
+      open.type = 'button';
+      open.addEventListener('click', openApplication);
+      lifecycleButtons.push(open);
+      openRow.appendChild(open);
+      app.appendChild(openRow);
     }
     app.appendChild(node('h2', null, 'This computer'));
     if (result.outcome !== 'ok') {

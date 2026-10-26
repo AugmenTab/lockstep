@@ -19,7 +19,9 @@ extra-source-files:
     henforcer.toml
     henforcer-tests.toml
     THIRD_PARTY_LICENSES.md
+    static/app.js
     static/control.js
+    static/htmx.min.js
     static/lockstep.css
 
 source-repository head
@@ -54,6 +56,7 @@ library
       Lockstep.Foundation.InstallProtocol
       Lockstep.Foundation.LifecycleProtocol
       Lockstep.Foundation.OperatorToken
+      Lockstep.Foundation.SessionProtocol
       Lockstep.Foundation.SystemConfig
       Lockstep.Kernel.Activation
       Lockstep.Kernel.Delivery
@@ -86,6 +89,7 @@ library
       Lockstep.Persistence.Queries
       Lockstep.Persistence.Repositories
       Lockstep.Persistence.Sandbox
+      Lockstep.Web.App
       Lockstep.Web.Application
       Lockstep.Web.CommandCenter
       Lockstep.Web.Common
@@ -101,6 +105,7 @@ library
       Lockstep.Web.Readiness
       Lockstep.Web.RequestGuard
       Lockstep.Web.Routes
+      Lockstep.Web.SecureResponse
       Lockstep.Web.Server
       Lockstep.Web.Static
       Lockstep.Web.Types
@@ -169,6 +174,7 @@ test-suite lockstep-integration
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
+      Lockstep.AppShellTest
       Lockstep.BrowserFormTest
       Lockstep.CommandCenterTest
       Lockstep.ControlBrowserTest
@@ -177,6 +183,7 @@ test-suite lockstep-integration
       Lockstep.DispatcherTest
       Lockstep.ExecutorTest
       Lockstep.FaultPlanTest
+      Lockstep.HandoverTest
       Lockstep.InstallBrowserTest
       Lockstep.InstallHelperTest
       Lockstep.InstallPaneTest
@@ -199,6 +206,7 @@ test-suite lockstep-integration
       Lockstep.RemediationThirdReviewTest
       Lockstep.RepositoryOwnershipTest
       Lockstep.ServiceDbTest
+      Lockstep.Support.App
       Lockstep.Support.Control
       Lockstep.Support.Http
       Lockstep.Support.Install
@@ -258,6 +266,7 @@ test-suite lockstep-unit
       Lockstep.Foundation.InstallProtocolTest
       Lockstep.Foundation.LifecycleProtocolTest
       Lockstep.Foundation.OperatorTokenTest
+      Lockstep.Foundation.SessionProtocolTest
       Lockstep.Foundation.SystemConfigTest
       Lockstep.Kernel.DeliveryTest
       Lockstep.Kernel.EffectTest

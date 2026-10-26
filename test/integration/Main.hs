@@ -5,6 +5,7 @@ module Main
 import Flipstone.Prelude
 import Test.Tasty (defaultMain, testGroup)
 
+import Lockstep.AppShellTest qualified as AppShellTest
 import Lockstep.BrowserFormTest qualified as BrowserFormTest
 import Lockstep.CommandCenterTest qualified as CommandCenterTest
 import Lockstep.ControlBrowserTest qualified as ControlBrowserTest
@@ -13,6 +14,7 @@ import Lockstep.ControlPaneTest qualified as ControlPaneTest
 import Lockstep.DispatcherTest qualified as DispatcherTest
 import Lockstep.ExecutorTest qualified as ExecutorTest
 import Lockstep.FaultPlanTest qualified as FaultPlanTest
+import Lockstep.HandoverTest qualified as HandoverTest
 import Lockstep.InstallBrowserTest qualified as InstallBrowserTest
 import Lockstep.InstallHelperTest qualified as InstallHelperTest
 import Lockstep.InstallPaneTest qualified as InstallPaneTest
@@ -71,4 +73,6 @@ main =
       , InstallHelperTest.tests
       , InstallPaneTest.tests
       , InstallBrowserTest.tests
+      , AppShellTest.tests
+      , HandoverTest.tests
       ]

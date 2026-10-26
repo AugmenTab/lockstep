@@ -24,10 +24,12 @@ import UnliftIO qualified
 
 import Lockstep.Application.Database (DatabaseRuntime)
 import Lockstep.Foundation.Config (ServeConfig (..))
+import Lockstep.Web.App (appRouteClass, handleApp, matchAppRoute)
 import Lockstep.Web.Components.Page404 (page404)
 import Lockstep.Web.Operator (guardRefusalResponse, handleOperator, matchOperatorRoute)
 import Lockstep.Web.RequestGuard (RouteClass (..), guardRequest)
 import Lockstep.Web.Routes (dispatch, routes)
+import Lockstep.Web.SecureResponse (errorJson)
 import Lockstep.Web.Static (StaticAsset (..), lookupAsset, staticRootPath)
 import Lockstep.Web.Types (AppContext (..), Lockstep, getConfig, getDatabase, log, runLockstep)
 
@@ -76,6 +78,14 @@ handleRequest request respond = do
               case lookupAsset name of
                 Nothing -> liftIO $ respond notFound
                 Just asset -> guarded PublicRead (liftIO . respond $ staticResponse asset)
+        -- C-P3.4 A1 (verification note): the application exists only with a database
+        -- configured; without one, /app… stays 404 as C-P1.1 requires.
+        _
+          | Just _ <- db
+          , Just route <- matchAppRoute (Wai.requestMethod request) (Wai.pathInfo request) ->
+              case guardRequest port (appRouteClass route) request of
+                Left _ -> liftIO . respond $ errorJson HTTP.status403 [Interpolate.i|refused|]
+                Right () -> logExceptions (liftIO (handleApp db route request >>= respond))
         _ ->
           case matchOperatorRoute (Wai.requestMethod request) (Wai.pathInfo request) of
             Just route ->

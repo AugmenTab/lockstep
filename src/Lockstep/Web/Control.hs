@@ -40,13 +40,16 @@ import Lockstep.Application.ControlPane
   , renderPaneError
   , submitInstall
   , submitLifecycle
+  , submitOpenApplication
   , submitRequest
+  , takeHandover
   )
 import Lockstep.Foundation.Config (BindHost (Loopback), Port, ServeConfig (..), portNumber)
 import Lockstep.Foundation.ControlProtocol (ControlResult (..), outcomeName, parseOp, requestIdText)
 import Lockstep.Foundation.InstallProtocol (InstallExpect, InstallOp, parseInstallExpect, parseInstallOp, validFor)
 import Lockstep.Foundation.LifecycleProtocol (LifecycleOp, expectedFor, parseLifecycleExpect, parseLifecycleOp)
 import Lockstep.Web.RequestGuard (RouteClass (..), guardRequest)
+import Lockstep.Web.SecureResponse (errorJson, jsonResponse, jsonString, readBodyLimited, respondWith)
 import Lockstep.Web.Server (serverSettings)
 import Lockstep.Web.Static (StaticAsset (..), lookupAsset)
 
@@ -66,54 +69,9 @@ runControlPane port state = do
             $ serverSettings (ServeConfig Loopback port)
       Warp.runSettings settings (controlApplication port runtime)
 
-contentSecurityPolicy :: BS.ByteString
-contentSecurityPolicy =
-  "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
-
-securityHeaders :: [HTTP.Header]
-securityHeaders =
-  [ ("Content-Security-Policy", contentSecurityPolicy)
-  , ("Cache-Control", "no-store")
-  , ("X-Content-Type-Options", "nosniff")
-  , ("Referrer-Policy", "no-referrer")
-  , ("X-Frame-Options", "DENY")
-  , ("Cross-Origin-Opener-Policy", "same-origin")
-  , ("Cross-Origin-Resource-Policy", "same-origin")
-  ]
-
-respondWith :: HTTP.Status -> [HTTP.Header] -> LBS.ByteString -> Wai.Response
-respondWith status headers =
-  Wai.responseLBS status (headers <> securityHeaders)
-
-jsonResponse :: HTTP.Status -> T.Text -> Wai.Response
-jsonResponse status body =
-  respondWith status [(HTTP.hContentType, "application/json; charset=utf-8")] (LBS.fromStrict (TE.encodeUtf8 body))
-
-errorJson :: HTTP.Status -> T.Text -> Wai.Response
-errorJson status code =
-  jsonResponse status ("{\"error\":" <> jsonString code <> "}")
-
 notFound :: Wai.Response
 notFound =
   errorJson HTTP.status404 "not-found"
-
--- | A JSON string, with @<@, @>@ and @&@ escaped so no response can be read as markup.
-jsonString :: T.Text -> T.Text
-jsonString text =
-  "\"" <> T.concatMap escape text <> "\""
- where
-  escape c
-    | c == '"' = "\\\""
-    | c == '\\' = "\\\\"
-    | c < ' ' || c > '~' || c `L.elem` ("<>&" :: String) = "\\u" <> T.justifyRight 4 '0' (T.pack (hex (Char.ord c)))
-    | otherwise = T.singleton c
-  hex n =
-    let
-      digits = "0123456789abcdef" :: String
-      go 0 acc = acc
-      go v acc = go (v `div` 16) (L.take 1 (L.drop (v `mod` 16) digits) <> acc)
-    in
-      if n == 0 then "0" else go n ""
 
 -- | The shell every page address returns: no state, no data; the script loads the rest.
 shell :: Wai.Response
@@ -148,6 +106,8 @@ data Route
   | Requests
   | Lifecycle
   | Install
+  | OpenApplication
+  | Handover T.Text
   | RequestResult T.Text
   | Preflight
 
@@ -186,6 +146,12 @@ matchRoute method path =
         | options -> Just Preflight
       ["api", "install"]
         | post -> Just Install
+        | options -> Just Preflight
+      ["api", "open-application"]
+        | post -> Just OpenApplication
+        | options -> Just Preflight
+      ["api", "handover", rid]
+        | get && T.length rid == 32 && T.all (\c -> Char.isDigit c || (c >= 'a' && c <= 'f')) rid -> Just (Handover rid)
         | options -> Just Preflight
       ["api", "requests", rid]
         | get && T.length rid == 32 && T.all (\c -> Char.isDigit c || (c >= 'a' && c <= 'f')) rid -> Just (RequestResult rid)
@@ -249,6 +215,16 @@ controlApplication port runtime request respond =
             respond $ case submitted of
               Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
               Left err -> submitError err
+      OpenApplication -> withBody $ \_ -> withSession $ do
+        submitted <- submitOpenApplication runtime
+        respond $ case submitted of
+          Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
+          Left err -> submitError err
+      Handover rid -> withSession $ do
+        url <- takeHandover runtime rid
+        respond $ case url of
+          Just u -> jsonResponse HTTP.status200 ("{\"url\":" <> jsonString u <> "}")
+          Nothing -> notFound
       RequestResult rid -> withSession $ do
         view <- readResult runtime rid
         respond $ case view of
@@ -301,19 +277,3 @@ resultJson result =
     , ",\"detail\":" <> jsonString (resultDetail result)
     , "}"
     ]
-
--- | The request body, or 'Nothing' if it is longer than the limit.
-readBodyLimited :: Wai.Request -> Int -> IO (Maybe BS.ByteString)
-readBodyLimited request limit =
-  let
-    go acc size = do
-      chunk <- Wai.getRequestBodyChunk request
-      if BS.null chunk
-        then pure (Just (BS.concat (L.reverse acc)))
-        else
-          let
-            size' = size + BS.length chunk
-          in
-            if size' > limit then pure Nothing else go (chunk : acc) size'
-  in
-    go [] 0

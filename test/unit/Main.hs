@@ -26,6 +26,7 @@ import Lockstep.Foundation.EvidenceModelTest qualified as EvidenceModelTest
 import Lockstep.Foundation.InstallProtocolTest qualified as InstallProtocolTest
 import Lockstep.Foundation.LifecycleProtocolTest qualified as LifecycleProtocolTest
 import Lockstep.Foundation.OperatorTokenTest qualified as OperatorTokenTest
+import Lockstep.Foundation.SessionProtocolTest qualified as SessionProtocolTest
 import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
 import Lockstep.Kernel.DeliveryTest qualified as DeliveryTest
 import Lockstep.Kernel.EffectTest qualified as EffectTest
@@ -119,4 +120,5 @@ main =
       , CliControlTest.tests
       , LifecycleProtocolTest.tests
       , InstallProtocolTest.tests
+      , SessionProtocolTest.tests
       ]

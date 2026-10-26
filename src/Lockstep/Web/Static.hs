@@ -45,10 +45,22 @@ controlJs :: BS.ByteString
 controlJs =
   $(FileEmbed.embedFile "static/control.js")
 
+-- | The application shell's page script (contract C-P3.4 A2).
+appJs :: BS.ByteString
+appJs =
+  $(FileEmbed.embedFile "static/app.js")
+
+-- | htmx 2.0.4, vendored and pinned by digest (contract C-P3.4 A1; THIRD_PARTY_LICENSES.md).
+htmxJs :: BS.ByteString
+htmxJs =
+  $(FileEmbed.embedFile "static/htmx.min.js")
+
 assets :: [(T.Text, StaticAsset)]
 assets =
   [ (stylesheetName, StaticAsset [Interpolate.i|text/css; charset=utf-8|] lockstepCss)
   , ([Interpolate.i|control.js|], StaticAsset [Interpolate.i|text/javascript; charset=utf-8|] controlJs)
+  , ([Interpolate.i|app.js|], StaticAsset [Interpolate.i|text/javascript; charset=utf-8|] appJs)
+  , ([Interpolate.i|htmx.min.js|], StaticAsset [Interpolate.i|text/javascript; charset=utf-8|] htmxJs)
   ]
 
 -- | The asset served at @/static/<name>@, if @name@ is on the allowlist.
