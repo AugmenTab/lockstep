@@ -29,6 +29,8 @@ module Lockstep.Application.Ledger
   , gateEvidenceNamed
   , ScheduleReceipt (..)
   , scheduleOnce
+  , SchedulePreview (..)
+  , previewSchedule
   , admitWorkUnit
   , loadIntent
   , claimIntent
@@ -167,7 +169,8 @@ import Lockstep.Kernel.Reconciliation
 import Lockstep.Kernel.Recovery (Recovery (..), RecoveryInput (..), recoverIntent, recoveryIntent, recoveryRefusalCode, renderRecovery)
 import Lockstep.Kernel.Repository (Ownership (..))
 import Lockstep.Kernel.Scheduler
-  ( ScheduledOrder (..)
+  ( ScheduleDecision
+  , ScheduledOrder (..)
   , SchedulerInput (..)
   , SourceBasis (..)
   , decisionSelected
@@ -927,9 +930,9 @@ scheduleOnce runtime =
       Left failure -> pure (Left failure)
       Right orders -> do
         owners <- Store.activeOwners
-        defaults <- fmap catMaybes (traverse defaultFor owners)
+        defaults <- fmap catMaybes (traverse repositoryDefaultRow owners)
         catalogRows <- Profiles.latestProfiles
-        extras <- traverse extrasFor orders
+        extras <- traverse orderExtras orders
         case assemble orders owners defaults catalogRows extras of
           Left failure -> pure (Left failure)
           Right input ->
@@ -952,16 +955,56 @@ scheduleOnce runtime =
                           digest = contentDigestText (scheduleDigest sha256Hasher decision)
                         Store.insertScheduleDecision rendering digest (fmap (wid . fst) claim)
                         pure (Right (ScheduleReceipt rendering digest claim))
- where
-  defaultFor (repositoryId, _) = do
-    profileId <- Profiles.repositoryDefault repositoryId
-    row <- maybe (pure Nothing) (`Profiles.findProfile` Nothing) profileId
-    pure (fmap (\r -> (repositoryId, r)) row)
-  extrasFor l = do
-    dependencies <- Store.dependenciesOf (Store.subjectRowId (loadedSubject l))
-    evidence <- Store.evidenceOf (Store.subjectRowId (loadedSubject l))
-    ticket <- Store.findTicket (Store.workOrderRowTicket (loadedRow l))
-    pure (dependencies, evidence, ticket)
+
+repositoryDefaultRow :: (T.Text, T.Text) -> O.Orville (Maybe (T.Text, Profiles.ProfileRow))
+repositoryDefaultRow (repositoryId, _) = do
+  profileId <- Profiles.repositoryDefault repositoryId
+  row <- maybe (pure Nothing) (`Profiles.findProfile` Nothing) profileId
+  pure (fmap (\r -> (repositoryId, r)) row)
+
+orderExtras :: LoadedOrder -> O.Orville ([T.Text], [Store.EvidenceRow], Maybe Store.TicketRow)
+orderExtras l = do
+  dependencies <- Store.dependenciesOf (Store.subjectRowId (loadedSubject l))
+  evidence <- Store.evidenceOf (Store.subjectRowId (loadedSubject l))
+  ticket <- Store.findTicket (Store.workOrderRowTicket (loadedRow l))
+  pure (dependencies, evidence, ticket)
+
+-- | Every Work Order with its repository, priority and Ticket title, and the decision the Scheduler would make now.
+data SchedulePreview
+  = SchedulePreview
+  { previewOrders :: [(WorkOrderId, T.Text, Int, T.Text)]
+  , previewDecision :: ScheduleDecision
+  }
+  deriving (Eq, Show)
+
+{- | C-P3.7 L6: the load and assembly of 'scheduleOnce' in a read-only
+snapshot, then the C-P2.4 decision, with no lock, Scheduler command, claim or
+decision row.
+-}
+previewSchedule :: DatabaseRuntime -> IO (Either LedgerFailure SchedulePreview)
+previewSchedule runtime =
+  transaction runtime $ \_ -> do
+    Store.readOnlySnapshot
+    subjects <- Store.subjectsOfKind (T.pack "work-order")
+    loaded <- traverse loadWorkOrder subjects
+    case sequenceA loaded of
+      Left failure -> pure (Left failure)
+      Right orders -> do
+        owners <- Store.activeOwners
+        defaults <- fmap catMaybes (traverse repositoryDefaultRow owners)
+        catalogRows <- Profiles.latestProfiles
+        extras <- traverse orderExtras orders
+        pure $ do
+          input <- assemble orders owners defaults catalogRows extras
+          decision <- either (\r -> Left (LedgerRefused (schedulerRefusalCode r) (T.pack (show r)))) Right (scheduleOrders input)
+          pure
+            SchedulePreview
+              { previewOrders =
+                  [ (workOrderId (loadedOrder l), Store.workOrderRowRepository (loadedRow l), fromIntegral (Store.workOrderRowPriority (loadedRow l)), maybe T.empty Store.ticketRowTitle ticket)
+                  | (l, (_, _, ticket)) <- L.zip orders extras
+                  ]
+              , previewDecision = decision
+              }
 
 -- | The C-P2.4 input from the loaded ledger. Phase 2 has no resources.
 assemble :: [LoadedOrder] -> [(T.Text, T.Text)] -> [(T.Text, Profiles.ProfileRow)] -> [Profiles.ProfileRow] -> [([T.Text], [Store.EvidenceRow], Maybe Store.TicketRow)] -> Either LedgerFailure SchedulerInput

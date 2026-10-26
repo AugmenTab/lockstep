@@ -63,6 +63,34 @@
 | `test/integration/Lockstep/ProjectChecksPageTest.hs` | integration: real service | the project page's section and link; the checks page's always-on rules, choices and form; no form without a folder; session and Origin required; choose, saved, the address; stale and fewer-checks answers in words; the queue shows a blocked high-priority piece as unable to start, with its reason; escaping; no internal words outside *Technical details*; 404s and the 16 KiB limit |
 | `test/integration/Lockstep/ProjectChecksBrowserTest.hs` | integration: headless Chromium (`test/browser/app_driver.py`, frozen), real service | sign in → a project in a new folder → its page → How work is checked → Always-on rules only → Save → "Saved." → reload: the choice is kept; keyboard only for the form |
 
+## 3a. Verification record (after implementation)
+
+| Check | Result | Evidence |
+|---|---|---|
+| Frozen files (P3.7 and earlier) | digests unchanged | §4, earlier contracts' §4 |
+| `scripts/check --integration` | format, lint, build, unit (785), no-live-model guard PASSED; integration 357 of 359 PASSED, the 2 failures being the known C-P3.4 `HandoverTest.hs` defect | `check-integration.log` |
+| C-P3.7 groups | unit 12 of 12; in-process 8 of 8 (the preview wrote nothing: no event, no schedule decision, both orders still pending); pages 7 of 7; the real-browser journey (a project in a new folder → How work is checked → Always-on rules only → Save by keyboard → kept after a real reload) PASSED | `check-integration.log` |
+| Linux clean clone | see the commit that records it | `linux-clone.log` |
+
+Three implementation runs:
+
+1. One new case failed, in the implementation and not the test. The queue said "Can start: first
+   in line." where the frozen page test expects "First in line". The wording is now "First in
+   line: it can start." / "Number N in line: it can start.".
+2. A Phase 1 browser case (`BrowserFormTest`, untouched since C-P1.x) timed out in its driver at
+   120 s; every C-P3.7 case passed. The run is kept as `check-integration-run2-browser-timeout.log`.
+3. A third run with no code change: everything passed except the known 2.
+
+Implementation notes (decisions within the design, recorded here):
+
+- `scheduleOnce`'s two local helpers became top-level functions (`repositoryDefaultRow`,
+  `orderExtras`) so `previewSchedule` can share them; their bodies are unchanged.
+- `Lockstep.Kernel.Profile` gains exports only: `gateArtifacts`, `gateVerifiers`, `definitionAllows`
+  (already defined) and `gateScopes` (new, the names of a gate's kinds, classes and path classes).
+- When the current set's stored document fails its digest, a change away from it always needs the
+  confirmation (it cannot be compared).
+- The Settings section lists each project's checks page.
+
 ## 4. Freeze record
 
 Frozen 2026-10-26 by the writing agent (manual), before the choosing and reading operations and

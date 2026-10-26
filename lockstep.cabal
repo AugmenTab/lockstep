@@ -42,6 +42,7 @@ library
       Lockstep.Application.OperatorTrust
       Lockstep.Application.ProfileDocument
       Lockstep.Application.Profiles
+      Lockstep.Application.ProjectChecks
       Lockstep.Application.Projects
       Lockstep.Application.Reconciler
       Lockstep.Application.Repositories
@@ -70,6 +71,7 @@ library
       Lockstep.Kernel.Evidence
       Lockstep.Kernel.Identity
       Lockstep.Kernel.KeyLifetime
+      Lockstep.Kernel.Policy
       Lockstep.Kernel.Profile
       Lockstep.Kernel.Project
       Lockstep.Kernel.Reconciliation
@@ -99,6 +101,7 @@ library
       Lockstep.Persistence.Tasks
       Lockstep.Web.App
       Lockstep.Web.Application
+      Lockstep.Web.ChecksPages
       Lockstep.Web.CommandCenter
       Lockstep.Web.Common
       Lockstep.Web.Components.Page
@@ -210,6 +213,9 @@ test-suite lockstep-integration
       Lockstep.OperatorTrustTest
       Lockstep.ProcessTest
       Lockstep.ProfileRegistryTest
+      Lockstep.ProjectChecksBrowserTest
+      Lockstep.ProjectChecksPageTest
+      Lockstep.ProjectChecksTest
       Lockstep.ProjectsBrowserTest
       Lockstep.ProjectsPageTest
       Lockstep.ProjectsTest
@@ -294,6 +300,7 @@ test-suite lockstep-unit
       Lockstep.Kernel.IdentityTest
       Lockstep.Kernel.LifecycleFixtures
       Lockstep.Kernel.LifecyclePropertyTest
+      Lockstep.Kernel.PolicyTest
       Lockstep.Kernel.ProfileTest
       Lockstep.Kernel.ProjectTest
       Lockstep.Kernel.ReconciliationTest

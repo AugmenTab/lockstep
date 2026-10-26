@@ -39,6 +39,7 @@ import Lockstep.Application.Command (WorkspaceState (..), generateIdempotencyKey
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason (..), Readiness (..), checkReadiness, revisionNumber)
 import Lockstep.Application.LedgerView (EffectLine (..), LedgerProjection (..), OrderLine (..), projectLedger)
 import Lockstep.Application.OperatorTrust (Session (..), exchangeSignIn, lookupSession, revokeSession)
+import Lockstep.Application.ProjectChecks (ChecksOutcome (..), ProjectChecks, chooseChecks, projectChecks)
 import Lockstep.Application.Projects
   ( NewProject (..)
   , ProjectFolders (..)
@@ -65,8 +66,10 @@ import Lockstep.Application.Tasks
 import Lockstep.Foundation.OperatorToken (decodeToken, encodeToken)
 import Lockstep.Kernel.EffectView (EffectStatus (..))
 import Lockstep.Kernel.Identity (parseUuid)
+import Lockstep.Kernel.Policy (checksRefusalWords, lossWords)
 import Lockstep.Kernel.Project (SetupState (..), parseFolderChoice, refusalWords, setupStateCode)
 import Lockstep.Kernel.Task (parsePriority, taskRefusalWords)
+import Lockstep.Web.ChecksPages (checksPage, choiceLosses, projectChecksSection)
 import Lockstep.Web.Fragment (attr, cls, fragment, href)
 import Lockstep.Web.RequestGuard (RouteClass (..))
 import Lockstep.Web.SecureResponse (errorJson, htmlResponse, jsonResponse, jsonString, readBodyLimited, respondWith)
@@ -109,6 +112,8 @@ data AppRoute
   | CreateTaskRoute T.Text
   | EditTaskRoute T.Text
   | DecideTaskRoute T.Text
+  | ChecksFragment T.Text
+  | ChooseChecksRoute T.Text
   | ExchangeSession
   | SignOut
 
@@ -131,6 +136,9 @@ matchAppRoute method path =
       ["app", "fragments", "project-new"] | get -> Just NewProjectFragment
       ["app", "projects", pid, "tasks", "new"] | get, validId pid -> Just Shell
       ["app", "tasks", tid] | get, validId tid -> Just Shell
+      ["app", "projects", pid, "checks"] | get, validId pid -> Just Shell
+      ["app", "fragments", "project-checks", pid] | get, validId pid -> Just (ChecksFragment pid)
+      ["app", "api", "projects", pid, "checks"] | post, validId pid -> Just (ChooseChecksRoute pid)
       ["app", "fragments", "project", pid] | get, validId pid -> Just (ProjectFragment pid)
       ["app", "fragments", "task-new", pid] | get, validId pid -> Just (NewTaskFragment pid)
       ["app", "fragments", "task", tid] | get, validId tid -> Just (TaskFragment tid)
@@ -345,6 +353,37 @@ handleWithDatabase db route request =
                 latest <- findTask db tid
                 taskAnswer db (either (const task) (fromMaybe task) latest) (Just (taskRefusalWords code))
           (Right (Just task), _, _) -> taskAnswer db task (Just "Lockstep could not read this form. Try again.")
+    ChecksFragment pid ->
+      withSession $ \_ _ -> do
+        found <- projectChecks db pid
+        case found of
+          Right (Just pc) -> pure (htmlResponse HTTP.status200 (checksPage pc Nothing))
+          Right Nothing -> pure (errorJson HTTP.status404 "not-found")
+          Left _ -> pure notReady
+    ChooseChecksRoute pid ->
+      withForm $ \fields -> do
+        let
+          value name = TE.decodeUtf8With TEE.lenientDecode <$> L.lookup name fields
+          confirmed = value "confirm_fewer" == Just "yes"
+        found <- projectChecks db pid
+        case (found, value "expected", value "choice") of
+          (Left _, _, _) -> pure notReady
+          (Right Nothing, _, _) -> pure (errorJson HTTP.status404 "not-found")
+          (Right (Just before), Just expected, Just choice) -> do
+            chosen <- chooseChecks db pid expected choice confirmed
+            case chosen of
+              Left _ -> pure notReady
+              Right (Right ChecksChosen) -> checksAnswer db pid before (Just "Saved.")
+              Right (Right ChecksUnchanged) -> checksAnswer db pid before (Just "Saved. This was already the choice.")
+              Right (Left code) -> do
+                let
+                  losses = choiceLosses before choice
+                  lost =
+                    if code == "fewer-checks-unconfirmed" && not (L.null losses)
+                      then " It would stop requiring " <> T.intercalate "; " (fmap lossWords losses) <> "."
+                      else ""
+                checksAnswer db pid before (Just (checksRefusalWords code <> lost))
+          (Right (Just before), _, _) -> checksAnswer db pid before (Just "Lockstep could not read this form. Try again.")
  where
   withSession action =
     case sessionHeader request >>= decodeToken of
@@ -401,6 +440,14 @@ taskAnswer db task notice = do
     Right Nothing -> pure (errorJson HTTP.status404 "not-found")
     Left _ -> pure notReady
 
+-- | The checks page as it is now, with its address for the page's history (C-P3.7 L7).
+checksAnswer :: DatabaseRuntime -> T.Text -> ProjectChecks -> Maybe T.Text -> IO Wai.Response
+checksAnswer db pid before notice = do
+  latest <- projectChecks db pid
+  let
+    pc = either (const before) (fromMaybe before) latest
+  pure (respondWith HTTP.status200 [(HTTP.hContentType, "text/html; charset=utf-8"), ("X-Lockstep-Path", TE.encodeUtf8 ("/app/projects/" <> pid <> "/checks"))] (checksPage pc notice))
+
 taskFormFrom :: [(BS.ByteString, BS.ByteString)] -> TaskForm
 taskFormFrom fields =
   let
@@ -429,11 +476,17 @@ renderSection db section session =
         [ E.h1 [] [E.text "Activity"]
         , E.p [] [E.text "The history of what happened will be shown here in a later update of Lockstep. Nothing is shown yet, so nothing here is guessed."]
         ]
-    Settings ->
+    Settings -> do
+      projects <- fromRight [] <$> listProjects db
       pure . fragment $
         [ E.h1 [] [E.text "Settings"]
         , E.p [] [E.text "Installing, updating, starting and stopping Lockstep happen in the control pane, and so does choosing which folders on this computer Lockstep may see (Project folders). To open it, run lockstep on this computer."]
+        , E.h2 [] [E.text "How work is checked"]
+        , E.p [] [E.text "Each project chooses which checks its work must pass, on top of the rules that always apply."]
         ]
+          <> [ E.ul [cls "ls-projects"] [E.li [] [E.a [href ("/app/projects/" <> projectId p <> "/checks")] [E.text (projectName p)]] | p <- projects]
+             | not (L.null projects)
+             ]
     Advanced -> advanced db session
 
 statusWords :: ProjectView -> T.Text
@@ -534,6 +587,7 @@ projectPage db view notice = do
   folders <- projectFoldersFromEnvironment
   offered <- offeredFolders db folders
   tasks <- fromRight [] <$> listTasks db (projectId view)
+  checks <- projectChecks db (projectId view)
   let
     status =
       case projectSetup view of
@@ -585,6 +639,7 @@ projectPage db view notice = do
          , outcome
          ]
       <> projectTasks view tasks
+      <> either (const []) (maybe [] projectChecksSection) checks
       <> [E.h2 [] [E.text "Its folder"]]
       <> status
       <> [ E.details

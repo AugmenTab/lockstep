@@ -35,6 +35,7 @@ import Lockstep.Kernel.EffectViewTest qualified as EffectViewTest
 import Lockstep.Kernel.EventCodecTest qualified as EventCodecTest
 import Lockstep.Kernel.IdentityTest qualified as IdentityTest
 import Lockstep.Kernel.LifecyclePropertyTest qualified as LifecyclePropertyTest
+import Lockstep.Kernel.PolicyTest qualified as PolicyTest
 import Lockstep.Kernel.ProfileTest qualified as ProfileTest
 import Lockstep.Kernel.ProjectTest qualified as ProjectTest
 import Lockstep.Kernel.ReconciliationTest qualified as ReconciliationTest
@@ -127,4 +128,5 @@ main =
       , FolderProtocolTest.tests
       , ProjectTest.tests
       , TaskTest.tests
+      , PolicyTest.tests
       ]
