@@ -17,6 +17,9 @@ module Lockstep.Application.ControlPane
   , submitLifecycle
   , submitInstall
   , submitOpenApplication
+  , submitFolder
+  , FolderList (..)
+  , readFolders
   , takeHandover
   , ResultView (..)
   , readResult
@@ -33,7 +36,7 @@ import Data.Char qualified as Char
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List qualified as L
 import Data.Map.Strict qualified as Map
-import Data.Maybe (isNothing)
+import Data.Maybe (isNothing, mapMaybe)
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
@@ -67,6 +70,7 @@ import Lockstep.Foundation.ControlProtocol
   , requestIdText
   , signInDigestHex
   )
+import Lockstep.Foundation.FolderProtocol (FolderOp (AddFolder), FolderRequest (..), encodeFolderRequest, foldersDigest)
 import Lockstep.Foundation.InstallProtocol (InstallExpect, InstallOp, InstallRequest (..), encodeInstallRequest)
 import Lockstep.Foundation.LifecycleProtocol (LifecycleOp, LifecycleRequest (..), encodeLifecycleRequest, expectedFor)
 import Lockstep.Foundation.OperatorToken (decodeToken, encodeToken, generateToken, tokenDigest)
@@ -321,6 +325,46 @@ one-at-a-time rule as lifecycle requests.
 submitInstall :: PaneRuntime -> InstallOp -> InstallExpect -> IO (Either SubmitError RequestId)
 submitInstall runtime op expect =
   submitExclusive runtime ".ireq" (\key rid t -> encodeInstallRequest key (InstallRequest rid t op expect))
+
+{- | Writes one signed add-folder request (C-P3.5 J6) for the list the person
+reviewed, under the same one-at-a-time rule: adding a folder may restart the
+service.
+-}
+submitFolder :: PaneRuntime -> T.Text -> T.Text -> IO (Either SubmitError RequestId)
+submitFolder runtime expect path =
+  submitExclusive runtime ".freq" (\key rid t -> encodeFolderRequest key (FolderRequest rid t AddFolder expect path))
+
+-- | The folder list the helper published for the pane, and its digest.
+data FolderList
+  = FolderList
+  { folderListDigest :: T.Text
+  , folderListEntries :: [(T.Text, T.Text)]
+  -- ^ (@rw@ or @ro@, path)
+  }
+
+{- | Reads @folders@ in the pane's state directory (written by the helper,
+C-P3.5 J5). A missing, oversized or non-regular file is an empty list; lines
+that are not @rw PATH@ or @ro PATH@ are not shown.
+-}
+readFolders :: PaneRuntime -> IO FolderList
+readFolders runtime = do
+  let
+    path = paneDirectory runtime <> "/folders"
+  status <- lstat path
+  bytes <-
+    case status of
+      Just s | isRegularFile s && fileSize s <= 16384 -> fromRight BS.empty <$> (try (BS.readFile path) :: IO (Either IOException BS.ByteString))
+      _ -> pure BS.empty
+  let
+    entry line =
+      case T.breakOn (T.pack " ") (TE.decodeLatin1 line) of
+        (mode, rest)
+          | mode `L.elem` [T.pack "rw", T.pack "ro"]
+          , Just p <- T.stripPrefix (T.pack " ") rest
+          , T.pack "/" `T.isPrefixOf` p ->
+              Just (mode, p)
+        _ -> Nothing
+  pure (FolderList (foldersDigest bytes) (mapMaybe entry (BS8.lines bytes)))
 
 submitExclusive :: PaneRuntime -> String -> (ChannelKey -> RequestId -> Integer -> BS.ByteString) -> IO (Either SubmitError RequestId)
 submitExclusive runtime suffix encode =

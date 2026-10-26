@@ -408,4 +408,26 @@ ALTER TABLE lockstep_effect_resolutions ADD CONSTRAINT lockstep_effect_resolutio
   CHECK (basis IN ('lookup', 'human-attested', 'human-retry', 'late-observation', 'human-abandon', 'human-carry'));
 |]
       )
+    ,
+      ( [Interpolate.i|projects|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_projects (
+  id uuid PRIMARY KEY,
+  creation_key text NOT NULL UNIQUE CHECK (creation_key ~ '^[A-Za-z0-9_-]{16,64}$'),
+  name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 80),
+  outcome text NOT NULL CHECK (char_length(outcome) <= 2000),
+  setup text NOT NULL CHECK (setup IN ('organized', 'connected', 'setup-failed')),
+  setup_refusal text,
+  folder text,
+  engineer_name text,
+  repository_id uuid UNIQUE REFERENCES lockstep_repositories (id),
+  revision bigint NOT NULL DEFAULT 1 CHECK (revision >= 1),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((setup = 'setup-failed') = (setup_refusal IS NOT NULL)),
+  CHECK ((setup = 'connected') = (repository_id IS NOT NULL AND folder IS NOT NULL))
+);
+CREATE UNIQUE INDEX lockstep_projects_name ON lockstep_projects (lower(name));
+|]
+      )
     ]

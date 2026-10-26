@@ -94,7 +94,42 @@ run_args() { # common docker arguments
       --env PATH="/opt/sentinel/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
       --env LOCKSTEP_SENTINEL_LOG=/opt/sentinel/sentinel.log)
   fi
+  folder_args
   printf '%s\n' "${args[@]}"
+}
+
+# C-P3.5 J5: the folders named by LOCKSTEP_SERVICE_FOLDERS (the helper's list), each
+# mounted at its own path: "rw PATH" only as the first line, then "ro PATH" lines.
+# Lines that are not well formed, or name no existing folder, are skipped. With no
+# folder mounted the container runs exactly as before.
+folder_args() {
+  local file=${LOCKSTEP_SERVICE_FOLDERS:-} line mode p n=0 root="" added="" mounted=0
+  [ -n "$file" ] && [ -f "$file" ] || return 0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    mode=${line%% *}
+    p=${line#* }
+    case $p in
+      /*) ;;
+      *) continue ;;
+    esac
+    case $p in
+      / | *:* | *,* | */) continue ;;
+    esac
+    [ -d "$p" ] || continue
+    if [ "$mode" = rw ] && [ $n = 1 ]; then
+      args+=(--volume "$p:$p")
+      root=$p
+    elif [ "$mode" = ro ]; then
+      args+=(--volume "$p:$p:ro")
+      added="$added:$p"
+    else
+      continue
+    fi
+    mounted=$((mounted + 1))
+  done < "$file"
+  [ $mounted -gt 0 ] || return 0
+  args+=(--user "$(id -u):$(id -g)" --env "LOCKSTEP_PROJECT_FOLDERS=$root$added")
 }
 
 require_install() {

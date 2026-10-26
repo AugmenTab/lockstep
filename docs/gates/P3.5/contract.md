@@ -38,7 +38,7 @@
 | J2 | **Typed operations** (`Lockstep.Application.Projects`): `createProject` (creation key, name, outcome, folder choice), `connectProject` (expected revision, folder choice), `listProjects`, `findProject`, `offeredFolders`. Name and outcome are checked first; a refused one creates nothing. A repeated creation key returns the project it created and creates nothing. A stale revision is refused and changes nothing. The C-P1.5 workspace receipts belong to the workspace revision and are not reused. |
 | J3 | **Folder choices.** `new`: Lockstep makes `<projects folder>/<slug>` (from the name: `a-z`, `0-9` and `-`, at most 36; `-2`, `-3`… past an existing file or folder, which is left alone) and runs `git init` there with branch `main`, no commit and no remote. `existing <path>`: one of the offered folders (J7), exactly as offered. `later`: no folder. A folder that is refused leaves the project created with `setup-failed` and the code; **Try again** is `connectProject` with the current revision. Each connection attempt is one revision. |
 | J4 | **Engineer binding.** The first connection attempt chooses the project's own Engineer, `p-<slug>` (`-2`… if the name is taken), creates it (C-P2.1 `addEngineer`) and keeps its name on the project; later attempts reuse it. Registration is the C-P2.1 `registerRepository`, unchanged; with several remotes and no choice it is tried again with `origin` when that exists (a fork keeps its own origin). Folder checks that need no Git (J7) come before the Engineer exists. The Engineer has no Profile and no executor; the page says "Lockstep can see this folder. It cannot change it or run anything in it yet." |
-| J5 | **Project folders (host authority).** The helper keeps `helper/folders`: at most one line `rw <path>` (the projects folder, first) and up to 15 lines `ro <path>` (added folders), canonical absolute paths. The projects folder exists only when the helper is given `--projects DIR` (the launcher passes `$HOME/lockstep-projects` for the operator's own Lockstep, never for an instance); the helper makes it. The helper writes the same bytes to `pane/folders` for the pane to show. It runs `scripts/service` with `LOCKSTEP_SERVICE_FOLDERS` naming the list; `scripts/service` (`start`, `cli`, `open`) then mounts each listed folder that exists at its own path (`rw` read-write, `ro` read-only), passes `LOCKSTEP_PROJECT_FOLDERS` (the projects folder or nothing, then the added folders, joined with `:`), and runs the container as the host user (`--user uid:gid`) so Git sees the owner it expects. Without `LOCKSTEP_SERVICE_FOLDERS` the container runs exactly as before. |
+| J5 | **Project folders (host authority).** The helper keeps `helper/folders`: at most one line `rw <path>` (the projects folder, first) and up to 15 lines `ro <path>` (added folders), canonical absolute paths. The projects folder exists only when the helper is given `--projects DIR` (the launcher passes `$HOME/lockstep-projects` for the operator's own Lockstep, never for an instance); the helper makes it. The helper writes the same bytes to `pane/folders` for the pane to show. It runs `scripts/service` with `LOCKSTEP_SERVICE_FOLDERS` naming the list; `scripts/service` (`start`, `cli`, `open`) then mounts each listed folder that exists at its own path (`rw` read-write, `ro` read-only), passes `LOCKSTEP_PROJECT_FOLDERS` (the projects folder or nothing, then the added folders, joined with `:`), and runs the container as the host user (`--user uid:gid`) so Git sees the owner it expects. Without `LOCKSTEP_SERVICE_FOLDERS`, or when it names no existing folder, the container runs exactly as before. |
 | J6 | **Adding a folder** is a fifth signed request kind, `lockstep-folder-request 1` (`requests/<id>.freq`, seven lines), op `add-folder`, `expect folders-<16 hex>` (the first 16 hex of SHA-256 of the list the person reviewed), and `path <absolute path>` (printable ASCII, no `:` or `,`, no empty, `.` or `..` segment). The helper resolves it on the host (`cd -P`, `pwd -P`) and refuses with: `state-changed` (the list changed), `unusable-path`, `folder-missing`, `not-a-folder`, `outside-home`, `home-folder`, `inside-lockstep` (the checkout or anything in it), `already-listed`, `overlaps-listed` (inside or around a listed folder), `list-full`. On success it appends `ro <canonical path>`, updates `pane/folders`, and restarts the service if it runs; the result carries `service.restart ok`, `failed` or `not-needed`. The pane's `GET /api/folders` returns the list and its digest; `POST /api/folders` (body `add-folder <expect> <path>`) writes the request. |
 | J7 | **Offered folders.** The service offers as existing folders only: each direct child of the projects folder, and each added folder, that is a real directory (not a symbolic link) holding a `.git` directory, and that no project has connected. It never walks further and never offers anything outside `LOCKSTEP_PROJECT_FOLDERS`. `existing <path>` that is not exactly an offered path is refused (`folder-not-offered`) before Git runs. |
 | J8 | **No remote publication.** No P3.5 code path runs a Git command that contacts a network or writes to a person's folder: `git init` runs only for `new`, only inside the projects folder; registration uses the C-P2.1 read-only observation; added folders are mounted read-only. Remotes already present are recorded as DG-03 records them and are never used. |
@@ -62,6 +62,31 @@ application's `#new-project`, "What should it achieve", `#project-name`, `#proje
 `#folder-existing`, `#folder-choice`, `#create-project`, "Lockstep can see this folder", "cannot
 change it or run anything in it yet", "not one of the folders Lockstep can see", "Try again",
 "already has a project with this name", "changed since this page was shown".
+
+## 3a. Verification record (after implementation)
+
+| Check | Result | Evidence |
+|---|---|---|
+| Frozen files (P3.5 and earlier) | digests unchanged | §4, C-P3.4 §4 |
+| `scripts/check --integration` | format, lint, build, unit (763), no-live-model guard PASSED; integration 324 of 326 PASSED, the 2 failures being the known C-P3.4 `HandoverTest.hs` defect (`docs/gates/P3.4/test-amendment-request.md`) | `check-integration.log` |
+| C-P3.5 groups | unit 21 of 21; projects 12 of 12; pages 8 of 8; folders on the host 10 of 10; the real-browser journey (pane → add a folder → the service restarts with it → Open Lockstep → keyboard to Projects → a project in a new folder → one in the added folder → the overview) PASSED | `check-integration.log` |
+
+The first implementation runs failed on the implementation, never on a test: five lint hints;
+`pathIsSymbolicLink` throws on a missing path, so every new folder name looked taken; and the pane's
+folder list called the page-wide `clear()`, which emptied the whole pane page — caught by the
+frozen C-P3.1–C-P3.4 browser tests.
+
+Implementation notes (decisions within the design, recorded here):
+
+- J5 as written says the container runs as before without `LOCKSTEP_SERVICE_FOLDERS`; it also
+  runs as before when the list names no existing folder (an instance helper has no `--projects`
+  and usually no added folder), so the instance services of the host checks keep their earlier
+  arguments.
+- An Engineer is created at the first connection attempt that reaches a folder; an attempt
+  refused before that (no projects folder, folder not offered) creates none.
+- The pane shows the folder list from `pane/folders`; the stale-review digest it sends is
+  computed by the helper's rules over the same bytes, and the helper checks it against its own
+  list.
 
 ## 4. Freeze record
 

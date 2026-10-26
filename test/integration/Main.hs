@@ -14,6 +14,7 @@ import Lockstep.ControlPaneTest qualified as ControlPaneTest
 import Lockstep.DispatcherTest qualified as DispatcherTest
 import Lockstep.ExecutorTest qualified as ExecutorTest
 import Lockstep.FaultPlanTest qualified as FaultPlanTest
+import Lockstep.FolderHelperTest qualified as FolderHelperTest
 import Lockstep.HandoverTest qualified as HandoverTest
 import Lockstep.InstallBrowserTest qualified as InstallBrowserTest
 import Lockstep.InstallHelperTest qualified as InstallHelperTest
@@ -30,6 +31,9 @@ import Lockstep.OperatorLedgerTest qualified as OperatorLedgerTest
 import Lockstep.OperatorTrustTest qualified as OperatorTrustTest
 import Lockstep.ProcessTest qualified as ProcessTest
 import Lockstep.ProfileRegistryTest qualified as ProfileRegistryTest
+import Lockstep.ProjectsBrowserTest qualified as ProjectsBrowserTest
+import Lockstep.ProjectsPageTest qualified as ProjectsPageTest
+import Lockstep.ProjectsTest qualified as ProjectsTest
 import Lockstep.ReconciliationTest qualified as ReconciliationTest
 import Lockstep.RemediationFinalReviewTest qualified as RemediationFinalReviewTest
 import Lockstep.RemediationReviewTest qualified as RemediationReviewTest
@@ -75,4 +79,8 @@ main =
       , InstallBrowserTest.tests
       , AppShellTest.tests
       , HandoverTest.tests
+      , ProjectsTest.tests
+      , ProjectsPageTest.tests
+      , FolderHelperTest.tests
+      , ProjectsBrowserTest.tests
       ]
