@@ -1,0 +1,129 @@
+lockstep> test (suite: lockstep-integration, args: -p /C-P3.2/)
+
+lockstep-integration
+  helper lifecycle operations (C-P3.2)
+    service-stop on a running service stops it and says ok:                                                       FAIL (31.11s)
+      test/integration/Lockstep/LifecycleHelperTest.hs:98:
+      no result for 000000006adea12a0000000000001001 within 30 s:
+      
+      Use -p '/C-P3.2/&&/service-stop on a running service stops it and says ok/' to rerun this test only.
+    service-start on an absent, compatible service starts it on the fixed port and observes it answer:            FAIL (30.80s)
+      test/integration/Lockstep/LifecycleHelperTest.hs:98:
+      no result for 000000006adea14a0000000000001002 within 30 s:
+      
+      Use -p '/C-P3.2/&&/service-start on an absent, compatible service starts it on the fixed port and observes it answer/' to rerun this test only.
+    service-start on a stopped container restarts it:                                                             FAIL (30.84s)
+      test/integration/Lockstep/LifecycleHelperTest.hs:98:
+      no result for 000000006adea1680000000000001003 within 30 s:
+      
+      Use -p '/C-P3.2/&&/service-start on a stopped container restarts it/' to rerun this test only.
+    service-restart on a running service stops and starts it:                                                     FAIL (30.86s)
+      test/integration/Lockstep/LifecycleHelperTest.hs:98:
+      no result for 000000006adea1870000000000001004 within 30 s:
+      
+      Use -p '/C-P3.2/&&/service-restart on a running service stops and starts it/' to rerun this test only.
+    database-stop with the service stopped, then database-start:                                                  FAIL (30.88s)
+      test/integration/Lockstep/LifecycleHelperTest.hs:98:
+      no result for 000000006adea1a60000000000001005 within 30 s:
+      
+      Use -p '/C-P3.2/&&/database-stop with the service stopped, then database-start/' to rerun this test only.
+    an expected state that no longer holds is refused and nothing runs:                                           FAIL (20.69s)
+      test/integration/Lockstep/LifecycleHelperTest.hs:98:
+      no result for 000000006adea1c50000000000001007 within 20 s:
+      
+      Use -p '/C-P3.2/&&/an expected state that no longer holds is refused and nothing runs/' to rerun this test only.
+    an incompatible installation is not started (upgrades are P3.3):                                              FAIL (20.68s)
+      test/integration/Lockstep/LifecycleHelperTest.hs:98:
+      no result for 000000006adea1da0000000000001009 within 20 s:
+      
+      Use -p '/C-P3.2/&&/an incompatible installation is not started (upgrades are P3.3)/' to rerun this test only.
+    the database is not stopped under a running service:                                                          FAIL (20.64s)
+      test/integration/Lockstep/LifecycleHelperTest.hs:98:
+      no result for 000000006adea1ee000000000000100a within 20 s:
+      
+      Use -p '/C-P3.2/&&/the database is not stopped under a running service/' to rerun this test only.
+    an instance's database is not managed by its control pane:                                                    FAIL (20.59s)
+      test/integration/Lockstep/LifecycleHelperTest.hs:98:
+      no result for 000000006adea203000000000000100b within 20 s:
+      
+      Use -p '/C-P3.2/&&/an instance'\''s database is not managed by its control pane/' to rerun this test only.
+    a start that fails is failed, with the error as detail:                                                       FAIL (30.97s)
+      test/integration/Lockstep/LifecycleHelperTest.hs:98:
+      no result for 000000006adea217000000000000100d within 30 s:
+      
+      Use -p '/C-P3.2/&&/a start that fails is failed, with the error as detail/' to rerun this test only.
+    a start that never answers is failed, not ok:                                                                 FAIL (61.71s)
+      test/integration/Lockstep/LifecycleHelperTest.hs:98:
+      no result for 000000006adea236000000000000100e within 60 s:
+      
+      Use -p '/C-P3.2/&&/a start that never answers is failed, not ok/' to rerun this test only.
+    two stops sent together: one runs, the other is refused, never overlapping:                                   FAIL (30.92s)
+      test/integration/Lockstep/LifecycleHelperTest.hs:98:
+      no result for 000000006adea274000000000000100f within 30 s:
+      
+      Use -p '/C-P3.2/&&/two stops sent together: one runs, the other is refused, never overlapping/' to rerun this test only.
+    forged, replayed, stale and wrongly expected lifecycle requests are refused:                                  FAIL (20.69s)
+      test/integration/Lockstep/LifecycleHelperTest.hs:98:
+      no result for 000000006adea2930000000000001011 within 20 s:
+      
+      Use -p '/C-P3.2/&&/forged, replayed, stale and wrongly expected lifecycle requests are refused/' to rerun this test only.
+    a lifecycle operation over its time limit is timed-out:                                                       FAIL (20.65s)
+      test/integration/Lockstep/LifecycleHelperTest.hs:98:
+      no result for 000000006adea2a80000000000001016 within 20 s:
+      
+      Use -p '/C-P3.2/&&/a lifecycle operation over its time limit is timed-out/' to rerun this test only.
+    lifecycle content in a status-kind file is refused as malformed:                                              OK (0.28s)
+    status still works and now reports health, Docker and Git:                                                    FAIL (0.30s)
+      test/integration/Lockstep/LifecycleHelperTest.hs:313:
+      expected: Just "answers"
+       but got: Nothing
+      Use -p '/C-P3.2/&&/status still works and now reports health, Docker and Git/' to rerun this test only.
+  pane lifecycle endpoint (C-P3.2 M6)
+    a lifecycle request needs a session and this pane's origin:                                                   FAIL (0.47s)
+      test/integration/Lockstep/LifecyclePaneTest.hs:68:
+      expected: 401
+       but got: 404
+      Use -p '/C-P3.2/&&/a lifecycle request needs a session and this pane'\''s origin/' to rerun this test only.
+    an allowlisted operation with its expectation becomes one signed lifecycle request:                           FAIL (0.44s)
+      test/integration/Lockstep/LifecyclePaneTest.hs:78:
+      expected: 202
+       but got: 404
+      Use -p '/C-P3.2/&&/an allowlisted operation with its expectation becomes one signed lifecycle request/' to rerun this test only.
+    unknown operations, wrong expectations and extra words are 400 and write nothing:                             FAIL (0.45s)
+      test/integration/Lockstep/LifecyclePaneTest.hs:91:
+      "reboot running" gave 404
+      Use -p '/C-P3.2/&&/unknown operations, wrong expectations and extra words are 400 and write nothing/' to rerun this test only.
+    a second lifecycle request while one is pending is 409, and allowed once its result exists:                   FAIL (0.45s)
+      test/integration/Lockstep/LifecyclePaneTest.hs:99:
+      expected: 202
+       but got: 404
+      Use -p '/C-P3.2/&&/a second lifecycle request while one is pending is 409, and allowed once its result exists/' to rerun this test only.
+    the status channel still refuses lifecycle names:                                                             OK (0.45s)
+    a body over 4 KiB is refused:                                                                                 FAIL (0.46s)
+      test/integration/Lockstep/LifecyclePaneTest.hs:120:
+      expected: 413
+       but got: 404
+      Use -p '/C-P3.2/&&/a body over 4 KiB is refused/' to rerun this test only.
+  control pane lifecycle in a real browser (C-P3.2)
+    the system view shows the state in words; Stop, Start and Restart change it; a double press is one operation: FAIL (1.75s)
+      test/integration/Lockstep/LifecycleBrowserTest.hs:94:
+      browser driver error: RuntimeError('no element matches #service-stop')
+      
+      Use -p '/C-P3.2/&&/the system view shows the state in words; Stop, Start and Restart change it; a double press is one operation/' to rerun this test only.
+
+21 out of 23 tests failed (407.05s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

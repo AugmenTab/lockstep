@@ -1,0 +1,15 @@
+FAIL launch exits 0
+PASS the browser saw the running service
+FAIL Stop: the page said the service was stopped
+FAIL Start: the page said the service was started
+FAIL Restart: the page said the service was restarted
+PASS the service is running at the end
+PASS the service answers on its port
+FAIL the helper ran service-stop exactly once, and it ended ok
+FAIL the helper ran service-start exactly once, and it ended ok
+FAIL the helper ran service-restart exactly once, and it ended ok
+PASS no lifecycle operation failed or was refused
+PASS the operator's service, control pane and database were not touched
+PASS no output contains a sign-in link
+
+check-lifecycle: 7 failure(s); results in .local/evidence/lifecycle-20261026t004735z/results.txt
