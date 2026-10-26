@@ -29,6 +29,7 @@ import Lockstep.Foundation.LifecycleProtocolTest qualified as LifecycleProtocolT
 import Lockstep.Foundation.OperatorTokenTest qualified as OperatorTokenTest
 import Lockstep.Foundation.SessionProtocolTest qualified as SessionProtocolTest
 import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
+import Lockstep.Kernel.ActivityTest qualified as ActivityTest
 import Lockstep.Kernel.DecisionTest qualified as DecisionTest
 import Lockstep.Kernel.DeliveryTest qualified as DeliveryTest
 import Lockstep.Kernel.EffectTest qualified as EffectTest
@@ -131,4 +132,5 @@ main =
       , TaskTest.tests
       , PolicyTest.tests
       , DecisionTest.tests
+      , ActivityTest.tests
       ]

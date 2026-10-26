@@ -30,6 +30,7 @@ source-repository head
 
 library
   exposed-modules:
+      Lockstep.Application.Activity
       Lockstep.Application.Command
       Lockstep.Application.CommandCenter
       Lockstep.Application.ControlPane
@@ -65,6 +66,7 @@ library
       Lockstep.Foundation.SessionProtocol
       Lockstep.Foundation.SystemConfig
       Lockstep.Kernel.Activation
+      Lockstep.Kernel.Activity
       Lockstep.Kernel.Decision
       Lockstep.Kernel.Delivery
       Lockstep.Kernel.Effect
@@ -102,6 +104,7 @@ library
       Lockstep.Persistence.Repositories
       Lockstep.Persistence.Sandbox
       Lockstep.Persistence.Tasks
+      Lockstep.Web.ActivityPage
       Lockstep.Web.App
       Lockstep.Web.Application
       Lockstep.Web.ChecksPages
@@ -191,6 +194,8 @@ test-suite lockstep-integration
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
+      Lockstep.ActivityBrowserTest
+      Lockstep.ActivityPageTest
       Lockstep.AppShellTest
       Lockstep.BrowserFormTest
       Lockstep.CommandCenterTest
@@ -301,6 +306,7 @@ test-suite lockstep-unit
       Lockstep.Foundation.OperatorTokenTest
       Lockstep.Foundation.SessionProtocolTest
       Lockstep.Foundation.SystemConfigTest
+      Lockstep.Kernel.ActivityTest
       Lockstep.Kernel.DecisionTest
       Lockstep.Kernel.DeliveryTest
       Lockstep.Kernel.EffectTest

@@ -35,6 +35,7 @@ import System.IO (FilePath)
 import Text.Read (readMaybe)
 import Text.Show (show)
 
+import Lockstep.Application.Activity (readActivity)
 import Lockstep.Application.Command (WorkspaceState (..), generateIdempotencyKey, idempotencyKeyText, mkIdempotencyKey, readWorkspace)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason (..), Readiness (..), checkReadiness, revisionNumber)
 import Lockstep.Application.Decisions (DecisionReceipt (..), OpenDecision (..), applyDecision, decidedReceipt, findDecision, listDecisions)
@@ -72,6 +73,7 @@ import Lockstep.Kernel.Identity (WorkOrderId (..), parseUuid)
 import Lockstep.Kernel.Policy (checksRefusalWords, lossWords)
 import Lockstep.Kernel.Project (SetupState (..), parseFolderChoice, refusalWords, setupStateCode)
 import Lockstep.Kernel.Task (parsePriority, taskRefusalWords)
+import Lockstep.Web.ActivityPage (activityPage)
 import Lockstep.Web.ChecksPages (checksPage, choiceLosses, projectChecksSection)
 import Lockstep.Web.DecisionPages (decisionPage, decisionsOverview, donePage)
 import Lockstep.Web.Fragment (attr, cls, fragment, href)
@@ -549,11 +551,7 @@ renderSection db section session =
         (Right ps, Right ts) -> tasksOverview [(p, [t | t <- ts, taskProject t == projectId p]) | p <- ps] True
         _ -> tasksOverview [] False
     Decisions -> decisionsOverview . either (const Nothing) Just <$> listDecisions db
-    Activity ->
-      pure . fragment $
-        [ E.h1 [] [E.text "Activity"]
-        , E.p [] [E.text "The history of what happened will be shown here in a later update of Lockstep. Nothing is shown yet, so nothing here is guessed."]
-        ]
+    Activity -> activityPage <$> readActivity db
     Settings -> do
       projects <- fromRight [] <$> listProjects db
       pure . fragment $
