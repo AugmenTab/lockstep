@@ -51,6 +51,21 @@
 | `test/integration/Lockstep/ActivityPageTest.hs` | integration: real service on a `withLedger` database, steps made through the real ledger | each of PASSED, ATTESTED, UNKNOWN, NOT_RUN and failed (NOT_APPLIED, no retry left) shown with its label and meaning, attention first with decision links; a work with no steps is not shown as passed; refusals in words; the canonical text under *Technical details* equals `renderProjection`; the ordinary text is identical after a service restart; no form or button; escaping; no internal words outside *Technical details* |
 | `test/integration/Lockstep/ActivityBrowserTest.hs` | integration: headless Chromium (`test/browser/app_driver.py`, frozen) | Home → Activity → the step that needs a person → its decision page |
 
+## 3a. Verification record (after implementation)
+
+| Check | Result | Evidence |
+|---|---|---|
+| Frozen files (P3.9 and earlier) | digests unchanged | §4, earlier contracts' §4 |
+| `scripts/check --integration` | format, lint, build, unit, no-live-model guard PASSED; integration 379 of 381 PASSED, the 2 failures being the known C-P3.4 `HandoverTest.hs` defect | `check-integration.log` |
+| C-P3.9 groups | unit 8 of 8; pages 5 of 5 (one PASSED label for one passed step; attention first with decision links; a work with no steps never passed; raw evidence under Technical details; identical after a restart); the real-browser journey (Home → Activity → the step that needs a person → its decision) PASSED | `check-integration.log` |
+| Linux clean clone | see the commit that records it | `linux-clone.log` |
+
+The first implementation run passed.
+
+Implementation notes: Activity reads tickets only to name work; a task that has no work yet is
+not activity ("Nothing has happened yet." while only tasks exist). Blocked steps point to
+Decisions through their stopped work, which carries the link.
+
 ## 4. Freeze record
 
 Frozen 2026-10-26 by the writing agent (manual), before the Activity page was implemented.

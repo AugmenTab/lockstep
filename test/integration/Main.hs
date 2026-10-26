@@ -5,6 +5,8 @@ module Main
 import Flipstone.Prelude
 import Test.Tasty (defaultMain, testGroup)
 
+import Lockstep.ActivityBrowserTest qualified as ActivityBrowserTest
+import Lockstep.ActivityPageTest qualified as ActivityPageTest
 import Lockstep.AppShellTest qualified as AppShellTest
 import Lockstep.BrowserFormTest qualified as BrowserFormTest
 import Lockstep.CommandCenterTest qualified as CommandCenterTest
@@ -101,4 +103,6 @@ main =
       , DecisionsTest.tests
       , DecisionsPageTest.tests
       , DecisionsBrowserTest.tests
+      , ActivityPageTest.tests
+      , ActivityBrowserTest.tests
       ]
