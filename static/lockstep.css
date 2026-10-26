@@ -341,6 +341,66 @@ summary {
   overflow-wrap: anywhere;
 }
 
+/* Projects (C-P3.5): forms that work with the keyboard and at any width. */
+.ls-field,
+.ls-choice {
+  margin: 0 0 var(--ls-space-3);
+}
+
+.ls-field label,
+.ls-label {
+  display: block;
+  margin: 0 0 var(--ls-space-1);
+  font-weight: 600;
+}
+
+.ls-choice label {
+  margin-left: var(--ls-space-2);
+}
+
+input[type="text"],
+textarea,
+select {
+  width: 100%;
+  max-width: 40rem;
+  padding: var(--ls-space-2);
+  font: inherit;
+  color: var(--ls-text);
+  background: var(--ls-surface);
+  border: 1px solid var(--ls-border);
+  border-radius: var(--ls-radius);
+}
+
+.ls-choice select {
+  display: block;
+  margin-top: var(--ls-space-2);
+}
+
+fieldset {
+  margin: 0 0 var(--ls-space-3);
+  padding: var(--ls-space-3);
+  border: 1px solid var(--ls-border);
+  border-radius: var(--ls-radius);
+}
+
+legend {
+  font-weight: 600;
+  padding: 0 var(--ls-space-1);
+}
+
+.ls-outcome {
+  white-space: pre-wrap;
+}
+
+.ls-good-text {
+  border-left: 6px solid var(--ls-accent);
+  padding-left: var(--ls-space-3);
+}
+
+.ls-projects li {
+  margin: 0 0 var(--ls-space-2);
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none;

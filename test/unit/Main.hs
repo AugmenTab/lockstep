@@ -23,6 +23,7 @@ import Lockstep.Foundation.CliTest qualified as CliTest
 import Lockstep.Foundation.CliWorkspaceTest qualified as CliWorkspaceTest
 import Lockstep.Foundation.ControlProtocolTest qualified as ControlProtocolTest
 import Lockstep.Foundation.EvidenceModelTest qualified as EvidenceModelTest
+import Lockstep.Foundation.FolderProtocolTest qualified as FolderProtocolTest
 import Lockstep.Foundation.InstallProtocolTest qualified as InstallProtocolTest
 import Lockstep.Foundation.LifecycleProtocolTest qualified as LifecycleProtocolTest
 import Lockstep.Foundation.OperatorTokenTest qualified as OperatorTokenTest
@@ -35,6 +36,7 @@ import Lockstep.Kernel.EventCodecTest qualified as EventCodecTest
 import Lockstep.Kernel.IdentityTest qualified as IdentityTest
 import Lockstep.Kernel.LifecyclePropertyTest qualified as LifecyclePropertyTest
 import Lockstep.Kernel.ProfileTest qualified as ProfileTest
+import Lockstep.Kernel.ProjectTest qualified as ProjectTest
 import Lockstep.Kernel.ReconciliationTest qualified as ReconciliationTest
 import Lockstep.Kernel.RecoveryTest qualified as RecoveryTest
 import Lockstep.Kernel.RemediationReviewTest qualified as RemediationReviewTest
@@ -121,4 +123,6 @@ main =
       , LifecycleProtocolTest.tests
       , InstallProtocolTest.tests
       , SessionProtocolTest.tests
+      , FolderProtocolTest.tests
+      , ProjectTest.tests
       ]

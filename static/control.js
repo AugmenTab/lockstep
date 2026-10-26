@@ -251,6 +251,124 @@
     await check();
   }
 
+  // ---- Project folders (C-P3.5 J5, J6). Only this computer's helper changes the list.
+
+  var FOLDER_REASONS = {
+    'state-changed': 'Nothing was done: the list of folders changed since it was shown. The current list is shown below.',
+    'unusable-path': 'Nothing was done: Lockstep can only use a full folder path made of plain letters, digits, spaces and . _ - / (no : or ,).',
+    'folder-missing': 'Nothing was done: there is no folder at that path.',
+    'not-a-folder': 'Nothing was done: that path is a file, not a folder.',
+    'outside-home': 'Nothing was done: Lockstep only uses folders inside your home folder.',
+    'home-folder': 'Nothing was done: Lockstep does not use your whole home folder. Choose the folder of one project.',
+    'inside-lockstep': 'Nothing was done: that folder is part of Lockstep itself.',
+    'already-listed': 'Nothing was done: Lockstep can already see that folder.',
+    'overlaps-listed': 'Nothing was done: that folder is inside, or contains, a folder Lockstep can already see.',
+    'list-full': 'Nothing was done: Lockstep can see at most 15 added folders.'
+  };
+
+  function emptyList(list) {
+    while (list.firstChild) { list.removeChild(list.firstChild); }
+  }
+
+  function plainFolderPath(path) {
+    return /^\/[ -~]*$/.test(path) && !/[:,]/.test(path) && !/\/$/.test(path) &&
+      path.split('/').slice(1).every(function (s) { return s !== '' && s !== '.' && s !== '..'; });
+  }
+
+  function renderFolders(serviceRunning) {
+    var section = node('section');
+    section.appendChild(node('h2', null, 'Project folders'));
+    section.appendChild(node('p', null, 'These are the only folders on this computer that Lockstep can see. New projects get a folder inside the first one. Folders you add can be read by Lockstep but not changed.'));
+    var list = node('ul', 'ls-status');
+    list.appendChild(node('li', 'ls-muted', 'Loading the list…'));
+    section.appendChild(list);
+    var label = node('label', 'ls-label', 'Add a folder that is already on this computer (its full path, for example /Users/you/code/my-site)');
+    label.setAttribute('for', 'folder-path');
+    section.appendChild(label);
+    var input = node('input');
+    input.id = 'folder-path';
+    input.type = 'text';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    section.appendChild(input);
+    var review = node('button', null, 'Review…');
+    review.id = 'folder-review';
+    review.type = 'button';
+    lifecycleButtons.push(review);
+    var row = node('div', 'ls-actions');
+    row.appendChild(review);
+    section.appendChild(row);
+    var digest = null;
+    review.addEventListener('click', function () {
+      var path = input.value.trim();
+      var old = section.querySelector('.ls-notice');
+      if (old) { old.parentNode.removeChild(old); }
+      if (!plainFolderPath(path)) {
+        section.appendChild(node('p', 'ls-notice', FOLDER_REASONS['unusable-path']));
+        return;
+      }
+      section.appendChild(confirmPanel(
+        'Lockstep will be able to see this folder: ' + path + '. It can read it but not change it.' +
+          (serviceRunning ? ' Lockstep restarts so that it can see the folder.' : ''),
+        'add-folder', 'Add folder',
+        function () { runFolder(digest, path); }));
+    });
+    api('GET', '/api/folders').then(function (response) {
+      if (response.status === 401) { forgetSession(); renderSignedOut(); return null; }
+      return response.ok ? response.json() : null;
+    }).then(function (body) {
+      emptyList(list);
+      if (!body) { list.appendChild(node('li', 'ls-attention', 'The list could not be read.')); return; }
+      digest = body.digest;
+      if (!body.folders.length) {
+        list.appendChild(node('li', 'ls-attention', 'Lockstep cannot see any folder yet.'));
+      }
+      body.folders.forEach(function (folder) {
+        item(list, folder.mode === 'rw' ? 'For new projects' : 'Added', folder.path,
+          folder.mode === 'rw' ? 'Lockstep makes new project folders here.' : 'Lockstep can read this folder but not change it.', true);
+      });
+    }).catch(function () {
+      emptyList(list);
+      list.appendChild(node('li', 'ls-attention', 'The list could not be read.'));
+    });
+    return section;
+  }
+
+  async function runFolder(digest, path) {
+    lifecycleButtons.forEach(function (b) { b.disabled = true; });
+    var working = node('p', 'ls-notice', 'Adding the folder…');
+    app.insertBefore(working, app.children[1] || null);
+    if (!digest) {
+      afterNotice = 'The list of folders could not be read, so nothing was done. Check again.';
+      await check();
+      return;
+    }
+    var response = await api('POST', '/api/folders', 'add-folder ' + digest + ' ' + path);
+    if (response.status === 401) { forgetSession(); renderSignedOut(); return; }
+    if (!response.ok) {
+      afterNotice = response.status === 409
+        ? 'Another operation is still running. Wait for it to finish, then try again.'
+        : response.status === 400 ? FOLDER_REASONS['unusable-path'] : 'Lockstep could not send that request to this computer.';
+      await check();
+      return;
+    }
+    var body = await response.json();
+    var result = await waitForResult(body.id, 300000);
+    if (result === 'signed-out') { return; }
+    if (!result) {
+      afterNotice = 'That has not finished reporting back. Check again in a moment.';
+    } else if (result.outcome === 'ok') {
+      var restart = (result.fields || {})['service.restart'];
+      afterNotice = 'Done: Lockstep can now see ' + path + '.' +
+        (restart === 'failed' ? ' The service could not be restarted, so it will see the folder after its next start.' : '');
+    } else if (result.outcome === 'refused' && FOLDER_REASONS[result.reason]) {
+      afterNotice = FOLDER_REASONS[result.reason];
+    } else {
+      afterNotice = failureText(result);
+    }
+    await check();
+  }
+
   // ---- Install, upgrade and recovery (C-P3.3). Every change is reviewed, then confirmed.
 
   async function runInstall(op, expect, doneText) {
@@ -453,6 +571,7 @@
     }
     app.appendChild(list);
     if (f['upgrade.state'] !== undefined) { app.appendChild(renderVersion(f)); }
+    app.appendChild(renderFolders(service === 'running'));
 
     if (result.detail) {
       app.appendChild(node('p', 'ls-muted', 'What Lockstep saw: ' + result.detail));

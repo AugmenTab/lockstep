@@ -28,7 +28,8 @@ import System.IO (FilePath, hFlush, hPutStrLn, putStrLn, stderr, stdout)
 import Text.Show (show)
 
 import Lockstep.Application.ControlPane
-  ( PaneRuntime
+  ( FolderList (..)
+  , PaneRuntime
   , ResultView (..)
   , SubmitError (..)
   , checkSession
@@ -36,8 +37,10 @@ import Lockstep.Application.ControlPane
   , exchangeSignIn
   , openPane
   , paneIdentity
+  , readFolders
   , readResult
   , renderPaneError
+  , submitFolder
   , submitInstall
   , submitLifecycle
   , submitOpenApplication
@@ -46,6 +49,7 @@ import Lockstep.Application.ControlPane
   )
 import Lockstep.Foundation.Config (BindHost (Loopback), Port, ServeConfig (..), portNumber)
 import Lockstep.Foundation.ControlProtocol (ControlResult (..), outcomeName, parseOp, requestIdText)
+import Lockstep.Foundation.FolderProtocol (validFolderExpect, validFolderPath)
 import Lockstep.Foundation.InstallProtocol (InstallExpect, InstallOp, parseInstallExpect, parseInstallOp, validFor)
 import Lockstep.Foundation.LifecycleProtocol (LifecycleOp, expectedFor, parseLifecycleExpect, parseLifecycleOp)
 import Lockstep.Web.RequestGuard (RouteClass (..), guardRequest)
@@ -107,6 +111,8 @@ data Route
   | Lifecycle
   | Install
   | OpenApplication
+  | FoldersList
+  | FoldersAdd
   | Handover T.Text
   | RequestResult T.Text
   | Preflight
@@ -149,6 +155,10 @@ matchRoute method path =
         | options -> Just Preflight
       ["api", "open-application"]
         | post -> Just OpenApplication
+        | options -> Just Preflight
+      ["api", "folders"]
+        | get -> Just FoldersList
+        | post -> Just FoldersAdd
         | options -> Just Preflight
       ["api", "handover", rid]
         | get && T.length rid == 32 && T.all (\c -> Char.isDigit c || (c >= 'a' && c <= 'f')) rid -> Just (Handover rid)
@@ -220,6 +230,22 @@ controlApplication port runtime request respond =
         respond $ case submitted of
           Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
           Left err -> submitError err
+      FoldersList -> withSession $ do
+        list <- readFolders runtime
+        respond . jsonResponse HTTP.status200 $
+          "{\"digest\":"
+            <> jsonString (folderListDigest list)
+            <> ",\"folders\":["
+            <> T.intercalate "," ["{\"mode\":" <> jsonString m <> ",\"path\":" <> jsonString p <> "}" | (m, p) <- folderListEntries list]
+            <> "]}"
+      FoldersAdd -> withBody $ \bytes -> withSession $
+        case parseFolderBody (TE.decodeUtf8With TEE.lenientDecode bytes) of
+          Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
+          Just (expect, path) -> do
+            submitted <- submitFolder runtime expect path
+            respond $ case submitted of
+              Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
+              Left err -> submitError err
       Handover rid -> withSession $ do
         url <- takeHandover runtime rid
         respond $ case url of
@@ -262,6 +288,17 @@ parseInstallBody body =
       expect <- parseInstallExpect expectText
       if validFor op expect then Just (op, expect) else Nothing
     _ -> Nothing
+
+-- | @add-folder <expectation> <path>@ for a folder request (C-P3.5 J6); the path may contain spaces.
+parseFolderBody :: T.Text -> Maybe (T.Text, T.Text)
+parseFolderBody body = do
+  rest <- T.stripPrefix "add-folder " body
+  let
+    (expect, afterExpect) = T.breakOn " " rest
+  path <- T.stripPrefix " " afterExpect
+  if validFolderExpect expect && validFolderPath path
+    then Just (expect, path)
+    else Nothing
 
 resultJson :: ControlResult -> T.Text
 resultJson result =

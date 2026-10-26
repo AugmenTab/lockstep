@@ -281,7 +281,8 @@ ensure_helper() {
   if [ -n "$instance" ]; then
     nohup "$root/scripts/control-helper" --state "$state" --instance "$instance" --service-port "$service_port" < /dev/null > /dev/null 2>&1 &
   else
-    nohup "$root/scripts/control-helper" --state "$state" --service-port "$service_port" < /dev/null > /dev/null 2>&1 &
+    # C-P3.5 J5: the operator's own Lockstep keeps new projects in ~/lockstep-projects.
+    nohup "$root/scripts/control-helper" --state "$state" --service-port "$service_port" --projects "$HOME/lockstep-projects" < /dev/null > /dev/null 2>&1 &
   fi
   local waited=0
   while [ -z "$(helper_pid)" ]; do

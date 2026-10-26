@@ -42,17 +42,20 @@ library
       Lockstep.Application.OperatorTrust
       Lockstep.Application.ProfileDocument
       Lockstep.Application.Profiles
+      Lockstep.Application.Projects
       Lockstep.Application.Reconciler
       Lockstep.Application.Repositories
       Lockstep.Application.Sandbox
       Lockstep.Effects.Executor
       Lockstep.Effects.Git
+      Lockstep.Effects.ProjectFolders
       Lockstep.Effects.Reconciler
       Lockstep.Effects.Scripted
       Lockstep.Foundation.Cli
       Lockstep.Foundation.Config
       Lockstep.Foundation.ControlProtocol
       Lockstep.Foundation.EvidenceModel
+      Lockstep.Foundation.FolderProtocol
       Lockstep.Foundation.InstallProtocol
       Lockstep.Foundation.LifecycleProtocol
       Lockstep.Foundation.OperatorToken
@@ -67,6 +70,7 @@ library
       Lockstep.Kernel.Identity
       Lockstep.Kernel.KeyLifetime
       Lockstep.Kernel.Profile
+      Lockstep.Kernel.Project
       Lockstep.Kernel.Reconciliation
       Lockstep.Kernel.Recovery
       Lockstep.Kernel.Repository
@@ -86,6 +90,7 @@ library
       Lockstep.Persistence.Migrations
       Lockstep.Persistence.OperatorSessions
       Lockstep.Persistence.Profiles
+      Lockstep.Persistence.Projects
       Lockstep.Persistence.Queries
       Lockstep.Persistence.Repositories
       Lockstep.Persistence.Sandbox
@@ -183,6 +188,7 @@ test-suite lockstep-integration
       Lockstep.DispatcherTest
       Lockstep.ExecutorTest
       Lockstep.FaultPlanTest
+      Lockstep.FolderHelperTest
       Lockstep.HandoverTest
       Lockstep.InstallBrowserTest
       Lockstep.InstallHelperTest
@@ -199,6 +205,9 @@ test-suite lockstep-integration
       Lockstep.OperatorTrustTest
       Lockstep.ProcessTest
       Lockstep.ProfileRegistryTest
+      Lockstep.ProjectsBrowserTest
+      Lockstep.ProjectsPageTest
+      Lockstep.ProjectsTest
       Lockstep.ReconciliationTest
       Lockstep.RemediationFinalReviewTest
       Lockstep.RemediationReviewTest
@@ -208,6 +217,7 @@ test-suite lockstep-integration
       Lockstep.ServiceDbTest
       Lockstep.Support.App
       Lockstep.Support.Control
+      Lockstep.Support.Folders
       Lockstep.Support.Http
       Lockstep.Support.Install
       Lockstep.Support.Ledger
@@ -263,6 +273,7 @@ test-suite lockstep-unit
       Lockstep.Foundation.CliWorkspaceTest
       Lockstep.Foundation.ControlProtocolTest
       Lockstep.Foundation.EvidenceModelTest
+      Lockstep.Foundation.FolderProtocolTest
       Lockstep.Foundation.InstallProtocolTest
       Lockstep.Foundation.LifecycleProtocolTest
       Lockstep.Foundation.OperatorTokenTest
@@ -276,6 +287,7 @@ test-suite lockstep-unit
       Lockstep.Kernel.LifecycleFixtures
       Lockstep.Kernel.LifecyclePropertyTest
       Lockstep.Kernel.ProfileTest
+      Lockstep.Kernel.ProjectTest
       Lockstep.Kernel.ReconciliationTest
       Lockstep.Kernel.RecoveryTest
       Lockstep.Kernel.RemediationReviewTest

@@ -20,21 +20,27 @@ here=$(cd "$(dirname "$0")" && pwd -P)
 root=$(dirname "$here")
 
 usage() {
-  echo "usage: scripts/control-helper --state DIR [--instance NAME] [--service-port N]" >&2
+  echo "usage: scripts/control-helper --state DIR [--instance NAME] [--service-port N] [--projects DIR]" >&2
   exit 64
 }
 
 state=""
 instance=""
 service_port=8000
+projects=""
 while [ $# -gt 0 ]; do
   case $1 in
     --state) [ $# -ge 2 ] || usage; state=$2; shift 2 ;;
     --instance) [ $# -ge 2 ] || usage; instance=$2; shift 2 ;;
     --service-port) [ $# -ge 2 ] || usage; service_port=$2; shift 2 ;;
+    --projects) [ $# -ge 2 ] || usage; projects=$2; shift 2 ;;
     *) usage ;;
   esac
 done
+case $projects in
+  "" | /*) ;;
+  *) echo "control-helper: --projects must be an absolute path" >&2; exit 64 ;;
+esac
 case $service_port in
   "" | *[!0-9]*) usage ;;
 esac
@@ -787,6 +793,135 @@ execute_session() { # ID
   log "open-application $id: $run_outcome"
 }
 
+# ---------------------------------------------------------------- project folders (C-P3.5 J5, J6)
+
+# The folders the service may see: "rw PATH" (the projects folder, first, only
+# with --projects) and up to 15 "ro PATH" lines, canonical absolute paths. The
+# pane gets a copy to show; scripts/service mounts what the list names.
+folders_file=$helper/folders
+export LOCKSTEP_SERVICE_FOLDERS=$folders_file
+home_real=$(cd -P -- "${HOME:-/nonexistent}" 2>/dev/null && pwd -P || true)
+
+plain_path() { # PATH: absolute, printable ASCII, no ':' or ',', no empty, '.' or '..' segment
+  case $1 in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  case $1 in
+    / | *:* | *,* | */ | *//* | */./* | */../* | */. | */..) return 1 ;;
+  esac
+  [[ ! $1 =~ [^\ -~] ]]
+}
+
+publish_folders() {
+  local tmp
+  tmp=$(mktemp "$pane/.folders.XXXXXX") || return 1
+  cat "$folders_file" > "$tmp"
+  chmod 600 "$tmp"
+  place "$tmp" "$pane/folders" || rm -f "$tmp"
+}
+
+# Writes the list at start: the projects folder (made if missing) and the added folders kept.
+init_folders() {
+  local tmp line real=""
+  if [ -n "$projects" ]; then
+    mkdir -p -- "$projects" 2>/dev/null
+    real=$(cd -P -- "$projects" 2>/dev/null && pwd -P || true)
+    if [ -z "$real" ] || ! plain_path "$real"; then
+      log "the projects folder $projects cannot be used; no folder for new projects"
+      real=""
+    fi
+  fi
+  tmp=$(mktemp "$helper/.folders.XXXXXX") || fatal "the folder list cannot be written"
+  {
+    [ -n "$real" ] && printf 'rw %s\n' "$real"
+    if [ -f "$folders_file" ]; then
+      while IFS= read -r line; do
+        case $line in
+          "ro /"*) plain_path "${line#ro }" && printf '%s\n' "$line" ;;
+        esac
+      done < "$folders_file"
+    fi
+  } > "$tmp"
+  chmod 600 "$tmp"
+  place "$tmp" "$folders_file" || fatal "the folder list cannot be written"
+  publish_folders || log "the folder list could not be given to the pane"
+}
+
+folders_digest() {
+  printf 'folders-%s' "$(sha256 < "$folders_file" | cut -c 1-16)"
+}
+
+# Prints the refusal code for adding the folder, or nothing; sets folder_real.
+folder_refusal() { # PATH
+  local path=$1 line listed added=0
+  folder_real=""
+  plain_path "$path" || { echo unusable-path; return; }
+  [ -e "$path" ] || { echo folder-missing; return; }
+  [ -d "$path" ] || { echo not-a-folder; return; }
+  folder_real=$(cd -P -- "$path" 2>/dev/null && pwd -P || true)
+  [ -n "$folder_real" ] || { echo folder-missing; return; }
+  plain_path "$folder_real" || { echo unusable-path; return; }
+  [ -n "$home_real" ] || { echo outside-home; return; }
+  [ "$folder_real" != "$home_real" ] || { echo home-folder; return; }
+  case $folder_real in
+    "$home_real"/*) ;;
+    *) echo outside-home; return ;;
+  esac
+  case "$folder_real/" in
+    "$root"/*) echo inside-lockstep; return ;;
+  esac
+  case "$root/" in
+    "$folder_real"/*) echo inside-lockstep; return ;;
+  esac
+  while IFS= read -r line; do
+    listed=${line#* }
+    [ "${line%% *}" = ro ] && added=$((added + 1))
+    [ "$folder_real" != "$listed" ] || { echo already-listed; return; }
+    case $folder_real in "$listed"/*) echo overlaps-listed; return ;; esac
+    case $listed in "$folder_real"/*) echo overlaps-listed; return ;; esac
+  done < "$folders_file"
+  [ "$added" -lt 15 ] || echo list-full
+}
+
+folder_restart() {
+  "${service_cmd[@]}" restart --port "$(running_port)" < /dev/null 2>&1
+}
+
+execute_folder() { # ID EXPECT PATH
+  local id=$1 expect=$2 path=$3 started finished refusal tmp restart=not-needed out
+  if [ "$expect" != "$(folders_digest)" ]; then
+    refuse "$id" add-folder state-changed
+    return
+  fi
+  refusal=$(folder_refusal "$path")
+  if [ -n "$refusal" ]; then
+    refuse "$id" add-folder "$refusal"
+    return
+  fi
+  folder_refusal "$path" > /dev/null
+  started=$(date +%s)
+  journal "start $id add-folder"
+  tmp=$(mktemp "$helper/.folders.XXXXXX")
+  { cat "$folders_file"; printf 'ro %s\n' "$folder_real"; } > "$tmp"
+  chmod 600 "$tmp"
+  place "$tmp" "$folders_file" || { rm -f "$tmp"; refuse "$id" add-folder unusable-path; return; }
+  publish_folders || log "the folder list could not be given to the pane"
+  log "added the folder $folder_real"
+  if [ "$(service_state)" = running ]; then
+    out=$helper/.out.$id
+    run_bounded "$out" folder_restart
+    if [ "$run_outcome" = ok ] && [ "$(service_state)" = running ] && answers_on "$(running_port)"; then restart=ok; else restart=failed; fi
+    rm -f "$out" "$out.err"
+  fi
+  finished=$(date +%s)
+  write_result "$id" add-folder ok - "$started" "$finished" "" "service.restart $restart" || true
+  journal "end $id ok"
+  log "add-folder $id: ok (restart $restart)"
+}
+
+re_folder_header='^lockstep-folder-request ([^ ]+)$'
+re_path='^path (/.*)$'
 re_header='^lockstep-control-request ([^ ]+)$'
 re_session_header='^lockstep-session-request ([^ ]+)$'
 re_install_header='^lockstep-install-request ([^ ]+)$'
@@ -800,7 +935,7 @@ re_mac='^mac ([0-9a-f]{64})$'
 # Checks one request file (C-P3.1 §4, C-P3.2 §3) and runs it if every check passes.
 # A .req file is a status request; a .lreq file is a lifecycle request.
 handle() { # NAME
-  local name=$1 path=$requests/$1 id kind size lines line mac version issued op expect now header
+  local name=$1 path=$requests/$1 id kind size lines line mac version issued op expect now header count folder_path=""
   case $name in
     .*) return ;;
   esac
@@ -820,6 +955,10 @@ handle() { # NAME
     kind=session
     id=${name%.sreq}
     header=$re_session_header
+  elif [[ $name =~ ^[0-9a-f]{32}\.freq$ ]]; then
+    kind=folder
+    id=${name%.freq}
+    header=$re_folder_header
   else
     rm -f -- "$path"
     log "removed a file that is not a request: name not allowed"
@@ -834,17 +973,20 @@ handle() { # NAME
   esac
   size=$(wc -c < "$path" | tr -d ' ')
   if [ "$size" -gt 1024 ]; then rm -f -- "$path"; refuse "$id" unknown too-large; return; fi
-  # Printable ASCII lines, each ending in a newline, exactly six of them, the MAC last.
+  # Printable ASCII lines, each ending in a newline, exactly six of them (seven for a
+  # folder request, whose last body line is the path), the MAC last.
   if grep -q '[^ -~]' "$path" || [ "$(tail -c 1 "$path" | wc -l | tr -d ' ')" != 1 ]; then
     rm -f -- "$path"; refuse "$id" unknown malformed; return
   fi
+  count=6
+  [ "$kind" = folder ] && count=7
   lines=()
   while IFS= read -r line; do lines+=("$line"); done < "$path"
-  if [ ${#lines[@]} -ne 6 ] || [[ ! ${lines[5]} =~ $re_mac ]]; then
+  if [ ${#lines[@]} -ne $count ] || [[ ! ${lines[$((count - 1))]} =~ $re_mac ]]; then
     rm -f -- "$path"; refuse "$id" unknown malformed; return
   fi
   mac=${BASH_REMATCH[1]}
-  if [ "$(head -n 5 "$path" | hmac)" != "$mac" ]; then
+  if [ "$(head -n $((count - 1)) "$path" | hmac)" != "$mac" ]; then
     rm -f -- "$path"; refuse "$id" unknown bad-mac; return
   fi
   rm -f -- "$path"
@@ -880,6 +1022,11 @@ handle() { # NAME
   elif [ "$kind" = session ]; then
     [ "$op" = open-application ] || { refuse "$id" unknown unknown-op; return; }
     [ "$expect" = service-running ] || { refuse "$id" "$op" bad-expect; return; }
+  elif [ "$kind" = folder ]; then
+    [ "$op" = add-folder ] || { refuse "$id" unknown unknown-op; return; }
+    [[ $expect =~ ^folders-[0-9a-f]{16}$ ]] || { refuse "$id" "$op" bad-expect; return; }
+    if [[ ! ${lines[5]} =~ $re_path ]]; then refuse "$id" "$op" unusable-path; return; fi
+    folder_path=${BASH_REMATCH[1]}
   else
     case $op in
       prepare-candidate | apply-candidate | restore-previous) ;;
@@ -906,6 +1053,7 @@ handle() { # NAME
     lifecycle) execute_lifecycle "$id" "$op" ;;
     install) execute_install "$id" "$op" "$expect" ;;
     session) execute_session "$id" ;;
+    folder) execute_folder "$id" "$expect" "$folder_path" ;;
   esac
 }
 
@@ -927,6 +1075,7 @@ if [ -f "$helper/journal" ]; then
     done
 fi
 
+init_folders
 log "started (pid $$, protocol 1, timeout ${timeout}s${instance:+, instance $instance})"
 warned=""
 while [ "$stopping" = 0 ]; do

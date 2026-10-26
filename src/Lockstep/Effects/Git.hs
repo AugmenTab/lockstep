@@ -8,6 +8,7 @@ directories on a case-sensitive one are two.
 -}
 module Lockstep.Effects.Git
   ( observeRepository
+  , gitEnvironment
   ) where
 
 import Control.Exception (IOException, try)
