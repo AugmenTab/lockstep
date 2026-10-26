@@ -1,0 +1,52 @@
+9d4221a40245d9d8994cff43295755cd185b0207
+Application
+Effects
+Foundation
+Kernel
+Persistence
+Web
+format PASSED
+lint PASSED
+build PASSED
+unit PASSED
+integration FAILED
+    a project's text is stored exactly:                                                                                                                                                 OK (0.14s)
+  Projects pages over HTTP (C-P3.5)
+    the new-project page asks for a name, an outcome and a folder, with a new folder as the default:                                                                                    OK (1.09s)
+    creating needs the session and this origin; the answer is the project page with its status:                                                                                         OK (0.64s)
+    the overview lists projects as links, with no form or button:                                                                                                                       OK (0.62s)
+    only offered folders are listed, and a forged path is refused in plain words:                                                                                                       OK (0.74s)
+    a taken name is explained on the form, which keeps what was typed:                                                                                                                  OK (0.62s)
+    Try again with an old revision says the project changed and changes nothing:                                                                                                        OK (0.64s)
+    text people typed is escaped:                                                                                                                                                       OK (0.62s)
+    unknown projects and other addresses are 404; bodies over 16 KiB are refused:                                                                                                       OK (0.63s)
+  Project folders on the host (C-P3.5 J5, J6)
+    the helper keeps the folder list, makes the projects folder, and gives the pane a copy:                                                                                             OK (0.26s)
+    without --projects there is no projects folder and nothing is made in the home folder:                                                                                              OK (0.28s)
+    add-folder records the folder's real path; a stopped service is not restarted:                                                                                                      OK (0.52s)
+    while the service runs, adding a folder restarts it with the new mounts:                                                                                                            OK (1.18s)
+    a stale review is refused and changes nothing:                                                                                                                                      OK (0.52s)
+    every folder Lockstep must not use is refused with its reason:                                                                                                                      OK (3.91s)
+    the list holds at most 15 added folders:                                                                                                                                            OK (4.27s)
+    scripts/service mounts exactly the listed folders at their own paths, as the host user:                                                                                             OK (0.03s)
+    without a folder list, scripts/service runs the container exactly as before:                                                                                                        OK
+    the pane shows the list and sends add-folder for its own session only:                                                                                                              OK (0.70s)
+  guided project setup in a real browser (C-P3.5)
+    pane: add a folder → Open Lockstep → Projects → a project in a new folder, then one in the added folder:                                                                            OK (100.41s)
+
+2 out of 326 tests failed (766.74s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

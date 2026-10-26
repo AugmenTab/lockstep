@@ -69,6 +69,8 @@ change it or run anything in it yet", "not one of the folders Lockstep can see",
 |---|---|---|
 | Frozen files (P3.5 and earlier) | digests unchanged | §4, C-P3.4 §4 |
 | `scripts/check --integration` | format, lint, build, unit (763), no-live-model guard PASSED; integration 324 of 326 PASSED, the 2 failures being the known C-P3.4 `HandoverTest.hs` defect (`docs/gates/P3.4/test-amendment-request.md`) | `check-integration.log` |
+| Linux clean clone of `9d4221a` | format, lint, build, unit PASSED; integration 324 of 326. The clone script keeps only the last 40 lines, which show every C-P3.5 case passing; the 2 failures are not in that tail. Their count matches the Mac run, where they are the 2 known `HandoverTest.hs` cases | `linux-clone.log` |
+| Real Docker on this Mac (OrbStack) | a path-preserving read-only mount is seen by Git as on the host, as the host user; a folder made through a read-write mount belongs to the host user | `host-mount-probe.md` |
 | C-P3.5 groups | unit 21 of 21; projects 12 of 12; pages 8 of 8; folders on the host 10 of 10; the real-browser journey (pane → add a folder → the service restarts with it → Open Lockstep → keyboard to Projects → a project in a new folder → one in the added folder → the overview) PASSED | `check-integration.log` |
 
 The first implementation runs failed on the implementation, never on a test: five lint hints;
