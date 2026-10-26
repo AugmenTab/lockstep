@@ -37,6 +37,7 @@ import Text.Show (show)
 
 import Lockstep.Application.Command (WorkspaceState (..), generateIdempotencyKey, idempotencyKeyText, mkIdempotencyKey, readWorkspace)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason (..), Readiness (..), checkReadiness, revisionNumber)
+import Lockstep.Application.Decisions (DecisionReceipt (..), OpenDecision (..), applyDecision, decidedReceipt, findDecision, listDecisions)
 import Lockstep.Application.LedgerView (EffectLine (..), LedgerProjection (..), OrderLine (..), projectLedger)
 import Lockstep.Application.OperatorTrust (Session (..), exchangeSignIn, lookupSession, revokeSession)
 import Lockstep.Application.ProjectChecks (ChecksOutcome (..), ProjectChecks, chooseChecks, projectChecks)
@@ -64,12 +65,15 @@ import Lockstep.Application.Tasks
   , listTasks
   )
 import Lockstep.Foundation.OperatorToken (decodeToken, encodeToken)
+import Lockstep.Kernel.Decision (DecisionRequest (..), decisionRefusalWords)
+import Lockstep.Kernel.Effect (OperationId (..))
 import Lockstep.Kernel.EffectView (EffectStatus (..))
-import Lockstep.Kernel.Identity (parseUuid)
+import Lockstep.Kernel.Identity (WorkOrderId (..), parseUuid)
 import Lockstep.Kernel.Policy (checksRefusalWords, lossWords)
 import Lockstep.Kernel.Project (SetupState (..), parseFolderChoice, refusalWords, setupStateCode)
 import Lockstep.Kernel.Task (parsePriority, taskRefusalWords)
 import Lockstep.Web.ChecksPages (checksPage, choiceLosses, projectChecksSection)
+import Lockstep.Web.DecisionPages (decisionPage, decisionsOverview, donePage)
 import Lockstep.Web.Fragment (attr, cls, fragment, href)
 import Lockstep.Web.RequestGuard (RouteClass (..))
 import Lockstep.Web.SecureResponse (errorJson, htmlResponse, jsonResponse, jsonString, readBodyLimited, respondWith)
@@ -114,6 +118,8 @@ data AppRoute
   | DecideTaskRoute T.Text
   | ChecksFragment T.Text
   | ChooseChecksRoute T.Text
+  | DecisionFragment T.Text
+  | DecideRoute T.Text
   | ExchangeSession
   | SignOut
 
@@ -139,6 +145,9 @@ matchAppRoute method path =
       ["app", "projects", pid, "checks"] | get, validId pid -> Just Shell
       ["app", "fragments", "project-checks", pid] | get, validId pid -> Just (ChecksFragment pid)
       ["app", "api", "projects", pid, "checks"] | post, validId pid -> Just (ChooseChecksRoute pid)
+      ["app", "decisions", did] | get, validId did -> Just Shell
+      ["app", "fragments", "decision", did] | get, validId did -> Just (DecisionFragment did)
+      ["app", "api", "decisions", did] | post, validId did -> Just (DecideRoute did)
       ["app", "fragments", "project", pid] | get, validId pid -> Just (ProjectFragment pid)
       ["app", "fragments", "task-new", pid] | get, validId pid -> Just (NewTaskFragment pid)
       ["app", "fragments", "task", tid] | get, validId tid -> Just (TaskFragment tid)
@@ -384,6 +393,45 @@ handleWithDatabase db route request =
                       else ""
                 checksAnswer db pid before (Just (checksRefusalWords code <> lost))
           (Right (Just before), _, _) -> checksAnswer db pid before (Just "Lockstep could not read this form. Try again.")
+    DecisionFragment did ->
+      withSession $ \_ _ -> decisionAnswer db did Nothing
+    DecideRoute did ->
+      withForm $ \fields -> do
+        let
+          value name = TE.decodeUtf8With TEE.lenientDecode <$> L.lookup name fields
+          expected = value "expected" >>= readMaybe . T.unpack
+          text = fromMaybe "" (value "text")
+          acknowledged = value "acknowledge" == Just "yes"
+          wanted =
+            case (parseUuid did, value "choice", expected) of
+              (Right u, Just choice, Just e) ->
+                case choice of
+                  "put-back" -> Just (PutBackInLine (WorkOrderId u) e)
+                  "cancel" -> Just (CancelWork (WorkOrderId u) e)
+                  "happened" -> Just (ItHappened (OperationId u) e text)
+                  "did-not-happen" -> Just (ItDidNotHappen (OperationId u) e text)
+                  "try-again" -> Just (TryAgain (OperationId u) e acknowledged)
+                  "give-up" -> Just (GiveUp (OperationId u) e text acknowledged)
+                  _ -> Nothing
+              _ -> Nothing
+        open <- findDecision db did
+        decided <- decidedReceipt db did
+        case (open, decided) of
+          (Left _, _) -> pure notReady
+          (_, Left _) -> pure notReady
+          (Right Nothing, Right Nothing) -> pure (errorJson HTTP.status404 "not-found")
+          (Right current, _) ->
+            case (wanted, value "key" >>= either (const Nothing) Just . mkIdempotencyKey) of
+              (Just r, Just k)
+                | maybe True (fits r) current -> do
+                    result <- applyDecision db k r
+                    case result of
+                      Left _ -> pure notReady
+                      Right (Right receipt)
+                        | receiptOutcome receipt == "applied" -> pure (pathAnswer ("/app/decisions/" <> did) (donePage receipt Nothing))
+                        | otherwise -> decisionAnswer db did (Just (decisionRefusalWords (fromMaybe "" (receiptRefusal receipt))))
+                      Right (Left code) -> decisionAnswer db did (Just (decisionRefusalWords code))
+              _ -> decisionAnswer db did (Just "Lockstep could not read this form. Try again.")
  where
   withSession action =
     case sessionHeader request >>= decodeToken of
@@ -440,6 +488,40 @@ taskAnswer db task notice = do
     Right Nothing -> pure (errorJson HTTP.status404 "not-found")
     Left _ -> pure notReady
 
+-- | An HTML answer with the address the page's history should show.
+pathAnswer :: T.Text -> LBS.ByteString -> Wai.Response
+pathAnswer path =
+  respondWith HTTP.status200 [(HTTP.hContentType, "text/html; charset=utf-8"), ("X-Lockstep-Path", TE.encodeUtf8 path)]
+
+-- | The decision as it stands now: its page while open, what was decided once closed, else 404 (C-P3.8 M6).
+decisionAnswer :: DatabaseRuntime -> T.Text -> Maybe T.Text -> IO Wai.Response
+decisionAnswer db did notice = do
+  open <- findDecision db did
+  case open of
+    Left _ -> pure notReady
+    Right (Just decision) -> do
+      key <- idempotencyKeyText <$> generateIdempotencyKey
+      pure (pathAnswer ("/app/decisions/" <> did) (decisionPage decision key notice))
+    Right Nothing -> do
+      decided <- decidedReceipt db did
+      pure $
+        case decided of
+          Left _ -> notReady
+          Right (Just receipt) -> pathAnswer ("/app/decisions/" <> did) (donePage receipt notice)
+          Right Nothing -> errorJson HTTP.status404 "not-found"
+
+-- | A choice belongs to its decision: stopped work is put back or canceled; an unknown outcome gets the other four.
+fits :: DecisionRequest -> OpenDecision -> Bool
+fits request decision =
+  case (request, decision) of
+    (PutBackInLine {}, StoppedWork _) -> True
+    (CancelWork {}, StoppedWork _) -> True
+    (_, UnknownOutcome _) -> case request of
+      PutBackInLine {} -> False
+      CancelWork {} -> False
+      _ -> True
+    _ -> False
+
 -- | The checks page as it is now, with its address for the page's history (C-P3.7 L7).
 checksAnswer :: DatabaseRuntime -> T.Text -> ProjectChecks -> Maybe T.Text -> IO Wai.Response
 checksAnswer db pid before notice = do
@@ -466,11 +548,7 @@ renderSection db section session =
       pure $ case (projects, tasks) of
         (Right ps, Right ts) -> tasksOverview [(p, [t | t <- ts, taskProject t == projectId p]) | p <- ps] True
         _ -> tasksOverview [] False
-    Decisions ->
-      pure . fragment $
-        [ E.h1 [] [E.text "Decisions"]
-        , E.p [] [E.text "Decisions arrive in a later update of Lockstep. Questions and approvals that need you will collect here, with what each choice would do."]
-        ]
+    Decisions -> decisionsOverview . either (const Nothing) Just <$> listDecisions db
     Activity ->
       pure . fragment $
         [ E.h1 [] [E.text "Activity"]
@@ -666,6 +744,7 @@ home db = do
   workspace <- readWorkspace db
   projection <- projectLedger db
   projects <- listProjects db
+  open <- fromRight [] <$> listDecisions db
   let
     name = either (const "Lockstep") workspaceName workspace
     orders = either (const []) projectionOrders projection
@@ -675,6 +754,7 @@ home db = do
     waiting = L.length [() | o <- orders, e <- orderLineEffects o, effectLineStatus e `L.elem` [StatusReconciliationNeeded, StatusUnknown, StatusBlocked]]
     attention =
       [E.li [] [E.text ("Lockstep's database is not ready: " <> reasonText r <> ". Open the control pane (run lockstep) to see what to do.")] | NotReady r <- [readiness]]
+        <> [E.li [] [E.text (T.pack (show (L.length open)) <> " decision(s) need you: "), E.a [href "/app/decisions"] [E.text "Decisions"]] | not (L.null open)]
         <> [E.li [] [E.text (T.pack (show waiting) <> " piece(s) of work are waiting for a person to look at them.")] | waiting > 0]
         <> [E.li [] [E.text (T.pack (show failed) <> " project(s) did not finish setting up. Open Projects to try again.")] | failed > 0]
     stateLine =
@@ -699,7 +779,7 @@ home db = do
         []
         [ E.text (if projectCount == 0 then "Start by creating a project: " else "See your projects: ")
         , E.a [href "/app/projects"] [E.text "Projects"]
-        , E.text ". Tasks and decisions arrive in later updates of this window."
+        , E.text ". Anything only you can decide is under Decisions."
         ]
     ]
 
