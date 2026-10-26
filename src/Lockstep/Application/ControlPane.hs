@@ -16,6 +16,8 @@ module Lockstep.Application.ControlPane
   , submitRequest
   , submitLifecycle
   , submitInstall
+  , submitOpenApplication
+  , takeHandover
   , ResultView (..)
   , readResult
   ) where
@@ -49,7 +51,7 @@ import System.Posix.Files
   , isSymbolicLink
   , setFileMode
   )
-import Text.Show (Show)
+import Text.Show (Show, show)
 
 import Lockstep.Foundation.ControlProtocol
   ( ChannelKey
@@ -68,6 +70,7 @@ import Lockstep.Foundation.ControlProtocol
 import Lockstep.Foundation.InstallProtocol (InstallExpect, InstallOp, InstallRequest (..), encodeInstallRequest)
 import Lockstep.Foundation.LifecycleProtocol (LifecycleOp, LifecycleRequest (..), encodeLifecycleRequest, expectedFor)
 import Lockstep.Foundation.OperatorToken (decodeToken, encodeToken, generateToken, tokenDigest)
+import Lockstep.Foundation.SessionProtocol (SessionOp (OpenApplication), SessionRequest (..), encodeSessionRequest)
 
 data PaneRuntime
   = PaneRuntime
@@ -250,6 +253,55 @@ temporary name, then a rename, so the helper never sees a partial file.
 submitRequest :: PaneRuntime -> ControlOp -> IO (Either SubmitError RequestId)
 submitRequest runtime op =
   writeSigned runtime ".req" (\key rid now -> encodeRequest key (ControlRequest rid now op ExpectAny))
+
+-- | Asks the helper for a one-time application sign-in (C-P3.4 A3).
+submitOpenApplication :: PaneRuntime -> IO (Either SubmitError RequestId)
+submitOpenApplication runtime = do
+  ensured <- ensureDirectory (paneDirectory runtime <> "/handover")
+  case ensured of
+    Left _ -> pure (Left RequestNotWritten)
+    Right () -> writeSigned runtime ".sreq" (\key rid t -> encodeSessionRequest key (SessionRequest rid t OpenApplication))
+
+{- | The address of the application's sign-in for a hand-over this pane asked
+for, exactly once: the file is removed whether or not it is well formed. A
+file that is not exactly @port N@ and @token T@ (43 base64url characters) is
+not handed over.
+-}
+takeHandover :: PaneRuntime -> T.Text -> IO (Maybe T.Text)
+takeHandover runtime ridText = do
+  issued <- readIORef (paneIssued runtime)
+  if not (Set.member ridText issued)
+    then pure Nothing
+    else do
+      let
+        path = paneDirectory runtime <> "/handover/" <> T.unpack ridText
+      status <- lstat path
+      case status of
+        Just s | isRegularFile s && fileSize s <= 256 -> do
+          content <- try (BS.readFile path) :: IO (Either IOException BS.ByteString)
+          _ <- try (removeFile path) :: IO (Either IOException ())
+          pure $ case fmap BS8.lines content of
+            Right [portLine, tokenLine]
+              | Just portText <- BS.stripPrefix (BS8.pack "port ") portLine
+              , Just token <- BS.stripPrefix (BS8.pack "token ") tokenLine
+              , Just port <- parsePort portText
+              , BS.length token == 43
+              , BS8.all isBase64Url token ->
+                  Just (T.pack ("http://127.0.0.1:" <> show port <> "/app/sign-in#") <> TE.decodeLatin1 token)
+            _ -> Nothing
+        Just _ -> do
+          _ <- try (removeFile path) :: IO (Either IOException ())
+          pure Nothing
+        Nothing -> pure Nothing
+ where
+  parsePort digits =
+    if not (BS.null digits) && BS.length digits <= 5 && BS8.all Char.isDigit digits
+      then
+        let
+          n = BS8.foldl' (\acc c -> acc * 10 + (Char.ord c - Char.ord '0')) 0 digits
+        in
+          if n >= 1 && n <= 65535 then Just n else Nothing
+      else Nothing
 
 -- | How long a lifecycle request without a result blocks the next one.
 lifecycleWindow :: Integer

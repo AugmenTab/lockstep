@@ -13,7 +13,11 @@ Copyright (c) 2023 Tyler Baum. Full text: `LICENSE-LAUNCHPAD`.
 
 ## Shipped browser assets
 
-None from third parties yet. `static/lockstep.css` is Lockstep's own.
+`static/lockstep.css`, `static/control.js` and `static/app.js` are Lockstep's own.
+
+| Asset | Version | License | Source | SHA-256 |
+|---|---|---|---|---|
+| `static/htmx.min.js` | htmx.org 2.0.4, `dist/htmx.min.js` | 0BSD (Zero-Clause BSD; no notice required) | npm package `htmx.org@2.0.4`, identical from unpkg.com and cdn.jsdelivr.net (C-P3.4 A4) | `e209dda5c8235479f3166defc7750e1dbcd5a5c1808b7792fc2e6733768fb447` |
 
 ## PostgreSQL server (separate process, not linked)
 

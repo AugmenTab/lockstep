@@ -52,6 +52,25 @@ runs); Home contains "What needs your attention"; seven `nav a` links; unbuilt s
 "later update"; Advanced contains "Schema revision" and "Session expires"; the application's
 `#sign-out` button; "You are signed out".
 
+## 3a. Verification record (after implementation)
+
+| Check | Result | Evidence |
+|---|---|---|
+| Frozen files (P3.4 and earlier) | digests unchanged | §4 |
+| `scripts/check --integration` | format, lint, build, unit (742), no-live-model guard PASSED; integration 293 of 295 PASSED. **The 2 failures are a defect in the frozen `HandoverTest.hs`** (the request id is read one byte off, so the test waits for a result that cannot exist); raised to the owner, not edited | `check-integration.log`, `test-amendment-request.md` |
+| C-P3.4 groups | 7 unit; shell 12 of 12; hand-over 3 of 5, the real-browser journey (pane → Open Lockstep → Home → keyboard → phone width → hostile page → sign-out) included; the 2 others fail only on the defect above | `check-integration.log` |
+
+Implementation notes (decisions within the design, recorded here):
+
+- **A1 narrowed:** the application routes exist only when the service has a database configured.
+  Without one, `/app…` stays 404, as the frozen C-P1.1 unit test "/app is not a route" (a
+  service built with no database) requires; the application cannot sign anyone in without a
+  database, so nothing usable is lost.
+- Brigid escapes text as numeric references (`&#60;`); fragments write the same characters as
+  named references (`&lt;`, `&gt;`, `&amp;`, `&quot;`). The meaning is identical.
+- The pane accepts a hand-over address only if it has the form
+  `http://127.0.0.1:<port>/app/sign-in#<token>` before navigating to it.
+
 ## 4. Freeze record
 
 Frozen 2026-10-26 by the writing agent (manual), before the shell and hand-over were implemented.
