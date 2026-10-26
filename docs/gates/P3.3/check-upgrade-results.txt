@@ -1,0 +1,21 @@
+PASS setup: the older version (6c2851d40a13be9ce08c97e692e30575b7b7d6e2, schema 5) runs on 18311; HEAD is 614f56c00048fd2fd10046b8e07394ba7b1acad1
+PASS 1: the page offered a new version and its review
+PASS 1: the page said the upgrade needs attention
+PASS 1: the database was migrated to the new schema before the failure
+PASS 1: a backup was taken into the instance's own backup folder, with its digest file
+PASS 1: the backup's digest verifies
+PASS 1: the helper recorded recovery-needed
+PASS 2: the page said the previous version is back
+PASS 2: the database is back at the old schema
+PASS 2: the old version is the active installation
+PASS 2: the service runs and answers
+PASS 3: the page said Lockstep was upgraded
+PASS 3: the active installation is HEAD
+PASS 3: the database is at the new schema
+PASS 3: the new version is ready
+PASS 3: the service runs and answers
+PASS the operator's installation, service, control pane and database were not touched
+PASS nothing was added to the operator's backup folder
+PASS no output contains a sign-in link
+
+check-upgrade: 0 failure(s); results in .local/evidence/upgrade-20261026t043330z/results.txt
