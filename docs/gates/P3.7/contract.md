@@ -70,7 +70,7 @@
 | Frozen files (P3.7 and earlier) | digests unchanged | §4, earlier contracts' §4 |
 | `scripts/check --integration` | format, lint, build, unit (785), no-live-model guard PASSED; integration 357 of 359 PASSED, the 2 failures being the known C-P3.4 `HandoverTest.hs` defect | `check-integration.log` |
 | C-P3.7 groups | unit 12 of 12; in-process 8 of 8 (the preview wrote nothing: no event, no schedule decision, both orders still pending); pages 7 of 7; the real-browser journey (a project in a new folder → How work is checked → Always-on rules only → Save by keyboard → kept after a real reload) PASSED | `check-integration.log` |
-| Linux clean clone | see the commit that records it | `linux-clone.log` |
+| Linux clean clone of `3aa99b6` | format, lint, build, unit PASSED; integration 357 of 359. The kept tail shows every C-P3.7 case passing (the real-browser journey included); the 2 failures are outside it and match the known `HandoverTest.hs` cases in count | `linux-clone.log` |
 
 Three implementation runs:
 

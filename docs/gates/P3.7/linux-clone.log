@@ -1,0 +1,52 @@
+3aa99b681f3e5b0383a89db8581ca82aacd234e9
+Application
+Effects
+Foundation
+Kernel
+Persistence
+Web
+format PASSED
+lint PASSED
+build PASSED
+unit PASSED
+integration FAILED
+    the Tasks section lists tasks as links, with no form or button:                                                                                                                     OK (0.63s)
+    unknown tasks and other addresses are 404; bodies over 16 KiB are refused:                                                                                                          OK (0.80s)
+  tasks in a real browser across a restart (C-P3.6)
+    a project, two tasks, a dependency, ready, a blocked high-priority task, a restart, the same words; a keyboard-only form:                                                           OK (242.28s)
+  how work is checked, and what can start (C-P3.7; real PostgreSQL)
+    a project without a folder cannot have checks set, and nothing is recorded:                                                                                                         OK (0.27s)
+    the built-in starting choice is offered, registered when chosen, and recorded:                                                                                                      OK (0.30s)
+    choosing the current set again is unchanged and adds no default:                                                                                                                    OK (0.28s)
+    a stale page or an unknown set is refused, recorded, and changes nothing:                                                                                                           OK (0.29s)
+    a stricter set needs no confirmation; a weaker one is refused until confirmed:                                                                                                      OK (0.28s)
+    the rules for each kind of work are the effective Profile C-P2.3 resolves:                                                                                                          OK (0.15s)
+    a tampered stored set of checks is shown as unusable and cannot be chosen:                                                                                                          OK (0.29s)
+    what can start: a high-priority piece waiting for another cannot start, and the preview writes nothing:                                                                             OK (0.42s)
+  how work is checked over HTTP (C-P3.7)
+    the project page links its checks; the checks page lists the always-on rules and the choices:                                                                                       OK (3.31s)
+    a project without a folder is explained and has no form:                                                                                                                            OK (3.30s)
+    choosing needs the session and this origin; the answer is the checks page, saved:                                                                                                   OK (3.35s)
+    a stale page and a choice with fewer checks are explained in words and change nothing:                                                                                              OK (3.49s)
+    work waiting to start: a high-priority piece that cannot start says why, and nothing is scheduled:                                                                                  OK (3.40s)
+    typed text is escaped, and the ordinary text has no internal words:                                                                                                                 OK (3.36s)
+    unknown projects and other addresses are 404; bodies over 16 KiB are refused:                                                                                                       OK (3.30s)
+  how work is checked in a real browser (C-P3.7)
+    a project in a new folder → How work is checked → Always-on rules only → Save with the keyboard → kept after a reload:                                                              OK (52.13s)
+
+2 out of 359 tests failed (1057.41s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       
