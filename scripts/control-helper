@@ -1,0 +1,453 @@
+#!/usr/bin/env bash
+# The control pane's host helper (contract C-P3.1 L7-L9, §4).
+#
+#   scripts/control-helper --state DIR [--instance NAME]
+#
+# Started in the background by ./lockstep as the invoking user; stopped by
+# `lockstep stop` (SIGTERM). It reads signed requests that the control pane
+# writes to DIR/pane/requests/, runs at most one allowlisted operation at a
+# time, and writes signed results to DIR/pane/results/. It is the only part of
+# the control pane that may use Docker, and only through fixed commands: no
+# text from a request ever reaches a shell or a command line.
+#
+# Protocol version 1. Allowlist: status (expect any).
+# Journal: DIR/helper/journal ("<unix> start|end|refused <id> <op|outcome|reason>").
+set -u
+umask 077
+export LC_ALL=C
+
+here=$(cd "$(dirname "$0")" && pwd -P)
+root=$(dirname "$here")
+
+usage() {
+  echo "usage: scripts/control-helper --state DIR [--instance NAME]" >&2
+  exit 64
+}
+
+state=""
+instance=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    --state) [ $# -ge 2 ] || usage; state=$2; shift 2 ;;
+    --instance) [ $# -ge 2 ] || usage; instance=$2; shift 2 ;;
+    *) usage ;;
+  esac
+done
+[ -n "$state" ] || usage
+case $state in
+  /*) ;;
+  *) echo "control-helper: --state must be an absolute path" >&2; exit 64 ;;
+esac
+if [ -n "$instance" ]; then
+  case $instance in
+    service | *[!abcdefghijklmnopqrstuvwxyz0123456789-]*) usage ;;
+  esac
+fi
+
+pane=$state/pane
+helper=$state/helper
+requests=$pane/requests
+results=$pane/results
+
+mode_of() {
+  stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null
+}
+
+# A directory this user owns, that is not a symlink, and that no one else can use.
+private_dir() {
+  [ -d "$1" ] && [ ! -L "$1" ] && [ -O "$1" ] || return 1
+  case $(mode_of "$1") in
+    *00) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+fatal() {
+  echo "control-helper: $*" >&2
+  exit 66
+}
+
+private_dir "$state" || fatal "the state directory $state must be a directory owned by this user with mode 0700"
+private_dir "$helper" || fatal "$helper must be a directory owned by this user with mode 0700"
+private_dir "$pane" || fatal "$pane must be a directory owned by this user with mode 0700"
+
+log() {
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$helper/helper.log"
+}
+journal() {
+  printf '%s %s\n' "$(date +%s)" "$*" >> "$helper/journal"
+}
+
+# One helper per state directory: a lock directory holding the owner's PID.
+lock=$helper/lock
+take_lock() {
+  if mkdir "$lock" 2>/dev/null; then
+    echo $$ > "$lock/pid"
+    return 0
+  fi
+  local owner
+  owner=$(cat "$lock/pid" 2>/dev/null || true)
+  case $owner in
+    "" | *[!0-9]*) ;;
+    *)
+      if kill -0 "$owner" 2>/dev/null; then
+        echo "control-helper: already running for $state (pid $owner)" >&2
+        exit 75
+      fi
+      ;;
+  esac
+  rm -rf "$lock"
+  mkdir "$lock" 2>/dev/null || { echo "control-helper: already running for $state" >&2; exit 75; }
+  echo $$ > "$lock/pid"
+}
+take_lock
+release_lock() {
+  [ "$(cat "$lock/pid" 2>/dev/null)" = $$ ] && rm -rf "$lock"
+}
+trap release_lock EXIT
+
+# The channel key: 32 bytes as 64 lower-case hex characters.
+key_hex=$(head -c 64 "$helper/channel.key" 2>/dev/null || true)
+case $key_hex in
+  *[!0123456789abcdef]* | "") fatal "$helper/channel.key is missing or invalid" ;;
+esac
+[ ${#key_hex} -eq 64 ] || fatal "$helper/channel.key is missing or invalid"
+
+timeout=${LOCKSTEP_HELPER_TIMEOUT:-90}
+case $timeout in
+  "" | *[!0-9]*) timeout=90 ;;
+esac
+if [ "$timeout" -lt 1 ] || [ "$timeout" -gt 300 ]; then timeout=90; fi
+
+# HMAC-SHA256 (RFC 2104) with printf and the system's SHA-256 tool.
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256() { sha256sum | cut -d ' ' -f 1; }
+else
+  sha256() { shasum -a 256 | cut -d ' ' -f 1; }
+fi
+ipad=""
+opad=""
+i=0
+while [ $i -lt 64 ]; do
+  if [ $i -lt 32 ]; then b=$((16#${key_hex:$((i * 2)):2})); else b=0; fi
+  ipad="$ipad$(printf '\\x%02x' $((b ^ 0x36)))"
+  opad="$opad$(printf '\\x%02x' $((b ^ 0x5c)))"
+  i=$((i + 1))
+done
+hex_escapes() {
+  local hex=$1 out="" j=0
+  while [ $j -lt ${#hex} ]; do
+    out="$out\\x${hex:$j:2}"
+    j=$((j + 2))
+  done
+  printf '%s' "$out"
+}
+hmac() { # the data on standard input
+  local inner
+  inner=$({ printf "$ipad"; cat; } | sha256)
+  { printf "$opad"; printf "$(hex_escapes "$inner")"; } | sha256
+}
+
+# Moves a file into place without following a symlink at the destination.
+if mv --version >/dev/null 2>&1; then
+  place() { mv -f -T "$1" "$2"; }
+else
+  place() { mv -f -h "$1" "$2"; }
+fi
+
+clean_detail() { # standard input -> one line of at most 300 printable ASCII characters
+  tr '\n\r\t' '   ' | tr -cd ' -~' | cut -c 1-300
+}
+
+# write_result ID OP OUTCOME REASON STARTED FINISHED DETAIL [FIELD...]
+# Never replaces an existing result, and never writes through a symlink.
+write_result() {
+  local id=$1 op=$2 outcome=$3 reason=$4 started=$5 finished=$6 detail=$7
+  shift 7
+  local dest=$results/$id.res tmp mac f
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    journal "refused $id result-exists"
+    return 1
+  fi
+  tmp=$(mktemp "$results/.res.XXXXXX") || return 1
+  {
+    printf 'lockstep-control-result 1\n'
+    printf 'id %s\n' "$id"
+    printf 'op %s\n' "$op"
+    printf 'outcome %s\n' "$outcome"
+    printf 'reason %s\n' "$reason"
+    printf 'started %s\n' "$started"
+    printf 'finished %s\n' "$finished"
+    for f in "$@"; do printf 'field %s\n' "$f"; done
+    printf 'detail %s\n' "$detail"
+  } > "$tmp"
+  mac=$(hmac < "$tmp")
+  printf 'mac %s\n' "$mac" >> "$tmp"
+  chmod 600 "$tmp"
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    rm -f "$tmp"
+    journal "refused $id result-exists"
+    return 1
+  fi
+  place "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
+}
+
+refuse() { # ID OP REASON
+  local now
+  now=$(date +%s)
+  journal "refused $1 $3"
+  log "refused $1: $3"
+  write_result "$1" "$2" refused "$3" "$now" "$now" "" || true
+}
+
+# The status operation (C-P3.1 L9). Its standard output is the result's field
+# lines, one "name value" per line, then "detail TEXT" if there is something to say.
+op_status() {
+  local install service present=no commit=unknown dirty=unknown state server readiness=unknown
+  local reason=unknown revision=unknown pending=unknown out code first word
+  if [ -n "$instance" ]; then
+    install=$root/.local/$instance-install
+    service=lockstep-$instance
+  else
+    install=$root/.local/install
+    service=lockstep-service
+  fi
+  [ -x "$install/bin/lockstep" ] && present=yes
+  if [ -f "$install/VERSION" ]; then
+    word=$(grep -E '^commit [0-9a-f]{40}$' "$install/VERSION" | head -n 1 | cut -d ' ' -f 2)
+    [ -n "$word" ] && commit=$word
+    if grep -qx 'dirty true' "$install/VERSION"; then dirty=true; fi
+    if grep -qx 'dirty false' "$install/VERSION"; then dirty=false; fi
+  fi
+  if state=$(docker container inspect --format '{{.State.Status}}' "$service" 2>/dev/null); then
+    case $state in
+      running) state=running ;;
+      created | exited | dead | paused | restarting | removing) state=stopped ;;
+      *) state=unknown ;;
+    esac
+  else
+    state=absent
+  fi
+  if [ -n "$instance" ]; then
+    server=not-managed
+  elif server=$(docker container inspect --format '{{.State.Running}}' lockstep-postgres 2>/dev/null); then
+    case $server in
+      true) server=running ;;
+      false) server=stopped ;;
+      *) server=unknown ;;
+    esac
+  else
+    server=absent
+  fi
+  if [ "$present" = yes ]; then
+    if [ -n "$instance" ]; then
+      out=$("$root/scripts/service" --instance "$instance" cli db status < /dev/null 2>&1)
+    else
+      out=$("$root/scripts/service" cli db status < /dev/null 2>&1)
+    fi
+    code=$?
+    first=$(printf '%s\n' "$out" | head -n 1)
+    case $first in
+      "readiness ready "[0-9]*) readiness=ready; reason=none ;;
+      "readiness not_ready "*)
+        readiness=not-ready
+        word=$(printf '%s\n' "$first" | cut -d ' ' -f 3)
+        case $word in
+          "" | *[!abcdefghijklmnopqrstuvwxyz_]*) reason=unknown ;;
+          *) reason=$word ;;
+        esac
+        ;;
+    esac
+    word=$(printf '%s\n' "$out" | grep -E '^revision ([0-9]{1,18}|none)$' | head -n 1 | cut -d ' ' -f 2)
+    [ -n "$word" ] && revision=$word
+    word=$(printf '%s\n' "$out" | grep -E '^pending [0-9]{1,18}$' | head -n 1 | cut -d ' ' -f 2)
+    [ -n "$word" ] && pending=$word
+    if [ "$readiness" = unknown ]; then
+      printf 'detail %s\n' "$(printf '%s' "$out" | clean_detail)"
+      [ "$code" = 0 ] || reason=unknown
+    fi
+  else
+    reason=not-installed
+  fi
+  printf 'install.present %s\ninstall.commit %s\ninstall.dirty %s\n' "$present" "$commit" "$dirty"
+  printf 'service.state %s\ndatabase.server %s\n' "$state" "$server"
+  printf 'database.readiness %s\ndatabase.reason %s\n' "$readiness" "$reason"
+  printf 'database.revision %s\ndatabase.pending %s\n' "$revision" "$pending"
+  printf 'helper.protocol 1\n'
+}
+
+stopping=0
+trap 'stopping=1' TERM INT
+
+# Runs one operation in its own process group, bounded by the timeout.
+# Sets run_outcome to ok, failed or timed-out; the output is in $1.
+run_bounded() { # OUTPUT-FILE FUNCTION
+  local out=$1 fn=$2 pid watchdog marker rc
+  marker=$helper/.timeout.$$
+  rm -f "$marker"
+  set -m
+  ( "$fn" ) > "$out" 2> "$out.err" &
+  pid=$!
+  set +m
+  (
+    sleep "$timeout"
+    : > "$marker"
+    kill -TERM -- "-$pid" 2>/dev/null
+    sleep 2
+    kill -KILL -- "-$pid" 2>/dev/null
+  ) &
+  watchdog=$!
+  while :; do
+    wait "$pid"
+    rc=$?
+    if [ "$rc" -gt 128 ] && kill -0 "$pid" 2>/dev/null; then continue; fi
+    break
+  done
+  kill "$watchdog" 2>/dev/null
+  pkill -P "$watchdog" 2>/dev/null
+  wait "$watchdog" 2>/dev/null
+  if [ -e "$marker" ]; then
+    rm -f "$marker"
+    run_outcome=timed-out
+  elif [ "$rc" = 0 ]; then
+    run_outcome=ok
+  else
+    run_outcome=failed
+  fi
+}
+
+execute() { # ID OP
+  local id=$1 op=$2 started finished out fields detail line
+  started=$(date +%s)
+  journal "start $id $op"
+  out=$helper/.out.$id
+  case $op in
+    status) run_bounded "$out" op_status ;;
+  esac
+  finished=$(date +%s)
+  fields=()
+  detail=""
+  if [ "$run_outcome" = ok ]; then
+    while IFS= read -r line; do
+      case $line in
+        "detail "*) detail=${line#detail } ;;
+        *) fields+=("$line") ;;
+      esac
+    done < "$out"
+  else
+    detail=$(clean_detail < "$out.err")
+  fi
+  rm -f "$out" "$out.err"
+  if [ ${#fields[@]} -gt 0 ]; then
+    write_result "$id" "$op" "$run_outcome" - "$started" "$finished" "$detail" "${fields[@]}" || true
+  else
+    write_result "$id" "$op" "$run_outcome" - "$started" "$finished" "$detail" || true
+  fi
+  journal "end $id $run_outcome"
+  log "$op $id: $run_outcome"
+}
+
+re_header='^lockstep-control-request ([^ ]+)$'
+re_id='^id ([0-9a-f]{32})$'
+re_issued='^issued ([0-9]{1,18})$'
+re_op='^op ([^ ].*)$'
+re_expect='^expect ([^ ].*)$'
+re_mac='^mac ([0-9a-f]{64})$'
+
+# Checks one request file (§4) and runs it if every check passes.
+handle() { # NAME
+  local name=$1 path=$requests/$1 id size lines line mac version issued op expect now
+  case $name in
+    .*) return ;;
+  esac
+  if [[ ! $name =~ ^[0-9a-f]{32}\.req$ ]]; then
+    rm -f -- "$path"
+    log "removed a file that is not a request: name not allowed"
+    return
+  fi
+  id=${name%.req}
+  if [ -L "$path" ]; then rm -f -- "$path"; refuse "$id" unknown not-regular-file; return; fi
+  if [ ! -f "$path" ]; then rmdir -- "$path" 2>/dev/null; refuse "$id" unknown not-regular-file; return; fi
+  if [ ! -O "$path" ]; then rm -f -- "$path"; refuse "$id" unknown not-owner; return; fi
+  case $(mode_of "$path") in
+    *00) ;;
+    *) rm -f -- "$path"; refuse "$id" unknown bad-permissions; return ;;
+  esac
+  size=$(wc -c < "$path" | tr -d ' ')
+  if [ "$size" -gt 1024 ]; then rm -f -- "$path"; refuse "$id" unknown too-large; return; fi
+  # Printable ASCII lines, each ending in a newline, exactly six of them, the MAC last.
+  if grep -q '[^ -~]' "$path" || [ "$(tail -c 1 "$path" | wc -l | tr -d ' ')" != 1 ]; then
+    rm -f -- "$path"; refuse "$id" unknown malformed; return
+  fi
+  lines=()
+  while IFS= read -r line; do lines+=("$line"); done < "$path"
+  if [ ${#lines[@]} -ne 6 ] || [[ ! ${lines[5]} =~ $re_mac ]]; then
+    rm -f -- "$path"; refuse "$id" unknown malformed; return
+  fi
+  mac=${BASH_REMATCH[1]}
+  if [ "$(head -n 5 "$path" | hmac)" != "$mac" ]; then
+    rm -f -- "$path"; refuse "$id" unknown bad-mac; return
+  fi
+  rm -f -- "$path"
+  if [[ ! ${lines[0]} =~ $re_header ]]; then refuse "$id" unknown malformed; return; fi
+  version=${BASH_REMATCH[1]}
+  [ "$version" = 1 ] || { refuse "$id" unknown bad-version; return; }
+  if [[ ! ${lines[1]} =~ $re_id ]] || [ "${BASH_REMATCH[1]}" != "$id" ]; then refuse "$id" unknown malformed; return; fi
+  if [[ ! ${lines[2]} =~ $re_issued ]]; then refuse "$id" unknown malformed; return; fi
+  issued=${BASH_REMATCH[1]}
+  if [[ ! ${lines[3]} =~ $re_op ]]; then refuse "$id" unknown malformed; return; fi
+  op=${BASH_REMATCH[1]}
+  if [[ ! ${lines[4]} =~ $re_expect ]]; then refuse "$id" unknown malformed; return; fi
+  expect=${BASH_REMATCH[1]}
+  case $op in
+    status) ;;
+    *) refuse "$id" unknown unknown-op; return ;;
+  esac
+  case "$op $expect" in
+    "status any") ;;
+    *) refuse "$id" "$op" bad-expect; return ;;
+  esac
+  if grep -qxF "$id" "$helper/seen" 2>/dev/null; then
+    journal "refused $id replayed"
+    log "refused $id: replayed"
+    return
+  fi
+  now=$(date +%s)
+  if [ "$issued" -lt $((now - 120)) ] || [ "$issued" -gt $((now + 10)) ]; then
+    refuse "$id" "$op" stale
+    return
+  fi
+  echo "$id" >> "$helper/seen"
+  execute "$id" "$op"
+}
+
+# An operation that started and never ended was interrupted (the helper stopped).
+if [ -f "$helper/journal" ]; then
+  awk '$2 == "start" { open[$3] = $4 } $2 == "end" { delete open[$3] } END { for (id in open) print id, open[id] }' "$helper/journal" |
+    while read -r id op; do
+      case $id in *[!0123456789abcdef]*) continue ;; esac
+      now=$(date +%s)
+      write_result "$id" "$op" interrupted - "$now" "$now" "the helper stopped while this ran" || true
+      journal "end $id interrupted"
+      log "$op $id: interrupted"
+    done
+fi
+
+log "started (pid $$, protocol 1, timeout ${timeout}s${instance:+, instance $instance})"
+warned=""
+while [ "$stopping" = 0 ]; do
+  if private_dir "$pane" && private_dir "$requests" && [ -d "$results" ] && [ ! -L "$results" ]; then
+    warned=""
+    while IFS= read -r name; do
+      [ "$stopping" = 0 ] || break
+      [ -n "$name" ] && handle "$name"
+    done <<EOF
+$(ls -1tr "$requests" 2>/dev/null)
+EOF
+  elif [ -z "$warned" ]; then
+    warned=yes
+    log "the request or result directory is missing, a symlink or not private; nothing is read"
+  fi
+  sleep 0.2
+done
+log "stopped"

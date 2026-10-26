@@ -40,9 +40,15 @@ lockstepCss :: BS.ByteString
 lockstepCss =
   $(FileEmbed.embedFile "static/lockstep.css")
 
+-- | The control pane's page script (contract C-P3.1 §3).
+controlJs :: BS.ByteString
+controlJs =
+  $(FileEmbed.embedFile "static/control.js")
+
 assets :: [(T.Text, StaticAsset)]
 assets =
   [ (stylesheetName, StaticAsset [Interpolate.i|text/css; charset=utf-8|] lockstepCss)
+  , ([Interpolate.i|control.js|], StaticAsset [Interpolate.i|text/javascript; charset=utf-8|] controlJs)
   ]
 
 -- | The asset served at @/static/<name>@, if @name@ is on the allowlist.

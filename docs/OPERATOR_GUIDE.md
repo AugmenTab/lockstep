@@ -16,6 +16,36 @@ and not distributed.
 
 The service needs no Node or Python runtime; its stylesheet is embedded in the binary.
 
+## 1a. Opening Lockstep: `lockstep` (C-P3.1)
+
+Run `./lockstep` in the checkout (or `lockstep` from any folder after `lockstep setup-path`). It
+opens the **control pane** in your default browser, already signed in, and works even when the
+database or the service is down: the pane then says what is missing, in plain words.
+
+| What happens | Details |
+|---|---|
+| First run only | "Preparing Lockstep for first use": the pane is built once into `.local/control/install` (a few minutes; log in `build.log` there). Later runs never rebuild. `lockstep rebuild-pane` rebuilds on request. |
+| Already-compatible services | If the installed application (`.local/install`) and the database schema match, PostgreSQL and the service are started. Nothing is ever installed, upgraded or migrated by `lockstep`. |
+| Control pane | Container `lockstep-control` on `127.0.0.1:8100` (the next free port if 8100 is taken by something else). It has no Docker socket, no database password and no source tree: it mounts only `.local/control/pane` and its own build, read-only root, all capabilities dropped, your user id. |
+| Helper | `scripts/control-helper`, a background process of your user, the only part allowed to use Docker, and only for the fixed operation `status`. It talks to the pane through signed files in `.local/control/pane/`. Journal: `.local/control/helper/journal`; log: `helper.log`. |
+| Sign-in | A one-time token in the address's `#fragment` (never sent to a server, removed from the address bar at once, valid 5 minutes, usable once). The session lives only in that browser tab's origin storage, is sent as a header, never as a cookie, and ends after 12 hours, on **Sign out**, on `lockstep stop`, or when the pane restarts. |
+| Second run | Reuses the running pane and helper and opens a new signed-in window. Two runs at once wait for each other. |
+| `lockstep stop` | Stops the pane and the helper and removes their keys. The service and database keep running. |
+| `lockstep ARGS…` | Anything else goes to `scripts/lockstep` (the Lockstep command line), unchanged. |
+
+`lockstep setup-path` asks before each change: a link `~/.local/bin/lockstep`, then one marked line
+in your shell's start-up file (`~/.zprofile` for zsh; `~/.bash_profile` for bash on macOS,
+`~/.bashrc` on Linux). For other shells it prints the line to add and changes nothing. The first
+interactive `lockstep` offers this once.
+
+What the sign-in does not protect against (C-P3.1 §6): anyone running as your user (or root) can
+read `.local/control` and your browser profile; while the browser is being opened, the address
+with its one-time token is briefly visible in the process list, on macOS also to other local
+accounts.
+
+The Phase 1/2 operator pages (`/operator…` on the service, cookie sign-in via
+`scripts/lockstep open`) are unchanged and remain available; the control pane does not use them.
+
 ## 2. Fresh install
 
 ```sh

@@ -140,6 +140,17 @@ Fields of `status`: `install.present` (yes|no), `install.commit`, `install.dirty
 Plus `scripts/check --integration`, a Linux clean clone, and, once and by hand with the owner's
 consent, `./lockstep` with the default browser on this Mac.
 
+## 5a. Verification record (after implementation)
+
+| Check | Result | Evidence |
+|---|---|---|
+| Frozen files | all twelve digests unchanged after implementation | §8 |
+| `scripts/check --integration` | PASSED all six steps: 712 unit, 230 integration, guard, backup/restore (working tree before the implementation commit) | `evidence/check-integration.log` |
+| Browser test alone | PASSED (73 s) | `evidence/browser-run.log` |
+| `scripts/lib/check-control` (host, real Docker, instance `p31c`) | 53 PASS, 0 FAIL, cleaned up | `evidence/check-control-results.txt` |
+| Linux clean clone | see below | `evidence/linux-clone.log` |
+| `./lockstep` with this Mac's default browser, by hand | NOT_RUN — needs the owner's consent (it opens the owner's browser) | — |
+
 ## 6. Exposure that remains (stated, not hidden)
 
 - The one-time token is in the browser launcher's arguments while `open`/`xdg-open` runs. On

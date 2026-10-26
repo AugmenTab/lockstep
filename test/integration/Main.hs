@@ -7,9 +7,13 @@ import Test.Tasty (defaultMain, testGroup)
 
 import Lockstep.BrowserFormTest qualified as BrowserFormTest
 import Lockstep.CommandCenterTest qualified as CommandCenterTest
+import Lockstep.ControlBrowserTest qualified as ControlBrowserTest
+import Lockstep.ControlHelperTest qualified as ControlHelperTest
+import Lockstep.ControlPaneTest qualified as ControlPaneTest
 import Lockstep.DispatcherTest qualified as DispatcherTest
 import Lockstep.ExecutorTest qualified as ExecutorTest
 import Lockstep.FaultPlanTest qualified as FaultPlanTest
+import Lockstep.LauncherTest qualified as LauncherTest
 import Lockstep.LedgerTest qualified as LedgerTest
 import Lockstep.LedgerTraceTest qualified as LedgerTraceTest
 import Lockstep.MigrationDbTest qualified as MigrationDbTest
@@ -51,4 +55,8 @@ main =
       , RemediationReviewTest.tests
       , RemediationThirdReviewTest.tests
       , RemediationFinalReviewTest.tests
+      , ControlPaneTest.tests
+      , ControlHelperTest.tests
+      , ControlBrowserTest.tests
+      , LauncherTest.tests
       ]

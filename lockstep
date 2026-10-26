@@ -1,0 +1,463 @@
+#!/usr/bin/env bash
+# Lockstep's one command (contract C-P3.1).
+#
+#   lockstep                 open Lockstep in your browser (starts what is needed)
+#   lockstep stop            close the control pane and its helper; the Lockstep
+#                            service and database keep running
+#   lockstep setup-path      make `lockstep` work from any folder (asks first)
+#   lockstep rebuild-pane    rebuild the control pane from this checkout
+#   lockstep help            this text
+#   lockstep ARGS...         anything else: the Lockstep command line
+#                            (scripts/lockstep ARGS...)
+#   lockstep --instance NAME [COMMAND]
+#                            the same for a qualification instance
+set -euo pipefail
+umask 077
+
+# The checkout this file belongs to, also when it is reached through a symlink.
+self=$0
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case $target in
+    /*) self=$target ;;
+    *) self=$(dirname "$self")/$target ;;
+  esac
+done
+root=$(cd "$(dirname "$self")" && pwd -P)
+
+usage() {
+  sed -n '3,14p' "$root/lockstep" | sed 's/^# \{0,1\}//'
+  echo
+  echo "This Lockstep lives in $root."
+}
+
+say() { printf '%s\n' "$*"; }
+complain() { printf 'lockstep: %s\n' "$*" >&2; }
+
+instance=""
+if [ "${1:-}" = --instance ]; then
+  if [ $# -lt 2 ]; then
+    complain "--instance needs a name"
+    exit 64
+  fi
+  instance=$2
+  case $instance in
+    "" | service | *[!abcdefghijklmnopqrstuvwxyz0123456789-]*)
+      complain "--instance takes lower-case letters, digits and '-' (not 'service')"
+      exit 64
+      ;;
+  esac
+  shift 2
+fi
+
+state=$root/.local/control${instance:+-$instance}
+pane_name=lockstep-control${instance:+-$instance}
+image=lockstep-dev:p1
+marker='# Added by Lockstep (lockstep setup-path)'
+path_line='export PATH="$HOME/.local/bin:$PATH"'
+
+# ---------------------------------------------------------------- PATH (L16)
+
+ask() { # QUESTION -> 0 for yes
+  local answer=""
+  printf '%s [y/N] ' "$1"
+  read -r answer || answer=""
+  case $answer in
+    y | Y | yes | Yes | YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+setup_path() {
+  local bindir=$HOME/.local/bin link file shell
+  link=$bindir/lockstep
+  if [ -L "$link" ] && [ "$(readlink "$link")" = "$root/lockstep" ]; then
+    say "lockstep is already available as $link."
+  elif [ -e "$link" ] || [ -L "$link" ]; then
+    say "Something else is already called lockstep in $bindir; Lockstep left it alone."
+    say "To use this Lockstep from any folder, run: $root/lockstep"
+    return 73
+  elif ask "Make the lockstep command work from any folder, by adding a link in $bindir?"; then
+    mkdir -p "$bindir"
+    ln -s "$root/lockstep" "$link"
+    say "Added $link."
+  else
+    say "Nothing was changed. You can always run $root/lockstep."
+    return 0
+  fi
+  case ":${PATH:-}:" in
+    *":$bindir:"*) say "You can now type lockstep in a terminal."; return 0 ;;
+  esac
+  shell=$(basename "${SHELL:-sh}")
+  case $shell in
+    zsh) file=$HOME/.zprofile ;;
+    bash)
+      if [ "$(uname -s)" = Darwin ]; then file=$HOME/.bash_profile; else file=$HOME/.bashrc; fi
+      ;;
+    *) file="" ;;
+  esac
+  if [ -z "$file" ]; then
+    if [ "$shell" = fish ]; then
+      say "Your shell is fish. To use lockstep in new terminals, run this once in fish:"
+      say "  fish_add_path \$HOME/.local/bin"
+    else
+      say "Your shell is $shell. To use lockstep in new terminals, add $bindir to your PATH"
+      say "in your shell's start-up file, for example with this line:"
+      say "  $path_line"
+    fi
+    return 0
+  fi
+  if [ -f "$file" ] && grep -qxF "$marker" "$file"; then
+    say "$file already adds $bindir to your PATH. Open a new terminal window to use lockstep."
+    return 0
+  fi
+  if ask "Your terminal does not look in $bindir yet. Add one line to $file so it does?"; then
+    printf '\n%s\n%s\n' "$marker" "$path_line" >> "$file"
+    say "Added. Open a new terminal window to use lockstep."
+  else
+    say "Nothing else was changed. To use lockstep in new terminals, add this line to $file:"
+    say "  $path_line"
+  fi
+}
+
+# ---------------------------------------------------------------- helpers
+
+need_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    complain "Lockstep needs Docker. Install Docker Desktop, start it, then run lockstep again."
+    exit 69
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    complain "Docker is not running. Start Docker Desktop, then run lockstep again."
+    exit 69
+  fi
+}
+
+private_dir() { # create if missing; always mode 0700
+  mkdir -p "$1"
+  chmod 700 "$1"
+}
+
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256() { sha256sum | cut -d ' ' -f 1; }
+else
+  sha256() { shasum -a 256 | cut -d ' ' -f 1; }
+fi
+
+random_hex() { # BYTES
+  head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'
+}
+
+write_secret() { # FILE CONTENT: atomically, mode 0600
+  local tmp
+  tmp=$(mktemp "$1.XXXXXX")
+  printf '%s\n' "$2" > "$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$1"
+}
+
+lock_dir=""
+take_lock() { # the launch lock (L13)
+  lock_dir=$state/launch.lock
+  local waited=0 owner
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    owner=$(cat "$lock_dir/pid" 2>/dev/null || true)
+    case $owner in
+      "" | *[!0-9]*) ;;
+      *) kill -0 "$owner" 2>/dev/null || rm -rf "$lock_dir" ;;
+    esac
+    if [ "$waited" -ge 600 ]; then
+      complain "another lockstep is still starting; try again in a minute"
+      exit 75
+    fi
+    [ "$waited" = 10 ] && say "Waiting for another lockstep that is starting…"
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  echo $$ > "$lock_dir/pid"
+  trap 'rm -rf "$lock_dir"' EXIT
+}
+
+prepare_state() {
+  private_dir "$root/.local"
+  private_dir "$state"
+  private_dir "$state/pane"
+  private_dir "$state/pane/signin"
+  private_dir "$state/pane/requests"
+  private_dir "$state/pane/results"
+  private_dir "$state/helper"
+  private_dir "$state/install"
+}
+
+# ---------------------------------------------------------------- the pane build (L11)
+
+build_pane() {
+  local log=$state/install/build.log rel=${state#"$root"/}
+  : > "$log"
+  if ! docker build --quiet --tag "$image" "$root" >> "$log" 2>&1; then
+    complain "Lockstep could not be prepared (building its environment failed). Details: $log"
+    exit 70
+  fi
+  if ! docker run --rm --volume "$root:/work" --volume lockstep-stack-root:/stack-root --workdir /work "$image" \
+    sh -c "stack build --copy-bins --local-bin-path '$rel/install/bin'" >> "$log" 2>&1; then
+    complain "Lockstep could not be prepared (building it failed). Details: $log"
+    exit 70
+  fi
+  local commit dirty=false digest
+  commit=$(git -C "$root" rev-parse HEAD 2>/dev/null || echo unknown)
+  [ -z "$(git -C "$root" status --porcelain 2>/dev/null)" ] || dirty=true
+  digest=$(sha256 < "$state/install/bin/lockstep")
+  printf 'commit %s\ndirty %s\nsha256 %s\ninstalled_at %s\n' "$commit" "$dirty" "$digest" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$state/install/VERSION"
+}
+
+# ---------------------------------------------------------------- automatic start (L12)
+
+container_state() { # NAME -> running | stopped | absent
+  local running
+  if running=$(docker container inspect --format '{{.State.Running}}' "$1" 2>/dev/null); then
+    if [ "$running" = true ]; then echo running; else echo stopped; fi
+  else
+    echo absent
+  fi
+}
+
+autostart() {
+  local service_port=${LOCKSTEP_SERVICE_PORT:-8000} install config service readiness
+  local -a svc
+  case $service_port in
+    "" | *[!0-9]*) service_port=8000 ;;
+  esac
+  if [ -n "$instance" ]; then
+    install=$root/.local/$instance-install
+    config=$root/.local/config/lockstep-$instance.json
+    service=lockstep-$instance
+    svc=("$root/scripts/service" --instance "$instance")
+  else
+    install=$root/.local/install
+    config=$root/.local/config/lockstep.json
+    service=lockstep-service
+    svc=("$root/scripts/service")
+  fi
+  [ -x "$install/bin/lockstep" ] && [ -f "$config" ] || return 0
+  if [ -z "$instance" ] && [ "$(container_state lockstep-postgres)" != running ]; then
+    say "Starting the Lockstep database…"
+    "$root/scripts/db" up >/dev/null 2>&1 || return 0
+  fi
+  [ "$(container_state "$service")" = running ] && return 0
+  readiness=$("${svc[@]}" cli db status < /dev/null 2>/dev/null | head -n 1 || true)
+  case $readiness in
+    "readiness ready "*) ;;
+    *) return 0 ;; # not compatible: nothing is migrated here; the pane shows why
+  esac
+  say "Starting the Lockstep service…"
+  if [ "$(container_state "$service")" = stopped ]; then
+    "${svc[@]}" restart --port "$service_port" >/dev/null 2>&1 || true
+  else
+    "${svc[@]}" start --port "$service_port" >/dev/null 2>&1 || true
+  fi
+}
+
+# ---------------------------------------------------------------- the helper (L8)
+
+helper_pid() { # the running helper's PID, or nothing
+  local pid
+  pid=$(cat "$state/helper/lock/pid" 2>/dev/null || true)
+  case $pid in
+    "" | *[!0-9]*) return 0 ;;
+  esac
+  if kill -0 "$pid" 2>/dev/null && ps -p "$pid" -o command= 2>/dev/null | grep -q control-helper; then
+    echo "$pid"
+  fi
+}
+
+ensure_helper() {
+  [ -n "$(helper_pid)" ] && return 0
+  local key
+  key=$(random_hex 32)
+  write_secret "$state/helper/channel.key" "$key"
+  write_secret "$state/pane/channel.key" "$key"
+  key=""
+  if [ -n "$instance" ]; then
+    nohup "$root/scripts/control-helper" --state "$state" --instance "$instance" < /dev/null > /dev/null 2>&1 &
+  else
+    nohup "$root/scripts/control-helper" --state "$state" < /dev/null > /dev/null 2>&1 &
+  fi
+  local waited=0
+  while [ -z "$(helper_pid)" ]; do
+    if [ "$waited" -ge 50 ]; then
+      complain "Lockstep's helper did not start. Details: $state/helper/helper.log"
+      exit 70
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+}
+
+# ---------------------------------------------------------------- the pane (L3, L4, L10)
+
+health_id() { # PORT -> the X-Lockstep-Control identity answered there, or nothing
+  curl -s -o /dev/null -D - --max-time 2 "http://127.0.0.1:$1/api/health" 2>/dev/null |
+    tr -d '\r' | awk 'tolower($1) == "x-lockstep-control:" { print $2; exit }'
+}
+
+our_pane_on() { # PORT
+  local want
+  want=$(cat "$state/pane/pane.id" 2>/dev/null || true)
+  [ -n "$want" ] && [ "$(health_id "$1")" = "$want" ]
+}
+
+answers() { # PORT -> something already listens there
+  curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$1/" 2>/dev/null
+}
+
+pane_port=""
+ensure_pane() {
+  local preferred=${LOCKSTEP_CONTROL_PORT:-8100} port p tries
+  case $preferred in
+    "" | *[!0-9]*) preferred=8100 ;;
+  esac
+  if [ "$(container_state "$pane_name")" = running ]; then
+    port=$(cat "$state/port" 2>/dev/null || true)
+    if [ -n "$port" ] && our_pane_on "$port"; then
+      pane_port=$port
+      return 0
+    fi
+  fi
+  docker rm -f "$pane_name" >/dev/null 2>&1 || true
+  write_secret "$state/pane/pane.id" "$(random_hex 16)"
+  p=$preferred
+  while [ "$p" -lt $((preferred + 10)) ]; do
+    if ! answers "$p"; then
+      docker run --detach --name "$pane_name" --network host \
+        --user "$(id -u):$(id -g)" --read-only --cap-drop ALL --security-opt no-new-privileges \
+        --volume "$state/install:/opt/lockstep-control:ro" \
+        --volume "$state/pane:/state" \
+        "$image" /opt/lockstep-control/bin/lockstep control serve --port "$p" --state /state >/dev/null 2>&1 || true
+      tries=0
+      while [ "$tries" -lt 50 ]; do
+        if our_pane_on "$p"; then
+          echo "$p" > "$state/port"
+          pane_port=$p
+          return 0
+        fi
+        [ "$(container_state "$pane_name")" = running ] || break
+        sleep 0.2
+        tries=$((tries + 1))
+      done
+      docker rm -f "$pane_name" >/dev/null 2>&1 || true
+    fi
+    p=$((p + 1))
+  done
+  complain "the control pane could not start on ports $preferred-$((preferred + 9)). Details: docker logs $pane_name"
+  exit 70
+}
+
+# ---------------------------------------------------------------- sign-in and browser (L5, L14)
+
+open_browser() {
+  local token digest url launcher file
+  find "$state/pane/signin" -type f -mmin +10 -exec rm -f {} + 2>/dev/null || true
+  our_pane_on "$pane_port" || {
+    complain "the control pane on port $pane_port did not identify itself; no sign-in link was sent"
+    exit 70
+  }
+  token=$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')
+  digest=$(printf '%s' "$token" | sha256)
+  file=$state/pane/signin/$digest
+  write_secret "$file" "expires $(($(date +%s) + 300))"
+  url="http://127.0.0.1:$pane_port/sign-in#$token"
+  token=""
+  if [ -n "${LOCKSTEP_BROWSER:-}" ]; then
+    launcher=$LOCKSTEP_BROWSER
+  elif [ "$(uname -s)" = Darwin ]; then
+    launcher=open
+  else
+    launcher=xdg-open
+  fi
+  if ! command -v "$launcher" >/dev/null 2>&1; then
+    url=""
+    rm -f "$file"
+    complain "no way to open a browser was found ($launcher). Set LOCKSTEP_BROWSER to a command that opens a web address."
+    exit 70
+  fi
+  # The launcher's own output is discarded: an error message could repeat the address.
+  if ! "$launcher" "$url" >/dev/null 2>&1; then
+    url=""
+    rm -f "$file"
+    complain "your browser could not be opened ($launcher failed). Nothing was left behind; run lockstep again."
+    exit 70
+  fi
+  url=""
+}
+
+offer_path() { # once, only in a terminal, only for the operator's own Lockstep
+  [ -z "$instance" ] && [ -t 0 ] && [ -t 1 ] || return 0
+  [ ! -e "$state/path-offer" ] || return 0
+  if [ "$(command -v lockstep 2>/dev/null || true)" = "$HOME/.local/bin/lockstep" ]; then return 0; fi
+  : > "$state/path-offer"
+  echo
+  setup_path || true
+}
+
+# ---------------------------------------------------------------- commands
+
+launch() {
+  need_docker
+  prepare_state
+  take_lock
+  if [ ! -x "$state/install/bin/lockstep" ]; then
+    say "Preparing Lockstep for first use. This happens once and takes a few minutes."
+    build_pane
+  fi
+  autostart
+  ensure_helper
+  ensure_pane
+  open_browser
+  say "Lockstep is open in your browser (http://127.0.0.1:$pane_port/)."
+  offer_path
+}
+
+stop_all() {
+  need_docker
+  [ -d "$state" ] || { say "Lockstep's control pane is not running."; return 0; }
+  take_lock
+  local pid waited=0
+  docker stop --time 5 "$pane_name" >/dev/null 2>&1 || true
+  docker rm -f "$pane_name" >/dev/null 2>&1 || true
+  pid=$(helper_pid)
+  if [ -n "$pid" ]; then
+    kill -TERM "$pid" 2>/dev/null || true
+    while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 1000 ]; do
+      sleep 0.1
+      waited=$((waited + 1))
+    done
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+  rm -f "$state/pane/channel.key" "$state/helper/channel.key"
+  find "$state/pane/signin" -type f -exec rm -f {} + 2>/dev/null || true
+  say "Stopped the Lockstep control pane. The Lockstep service and database keep running."
+}
+
+rebuild_pane() {
+  need_docker
+  prepare_state
+  take_lock
+  say "Rebuilding the control pane from $root. This takes a few minutes."
+  build_pane
+  docker rm -f "$pane_name" >/dev/null 2>&1 || true
+  say "Done. Run lockstep to open it."
+}
+
+case "${1:-}" in
+  "") launch ;;
+  stop) [ $# -eq 1 ] || { complain "stop takes no arguments"; exit 64; }; stop_all ;;
+  setup-path) [ $# -eq 1 ] || { complain "setup-path takes no arguments"; exit 64; }; setup_path ;;
+  rebuild-pane) [ $# -eq 1 ] || { complain "rebuild-pane takes no arguments"; exit 64; }; rebuild_pane ;;
+  help | --help | -h) usage ;;
+  *)
+    if [ -n "$instance" ]; then
+      exec "$root/scripts/lockstep" --instance "$instance" "$@"
+    fi
+    exec "$root/scripts/lockstep" "$@"
+    ;;
+esac

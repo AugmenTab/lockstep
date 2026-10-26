@@ -11,6 +11,7 @@ import Lockstep.Application.ProfileDocumentTest qualified as ProfileDocumentTest
 import Lockstep.Application.ReadinessTest qualified as ReadinessTest
 import Lockstep.Effects.ExecutorTest qualified as ExecutorTest
 import Lockstep.Effects.ReconcilerTest qualified as ReconcilerTest
+import Lockstep.Foundation.CliControlTest qualified as CliControlTest
 import Lockstep.Foundation.CliDbTest qualified as CliDbTest
 import Lockstep.Foundation.CliFinalReviewTest qualified as CliFinalReviewTest
 import Lockstep.Foundation.CliJobTest qualified as CliJobTest
@@ -20,6 +21,7 @@ import Lockstep.Foundation.CliProfileTest qualified as CliProfileTest
 import Lockstep.Foundation.CliRepositoryTest qualified as CliRepositoryTest
 import Lockstep.Foundation.CliTest qualified as CliTest
 import Lockstep.Foundation.CliWorkspaceTest qualified as CliWorkspaceTest
+import Lockstep.Foundation.ControlProtocolTest qualified as ControlProtocolTest
 import Lockstep.Foundation.EvidenceModelTest qualified as EvidenceModelTest
 import Lockstep.Foundation.OperatorTokenTest qualified as OperatorTokenTest
 import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
@@ -111,4 +113,6 @@ main =
       , RemediationTest.tests
       , RemediationReviewTest.tests
       , RemediationThirdReviewTest.tests
+      , ControlProtocolTest.tests
+      , CliControlTest.tests
       ]

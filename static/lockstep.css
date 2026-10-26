@@ -220,6 +220,89 @@ td.ls-count {
   padding: var(--ls-space-3);
 }
 
+/* Control pane (C-P3.1). Every state is written out; colour only repeats it. */
+
+.ls-status {
+  display: grid;
+  gap: var(--ls-space-2);
+  margin: 0 0 var(--ls-space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.ls-status li {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  gap: var(--ls-space-3);
+  align-items: baseline;
+  padding: var(--ls-space-3) var(--ls-space-4);
+  background: var(--ls-surface);
+  border: 1px solid var(--ls-border);
+  border-left: 6px solid var(--ls-border);
+  border-radius: var(--ls-radius);
+}
+
+/* Green stays reserved for PASSED (C-P1.6 E8): a working component uses the accent. */
+.ls-status li.ls-good {
+  border-left-color: var(--ls-accent);
+}
+
+.ls-status li.ls-attention {
+  border-left-color: var(--ls-inconclusive-fg);
+}
+
+.ls-status .ls-label {
+  font-weight: 600;
+}
+
+.ls-status .ls-state {
+  font-size: 1.125rem;
+}
+
+.ls-status .ls-explain {
+  display: block;
+  color: var(--ls-text-muted);
+  font-size: 0.95rem;
+}
+
+.ls-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ls-space-2);
+  margin: 0 0 var(--ls-space-4);
+}
+
+button {
+  font: inherit;
+  padding: var(--ls-space-2) var(--ls-space-3);
+  border: 1px solid var(--ls-accent);
+  border-radius: var(--ls-radius);
+  background: var(--ls-surface);
+  color: var(--ls-accent);
+  cursor: pointer;
+}
+
+button.ls-primary {
+  background: var(--ls-accent);
+  color: var(--ls-surface);
+}
+
+details {
+  margin: 0 0 var(--ls-space-3);
+}
+
+summary {
+  cursor: pointer;
+  color: var(--ls-text-muted);
+}
+
+@media (max-width: 30rem) {
+  .ls-status li {
+    grid-template-columns: 1fr;
+    gap: var(--ls-space-1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none;

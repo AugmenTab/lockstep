@@ -26,6 +26,7 @@ import Lockstep.Foundation.Config
   ( BindHost (Loopback)
   , Port
   , ServeConfig (..)
+  , defaultControlPort
   , defaultPort
   , mkPort
   )
@@ -67,6 +68,7 @@ data Command
   | EffectsAbandonAcknowledged String String
   | EffectsCarry String Integer Integer Bool
   | SandboxShow
+  | ControlServe Port FilePath
   deriving (Eq, Show)
 
 -- | @work-order create@ options (contract C-P2.8 §5).
@@ -195,7 +197,25 @@ parseArgs args =
     "work-unit" : rest -> parseWorkUnitCommand rest
     "effects" : rest -> parseEffectsCommand rest
     "sandbox" : rest -> parseSandboxCommand rest
+    "control" : rest -> parseControlCommand rest
     command : _ -> Left (UnknownCommand command)
+
+-- | Contract C-P3.1 L10: @control serve [--port N] --state DIR@.
+parseControlCommand :: [String] -> Either CliError Command
+parseControlCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "control")
+    "serve" : options -> do
+      (acc, mbArgument) <- parseOptionsAndArgument [portOption, stateOption] [] options
+      noArgument mbArgument
+      port <- maybe (Right defaultControlPort) parsePort (L.lookup portOption acc)
+      state <- required stateOption acc
+      pure (ControlServe port state)
+    command : _ -> Left (UnknownCommand ("control " <> command))
+
+stateOption :: String
+stateOption =
+  "--state"
 
 -- | Contract C-P2.1 I10.
 parseEngineerCommand :: [String] -> Either CliError Command
@@ -861,6 +881,7 @@ usage =
     , "       lockstep effects abandon OPERATION --reason TEXT [--acknowledge-duplication-risk]"
     , "       lockstep effects carry OPERATION --from-activation S --to-activation T [--acknowledge-duplication-risk]"
     , "       lockstep sandbox show"
+    , "       lockstep control serve [--port N] --state DIR"
     , ""
     , "  serve        run the local service on 127.0.0.1 (default port 8000)"
     , "  --port N     listen on port N (1-65535)"
@@ -891,6 +912,8 @@ usage =
     , "                        claimed work order with sandbox effects, execute or recover one"
     , "                        effect, reconcile one uncertain effect (model-free; no daemon)"
     , "  sandbox show          print the sandbox destination's applications per operation"
+    , "  control serve         run the local control pane on 127.0.0.1 (default port 8100) with"
+    , "                        the state directory DIR; it needs no database (started by ./lockstep)"
     , ""
     , "The database is configured by the file named in LOCKSTEP_CONFIG."
     ]

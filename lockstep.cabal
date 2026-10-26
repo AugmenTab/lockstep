@@ -19,6 +19,7 @@ extra-source-files:
     henforcer.toml
     henforcer-tests.toml
     THIRD_PARTY_LICENSES.md
+    static/control.js
     static/lockstep.css
 
 source-repository head
@@ -29,6 +30,7 @@ library
   exposed-modules:
       Lockstep.Application.Command
       Lockstep.Application.CommandCenter
+      Lockstep.Application.ControlPane
       Lockstep.Application.Database
       Lockstep.Application.Dispatcher
       Lockstep.Application.Executor
@@ -47,6 +49,7 @@ library
       Lockstep.Effects.Scripted
       Lockstep.Foundation.Cli
       Lockstep.Foundation.Config
+      Lockstep.Foundation.ControlProtocol
       Lockstep.Foundation.EvidenceModel
       Lockstep.Foundation.OperatorToken
       Lockstep.Foundation.SystemConfig
@@ -86,6 +89,7 @@ library
       Lockstep.Web.Common
       Lockstep.Web.Components.Page
       Lockstep.Web.Components.Page404
+      Lockstep.Web.Control
       Lockstep.Web.Handler.NoPermissionError
       Lockstep.Web.Handler.NoUser
       Lockstep.Web.Health
@@ -165,9 +169,13 @@ test-suite lockstep-integration
   other-modules:
       Lockstep.BrowserFormTest
       Lockstep.CommandCenterTest
+      Lockstep.ControlBrowserTest
+      Lockstep.ControlHelperTest
+      Lockstep.ControlPaneTest
       Lockstep.DispatcherTest
       Lockstep.ExecutorTest
       Lockstep.FaultPlanTest
+      Lockstep.LauncherTest
       Lockstep.LedgerTest
       Lockstep.LedgerTraceTest
       Lockstep.MigrationDbTest
@@ -183,6 +191,7 @@ test-suite lockstep-integration
       Lockstep.RemediationThirdReviewTest
       Lockstep.RepositoryOwnershipTest
       Lockstep.ServiceDbTest
+      Lockstep.Support.Control
       Lockstep.Support.Http
       Lockstep.Support.Ledger
       Lockstep.Support.Postgres
@@ -224,6 +233,7 @@ test-suite lockstep-unit
       Lockstep.Application.ReadinessTest
       Lockstep.Effects.ExecutorTest
       Lockstep.Effects.ReconcilerTest
+      Lockstep.Foundation.CliControlTest
       Lockstep.Foundation.CliDbTest
       Lockstep.Foundation.CliFinalReviewTest
       Lockstep.Foundation.CliJobTest
@@ -233,6 +243,7 @@ test-suite lockstep-unit
       Lockstep.Foundation.CliRepositoryTest
       Lockstep.Foundation.CliTest
       Lockstep.Foundation.CliWorkspaceTest
+      Lockstep.Foundation.ControlProtocolTest
       Lockstep.Foundation.EvidenceModelTest
       Lockstep.Foundation.OperatorTokenTest
       Lockstep.Foundation.SystemConfigTest

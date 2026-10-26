@@ -1,0 +1,53 @@
+PASS first launch exits 0
+PASS first launch said it prepares Lockstep once
+PASS first launch built the pane binary with a VERSION
+PASS first launch: the pane container is running
+PASS first launch: one helper
+PASS first launch: the real browser signed in and saw the status (fragment gone)
+PASS first launch: the status appeared
+PASS first launch: the page says the application is not installed
+PASS first launch: no service container was started
+PASS second launch exits 0
+PASS second launch did not rebuild
+PASS second launch did not say first use
+PASS second launch reused the pane (start time unchanged)
+PASS second launch: still one helper
+PASS database missing: the page says the database is not ready
+PASS database missing: the page says installed
+PASS database missing: no service started
+PASS schema behind: launch exits 0
+PASS schema behind: no service started
+PASS schema behind: nothing was migrated
+PASS schema behind: the page says the database is not ready
+PASS compatible: launch exits 0
+PASS compatible: the service was started
+PASS compatible: the page says ready
+PASS compatible: the page says the service is running
+PASS pane mounts exactly the install (read-only) and the pane state (read-write)
+PASS pane has no Docker socket
+PASS pane root filesystem is read-only
+PASS pane drops all capabilities
+PASS pane runs as this user
+PASS pane has no database configuration in its environment
+PASS stop exits 0
+PASS stop removed the pane container
+PASS stop ended the helper
+PASS stop removed the channel keys
+PASS stop left the service running
+PASS stop says the service keeps running
+PASS simultaneous launches: one pane container
+PASS simultaneous launches: one helper
+PASS simultaneous launches: both browsers saw the status
+PASS squatter: launch exits 0
+PASS squatter: the pane moved to the next port
+PASS squatter: the browser reached the real pane
+PASS squatter: received no sign-in request
+PASS browser fails: exit 70
+PASS no browser launcher: exit 70
+PASS forwarding: workspace show exits 0
+PASS forwarding: workspace show prints the workspace
+PASS no output contains a sign-in link
+PASS the pane log contains no sign-in link
+PASS the helper log contains no sign-in link
+PASS the smoke summaries contain no sign-in link
+PASS no launch asked a question without a terminal
