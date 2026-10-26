@@ -58,6 +58,7 @@ runs); Home contains "What needs your attention"; seven `nav a` links; unbuilt s
 |---|---|---|
 | Frozen files (P3.4 and earlier) | digests unchanged | §4 |
 | `scripts/check --integration` | format, lint, build, unit (742), no-live-model guard PASSED; integration 293 of 295 PASSED. **The 2 failures are a defect in the frozen `HandoverTest.hs`** (the request id is read one byte off, so the test waits for a result that cannot exist); raised to the owner, not edited | `check-integration.log`, `test-amendment-request.md` |
+| Linux clean clone of `21dad60` | format, lint, build, unit PASSED; integration 293 of 295, the same 2 defect cases and nothing else | `linux-clone.log` |
 | C-P3.4 groups | 7 unit; shell 12 of 12; hand-over 3 of 5, the real-browser journey (pane → Open Lockstep → Home → keyboard → phone width → hostile page → sign-out) included; the 2 others fail only on the defect above | `check-integration.log` |
 
 Implementation notes (decisions within the design, recorded here):
