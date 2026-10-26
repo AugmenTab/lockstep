@@ -1,4 +1,4 @@
-// Lockstep application shell (contract C-P3.4 A1–A7, C-P3.5 J9). This script
+// Lockstep application shell (contract C-P3.4 A1–A7, C-P3.5 J9, C-P3.7 L7). This script
 // builds the frame with textContent only; the sections are server-rendered
 // fragments that htmx fetches and swaps into #content (no eval, no script tags,
 // same origin only). The session lives only in this origin's localStorage and is
@@ -21,7 +21,8 @@
   var PROJECT = new RegExp('^/app/projects/' + UUID + '$');
   var NEW_TASK = new RegExp('^/app/projects/' + UUID + '/tasks/new$');
   var TASK = new RegExp('^/app/tasks/' + UUID + '$');
-  var FORM_ACTION = new RegExp('^/app/api/(projects|projects/' + UUID + '/(connect|tasks)|tasks/' + UUID + '/(edit|decide))$');
+  var CHECKS = new RegExp('^/app/projects/' + UUID + '/checks$');
+  var FORM_ACTION = new RegExp('^/app/api/(projects|projects/' + UUID + '/(connect|tasks|checks)|tasks/' + UUID + '/(edit|decide))$');
 
   // The sign-in token arrives in the fragment of /app/sign-in. Take it, then
   // remove it from the address bar and from this history entry before anything else.
@@ -41,6 +42,8 @@
     if (newTask) { return { fragment: '/app/fragments/task-new/' + newTask[1], section: 'projects' }; }
     var task = TASK.exec(path);
     if (task) { return { fragment: '/app/fragments/task/' + task[1], section: 'tasks' }; }
+    var checks = CHECKS.exec(path);
+    if (checks) { return { fragment: '/app/fragments/project-checks/' + checks[1], section: 'projects' }; }
     var match = /^\/app\/([a-z]+)$/.exec(path);
     if (!match) { return null; }
     for (var i = 0; i < SECTIONS.length; i += 1) {
@@ -191,7 +194,7 @@
     if (event.detail.target !== content) { return; }
     // An answer that is a project's page says so; the address follows it.
     var path = event.detail.xhr ? event.detail.xhr.getResponseHeader('X-Lockstep-Path') : null;
-    if (path && (PROJECT.test(path) || TASK.test(path)) && path !== window.location.pathname) {
+    if (path && (PROJECT.test(path) || TASK.test(path) || CHECKS.test(path)) && path !== window.location.pathname) {
       current = path;
       window.history.pushState(null, '', path);
     }

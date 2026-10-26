@@ -31,6 +31,9 @@ import Lockstep.OperatorLedgerTest qualified as OperatorLedgerTest
 import Lockstep.OperatorTrustTest qualified as OperatorTrustTest
 import Lockstep.ProcessTest qualified as ProcessTest
 import Lockstep.ProfileRegistryTest qualified as ProfileRegistryTest
+import Lockstep.ProjectChecksBrowserTest qualified as ProjectChecksBrowserTest
+import Lockstep.ProjectChecksPageTest qualified as ProjectChecksPageTest
+import Lockstep.ProjectChecksTest qualified as ProjectChecksTest
 import Lockstep.ProjectsBrowserTest qualified as ProjectsBrowserTest
 import Lockstep.ProjectsPageTest qualified as ProjectsPageTest
 import Lockstep.ProjectsTest qualified as ProjectsTest
@@ -89,4 +92,7 @@ main =
       , TasksTest.tests
       , TasksPageTest.tests
       , TasksBrowserTest.tests
+      , ProjectChecksTest.tests
+      , ProjectChecksPageTest.tests
+      , ProjectChecksBrowserTest.tests
       ]

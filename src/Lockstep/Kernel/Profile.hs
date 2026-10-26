@@ -41,12 +41,16 @@ module Lockstep.Kernel.Profile
   , Gate
   , gateId
   , gateStage
+  , gateArtifacts
+  , gateVerifiers
+  , gateScopes
   , gateApproval
   , gateExceptionPath
   , ProfileDefinition
   , mkProfileDefinition
   , definitionId
   , definitionVersion
+  , definitionAllows
   , definitionGates
   , installationBaseline
   , renderProfileDefinition
@@ -417,6 +421,18 @@ gateApplicability (Gate _ _ _ applicability _ _ _) =
 gateVerifiers :: Gate -> [VerifierKind]
 gateVerifiers (Gate _ _ _ _ verifiers _ _) =
   verifiers
+
+-- | The kinds, class tags and path classes a gate is limited to, by name; 'Nothing' is any (C-P3.7 L1).
+gateScopes :: Gate -> (Maybe [T.Text], Maybe [T.Text], Maybe [T.Text])
+gateScopes gate =
+  case gateApplicability gate of
+    Applicability kinds classes paths -> (names workOrderKindName kinds, names classTagText classes, names pathClassName paths)
+ where
+  names :: (a -> T.Text) -> Scope a -> Maybe [T.Text]
+  names name scope =
+    case scope of
+      AnyValue -> Nothing
+      OnlyValues values -> Just (fmap name values)
 
 gateApproval :: Gate -> Approval
 gateApproval (Gate _ _ _ _ _ approval _) =
