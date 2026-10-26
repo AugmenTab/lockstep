@@ -17,7 +17,6 @@ module Lockstep.Web.App
 
 import Brigid.HTML.Attributes qualified as A
 import Brigid.HTML.Elements qualified as E
-import Brigid.HTML.Render.ByteString (renderLazyHTML)
 import Brigid.HTML.Types qualified as HTML
 import Brigid.Types qualified as B
 import Data.ByteString qualified as BS
@@ -51,12 +50,27 @@ import Lockstep.Application.Projects
   , offeredFolders
   , projectFoldersFromEnvironment
   )
+import Lockstep.Application.Tasks
+  ( NewTask (..)
+  , TaskDecision (..)
+  , TaskEdit (..)
+  , TaskView (..)
+  , createTask
+  , decideTask
+  , editTask
+  , findTask
+  , listAllTasks
+  , listTasks
+  )
 import Lockstep.Foundation.OperatorToken (decodeToken, encodeToken)
 import Lockstep.Kernel.EffectView (EffectStatus (..))
 import Lockstep.Kernel.Identity (parseUuid)
 import Lockstep.Kernel.Project (SetupState (..), parseFolderChoice, refusalWords, setupStateCode)
+import Lockstep.Kernel.Task (parsePriority, taskRefusalWords)
+import Lockstep.Web.Fragment (attr, cls, fragment, href)
 import Lockstep.Web.RequestGuard (RouteClass (..))
 import Lockstep.Web.SecureResponse (errorJson, htmlResponse, jsonResponse, jsonString, readBodyLimited, respondWith)
+import Lockstep.Web.TaskPages (TaskForm (..), emptyTaskForm, newTaskPage, projectTasks, taskPage, tasksOverview)
 
 data Section
   = Home
@@ -90,6 +104,11 @@ data AppRoute
   | ProjectFragment T.Text
   | CreateProject
   | ConnectProject T.Text
+  | NewTaskFragment T.Text
+  | TaskFragment T.Text
+  | CreateTaskRoute T.Text
+  | EditTaskRoute T.Text
+  | DecideTaskRoute T.Text
   | ExchangeSession
   | SignOut
 
@@ -110,8 +129,15 @@ matchAppRoute method path =
       ["app", "projects", "new"] | get -> Just Shell
       ["app", "projects", pid] | get, validId pid -> Just Shell
       ["app", "fragments", "project-new"] | get -> Just NewProjectFragment
+      ["app", "projects", pid, "tasks", "new"] | get, validId pid -> Just Shell
+      ["app", "tasks", tid] | get, validId tid -> Just Shell
       ["app", "fragments", "project", pid] | get, validId pid -> Just (ProjectFragment pid)
+      ["app", "fragments", "task-new", pid] | get, validId pid -> Just (NewTaskFragment pid)
+      ["app", "fragments", "task", tid] | get, validId tid -> Just (TaskFragment tid)
       ["app", "fragments", s] | get -> Fragment <$> parseSection s
+      ["app", "api", "projects", pid, "tasks"] | post, validId pid -> Just (CreateTaskRoute pid)
+      ["app", "api", "tasks", tid, "edit"] | post, validId tid -> Just (EditTaskRoute tid)
+      ["app", "api", "tasks", tid, "decide"] | post, validId tid -> Just (DecideTaskRoute tid)
       ["app", "api", "session"] | post -> Just ExchangeSession
       ["app", "api", "sign-out"] | post -> Just SignOut
       ["app", "api", "projects"] | post -> Just CreateProject
@@ -235,6 +261,90 @@ handleWithDatabase db route request =
               Right (Left code) -> do
                 latest <- findProject db pid
                 projectAnswer db (either (const view) (fromMaybe view) latest) (Just (refusalWords code))
+    NewTaskFragment pid ->
+      withSession $ \_ _ -> do
+        found <- findProject db pid
+        case found of
+          Left _ -> pure notReady
+          Right Nothing -> pure (errorJson HTTP.status404 "not-found")
+          Right (Just project) -> do
+            key <- idempotencyKeyText <$> generateIdempotencyKey
+            others <- fromRight [] <$> listTasks db pid
+            pure (htmlResponse HTTP.status200 (newTaskPage project others (emptyTaskForm key) Nothing))
+    TaskFragment tid ->
+      withSession $ \_ _ -> do
+        found <- findTask db tid
+        case found of
+          Right (Just task) -> taskAnswer db task Nothing
+          Right Nothing -> pure (errorJson HTTP.status404 "not-found")
+          Left _ -> pure notReady
+    CreateTaskRoute pid ->
+      withForm $ \fields -> do
+        let
+          form = taskFormFrom fields
+        found <- findProject db pid
+        case found of
+          Left _ -> pure notReady
+          Right Nothing -> pure (errorJson HTTP.status404 "not-found")
+          Right (Just project) -> do
+            others <- fromRight [] <$> listTasks db pid
+            let
+              again notice = pure (htmlResponse HTTP.status200 (newTaskPage project others form (Just notice)))
+            case (mkIdempotencyKey (formTaskKey form), parsePriority (formTaskPriority form)) of
+              (Left _, _) -> again "Lockstep could not read this form. Open New task again."
+              (_, Nothing) -> again (taskRefusalWords "unknown-priority")
+              (Right key, Just priority) -> do
+                created <- createTask db (NewTask key pid (formTaskTitle form) (formTaskAcceptance form) priority (formTaskDependencies form))
+                case created of
+                  Left _ -> pure notReady
+                  Right (Left code) -> again (taskRefusalWords code)
+                  Right (Right task) -> taskAnswer db task Nothing
+    EditTaskRoute tid ->
+      withForm $ \fields -> do
+        let
+          form = taskFormFrom fields
+          revision = L.lookup "revision" fields >>= readMaybe . BS8.unpack
+        found <- findTask db tid
+        case found of
+          Left _ -> pure notReady
+          Right Nothing -> pure (errorJson HTTP.status404 "not-found")
+          Right (Just task) ->
+            case (revision, parsePriority (formTaskPriority form)) of
+              (Nothing, _) -> taskAnswer db task (Just "Lockstep could not read this form. Try again.")
+              (_, Nothing) -> taskAnswer db task (Just (taskRefusalWords "unknown-priority"))
+              (Just r, Just priority) -> do
+                edited <- editTask db tid r (TaskEdit (formTaskTitle form) (formTaskAcceptance form) priority (formTaskDependencies form))
+                case edited of
+                  Left _ -> pure notReady
+                  Right (Right updated) -> taskAnswer db updated Nothing
+                  Right (Left code) -> do
+                    latest <- findTask db tid
+                    taskAnswer db (either (const task) (fromMaybe task) latest) (Just (taskRefusalWords code))
+    DecideTaskRoute tid ->
+      withForm $ \fields -> do
+        let
+          value name = TE.decodeUtf8With TEE.lenientDecode <$> L.lookup name fields
+          revision = L.lookup "ticket_revision" fields >>= readMaybe . BS8.unpack
+          decision =
+            case value "action" of
+              Just "ready" -> Just MarkReady
+              Just "block" -> Just (BlockTask (fromMaybe "" (value "reason")))
+              Just "unblock" -> Just UnblockTask
+              Just "cancel" -> Just CancelTask
+              _ -> Nothing
+        found <- findTask db tid
+        case (found, revision, decision) of
+          (Left _, _, _) -> pure notReady
+          (Right Nothing, _, _) -> pure (errorJson HTTP.status404 "not-found")
+          (Right (Just task), Just r, Just d) -> do
+            decided <- decideTask db "application" tid r d
+            case decided of
+              Left _ -> pure notReady
+              Right (Right updated) -> taskAnswer db updated Nothing
+              Right (Left code) -> do
+                latest <- findTask db tid
+                taskAnswer db (either (const task) (fromMaybe task) latest) (Just (taskRefusalWords code))
+          (Right (Just task), _, _) -> taskAnswer db task (Just "Lockstep could not read this form. Try again.")
  where
   withSession action =
     case sessionHeader request >>= decodeToken of
@@ -280,56 +390,35 @@ formPathMaybe :: ProjectForm -> Maybe T.Text
 formPathMaybe form =
   if T.null (formPath form) then Nothing else Just (formPath form)
 
-fragment :: [E.ChildHTML E.Division E.Body] -> LBS.ByteString
-fragment children =
-  namedEntities (renderLazyHTML (E.div [cls "ls-section"] children :: E.ChildHTML E.Body E.Html))
+-- | The task page, with its address for the page's history (C-P3.6 K6).
+taskAnswer :: DatabaseRuntime -> TaskView -> Maybe T.Text -> IO Wai.Response
+taskAnswer db task notice = do
+  project <- findProject db (taskProject task)
+  siblings <- fromRight [] <$> listTasks db (taskProject task)
+  case project of
+    Right (Just p) ->
+      pure (respondWith HTTP.status200 [(HTTP.hContentType, "text/html; charset=utf-8"), ("X-Lockstep-Path", TE.encodeUtf8 ("/app/tasks/" <> taskId task))] (taskPage p siblings task notice))
+    Right Nothing -> pure (errorJson HTTP.status404 "not-found")
+    Left _ -> pure notReady
 
-{- | Brigid escapes text as numeric references (@&#60;@); the same characters are
-written here as the named references (@&lt;@), which mean exactly the same.
--}
-namedEntities :: LBS.ByteString -> LBS.ByteString
-namedEntities =
-  LBS.fromStrict . go . LBS.toStrict
- where
-  go bytes =
-    case BS.breakSubstring "&#" bytes of
-      (before, rest)
-        | BS.null rest -> before
-        | otherwise -> before <> replaceOne rest
-  replaceOne rest =
-    case L.find (\(numeric, _) -> numeric `BS.isPrefixOf` rest) table of
-      Just (numeric, named) -> named <> go (BS.drop (BS.length numeric) rest)
-      Nothing -> "&#" <> go (BS.drop 2 rest)
-  table =
-    [ ("&#60;", "&lt;")
-    , ("&#62;", "&gt;")
-    , ("&#38;", "&amp;")
-    , ("&#34;", "&quot;")
-    ]
-
-cls :: T.Text -> A.Attribute tag
-cls =
-  A.class_ . HTML.Class
-
--- | An attribute whose value is escaped (Brigid escapes quotes in custom attributes; ampersands here).
-attr :: T.Text -> T.Text -> A.Attribute tag
-attr name =
-  A.customAttribute name . T.replace "&" "&amp;"
-
-href :: T.Text -> A.Attribute E.Anchor
-href =
-  A.href . B.mkRawURL
+taskFormFrom :: [(BS.ByteString, BS.ByteString)] -> TaskForm
+taskFormFrom fields =
+  let
+    value name = maybe "" (TE.decodeUtf8With TEE.lenientDecode) (L.lookup name fields)
+  in
+    TaskForm (value "key") (value "title") (value "acceptance") (value "priority") [TE.decodeUtf8With TEE.lenientDecode v | (k, v) <- fields, k == "depends_on"]
 
 renderSection :: DatabaseRuntime -> Section -> Session -> IO LBS.ByteString
 renderSection db section session =
   case section of
     Home -> home db
     Projects -> projectsOverview db
-    Tasks ->
-      pure . fragment $
-        [ E.h1 [] [E.text "Tasks"]
-        , E.p [] [E.text "Tasks arrive in a later update of Lockstep. You will write down what needs doing in your own words, set what matters most and see what is ready or blocked."]
-        ]
+    Tasks -> do
+      projects <- listProjects db
+      tasks <- listAllTasks db
+      pure $ case (projects, tasks) of
+        (Right ps, Right ts) -> tasksOverview [(p, [t | t <- ts, taskProject t == projectId p]) | p <- ps] True
+        _ -> tasksOverview [] False
     Decisions ->
       pure . fragment $
         [ E.h1 [] [E.text "Decisions"]
@@ -444,6 +533,7 @@ projectPage :: DatabaseRuntime -> ProjectView -> Maybe T.Text -> IO LBS.ByteStri
 projectPage db view notice = do
   folders <- projectFoldersFromEnvironment
   offered <- offeredFolders db folders
+  tasks <- fromRight [] <$> listTasks db (projectId view)
   let
     status =
       case projectSetup view of
@@ -493,8 +583,9 @@ projectPage db view notice = do
       <> [E.p [cls "ls-notice", attr "role" "alert"] [E.text n] | Just n <- [notice]]
       <> [ E.h2 [] [E.text "What it should achieve"]
          , outcome
-         , E.h2 [] [E.text "Its folder"]
          ]
+      <> projectTasks view tasks
+      <> [E.h2 [] [E.text "Its folder"]]
       <> status
       <> [ E.details
              []

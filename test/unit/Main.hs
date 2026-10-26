@@ -46,6 +46,7 @@ import Lockstep.Kernel.RemoteTest qualified as RemoteTest
 import Lockstep.Kernel.RepositoryTest qualified as RepositoryTest
 import Lockstep.Kernel.SchedulerPropertyTest qualified as SchedulerPropertyTest
 import Lockstep.Kernel.SchedulerTest qualified as SchedulerTest
+import Lockstep.Kernel.TaskTest qualified as TaskTest
 import Lockstep.Kernel.TicketTest qualified as TicketTest
 import Lockstep.Kernel.TraceTest qualified as TraceTest
 import Lockstep.Kernel.TransitionTest qualified as TransitionTest
@@ -125,4 +126,5 @@ main =
       , SessionProtocolTest.tests
       , FolderProtocolTest.tests
       , ProjectTest.tests
+      , TaskTest.tests
       ]

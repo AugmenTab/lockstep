@@ -430,4 +430,26 @@ CREATE TABLE lockstep_projects (
 CREATE UNIQUE INDEX lockstep_projects_name ON lockstep_projects (lower(name));
 |]
       )
+    ,
+      ( [Interpolate.i|project tasks and their dependencies|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_project_tasks (
+  ticket_id uuid PRIMARY KEY REFERENCES lockstep_tickets (id),
+  project_id uuid NOT NULL REFERENCES lockstep_projects (id),
+  creation_key text NOT NULL UNIQUE CHECK (creation_key ~ '^[A-Za-z0-9_-]{16,64}$'),
+  acceptance text NOT NULL CHECK (char_length(acceptance) <= 4000),
+  priority integer NOT NULL CHECK (priority BETWEEN 0 AND 999),
+  revision bigint NOT NULL DEFAULT 1 CHECK (revision >= 1),
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX lockstep_project_tasks_project ON lockstep_project_tasks (project_id);
+CREATE TABLE lockstep_task_dependencies (
+  task_id uuid NOT NULL REFERENCES lockstep_project_tasks (ticket_id),
+  depends_on uuid NOT NULL REFERENCES lockstep_project_tasks (ticket_id),
+  PRIMARY KEY (task_id, depends_on),
+  CHECK (task_id <> depends_on)
+);
+|]
+      )
     ]

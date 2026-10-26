@@ -57,6 +57,29 @@ ready to work on: …", "Blocked: …", "Waiting for: …"; the task form's "Wha
 `ticket_revision` (actions), "Nothing runs it yet", "changed since this page was shown", "Say why
 it is blocked"; readiness words "Not yet ready to work on.", "Ready to work on.", "Canceled.".
 
+## 3a. Verification record (after implementation)
+
+| Check | Result | Evidence |
+|---|---|---|
+| Frozen files (P3.6 and earlier) | digests unchanged | §4, C-P3.5 §4, C-P3.4 §4 |
+| `scripts/check --integration` | format, lint, build, unit (773), no-live-model guard PASSED; integration 341 of 343 PASSED, the 2 failures being the known C-P3.4 `HandoverTest.hs` defect | `check-integration.log` |
+| C-P3.6 groups | unit 10 of 10; tasks 8 of 8 (no Work Order, schedule decision, job, effect or work unit is ever created); pages 8 of 8; the real-browser journey across a service restart (project → two tasks with a dependency → ready → a blocked high-priority task → the most important ready task named → restart → the same words → a form submitted with the keyboard) PASSED | `check-integration.log` |
+
+The first implementation run failed twice on the implementation, never on a test: the project
+page named the most important ready task above the list (now below it, so the list leads in
+priority order), and attribute values escaped quotes and ampersands but not angle brackets, so a
+typed title appeared unescaped inside the edit form's `value` (now escaped everywhere through one
+helper, `Lockstep.Web.Fragment.attr`).
+
+Implementation notes (decisions within the design, recorded here):
+
+- `Lockstep.Application.Ledger` gains `createTicketIn`, `reviseTicketIn` and `ticketFactsIn`: the
+  bodies of `createTicket` and `reviseTicket`, and a read of the replayed state, inside the
+  caller's transaction. `createTicket` and `reviseTicket` behave exactly as before.
+- The cancel signoff (C-P2.2 requires one) reads "canceled in the application (application)": the
+  application session authenticated the person; no token or session id is recorded in it.
+- `too-many-dependencies` counts the submitted list before repeats are removed.
+
 ## 4. Freeze record
 
 Frozen 2026-10-26 by the writing agent (manual), before the task operations and pages were
