@@ -63,6 +63,8 @@ it is blocked"; readiness words "Not yet ready to work on.", "Ready to work on."
 |---|---|---|
 | Frozen files (P3.6 and earlier) | digests unchanged | §4, C-P3.5 §4, C-P3.4 §4 |
 | `scripts/check --integration` | format, lint, build, unit (773), no-live-model guard PASSED; integration 341 of 343 PASSED, the 2 failures being the known C-P3.4 `HandoverTest.hs` defect | `check-integration.log` |
+| Linux clean clone of `3adc064` | format, lint, build, unit PASSED; integration 341 of 343. The kept tail shows every C-P3.6 case passing (the browser journey across the restart included); the 2 failures are outside it and match the Mac run's known `HandoverTest.hs` cases in count | `linux-clone.log` |
+| Early value checkpoint (Plan v0.3 §2.1) | NOT_RUN: owner-only (the operator's installation, home folder and default browser); a ready-to-run checklist is prepared | `dogfood-checkpoint.md` |
 | C-P3.6 groups | unit 10 of 10; tasks 8 of 8 (no Work Order, schedule decision, job, effect or work unit is ever created); pages 8 of 8; the real-browser journey across a service restart (project → two tasks with a dependency → ready → a blocked high-priority task → the most important ready task named → restart → the same words → a form submitted with the keyboard) PASSED | `check-integration.log` |
 
 The first implementation run failed twice on the implementation, never on a test: the project
