@@ -452,4 +452,25 @@ CREATE TABLE lockstep_task_dependencies (
 );
 |]
       )
+    ,
+      ( [Interpolate.i|receipts of human decisions made in the browser|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_decision_receipts (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  idempotency_key text NOT NULL UNIQUE CHECK (idempotency_key ~ '^[A-Za-z0-9_-]{16,64}$'),
+  payload_digest text NOT NULL CHECK (payload_digest ~ '^[0-9a-f]{64}$'),
+  subject uuid NOT NULL,
+  choice text NOT NULL CHECK (choice IN ('put-back', 'cancel', 'happened', 'did-not-happen', 'try-again', 'give-up')),
+  expected integer NOT NULL CHECK (expected >= 0),
+  outcome text NOT NULL CHECK (outcome IN ('applied', 'refused')),
+  refusal_code text,
+  actor text NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((outcome = 'refused') = (refusal_code IS NOT NULL))
+);
+CREATE INDEX lockstep_decision_receipts_subject ON lockstep_decision_receipts (subject);
+CREATE TRIGGER lockstep_decision_receipts_immutable BEFORE UPDATE OR DELETE ON lockstep_decision_receipts FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_decision_receipts_no_truncate BEFORE TRUNCATE ON lockstep_decision_receipts FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+|]
+      )
     ]

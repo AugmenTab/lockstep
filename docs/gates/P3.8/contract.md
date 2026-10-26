@@ -57,6 +57,30 @@
 | `test/integration/Lockstep/DecisionsPageTest.hs` | integration: real service | the section lists links only and says "later update"; a decision page's subject, state, choices, consequences and hidden fields; session and Origin required; applying answers Done; a replay answers with the same receipt; stale words; escaping; no internal words outside *Technical details*; 404s and the 16 KiB limit |
 | `test/integration/Lockstep/DecisionsBrowserTest.hs` | integration: headless Chromium (`test/browser/app_driver.py`, frozen), real service | Home → Decisions → the stopped work → Put it back in line (keyboard) → Done → back to Decisions: it is gone |
 
+## 3a. Verification record (after implementation)
+
+| Check | Result | Evidence |
+|---|---|---|
+| Frozen files (P3.8 and earlier) | digests unchanged | §4, earlier contracts' §4 |
+| `scripts/check --integration` | format, lint, build, unit, no-live-model guard PASSED; integration 373 of 375 PASSED, the 2 failures being the known C-P3.4 `HandoverTest.hs` defect | `check-integration.log` |
+| C-P3.8 groups | unit 7 of 7; in-process 9 of 9 (a Human event per applied decision; a replay appends nothing; stale revision and generation refused with receipts; receipts immutable); pages 6 of 6; the real-browser journey (Home → Decisions → stopped work → Put it back in line by keyboard → Done → no longer open) PASSED | `check-integration.log` |
+| Linux clean clone | see the commit that records it | `linux-clone.log` |
+
+The first implementation run passed; the only fix before it was a compile error (a local name
+shadowing another).
+
+Implementation notes (decisions within the design, recorded here):
+
+- The receipt is written after the operation's own transaction (C-P2.5 operations own their
+  transactions). A crash between them leaves an applied decision without a receipt; a replay of
+  that request is then refused by the revision or generation check (no double effect) and gets a
+  `refused` receipt. Recorded here as a known limitation.
+- *Give up* checks the step's current generation itself before `abandonIntentAcknowledged`, which
+  has no generation argument; a race between the two is refused by the ledger as `already-settled`.
+- Home's "What needs your attention" gains "N decision(s) need you: Decisions"; its last sentence
+  now says "Anything only you can decide is under Decisions." (it said decisions would arrive in a
+  later update).
+
 ## 4. Freeze record
 
 Frozen 2026-10-26 by the writing agent (manual), before the decision operations and pages were

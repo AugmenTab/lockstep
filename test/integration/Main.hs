@@ -11,6 +11,9 @@ import Lockstep.CommandCenterTest qualified as CommandCenterTest
 import Lockstep.ControlBrowserTest qualified as ControlBrowserTest
 import Lockstep.ControlHelperTest qualified as ControlHelperTest
 import Lockstep.ControlPaneTest qualified as ControlPaneTest
+import Lockstep.DecisionsBrowserTest qualified as DecisionsBrowserTest
+import Lockstep.DecisionsPageTest qualified as DecisionsPageTest
+import Lockstep.DecisionsTest qualified as DecisionsTest
 import Lockstep.DispatcherTest qualified as DispatcherTest
 import Lockstep.ExecutorTest qualified as ExecutorTest
 import Lockstep.FaultPlanTest qualified as FaultPlanTest
@@ -95,4 +98,7 @@ main =
       , ProjectChecksTest.tests
       , ProjectChecksPageTest.tests
       , ProjectChecksBrowserTest.tests
+      , DecisionsTest.tests
+      , DecisionsPageTest.tests
+      , DecisionsBrowserTest.tests
       ]
