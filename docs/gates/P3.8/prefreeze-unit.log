@@ -1,0 +1,17 @@
+lockstep> test (suite: lockstep-unit, args: -p /C-P3.8/)
+
+lockstep-unit
+  C-P3.8 decision requests
+    the canonical payload of a request:                                            OK
+    a request without text or acknowledgment has them empty and false:             OK
+    every request has its own payload, and every field changes it:                 OK
+    subjects, choice names and expected values:                                    OK
+    evidence and reasons are 1 to 500 characters without control characters:       OK
+    every choice has a label and a consequence in plain words:                     OK
+    every refusal has plain words; the changed-meanwhile codes share one sentence: OK
+
+All 7 tests passed (0.01s)
+
+
+
+lockstep> Test suite lockstep-unit passed
