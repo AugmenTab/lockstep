@@ -1,0 +1,139 @@
+lockstep> test (suite: lockstep-integration, args: -p /C-P3.3/)
+
+lockstep-integration
+  helper install and upgrade (C-P3.3)
+    prepare builds the clean checkout into staging; status shows the candidate:                       FAIL (61.47s)
+      test/integration/Lockstep/InstallHelperTest.hs:113:
+      no result for 000000000000000000065eb65f2eb774 within 60 s:
+      
+      Use -p '/C-P3.3/&&/prepare builds the clean checkout into staging; status shows the candidate/' to rerun this test only.
+    prepare refuses a checkout with uncommitted changes and builds nothing:                           FAIL (30.83s)
+      test/integration/Lockstep/InstallHelperTest.hs:113:
+      no result for 000000000000000000065eb662d87265 within 30 s:
+      
+      Use -p '/C-P3.3/&&/prepare refuses a checkout with uncommitted changes and builds nothing/' to rerun this test only.
+    prepare with an expectation that does not match the staging is refused:                           FAIL (31.05s)
+      test/integration/Lockstep/InstallHelperTest.hs:113:
+      no result for 000000000000000000065eb664af0d18 within 30 s:
+      
+      Use -p '/C-P3.3/&&/prepare with an expectation that does not match the staging is refused/' to rerun this test only.
+    a failing build is failed and leaves no candidate:                                                FAIL (61.71s)
+      test/integration/Lockstep/InstallHelperTest.hs:113:
+      no result for 000000000000000000065eb666889b50 within 60 s:
+      
+      Use -p '/C-P3.3/&&/a failing build is failed and leaves no candidate/' to rerun this test only.
+    upgrade: back up and verify, stop, migrate with the backup, activate, start, verify:              FAIL (61.70s)
+      test/integration/Lockstep/InstallHelperTest.hs:113:
+      no result for 000000000000000000065eb66a36b4d1 within 60 s:
+      
+      Use -p '/C-P3.3/&&/upgrade: back up and verify, stop, migrate with the backup, activate, start, verify/' to rerun this test only.
+    a candidate other than the one the page showed is not applied:                                    FAIL (62.64s)
+      test/integration/Lockstep/InstallHelperTest.hs:113:
+      no result for 000000000000000000065eb66de3c39c within 60 s:
+      
+      Use -p '/C-P3.3/&&/a candidate other than the one the page showed is not applied/' to rerun this test only.
+    a backup that cannot be created stops the upgrade before anything changes:                        FAIL (61.59s)
+      test/integration/Lockstep/InstallHelperTest.hs:113:
+      no result for 000000000000000000065eb6719f9a64 within 60 s:
+      
+      Use -p '/C-P3.3/&&/a backup that cannot be created stops the upgrade before anything changes/' to rerun this test only.
+    a corrupt backup stops the upgrade before anything changes:                                       FAIL (61.58s)
+      test/integration/Lockstep/InstallHelperTest.hs:113:
+      no result for 000000000000000000065eb6754b3fde within 60 s:
+      
+      Use -p '/C-P3.3/&&/a corrupt backup stops the upgrade before anything changes/' to rerun this test only.
+    a failed migration needs recovery; restore-previous restores the backup and the previous version: FAIL (61.52s)
+      test/integration/Lockstep/InstallHelperTest.hs:113:
+      no result for 000000000000000000065eb678f6f947 within 60 s:
+      
+      Use -p '/C-P3.3/&&/a failed migration needs recovery; restore-previous restores the backup and the previous version/' to rerun this test only.
+    a service that does not start after the migration needs recovery, and recovers:                   FAIL (61.78s)
+      test/integration/Lockstep/InstallHelperTest.hs:113:
+      no result for 000000000000000000065eb67ca18c0c within 60 s:
+      
+      Use -p '/C-P3.3/&&/a service that does not start after the migration needs recovery, and recovers/' to rerun this test only.
+    recovery names the exact failed upgrade:                                                          FAIL (61.86s)
+      test/integration/Lockstep/InstallHelperTest.hs:113:
+      no result for 000000000000000000065eb680509707 within 60 s:
+      
+      Use -p '/C-P3.3/&&/recovery names the exact failed upgrade/' to rerun this test only.
+    a database ahead of the candidate is not downgraded; a newer candidate upgrades it:               FAIL (61.72s)
+      test/integration/Lockstep/InstallHelperTest.hs:113:
+      no result for 000000000000000000065eb68401e5a9 within 60 s:
+      
+      Use -p '/C-P3.3/&&/a database ahead of the candidate is not downgraded; a newer candidate upgrades it/' to rerun this test only.
+    an upgrade interrupted by a helper crash is reported, and can be recovered:                       FAIL (61.54s)
+      test/integration/Lockstep/InstallHelperTest.hs:113:
+      no result for 000000000000000000065eb687ae1838 within 60 s:
+      
+      Use -p '/C-P3.3/&&/an upgrade interrupted by a helper crash is reported, and can be recovered/' to rerun this test only.
+    two upgrade requests for one candidate: one applies it, the other is refused:                     FAIL (62.24s)
+      test/integration/Lockstep/InstallHelperTest.hs:113:
+      no result for 000000000000000000065eb68b594ad4 within 60 s:
+      
+      Use -p '/C-P3.3/&&/two upgrade requests for one candidate: one applies it, the other is refused/' to rerun this test only.
+    a first installation needs no backup of an empty database:                                        FAIL (62.47s)
+      test/integration/Lockstep/InstallHelperTest.hs:113:
+      no result for 000000000000000000065eb68f10afbe within 60 s:
+      
+      Use -p '/C-P3.3/&&/a first installation needs no backup of an empty database/' to rerun this test only.
+    an instance upgrades only its own installation, staging and database:                             FAIL (62.41s)
+      test/integration/Lockstep/InstallHelperTest.hs:113:
+      no result for 000000000000000000065eb692c817b2 within 60 s:
+      
+      Use -p '/C-P3.3/&&/an instance upgrades only its own installation, staging and database/' to rerun this test only.
+    install requests are refused in the other kinds' files and unknown ones are refused:              OK (0.30s)
+  pane install endpoint (C-P3.3 U1)
+    needs a session and this pane's origin:                                                           FAIL (0.49s)
+      test/integration/Lockstep/InstallPaneTest.hs:50:
+      expected: 401
+       but got: 404
+      Use -p '/C-P3.3/&&/needs a session and this pane'\''s origin/' to rerun this test only.
+    a valid request becomes one signed install request:                                               FAIL (0.43s)
+      test/integration/Lockstep/InstallPaneTest.hs:58:
+      expected: 202
+       but got: 404
+      Use -p '/C-P3.3/&&/a valid request becomes one signed install request/' to rerun this test only.
+    paths, unknown operations and mismatched expectations are 400 and write nothing:                  FAIL (0.44s)
+      test/integration/Lockstep/InstallPaneTest.hs:75:
+      "apply-candidate /Users/someone/other-checkout" gave 404
+      Use -p '/C-P3.3/&&/paths, unknown operations and mismatched expectations are 400 and write nothing/' to rerun this test only.
+    an install request while a lifecycle request is pending is 409, and the reverse:                  FAIL (0.44s)
+      test/integration/Lockstep/InstallPaneTest.hs:92:
+      expected: 409
+       but got: 404
+      Use -p '/C-P3.3/&&/an install request while a lifecycle request is pending is 409, and the reverse/' to rerun this test only.
+    a lifecycle request while an install request is pending is 409:                                   FAIL (0.45s)
+      test/integration/Lockstep/InstallPaneTest.hs:97:
+      expected: 202
+       but got: 404
+      Use -p '/C-P3.3/&&/a lifecycle request while an install request is pending is 409/' to rerun this test only.
+    the other kinds still refuse install names:                                                       OK (0.44s)
+  control pane install and upgrade in a real browser (C-P3.3)
+    prepare, review and upgrade; the page shows each step's outcome:                                  FAIL (1.53s)
+      test/integration/Lockstep/InstallBrowserTest.hs:133:
+      browser driver error: RuntimeError('no element matches #prepare-candidate')
+      
+      Use -p '/C-P3.3/&&/prepare, review and upgrade; the page shows each step'\''s outcome/' to rerun this test only.
+    a failed upgrade is explained, and recovery from the page restores the previous version:          FAIL (1.54s)
+      test/integration/Lockstep/InstallBrowserTest.hs:133:
+      browser driver error: RuntimeError('no element matches #prepare-candidate')
+      
+      Use -p '/C-P3.3/&&/a failed upgrade is explained, and recovery from the page restores the previous version/' to rerun this test only.
+
+23 out of 25 tests failed (934.18s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       
