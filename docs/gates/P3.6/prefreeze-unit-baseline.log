@@ -1,0 +1,69 @@
+lockstep> test (suite: lockstep-unit, args: -p /C-P3.6/)
+
+lockstep-unit
+  Task rules (C-P3.6)
+    a title is 1 to 200 characters after trimming, without control characters:      FAIL
+      test/unit/Lockstep/Kernel/TaskTest.hs:60:
+      expected: Right "Write the menu"
+       but got: Left TitleEmpty
+      Use -p '/C-P3.6/&&/a title is 1 to 200 characters after trimming, without control characters/' to rerun this test only.
+    what done looks like is at most 4000 characters; new lines and tabs are kept:   FAIL
+      test/unit/Lockstep/Kernel/TaskTest.hs:67:
+      expected: Right ""
+       but got: Left AcceptanceTooLong
+      Use -p '/C-P3.6/&&/what done looks like is at most 4000 characters; new lines and tabs are kept/' to rerun this test only.
+    rule errors have stable codes:                                                  FAIL
+      test/unit/Lockstep/Kernel/TaskTest.hs:74:
+      expected: ["title-empty","title-too-long","title-control","acceptance-too-long","acceptance-control"]
+       but got: ["","","","",""]
+      Use -p '/C-P3.6/&&/rule errors have stable codes/' to rerun this test only.
+    priority is High 800, Normal 500, Low 200, and stored values read back by band: FAIL
+      test/unit/Lockstep/Kernel/TaskTest.hs:76:
+      expected: [800,500,200]
+       but got: [0,0,0]
+      Use -p '/C-P3.6/&&/priority is High 800, Normal 500, Low 200, and stored values read back by band/' to rerun this test only.
+    readiness follows the contract's order for every state:                         FAIL
+      test/unit/Lockstep/Kernel/TaskTest.hs:82:
+      expected: TaskCanceled
+       but got: BeingWorkedOn
+      Use -p '/C-P3.6/&&/readiness follows the contract'\''s order for every state/' to rerun this test only.
+    a blocked task keeps its reason; an unknown reason still says blocked:          FAIL
+      test/unit/Lockstep/Kernel/TaskTest.hs:94:
+      expected: BlockedBecause ""
+       but got: BeingWorkedOn
+      Use -p '/C-P3.6/&&/a blocked task keeps its reason; an unknown reason still says blocked/' to rerun this test only.
+    the most important ready task is never a blocked or waiting one:                FAIL
+      test/unit/Lockstep/Kernel/TaskTest.hs:96:
+      expected: Just "b"
+       but got: Nothing
+      Use -p '/C-P3.6/&&/the most important ready task is never a blocked or waiting one/' to rerun this test only.
+    a dependency that would close a loop is a cycle; others are not:                FAIL
+      test/unit/Lockstep/Kernel/TaskTest.hs:104:
+      expected: True
+       but got: False
+      Use -p '/C-P3.6/&&/a dependency that would close a loop is a cycle; others are not/' to rerun this test only.
+    every refusal and every readiness has plain words without internal vocabulary:  FAIL
+      test/unit/Lockstep/Kernel/TaskTest.hs:114:
+      title-empty missing
+      Use -p '/C-P3.6/&&/every refusal and every readiness has plain words without internal vocabulary/' to rerun this test only.
+    readiness words name what they depend on:                                       FAIL
+      test/unit/Lockstep/Kernel/TaskTest.hs:144:
+      waiting
+      Use -p '/C-P3.6/&&/readiness words name what they depend on/' to rerun this test only.
+
+10 out of 10 tests failed (0.01s)
+
+
+
+lockstep> Test suite lockstep-unit failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-unit:  exited with: ExitFailure 1
+       Logs printed to console
+       

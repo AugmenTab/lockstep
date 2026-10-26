@@ -1,0 +1,37 @@
+lockstep-0.2.0.0: unregistering (local file changes: src/Lockstep/Kernel/Task.hs)
+lockstep> configure (lib + test)
+Configuring lockstep-0.2.0.0...
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+[19 of 87] Compiling Lockstep.Kernel.Task [Source file changed]
+[61 of 87] Compiling Lockstep.Application.Tasks [Lockstep.Kernel.Task changed]
+Preprocessing test suite 'lockstep-unit' for lockstep-0.2.0.0...
+Building test suite 'lockstep-unit' for lockstep-0.2.0.0...
+[44 of 61] Compiling Lockstep.Kernel.TaskTest [Lockstep.Kernel.Task changed]
+[61 of 61] Compiling Main [Lockstep.Kernel.TaskTest changed]
+[62 of 62] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-unit/lockstep-unit [Objects changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-6ggF0AiJnRUCIB81Gsi4xx
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-unit, args: -p /C-P3.6/)
+
+lockstep-unit
+  Task rules (C-P3.6)
+    a title is 1 to 200 characters after trimming, without control characters:      OK
+    what done looks like is at most 4000 characters; new lines and tabs are kept:   OK
+    rule errors have stable codes:                                                  OK
+    priority is High 800, Normal 500, Low 200, and stored values read back by band: OK
+    readiness follows the contract's order for every state:                         OK
+    a blocked task keeps its reason; an unknown reason still says blocked:          OK
+    the most important ready task is never a blocked or waiting one:                OK
+    a dependency that would close a loop is a cycle; others are not:                OK
+    every refusal and every readiness has plain words without internal vocabulary:  OK
+    readiness words name what they depend on:                                       OK
+
+All 10 tests passed (0.01s)
+
+
+
+lockstep> Test suite lockstep-unit passed
+Completed 2 action(s).
