@@ -108,20 +108,119 @@
     database_error: 'the database reported an error'
   };
 
-  function item(list, label, state, explanation, good) {
+  function item(list, label, state, explanation, good, buttons) {
     var li = node('li', good ? 'ls-good' : 'ls-attention');
     li.appendChild(node('span', 'ls-label', label));
     var value = node('span', 'ls-state', state);
     if (explanation) { value.appendChild(node('span', 'ls-explain', explanation)); }
+    if (buttons && buttons.length) {
+      var row = node('span', 'ls-actions');
+      buttons.forEach(function (b) { row.appendChild(b); });
+      value.appendChild(row);
+    }
     li.appendChild(value);
     list.appendChild(li);
   }
 
+  // ---- Start, stop and restart (C-P3.2). One operation at a time.
+
+  var afterNotice = null;
+  var lifecycleButtons = [];
+  var WORKING = {
+    'service-start': 'Starting the service…',
+    'service-stop': 'Stopping the service…',
+    'service-restart': 'Restarting the service…',
+    'database-start': 'Starting the database…',
+    'database-stop': 'Stopping the database…'
+  };
+  var DONE = {
+    'service-start': 'Done: the service was started.',
+    'service-stop': 'Done: the service was stopped.',
+    'service-restart': 'Done: the service was restarted.',
+    'database-start': 'Done: the database was started.',
+    'database-stop': 'Done: the database was stopped.'
+  };
+  var EXPECT = {
+    'service-start': 'not-running',
+    'service-stop': 'running',
+    'service-restart': 'running',
+    'database-start': 'not-running',
+    'database-stop': 'service-not-running'
+  };
+
+  function lifecycleButton(op, label, enabled) {
+    var b = node('button', null, label);
+    b.id = op;
+    b.type = 'button';
+    b.disabled = !enabled;
+    b.addEventListener('click', function () { runLifecycle(op); });
+    lifecycleButtons.push(b);
+    return b;
+  }
+
+  function failureText(result) {
+    switch (result.outcome === 'refused' ? result.reason : result.outcome) {
+      case 'state-changed': return 'Nothing was done: the state had already changed. The current state is shown below.';
+      case 'not-compatible': return 'Nothing was done: the installed application and the database do not match. Upgrading from this window comes in a later version.';
+      case 'not-managed': return 'Nothing was done: this database is not managed from this window.';
+      case 'timed-out': return 'That took too long and was stopped. The current state is shown below.';
+      case 'interrupted': return 'That was interrupted. The current state is shown below.';
+      case 'untrusted': return 'The answer could not be verified, so it is not shown.';
+      default: return 'It did not work.' + (result.detail ? ' What Lockstep saw: ' + result.detail : '');
+    }
+  }
+
+  async function runLifecycle(op) {
+    lifecycleButtons.forEach(function (b) { b.disabled = true; });
+    var working = node('p', 'ls-notice', WORKING[op]);
+    app.insertBefore(working, app.children[1] || null);
+    var response = await api('POST', '/api/lifecycle', op + ' ' + EXPECT[op]);
+    if (response.status === 401) { forgetSession(); renderSignedOut(); return; }
+    if (response.status === 409) {
+      afterNotice = 'Another operation is still running. Wait for it to finish, then check again.';
+      await check();
+      return;
+    }
+    if (!response.ok) {
+      afterNotice = 'Lockstep could not send that request to this computer.';
+      await check();
+      return;
+    }
+    var body = await response.json();
+    var result = await waitForResult(body.id, 300000);
+    if (result === 'signed-out') { return; }
+    if (!result) {
+      afterNotice = 'That has not finished reporting back. Check again in a moment.';
+    } else {
+      afterNotice = result.outcome === 'ok' ? DONE[op] : failureText(result);
+    }
+    await check();
+  }
+
+  async function waitForResult(id, limit) {
+    var started = Date.now();
+    while (Date.now() - started < limit) {
+      var response = await api('GET', '/api/requests/' + id);
+      if (response.status === 401) { forgetSession(); renderSignedOut(); return 'signed-out'; }
+      if (!response.ok) { return null; }
+      var body = await response.json();
+      if (body.state === 'done') { return body; }
+      if (body.state === 'untrusted') { return { outcome: 'untrusted' }; }
+      await wait(500);
+    }
+    return null;
+  }
+
   function renderStatus(result) {
     var f = result.fields || {};
+    lifecycleButtons = [];
     clear();
     heading();
     showNotice();
+    if (afterNotice) {
+      app.appendChild(node('p', 'ls-notice', afterNotice));
+      afterNotice = null;
+    }
     app.appendChild(node('h2', null, 'This computer'));
     if (result.outcome !== 'ok') {
       app.appendChild(node('p', 'ls-notice', 'Lockstep could not finish checking this computer (' + result.outcome + ').'));
@@ -138,26 +237,47 @@
     }
 
     var service = f['service.state'];
+    var readiness = f['database.readiness'];
+    var reason = f['database.reason'];
+    var server = f['database.server'];
+    var canStart = f['install.present'] === 'yes' && readiness === 'ready';
+    var startWhy = canStart ? null : 'It can start once the application is installed and the database is ready.';
     if (service === 'running') {
-      item(list, 'Service', 'Running', null, true);
+      var health = f['service.health'] === 'answers' ? null : 'It is running but does not answer yet.';
+      item(list, 'Service', 'Running', health, !health, [
+        lifecycleButton('service-stop', 'Stop', true),
+        lifecycleButton('service-restart', 'Restart', canStart)
+      ]);
     } else if (service === 'stopped') {
-      item(list, 'Service', 'Not running', null, false);
+      var exitCode = f['service.exitcode'] && f['service.exitcode'] !== 'none' && f['service.exitcode'] !== 'unknown' ? 'It last stopped with exit code ' + f['service.exitcode'] + '.' : null;
+      item(list, 'Service', 'Not running', startWhy || exitCode, false, [lifecycleButton('service-start', 'Start', canStart)]);
     } else if (service === 'absent') {
-      item(list, 'Service', 'Not set up', 'It starts automatically once the application and database are ready.', false);
+      item(list, 'Service', 'Not running', startWhy || 'It has not been started yet.', false, [lifecycleButton('service-start', 'Start', canStart)]);
     } else {
       item(list, 'Service', 'Unknown', null, false);
     }
 
-    var readiness = f['database.readiness'];
-    var reason = f['database.reason'];
+    var dbButtons = [];
+    if (server === 'running') {
+      dbButtons.push(lifecycleButton('database-stop', 'Stop', service !== 'running'));
+    } else if (server === 'stopped' || server === 'absent') {
+      dbButtons.push(lifecycleButton('database-start', 'Start', true));
+    }
+    var dbStopWhy = server === 'running' && service === 'running' ? 'To stop the database, stop the service first.' : null;
     if (readiness === 'ready') {
-      item(list, 'Database', 'Ready', null, true);
+      item(list, 'Database', 'Ready', dbStopWhy, true, dbButtons);
     } else if (readiness === 'not-ready') {
-      item(list, 'Database', 'Not ready', DATABASE_REASONS[reason] || 'the database is not ready', false);
+      item(list, 'Database', 'Not ready', DATABASE_REASONS[reason] || 'the database is not ready', false, dbButtons);
     } else if (reason === 'not-installed') {
-      item(list, 'Database', 'Unknown', 'Lockstep is not installed yet, so the database was not checked.', false);
+      item(list, 'Database', 'Unknown', 'Lockstep is not installed yet, so the database was not checked.', false, dbButtons);
     } else {
-      item(list, 'Database', 'Unknown', null, false);
+      item(list, 'Database', 'Unknown', null, false, dbButtons);
+    }
+
+    if (f['docker.server'] && f['docker.server'] !== 'unknown') {
+      item(list, 'Docker', 'Available', 'Version ' + f['docker.server'], true);
+    } else if (f['docker.server'] === 'unknown') {
+      item(list, 'Docker', 'Unknown', 'Lockstep runs its parts in Docker; it could not ask Docker for its version.', false);
     }
     app.appendChild(list);
 

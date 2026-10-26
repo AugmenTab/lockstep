@@ -33,6 +33,15 @@ database or the service is down: the pane then says what is missing, in plain wo
 | `lockstep stop` | Stops the pane and the helper and removes their keys. The service and database keep running. |
 | `lockstep ARGS…` | Anything else goes to `scripts/lockstep` (the Lockstep command line), unchanged. |
 
+**Start, Stop and Restart (C-P3.2).** The pane's "This computer" view shows the application
+version, whether the service runs and answers, the database, Docker, and the last exit code of a
+stopped service. Its buttons start, stop and restart the service and start or stop the database
+server (the database only while the service is stopped). Each press sends one signed lifecycle
+request naming the operation and the state the page showed; the helper refuses ("the state had
+already changed") if that is no longer true, starts the service only when the installation and
+database schema match, runs one operation at a time, and reports "Done" only after it has seen
+the result. Install, upgrade and migrate are not in the pane yet.
+
 `lockstep setup-path` asks before each change: a link `~/.local/bin/lockstep`, then one marked line
 in your shell's start-up file (`~/.zprofile` for zsh; `~/.bash_profile` for bash on macOS,
 `~/.bashrc` on Linux). For other shells it prints the line to add and changes nothing. The first

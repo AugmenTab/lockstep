@@ -32,7 +32,7 @@
 | M4 | **Checks before and after.** Before: the expected state must hold; `service-start` and `service-restart` also need a compatible installation (`db status` says `readiness ready`), otherwise `refused not-compatible` (upgrades are P3.3). After: the helper observes the result again and reports `ok` only if the service answers its health check (start, restart) or is gone (stop), or the database is ready (start) or stopped (stop); otherwise `failed`, with the last error as `detail`. |
 | M5 | **Refusal codes** (in addition to C-P3.1 §4): `state-changed`, `not-compatible`, `not-managed`, `busy`. |
 | M6 | **Pane API.** `POST /api/lifecycle` (exact Host and Origin, session; body `<op> <expect>`) → `202 {"id":…}`; an unknown operation or an expectation that does not fit it → `400`; a lifecycle request still pending → `409`. Results are read with the existing `GET /api/requests/<id>`. |
-| M7 | **Status fields added** (the `status` operation, protocol unchanged): `service.health` (answers / no-answer / unknown), `service.port`, `service.exit-code`, `docker.server` (version or unknown), `git.present`. |
+| M7 | **Status fields added** (the `status` operation, protocol unchanged): `service.health` (answers / no-answer / unknown), `service.port`, `service.exitcode`, `docker.server` (version or unknown), `git.present`. (Implementation note, 2026-10-26: first named `service.exit-code`, which C-P3.1's field-name grammar `[a-z][a-z.]*` refuses; the helper test exposed it, and the name was corrected. No frozen test names this field.) |
 
 ## 3. Lifecycle request format
 
@@ -65,6 +65,18 @@ Page wording the tests rely on: buttons `#service-start`, `#service-stop`, `#ser
 stopped." / "started." / "restarted."; the service row reads `Running` or `Not running`; the page
 names Docker. One lifecycle operation at a time: a button is disabled while one runs. The helper
 takes `--service-port N` (the launcher passes `LOCKSTEP_SERVICE_PORT`, default 8000).
+
+## 4a. Verification record (after implementation)
+
+| Check | Result | Evidence |
+|---|---|---|
+| Frozen files (P3.2 and P3.1) | digests unchanged | §5, C-P3.1 §8 |
+| P3.2 groups (unit 12, integration 23 incl. browser) | PASSED | in `check-integration.log` |
+| P3.1 groups rerun after the change | PASSED (49) | in `check-integration.log` |
+| `scripts/check --integration` | PASSED all six steps: 724 unit, 253 integration | `check-integration.log` |
+| `scripts/lib/check-lifecycle` (real Docker, instance `p32c`) | 13 PASS, 0 FAIL; the operator's service, pane and database untouched | `check-lifecycle-results.txt` |
+| `scripts/lib/check-control` rerun (the launcher changed) | 53 PASS, 0 FAIL | `check-control-rerun-results.txt` |
+| Linux clean clone | after the commit | `linux-clone.log` |
 
 ## 5. Freeze record
 

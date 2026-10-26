@@ -50,6 +50,10 @@ if [ "${1:-}" = --instance ]; then
   shift 2
 fi
 
+service_port=${LOCKSTEP_SERVICE_PORT:-8000}
+case $service_port in
+  "" | *[!0-9]*) service_port=8000 ;;
+esac
 state=$root/.local/control${instance:+-$instance}
 pane_name=lockstep-control${instance:+-$instance}
 image=lockstep-dev:p1
@@ -222,11 +226,8 @@ container_state() { # NAME -> running | stopped | absent
 }
 
 autostart() {
-  local service_port=${LOCKSTEP_SERVICE_PORT:-8000} install config service readiness
+  local install config service readiness
   local -a svc
-  case $service_port in
-    "" | *[!0-9]*) service_port=8000 ;;
-  esac
   if [ -n "$instance" ]; then
     install=$root/.local/$instance-install
     config=$root/.local/config/lockstep-$instance.json
@@ -278,9 +279,9 @@ ensure_helper() {
   write_secret "$state/pane/channel.key" "$key"
   key=""
   if [ -n "$instance" ]; then
-    nohup "$root/scripts/control-helper" --state "$state" --instance "$instance" < /dev/null > /dev/null 2>&1 &
+    nohup "$root/scripts/control-helper" --state "$state" --instance "$instance" --service-port "$service_port" < /dev/null > /dev/null 2>&1 &
   else
-    nohup "$root/scripts/control-helper" --state "$state" < /dev/null > /dev/null 2>&1 &
+    nohup "$root/scripts/control-helper" --state "$state" --service-port "$service_port" < /dev/null > /dev/null 2>&1 &
   fi
   local waited=0
   while [ -z "$(helper_pid)" ]; do

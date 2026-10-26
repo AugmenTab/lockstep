@@ -51,6 +51,7 @@ library
       Lockstep.Foundation.Config
       Lockstep.Foundation.ControlProtocol
       Lockstep.Foundation.EvidenceModel
+      Lockstep.Foundation.LifecycleProtocol
       Lockstep.Foundation.OperatorToken
       Lockstep.Foundation.SystemConfig
       Lockstep.Kernel.Activation
@@ -178,6 +179,9 @@ test-suite lockstep-integration
       Lockstep.LauncherTest
       Lockstep.LedgerTest
       Lockstep.LedgerTraceTest
+      Lockstep.LifecycleBrowserTest
+      Lockstep.LifecycleHelperTest
+      Lockstep.LifecyclePaneTest
       Lockstep.MigrationDbTest
       Lockstep.OperatorCommandTest
       Lockstep.OperatorLedgerTest
@@ -194,6 +198,7 @@ test-suite lockstep-integration
       Lockstep.Support.Control
       Lockstep.Support.Http
       Lockstep.Support.Ledger
+      Lockstep.Support.Lifecycle
       Lockstep.Support.Postgres
       Lockstep.Support.Process
   hs-source-dirs:
@@ -245,6 +250,7 @@ test-suite lockstep-unit
       Lockstep.Foundation.CliWorkspaceTest
       Lockstep.Foundation.ControlProtocolTest
       Lockstep.Foundation.EvidenceModelTest
+      Lockstep.Foundation.LifecycleProtocolTest
       Lockstep.Foundation.OperatorTokenTest
       Lockstep.Foundation.SystemConfigTest
       Lockstep.Kernel.DeliveryTest

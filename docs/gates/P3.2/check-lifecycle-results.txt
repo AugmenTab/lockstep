@@ -1,0 +1,13 @@
+PASS launch exits 0
+PASS the browser saw the running service
+PASS Stop: the page said the service was stopped
+PASS Start: the page said the service was started
+PASS Restart: the page said the service was restarted
+PASS the service is running at the end
+PASS the service answers on its port
+PASS the helper ran service-stop exactly once, and it ended ok
+PASS the helper ran service-start exactly once, and it ended ok
+PASS the helper ran service-restart exactly once, and it ended ok
+PASS no lifecycle operation failed or was refused
+PASS the operator's service, control pane and database were not touched
+PASS no output contains a sign-in link
