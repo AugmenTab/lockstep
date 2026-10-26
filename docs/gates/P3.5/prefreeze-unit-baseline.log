@@ -1,0 +1,112 @@
+lockstep> test (suite: lockstep-unit, args: -p /C-P3.5/)
+
+lockstep-unit
+  FolderProtocol (C-P3.5 J6)
+    the allowlist is exactly add-folder:                                                                  FAIL
+      test/unit/Lockstep/Foundation/FolderProtocolTest.hs:62:
+      expected: ["add-folder"]
+       but got: [""]
+      Use -p '/C-P3.5/&&/the allowlist is exactly add-folder/' to rerun this test only.
+    names are exact and the other kinds refuse it:                                                        FAIL
+      test/unit/Lockstep/Foundation/FolderProtocolTest.hs:64:
+      expected: Just AddFolder
+       but got: Nothing
+      Use -p '/C-P3.5/&&/names are exact and the other kinds refuse it/' to rerun this test only.
+    HMAC vector (computed with openssl):                                                                  OK
+    encoding is exactly the documented file, and it decodes back:                                         FAIL
+      test/unit/Lockstep/Foundation/FolderProtocolTest.hs:81:
+      expected: "lockstep-folder-request 1\nid 0123456789abcdef0123456789abcdef\nissued 1761400000\nop add-folder\nexpect folders-0123456789abcdef\npath /home/someone/code/my project\nmac a5d84558df7e0f1cbe9cd7960f439dc9df01bfb8edb4a1d9ba07d63a4a99c3d6\n"
+       but got: ""
+      Use -p '/C-P3.5/&&/encoding is exactly the documented file, and it decodes back/' to rerun this test only.
+    the list digest is folders- and the first 16 hex of its SHA-256 (computed with shasum):               FAIL
+      test/unit/Lockstep/Foundation/FolderProtocolTest.hs:84:
+      expected: "folders-7fd4950609109939"
+       but got: ""
+      Use -p '/C-P3.5/&&/the list digest is folders- and the first 16 hex of its SHA-256 (computed with shasum)/' to rerun this test only.
+    the expectation is folders- and 16 lower-case hex digits, nothing else:                               FAIL
+      test/unit/Lockstep/Foundation/FolderProtocolTest.hs:88:
+      expected: Left BadExpect
+       but got: Left Malformed
+      Use -p '/C-P3.5/&&/the expectation is folders- and 16 lower-case hex digits, nothing else/' to rerun this test only.
+    a path is absolute, plain and without separators the list or the mount use:                           FAIL
+      test/unit/Lockstep/Foundation/FolderProtocolTest.hs:92:
+      /home/someone/code/my project refused
+      Use -p '/C-P3.5/&&/a path is absolute, plain and without separators the list or the mount use/' to rerun this test only.
+    an unusable path, unknown operation, bad MAC and other version are refused:                           FAIL
+      test/unit/Lockstep/Foundation/FolderProtocolTest.hs:114:
+      expected: Left UnknownOp
+       but got: Left Malformed
+      Use -p '/C-P3.5/&&/an unusable path, unknown operation, bad MAC and other version are refused/' to rerun this test only.
+    kinds do not mix:                                                                                     OK
+    malformed and oversized files are refused:                                                            FAIL
+      test/unit/Lockstep/Foundation/FolderProtocolTest.hs:127:
+      expected: Left TooLarge
+       but got: Left Malformed
+      Use -p '/C-P3.5/&&/malformed and oversized files are refused/' to rerun this test only.
+  Project rules (C-P3.5)
+    a name is 1 to 80 characters after trimming, without control characters:                              FAIL
+      test/unit/Lockstep/Kernel/ProjectTest.hs:72:
+      expected: Right "Family recipes"
+       but got: Left NameEmpty
+      Use -p '/C-P3.5/&&/a name is 1 to 80 characters after trimming, without control characters/' to rerun this test only.
+    an outcome is at most 2000 characters; new lines and tabs are kept, other control characters are not: FAIL
+      test/unit/Lockstep/Kernel/ProjectTest.hs:81:
+      expected: Right ""
+       but got: Left OutcomeTooLong
+      Use -p '/C-P3.5/&&/an outcome is at most 2000 characters; new lines and tabs are kept, other control characters are not/' to rerun this test only.
+    rule errors have stable codes:                                                                        FAIL
+      test/unit/Lockstep/Kernel/ProjectTest.hs:88:
+      expected: ["name-empty","name-too-long","name-control","outcome-too-long","outcome-control"]
+       but got: ["","","","",""]
+      Use -p '/C-P3.5/&&/rule errors have stable codes/' to rerun this test only.
+    the folder name comes from the project name: a-z, 0-9 and -, at most 36:                              FAIL
+      test/unit/Lockstep/Kernel/ProjectTest.hs:90:
+      expected: "my-website"
+       but got: "<refused>"
+      Use -p '/C-P3.5/&&/the folder name comes from the project name: a-z, 0-9 and -, at most 36/' to rerun this test only.
+    taken folder names get -2, -3 … and stay within 36:                                                   FAIL
+      test/unit/Lockstep/Kernel/ProjectTest.hs:99:
+      expected: "my-website-2"
+       but got: "my-website"
+      Use -p '/C-P3.5/&&/taken folder names get -2, -3 … and stay within 36/' to rerun this test only.
+    the project's Engineer is p- and the folder name, a valid C-P2.1 name:                                FAIL
+      test/unit/Lockstep/Kernel/ProjectTest.hs:103:
+      expected: "p-my-website"
+       but got: "my-website"
+      Use -p '/C-P3.5/&&/the project'\''s Engineer is p- and the folder name, a valid C-P2.1 name/' to rerun this test only.
+    folder choices are new, existing with a path, or later:                                               FAIL
+      test/unit/Lockstep/Kernel/ProjectTest.hs:107:
+      expected: Just NewFolder
+       but got: Nothing
+      Use -p '/C-P3.5/&&/folder choices are new, existing with a path, or later/' to rerun this test only.
+    setup states have stable codes:                                                                       FAIL
+      test/unit/Lockstep/Kernel/ProjectTest.hs:115:
+      expected: ["organized","connected","setup-failed"]
+       but got: ["","",""]
+      Use -p '/C-P3.5/&&/setup states have stable codes/' to rerun this test only.
+    every refusal has its own plain words, with no Git vocabulary:                                        FAIL
+      test/unit/Lockstep/Kernel/ProjectTest.hs:123:
+      no project codes
+      Use -p '/C-P3.5/&&/every refusal has its own plain words, with no Git vocabulary/' to rerun this test only.
+    the project codes include every P3.5 refusal:                                                         FAIL
+      test/unit/Lockstep/Kernel/ProjectTest.hs:136:
+      folder-not-offered missing
+      Use -p '/C-P3.5/&&/the project codes include every P3.5 refusal/' to rerun this test only.
+    rule errors refuse rather than truncate:                                                              OK
+
+18 out of 21 tests failed (0.01s)
+
+
+
+lockstep> Test suite lockstep-unit failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-unit:  exited with: ExitFailure 1
+       Logs printed to console
+       
