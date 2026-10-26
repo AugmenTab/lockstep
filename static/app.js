@@ -17,7 +17,11 @@
     ['settings', 'Settings'],
     ['advanced', 'Advanced']
   ];
-  var PROJECT = /^\/app\/projects\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+  var UUID = '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})';
+  var PROJECT = new RegExp('^/app/projects/' + UUID + '$');
+  var NEW_TASK = new RegExp('^/app/projects/' + UUID + '/tasks/new$');
+  var TASK = new RegExp('^/app/tasks/' + UUID + '$');
+  var FORM_ACTION = new RegExp('^/app/api/(projects|projects/' + UUID + '/(connect|tasks)|tasks/' + UUID + '/(edit|decide))$');
 
   // The sign-in token arrives in the fragment of /app/sign-in. Take it, then
   // remove it from the address bar and from this history entry before anything else.
@@ -33,6 +37,10 @@
     if (path === '/app/projects/new') { return { fragment: '/app/fragments/project-new', section: 'projects' }; }
     var project = PROJECT.exec(path);
     if (project) { return { fragment: '/app/fragments/project/' + project[1], section: 'projects' }; }
+    var newTask = NEW_TASK.exec(path);
+    if (newTask) { return { fragment: '/app/fragments/task-new/' + newTask[1], section: 'projects' }; }
+    var task = TASK.exec(path);
+    if (task) { return { fragment: '/app/fragments/task/' + task[1], section: 'tasks' }; }
     var match = /^\/app\/([a-z]+)$/.exec(path);
     if (!match) { return null; }
     for (var i = 0; i < SECTIONS.length; i += 1) {
@@ -125,10 +133,17 @@
       var form = event.target;
       if (!form || form.tagName !== 'FORM') { return; }
       var action = form.getAttribute('action') || '';
-      if (!/^\/app\/api\/projects(\/[0-9a-f-]{36}\/connect)?$/.test(action)) { return; }
+      if (!FORM_ACTION.test(action)) { return; }
       event.preventDefault();
+      // Repeated names (the "depends on" checkboxes) are sent as lists.
       var values = {};
-      new window.FormData(form).forEach(function (value, name) { values[name] = value; });
+      new window.FormData(form).forEach(function (value, name) {
+        if (Object.prototype.hasOwnProperty.call(values, name)) {
+          values[name] = [].concat(values[name], value);
+        } else {
+          values[name] = value;
+        }
+      });
       Array.prototype.forEach.call(form.querySelectorAll('button'), function (b) { b.disabled = true; });
       window.htmx.ajax('POST', action, { target: '#content', swap: 'innerHTML', values: values });
     });
@@ -176,7 +191,7 @@
     if (event.detail.target !== content) { return; }
     // An answer that is a project's page says so; the address follows it.
     var path = event.detail.xhr ? event.detail.xhr.getResponseHeader('X-Lockstep-Path') : null;
-    if (path && PROJECT.test(path) && path !== window.location.pathname) {
+    if (path && (PROJECT.test(path) || TASK.test(path)) && path !== window.location.pathname) {
       current = path;
       window.history.pushState(null, '', path);
     }

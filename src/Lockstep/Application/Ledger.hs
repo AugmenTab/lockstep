@@ -14,7 +14,10 @@ module Lockstep.Application.Ledger
   , Receipt (..)
   , SubjectView (..)
   , createTicket
+  , createTicketIn
   , reviseTicket
+  , reviseTicketIn
+  , ticketFactsIn
   , decideTicket
   , showTicket
   , NewWorkOrder (..)
@@ -331,16 +334,62 @@ createTicket runtime title
   | not (validTitle title) = pure (refused (T.pack "invalid-record") "a title has 1 to 200 characters and no control characters")
   | otherwise = do
       u <- newUuid
-      transaction runtime $ \_ ->
-        case encodeTicketEvent (TicketCreated title) of
-          Left reason -> pure (Left (LedgerRefused (T.pack "not-durable") reason))
-          Right command -> do
-            let
-              state = ticketStateName Proposed
-            Store.insertSubject (uuidText u) (T.pack "ticket") state
-            Store.insertTicket (uuidText u) title
-            _ <- Store.insertEvent (uuidText u) (Store.EventRow 1 (principalName Human) command state)
-            pure (Right (TicketId u))
+      transaction runtime $ \_ -> createTicketIn u title
+
+{- | The writes of 'createTicket' inside the caller's transaction (C-P3.6 K2: a
+task's Ticket and its task row are made together). The caller checks readiness.
+-}
+createTicketIn :: Uuid -> T.Text -> O.Orville (Either LedgerFailure TicketId)
+createTicketIn u title
+  | not (validTitle title) = pure (refused (T.pack "invalid-record") "a title has 1 to 200 characters and no control characters")
+  | otherwise =
+      case encodeTicketEvent (TicketCreated title) of
+        Left reason -> pure (Left (LedgerRefused (T.pack "not-durable") reason))
+        Right command -> do
+          let
+            state = ticketStateName Proposed
+          Store.insertSubject (uuidText u) (T.pack "ticket") state
+          Store.insertTicket (uuidText u) title
+          _ <- Store.insertEvent (uuidText u) (Store.EventRow 1 (principalName Human) command state)
+          pure (Right (TicketId u))
+
+{- | A new title for a Ticket as one @TicketRevised@ event, inside the caller's
+transaction, at the Ticket's current revision (C-P3.6 K2: the caller's own
+revision guards the edit). Returns the Ticket's new revision.
+-}
+reviseTicketIn :: T.Text -> T.Text -> O.Orville (Either LedgerFailure Int)
+reviseTicketIn ticketId title = do
+  loaded <- loadTicket ticketId
+  case loaded of
+    Left failure -> pure (Left failure)
+    Right (s, _, state, content)
+      | not (validTitle title) -> pure (refused (T.pack "invalid-record") "a title has 1 to 200 characters and no control characters")
+      | otherwise ->
+          case encodeTicketEvent (TicketRevised title) of
+            Left reason -> pure (Left (LedgerRefused (T.pack "not-durable") reason))
+            Right text -> do
+              let
+                revision = fromIntegral (Store.subjectRowRevision s)
+                name = ticketStateName state
+              _ <- Store.insertEvent ticketId (Store.EventRow (int32 (revision + 1)) (principalName Human) text name)
+              Store.updateTicket ticketId title (int32 (content + 1))
+              Store.updateSubject ticketId (int32 (revision + 1)) name
+              pure (Right (revision + 1))
+
+{- | A Ticket's replayed facts inside the caller's transaction: its state name,
+the reason it is blocked (if it is), its revision and its title.
+-}
+ticketFactsIn :: T.Text -> O.Orville (Either LedgerFailure (T.Text, Maybe T.Text, Int, T.Text))
+ticketFactsIn ticketId = do
+  loaded <- loadTicket ticketId
+  pure $ do
+    (s, row, state, _) <- loaded
+    let
+      reason =
+        case state of
+          Blocked r _ -> Just r
+          _ -> Nothing
+    pure (ticketStateName state, reason, fromIntegral (Store.subjectRowRevision s), Store.ticketRowTitle row)
 
 -- | The Ticket rebuilt from its events: its state and content revision.
 replayTicket :: Store.SubjectRow -> Store.TicketRow -> [Store.EventRow] -> Either LedgerFailure (TicketState, Int)

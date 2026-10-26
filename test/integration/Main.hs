@@ -41,6 +41,9 @@ import Lockstep.RemediationTest qualified as RemediationTest
 import Lockstep.RemediationThirdReviewTest qualified as RemediationThirdReviewTest
 import Lockstep.RepositoryOwnershipTest qualified as RepositoryOwnershipTest
 import Lockstep.ServiceDbTest qualified as ServiceDbTest
+import Lockstep.TasksBrowserTest qualified as TasksBrowserTest
+import Lockstep.TasksPageTest qualified as TasksPageTest
+import Lockstep.TasksTest qualified as TasksTest
 
 main :: IO ()
 main =
@@ -83,4 +86,7 @@ main =
       , ProjectsPageTest.tests
       , FolderHelperTest.tests
       , ProjectsBrowserTest.tests
+      , TasksTest.tests
+      , TasksPageTest.tests
+      , TasksBrowserTest.tests
       ]
