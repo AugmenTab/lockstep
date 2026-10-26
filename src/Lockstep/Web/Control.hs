@@ -38,11 +38,13 @@ import Lockstep.Application.ControlPane
   , paneIdentity
   , readResult
   , renderPaneError
+  , submitInstall
   , submitLifecycle
   , submitRequest
   )
 import Lockstep.Foundation.Config (BindHost (Loopback), Port, ServeConfig (..), portNumber)
 import Lockstep.Foundation.ControlProtocol (ControlResult (..), outcomeName, parseOp, requestIdText)
+import Lockstep.Foundation.InstallProtocol (InstallExpect, InstallOp, parseInstallExpect, parseInstallOp, validFor)
 import Lockstep.Foundation.LifecycleProtocol (LifecycleOp, expectedFor, parseLifecycleExpect, parseLifecycleOp)
 import Lockstep.Web.RequestGuard (RouteClass (..), guardRequest)
 import Lockstep.Web.Server (serverSettings)
@@ -145,6 +147,7 @@ data Route
   | SignOut
   | Requests
   | Lifecycle
+  | Install
   | RequestResult T.Text
   | Preflight
 
@@ -180,6 +183,9 @@ matchRoute method path =
         | options -> Just Preflight
       ["api", "lifecycle"]
         | post -> Just Lifecycle
+        | options -> Just Preflight
+      ["api", "install"]
+        | post -> Just Install
         | options -> Just Preflight
       ["api", "requests", rid]
         | get && T.length rid == 32 && T.all (\c -> Char.isDigit c || (c >= 'a' && c <= 'f')) rid -> Just (RequestResult rid)
@@ -235,6 +241,14 @@ controlApplication port runtime request respond =
             respond $ case submitted of
               Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
               Left err -> submitError err
+      Install -> withBody $ \bytes -> withSession $
+        case parseInstallBody (TE.decodeUtf8With TEE.lenientDecode bytes) of
+          Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
+          Just (op, expect) -> do
+            submitted <- submitInstall runtime op expect
+            respond $ case submitted of
+              Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
+              Left err -> submitError err
       RequestResult rid -> withSession $ do
         view <- readResult runtime rid
         respond $ case view of
@@ -261,6 +275,16 @@ parseLifecycleBody body =
       op <- parseLifecycleOp opText
       expect <- parseLifecycleExpect expectText
       if expect == expectedFor op then Just op else Nothing
+    _ -> Nothing
+
+-- | @<operation> <expectation>@ for an install request (C-P3.3 U1).
+parseInstallBody :: T.Text -> Maybe (InstallOp, InstallExpect)
+parseInstallBody body =
+  case T.splitOn " " body of
+    [opText, expectText] -> do
+      op <- parseInstallOp opText
+      expect <- parseInstallExpect expectText
+      if validFor op expect then Just (op, expect) else Nothing
     _ -> Nothing
 
 resultJson :: ControlResult -> T.Text

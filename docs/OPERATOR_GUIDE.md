@@ -40,7 +40,22 @@ server (the database only while the service is stopped). Each press sends one si
 request naming the operation and the state the page showed; the helper refuses ("the state had
 already changed") if that is no longer true, starts the service only when the installation and
 database schema match, runs one operation at a time, and reports "Done" only after it has seen
-the result. Install, upgrade and migrate are not in the pane yet.
+the result.
+
+**Install, upgrade and recovery (C-P3.3).** The pane's "Version" section prepares a new version
+from this checkout's committed HEAD (refused if the checkout has uncommitted changes) into
+`.local/staging-install`, and shows it: its commit and how many database upgrades it applies.
+**Review and upgrade** shows the plan; **Upgrade now** then backs up the database into
+`.local/backups` and checks the backup (digest and a read-back), stops the service, migrates with
+the candidate binary and that backup, activates it (the old version moves to
+`.local/install.previous`), starts it and checks it is ready and answers. If a step fails before
+the migration, nothing has changed. If it fails at or after the migration, the pane says "The
+upgrade needs your attention" and offers **Review recovery → Restore now**: it empties the
+database schema, restores the verified backup taken just before the upgrade, puts the previous
+version back and starts it. The pane never starts the previous version on a database the new one
+has migrated, and never installs a version older than the database. An instance
+(`--instance NAME`) uses only `.local/NAME-staging-install`, `.local/NAME-install`,
+`.local/NAME-backups` and its own database.
 
 `lockstep setup-path` asks before each change: a link `~/.local/bin/lockstep`, then one marked line
 in your shell's start-up file (`~/.zprofile` for zsh; `~/.bash_profile` for bash on macOS,

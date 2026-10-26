@@ -211,6 +211,128 @@
     return null;
   }
 
+  // ---- Install, upgrade and recovery (C-P3.3). Every change is reviewed, then confirmed.
+
+  async function runInstall(op, expect, doneText) {
+    lifecycleButtons.forEach(function (b) { b.disabled = true; });
+    var working = node('p', 'ls-notice', op === 'prepare-candidate'
+      ? 'Preparing the new version. This builds it and can take several minutes; nothing changes yet.'
+      : op === 'apply-candidate' ? 'Installing. Keep this window open or come back later: Lockstep carries on without it.'
+        : 'Restoring the previous version…');
+    app.insertBefore(working, app.children[1] || null);
+    var response = await api('POST', '/api/install', op + ' ' + expect);
+    if (response.status === 401) { forgetSession(); renderSignedOut(); return; }
+    if (response.status === 409) {
+      afterNotice = 'Another operation is still running. Wait for it to finish, then check again.';
+      await check();
+      return;
+    }
+    if (!response.ok) {
+      afterNotice = 'Lockstep could not send that request to this computer.';
+      await check();
+      return;
+    }
+    var body = await response.json();
+    var result = await waitForResult(body.id, 3600000);
+    if (result === 'signed-out') { return; }
+    if (!result) {
+      afterNotice = 'That has not finished yet. Check again in a few minutes.';
+    } else if (result.outcome === 'ok') {
+      afterNotice = doneText;
+    } else if (result.outcome === 'refused' && result.reason === 'dirty-checkout') {
+      afterNotice = 'Nothing was done: this copy of Lockstep has changes that are not saved in Git, so it cannot be installed as a version.';
+    } else if (result.outcome === 'refused' && result.reason === 'database-ahead') {
+      afterNotice = 'Nothing was done: the database belongs to a newer version of Lockstep than this one. Lockstep never installs an older version over it.';
+    } else {
+      afterNotice = failureText(result);
+    }
+    await check();
+  }
+
+  function confirmPanel(text, buttonId, label, action) {
+    var panel = node('div', 'ls-notice');
+    panel.appendChild(node('p', null, text));
+    var row = node('div', 'ls-actions');
+    var yes = node('button', 'ls-primary', label);
+    yes.id = buttonId;
+    yes.type = 'button';
+    yes.addEventListener('click', action);
+    lifecycleButtons.push(yes);
+    var no = node('button', null, 'Cancel');
+    no.type = 'button';
+    no.addEventListener('click', function () { panel.parentNode.removeChild(panel); });
+    row.appendChild(yes);
+    row.appendChild(no);
+    panel.appendChild(row);
+    return panel;
+  }
+
+  function renderVersion(f) {
+    var section = node('section');
+    section.appendChild(node('h2', null, 'Version'));
+    var state = f['upgrade.state'];
+    var installed = f['install.present'] === 'yes';
+    if (state === 'recovery-needed' || state === 'interrupted') {
+      section.appendChild(node('p', 'ls-notice', 'The upgrade needs your attention. It ' +
+        (state === 'interrupted' ? 'was interrupted' : 'did not finish') + ' at the step: ' + (f['upgrade.step'] || 'unknown') +
+        '. The database may already have been upgraded, so the previous version is not started on its own.'));
+      var review = node('button', 'ls-primary', 'Review recovery…');
+      review.id = 'restore-review';
+      review.type = 'button';
+      review.addEventListener('click', function () {
+        section.appendChild(confirmPanel(
+          'Lockstep will: stop the service, restore the database backup taken before the upgrade, put the previous version back and start it.',
+          'restore-previous', 'Restore now',
+          function () { runInstall('restore-previous', 'recovery-' + f['upgrade.id'], 'Done: the previous version is back.'); }));
+      });
+      lifecycleButtons.push(review);
+      section.appendChild(review);
+      return section;
+    }
+    if (f['candidate.present'] === 'yes') {
+      var pending = f['candidate.pending'];
+      var upgrades = pending === '0' ? 'It needs no database upgrades.'
+        : pending === '1' ? 'It applies 1 database upgrade.'
+          : /^[0-9]+$/.test(pending || '') ? 'It applies ' + pending + ' database upgrades.' : '';
+      var commit = (f['candidate.commit'] || '').slice(0, 7);
+      section.appendChild(node('p', null, 'A new version is ready to install: version ' + commit + '. ' + upgrades));
+      var plan = installed
+        ? 'Lockstep will: back up the database and check the backup, stop the service, upgrade the database, start the new version and check that it works.'
+        : 'Lockstep will: set up the database, start Lockstep and check that it works.';
+      var applyReview = node('button', 'ls-primary', installed ? 'Review and upgrade…' : 'Review and install…');
+      applyReview.id = 'apply-review';
+      applyReview.type = 'button';
+      applyReview.addEventListener('click', function () {
+        section.appendChild(confirmPanel(plan, 'apply-candidate', installed ? 'Upgrade now' : 'Install now', function () {
+          runInstall('apply-candidate', 'candidate-' + f['candidate.digest'], installed ? 'Done: Lockstep was upgraded.' : 'Done: Lockstep was installed.');
+        }));
+      });
+      lifecycleButtons.push(applyReview);
+      var row = node('div', 'ls-actions');
+      row.appendChild(applyReview);
+      var again = node('button', null, 'Prepare again');
+      again.id = 'prepare-candidate';
+      again.type = 'button';
+      again.addEventListener('click', function () {
+        runInstall('prepare-candidate', 'candidate-' + f['candidate.digest'], 'Done: the new version was prepared again.');
+      });
+      lifecycleButtons.push(again);
+      row.appendChild(again);
+      section.appendChild(row);
+      return section;
+    }
+    section.appendChild(node('p', null, installed
+      ? 'To install a newer version from this computer’s copy of Lockstep, prepare it first. Preparing builds it and changes nothing yet.'
+      : 'Lockstep is not installed yet. Prepare it first: this builds it from this computer’s copy and changes nothing yet.'));
+    var prepare = node('button', 'ls-primary', installed ? 'Prepare an update' : 'Prepare Lockstep');
+    prepare.id = 'prepare-candidate';
+    prepare.type = 'button';
+    prepare.addEventListener('click', function () { runInstall('prepare-candidate', 'candidate-none', 'Done: the new version is ready to review.'); });
+    lifecycleButtons.push(prepare);
+    section.appendChild(prepare);
+    return section;
+  }
+
   function renderStatus(result) {
     var f = result.fields || {};
     lifecycleButtons = [];
@@ -280,6 +402,7 @@
       item(list, 'Docker', 'Unknown', 'Lockstep runs its parts in Docker; it could not ask Docker for its version.', false);
     }
     app.appendChild(list);
+    if (f['upgrade.state'] !== undefined) { app.appendChild(renderVersion(f)); }
 
     if (result.detail) {
       app.appendChild(node('p', 'ls-muted', 'What Lockstep saw: ' + result.detail));
