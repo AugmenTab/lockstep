@@ -591,7 +591,7 @@ projectsOverview db = do
         Left _ -> E.p [cls "ls-notice"] [E.text "Lockstep's database is not ready, so the projects cannot be shown. Run lockstep to see what to do."]
         Right [] -> E.p [] [E.text "There are no projects yet."]
         Right _ -> E.ul [cls "ls-projects"] (fmap item projects)
-    , E.p [cls "ls-muted"] [E.text "Tasks inside a project arrive in a later update of Lockstep."]
+    , E.p [cls "ls-muted"] [E.text "Running the work inside a project arrives in a later update of Lockstep."]
     ]
 
 folderOptions :: [FilePath] -> T.Text -> [E.ChildHTML E.Select grandparent]
@@ -696,7 +696,7 @@ projectPage db view notice = do
                        [cls "ls-choice"]
                        [ E.input [A.type_ HTML.InputRadio, attr "id" "connect-existing", attr "name" "folder", attr "value" "existing"]
                        , E.label [attr "for" "connect-existing"] [E.text "In this folder: "]
-                       , E.select [attr "id" "connect-choice", attr "name" "path"] (folderOptions offered "")
+                       , E.select [attr "id" "connect-choice", attr "name" "path", attr "aria-label" "Folder"] (folderOptions offered "")
                        ]
                    | not (L.null offered)
                    ]
