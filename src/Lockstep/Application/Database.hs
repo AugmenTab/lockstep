@@ -349,7 +349,9 @@ withSessionLock runtime lock key action = do
           | otherwise -> liftIO (throwIO err)
         Right () -> do
           result <- liftIO (action (Locked (O.runOrvilleWithState state) (SessionLocks.held namespace key)))
-          _ <- SessionLocks.release namespace key
+          -- Best effort: the action's outcome stands even when the unlock cannot run,
+          -- because closing the connection below releases the lock anyway.
+          _ <- liftIO (try (O.runOrvilleWithState state (SessionLocks.release namespace key)) :: IO (Either SomeException Bool))
           pure (Just result)
   outcome <- try (O.runOrville pool locked) `finally` Connection.destroyIdleConnections pool
   pure $

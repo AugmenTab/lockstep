@@ -236,11 +236,13 @@ underLock runtime keyText digest request lock = do
   case existing of
     Just stored -> replayOrConflict stored
     Nothing -> do
-      attempted <- onLockConnection lock (Store.attemptExists keyText)
-      marked <- if attempted then pure False else onLockConnection lock (Store.insertAttempt keyText digest (decisionSubject request))
-      if not marked
-        then pure (Right (Left (T.pack "decision-outcome-uncertain")))
-        else do
+      attempted <- onLockConnection lock (Store.attemptDigest keyText)
+      marked <- maybe (onLockConnection lock (Store.insertAttempt keyText digest (decisionSubject request))) (const (pure False)) attempted
+      case (marked, attempted) of
+        (False, Just earlier)
+          | earlier /= digest -> pure (Right (Left (T.pack "key-conflict")))
+        (False, _) -> pure (Right (Left (T.pack "decision-outcome-uncertain")))
+        (True, _) -> do
           performed <- perform runtime request
           case performed of
             Right basis -> store (row "applied" Nothing (Just basis))

@@ -74,15 +74,24 @@ ask() { # QUESTION -> 0 for yes
 
 # The program `lockstep` runs in this terminal when it is not this Lockstep, else nothing.
 path_conflict() {
-  local found dir
+  local found target link dir n=0
   found=$(command -v lockstep 2>/dev/null || true)
   case $found in
     /*) ;;
     *) return 0 ;;
   esac
-  if [ -L "$found" ] && [ "$(readlink "$found")" = "$root/lockstep" ]; then return 0; fi
-  dir=$(cd -P -- "$(dirname -- "$found")" 2>/dev/null && pwd -P || true)
-  [ "$dir/$(basename -- "$found")" != "$root/lockstep" ] || return 0
+  # Follow every link (absolute or relative, at most 20) to the file that actually runs.
+  target=$found
+  while [ -L "$target" ] && [ "$n" -lt 20 ]; do
+    link=$(readlink "$target")
+    case $link in
+      /*) target=$link ;;
+      *) target=$(dirname -- "$target")/$link ;;
+    esac
+    n=$((n + 1))
+  done
+  dir=$(cd -P -- "$(dirname -- "$target")" 2>/dev/null && pwd -P || true)
+  [ "$dir/$(basename -- "$target")" != "$root/lockstep" ] || return 0
   printf '%s\n' "$found"
 }
 
