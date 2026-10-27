@@ -40,5 +40,15 @@ needs the cookie pages; while they exist, anyone who signs in to them holds a le
 
 | Decision | Choice |
 |---|---|
-| Retire (a / b / c) | |
-| Decided by / at | |
+| Retire (a / b / c) | **(c) — defer retirement until after Gate C-UX** (Planner recommendation) |
+| Decided by / at | Phase 3 Planner disposition, 2026-10-27 |
+
+Conditions attached to (c), from the disposition:
+
+- No large legacy-route or frozen-test migration during the current qualification.
+- Ordinary users are directed only through the header-authenticated application.
+- The old cookie routes get no new capabilities.
+- The ability to run the deferred Gate B walkthrough in an isolated qualification environment is
+  kept.
+- Final retirement needs an exact, separately authorized amendment set; this decision is not
+  permission to change protected files.

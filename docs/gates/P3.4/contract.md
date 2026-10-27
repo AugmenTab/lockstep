@@ -80,7 +80,7 @@ Frozen 2026-10-26 by the writing agent (manual), before the shell and hand-over 
 |---|---|
 | `test/unit/Lockstep/Foundation/SessionProtocolTest.hs` | `77013dead1845c10b0d6fb48890055a88c4d4ea8b1dcb51c7fffdb80d3c3551d` |
 | `test/integration/Lockstep/AppShellTest.hs` | `d35dc52c4917cedcee4f0a5ec8d9cbb5df6f3572d3e00e7202323cbf2e69b667` |
-| `test/integration/Lockstep/HandoverTest.hs` | `eb856b5ade7e524d399b448d7203e638e1bcf874dcd726648de01fc61bbcfd6c` |
+| `test/integration/Lockstep/HandoverTest.hs` | `eb856b5ade7e524d399b448d7203e638e1bcf874dcd726648de01fc61bbcfd6c` (superseded by amendment A1 below) |
 | `test/integration/Lockstep/Support/App.hs` | `9a9c09c36a70a993ba4c90fac9f7c7d349d93d46683f7bd25cb9fdceffe2864f` |
 | `test/browser/app_driver.py` | `d303f93bbb94a44c96fccbdf684049573aa33f9e8ba4351490ffd9823afa81d4` |
 | `test/unit/Main.hs` (runner, additive) | `6658ade6dba2fb001175e7a9fbb17c4f185a9d7ab9db468178d1cf7eb35cf9de` |
@@ -101,3 +101,18 @@ Pre-freeze verification:
   "anything else under /app is 404" and "the Phase 1/2 pages and the status page are unchanged".
 - A lint hint in `AppShellTest.hs` (eta reduction) was found by the first run and fixed before
   the freeze.
+
+### Amendment A1 — `HandoverTest.hs` (Planner-authorized, 2026-10-27)
+
+- Authority: Phase 3 Planner disposition, 2026-10-27: "C-P3.4 frozen-test amendment —
+  **APPROVED**", on `test-amendment-request.md`.
+- Exactly two replacements, nothing else: line 129 `BS.drop 7` → `BS.drop 6`; line 147
+  `BS.drop 7` → `BS.drop 6`.
+- Before: `eb856b5ade7e524d399b448d7203e638e1bcf874dcd726648de01fc61bbcfd6c` (checked before the
+  edit). After: `8a9903a9bcac3b422e6428b2cf6fe9aa85654eb8b52f4cf48fccea456bd61da0`, equal to the
+  digest the Planner gave in advance. `git diff --stat`: 1 file, 2 insertions, 2 deletions.
+- Re-frozen at the new digest:
+
+| File | SHA-256 |
+|---|---|
+| `test/integration/Lockstep/HandoverTest.hs` | `8a9903a9bcac3b422e6428b2cf6fe9aa85654eb8b52f4cf48fccea456bd61da0` |

@@ -1,9 +1,10 @@
 # Frozen-test amendment request — C-P3.4 `HandoverTest.hs` (for the owner)
 
-- Status: **AWAITING OWNER DECISION** (raised 2026-10-26 by the writing agent, manual)
+- Status: **APPROVED AND APPLIED** (Planner disposition, 2026-10-27). Raised 2026-10-26 by the
+  writing agent, manual.
 - Affects: `test/integration/Lockstep/HandoverTest.hs`, frozen in C-P3.4 §4 at
-  `eb856b5ade7e524d399b448d7203e638e1bcf874dcd726648de01fc61bbcfd6c`
-- Nothing has been edited. The writing agent does not amend frozen tests (C-P3.4 §4).
+  `eb856b5ade7e524d399b448d7203e638e1bcf874dcd726648de01fc61bbcfd6c`; re-frozen at
+  `8a9903a9bcac3b422e6428b2cf6fe9aa85654eb8b52f4cf48fccea456bd61da0` (C-P3.4 §4, amendment A1).
 
 ## The defect
 
