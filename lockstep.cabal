@@ -208,6 +208,7 @@ test-suite lockstep-integration
       Lockstep.DispatcherTest
       Lockstep.ExecutorTest
       Lockstep.FaultPlanTest
+      Lockstep.FirstUseJourneyTest
       Lockstep.FolderHelperTest
       Lockstep.HandoverTest
       Lockstep.InstallBrowserTest

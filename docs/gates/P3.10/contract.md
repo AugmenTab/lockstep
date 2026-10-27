@@ -46,6 +46,21 @@
 |---|---|---|
 | `test/integration/Lockstep/FirstUseJourneyTest.hs` | integration: headless Chromium (`test/browser/app_driver.py`, frozen), real service | O1–O4 along the whole journey; nothing is scheduled or run by it |
 
+## 3a. Verification record (after implementation)
+
+| Check | Result | Evidence |
+|---|---|---|
+| Frozen files (P3.10 and earlier) | digests unchanged | §4, earlier contracts' §4 |
+| `scripts/check --integration` | format, lint, build, unit, no-live-model guard PASSED; integration 380 of 382 PASSED, the 2 failures being the known C-P3.4 `HandoverTest.hs` defect | `check-integration.log` |
+| C-P3.10 journey | PASSED (337 s): every page swept (labels, one heading), every page narrow at 390 px, true words on Projects, keyboard steps, counts (2 projects, 1 task, no work order, no schedule decision) | `check-integration.log` |
+| Real novices (C9) | **NOT_RUN** — the procedure is ready (`usability-protocol.md`) | — |
+| Linux clean clone | see the Gate C package | `docs/gates/C/` |
+
+Two implementation runs: in the first, the journey passed but the C-P3.8 browser case timed
+out in its driver (the run took 2870 s, twice its usual time; the date rolled over during it).
+The second run, with no change, passed everything but the known 2. The first is kept as
+`check-integration-run1-browser-timeout.log`.
+
 ## 4. Freeze record
 
 Frozen 2026-10-26 by the writing agent (manual), before the copy fixes.

@@ -19,6 +19,7 @@ import Lockstep.DecisionsTest qualified as DecisionsTest
 import Lockstep.DispatcherTest qualified as DispatcherTest
 import Lockstep.ExecutorTest qualified as ExecutorTest
 import Lockstep.FaultPlanTest qualified as FaultPlanTest
+import Lockstep.FirstUseJourneyTest qualified as FirstUseJourneyTest
 import Lockstep.FolderHelperTest qualified as FolderHelperTest
 import Lockstep.HandoverTest qualified as HandoverTest
 import Lockstep.InstallBrowserTest qualified as InstallBrowserTest
@@ -105,4 +106,5 @@ main =
       , DecisionsBrowserTest.tests
       , ActivityPageTest.tests
       , ActivityBrowserTest.tests
+      , FirstUseJourneyTest.tests
       ]
