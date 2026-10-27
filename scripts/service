@@ -100,10 +100,12 @@ run_args() { # common docker arguments
 
 # C-P3.5 J5: the folders named by LOCKSTEP_SERVICE_FOLDERS (the helper's list), each
 # mounted at its own path: "rw PATH" only as the first line, then "ro PATH" lines.
-# Lines that are not well formed, or name no existing folder, are skipped. With no
-# folder mounted the container runs exactly as before.
+# Lines that are not well formed, or name no existing folder, are skipped; so is a
+# listed path that is a symbolic link or whose real path is not the listed one
+# (C-C.R1 R6), checked again here right before mounting. With no folder mounted the
+# container runs exactly as before.
 folder_args() {
-  local file=${LOCKSTEP_SERVICE_FOLDERS:-} line mode p n=0 root="" added="" mounted=0
+  local file=${LOCKSTEP_SERVICE_FOLDERS:-} line mode p real n=0 root="" added="" mounted=0
   [ -n "$file" ] && [ -f "$file" ] || return 0
   while IFS= read -r line; do
     n=$((n + 1))
@@ -116,7 +118,9 @@ folder_args() {
     case $p in
       / | *:* | *,* | */) continue ;;
     esac
-    [ -d "$p" ] || continue
+    [ -d "$p" ] && [ ! -L "$p" ] || continue
+    real=$(cd -P -- "$p" 2>/dev/null && pwd -P || true)
+    [ "$real" = "$p" ] || continue
     if [ "$mode" = rw ] && [ $n = 1 ]; then
       args+=(--volume "$p:$p")
       root=$p

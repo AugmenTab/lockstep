@@ -19,6 +19,7 @@ module Lockstep.Application.Ledger
   , reviseTicketIn
   , ticketFactsIn
   , decideTicket
+  , decideTicketIn
   , showTicket
   , NewWorkOrder (..)
   , createWorkOrder
@@ -444,29 +445,40 @@ showTicket runtime t =
       pure (SubjectView (fromIntegral (Store.subjectRowRevision s)) (ticketStateName state) content)
 
 decideTicket :: DatabaseRuntime -> Faults -> TicketId -> Int -> Command TicketInput -> IO (Either LedgerFailure Receipt)
-decideTicket runtime faults t expected command@(Command principal input) =
-  transaction runtime $ \run -> do
-    loaded <- loadTicket (tid t)
-    case loaded of
-      Left failure -> pure (Left failure)
-      Right (s, _, state, _) -> do
-        let
-          refusal = Store.NewRefusal (tid t) (int32 expected) (principalName principal) (fromRight (ticketInputName input) (encodeTicketEvent (TicketStep input))) T.empty
-          revision = fromIntegral (Store.subjectRowRevision s)
-        if revision /= expected
-          then refuseWith refusal (LedgerRefused (T.pack "stale-revision") (T.pack "the ticket has moved on; re-read it"))
-          else case stepTicket state command of
-            Left r -> refuseWith refusal (LedgerRefused (transitionRefusalCode r) (T.pack (show r)))
-            Right next ->
-              case encodeTicketEvent (TicketStep input) of
-                Left reason -> refuseWith refusal (LedgerRefused (T.pack "not-durable") reason)
-                Right text -> do
-                  let
-                    name = ticketStateName next
-                  _ <- Store.insertEvent (tid t) (Store.EventRow (int32 (revision + 1)) (principalName principal) text name)
-                  run (faultAfterEvent faults)
-                  Store.updateSubject (tid t) (int32 (revision + 1)) name
-                  pure (Right (Receipt (revision + 1) name []))
+decideTicket runtime faults t expected command =
+  transaction runtime $ \run -> decideTicketWith (run (faultAfterEvent faults)) t expected command
+
+{- | 'decideTicket' inside the caller's transaction, with the same rules and
+refusal rows (C-C.R1 R7: a task decision runs under the task lock). The caller
+checks readiness.
+-}
+decideTicketIn :: TicketId -> Int -> Command TicketInput -> O.Orville (Either LedgerFailure Receipt)
+decideTicketIn =
+  decideTicketWith (pure ())
+
+decideTicketWith :: O.Orville () -> TicketId -> Int -> Command TicketInput -> O.Orville (Either LedgerFailure Receipt)
+decideTicketWith afterEvent t expected command@(Command principal input) = do
+  loaded <- loadTicket (tid t)
+  case loaded of
+    Left failure -> pure (Left failure)
+    Right (s, _, state, _) -> do
+      let
+        refusal = Store.NewRefusal (tid t) (int32 expected) (principalName principal) (fromRight (ticketInputName input) (encodeTicketEvent (TicketStep input))) T.empty
+        revision = fromIntegral (Store.subjectRowRevision s)
+      if revision /= expected
+        then refuseWith refusal (LedgerRefused (T.pack "stale-revision") (T.pack "the ticket has moved on; re-read it"))
+        else case stepTicket state command of
+          Left r -> refuseWith refusal (LedgerRefused (transitionRefusalCode r) (T.pack (show r)))
+          Right next ->
+            case encodeTicketEvent (TicketStep input) of
+              Left reason -> refuseWith refusal (LedgerRefused (T.pack "not-durable") reason)
+              Right text -> do
+                let
+                  name = ticketStateName next
+                _ <- Store.insertEvent (tid t) (Store.EventRow (int32 (revision + 1)) (principalName principal) text name)
+                afterEvent
+                Store.updateSubject (tid t) (int32 (revision + 1)) name
+                pure (Right (Receipt (revision + 1) name []))
 
 reviseTicket :: DatabaseRuntime -> TicketId -> Int -> T.Text -> IO (Either LedgerFailure Receipt)
 reviseTicket runtime t expected title =

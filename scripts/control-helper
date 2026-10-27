@@ -852,36 +852,38 @@ folders_digest() {
   printf 'folders-%s' "$(sha256 < "$folders_file" | cut -c 1-16)"
 }
 
-# Prints the refusal code for adding the folder, or nothing; sets folder_real.
-folder_refusal() { # PATH
+# Checks the folder once, in this shell (C-C.R1 R6): sets folder_refusal_code (empty
+# when the folder may be added) and folder_real (the one resolution that is written).
+check_folder() { # PATH
   local path=$1 line listed added=0
+  folder_refusal_code=""
   folder_real=""
-  plain_path "$path" || { echo unusable-path; return; }
-  [ -e "$path" ] || { echo folder-missing; return; }
-  [ -d "$path" ] || { echo not-a-folder; return; }
+  plain_path "$path" || { folder_refusal_code=unusable-path; return; }
+  [ -e "$path" ] || { folder_refusal_code=folder-missing; return; }
+  [ -d "$path" ] || { folder_refusal_code=not-a-folder; return; }
   folder_real=$(cd -P -- "$path" 2>/dev/null && pwd -P || true)
-  [ -n "$folder_real" ] || { echo folder-missing; return; }
-  plain_path "$folder_real" || { echo unusable-path; return; }
-  [ -n "$home_real" ] || { echo outside-home; return; }
-  [ "$folder_real" != "$home_real" ] || { echo home-folder; return; }
+  [ -n "$folder_real" ] || { folder_refusal_code=folder-missing; return; }
+  plain_path "$folder_real" || { folder_refusal_code=unusable-path; return; }
+  [ -n "$home_real" ] || { folder_refusal_code=outside-home; return; }
+  [ "$folder_real" != "$home_real" ] || { folder_refusal_code=home-folder; return; }
   case $folder_real in
     "$home_real"/*) ;;
-    *) echo outside-home; return ;;
+    *) folder_refusal_code=outside-home; return ;;
   esac
   case "$folder_real/" in
-    "$root"/*) echo inside-lockstep; return ;;
+    "$root"/*) folder_refusal_code=inside-lockstep; return ;;
   esac
   case "$root/" in
-    "$folder_real"/*) echo inside-lockstep; return ;;
+    "$folder_real"/*) folder_refusal_code=inside-lockstep; return ;;
   esac
   while IFS= read -r line; do
     listed=${line#* }
     [ "${line%% *}" = ro ] && added=$((added + 1))
-    [ "$folder_real" != "$listed" ] || { echo already-listed; return; }
-    case $folder_real in "$listed"/*) echo overlaps-listed; return ;; esac
-    case $listed in "$folder_real"/*) echo overlaps-listed; return ;; esac
+    [ "$folder_real" != "$listed" ] || { folder_refusal_code=already-listed; return; }
+    case $folder_real in "$listed"/*) folder_refusal_code=overlaps-listed; return ;; esac
+    case $listed in "$folder_real"/*) folder_refusal_code=overlaps-listed; return ;; esac
   done < "$folders_file"
-  [ "$added" -lt 15 ] || echo list-full
+  [ "$added" -lt 15 ] || folder_refusal_code=list-full
 }
 
 folder_restart() {
@@ -894,12 +896,12 @@ execute_folder() { # ID EXPECT PATH
     refuse "$id" add-folder state-changed
     return
   fi
-  refusal=$(folder_refusal "$path")
+  check_folder "$path"
+  refusal=$folder_refusal_code
   if [ -n "$refusal" ]; then
     refuse "$id" add-folder "$refusal"
     return
   fi
-  folder_refusal "$path" > /dev/null
   started=$(date +%s)
   journal "start $id add-folder"
   tmp=$(mktemp "$helper/.folders.XXXXXX")

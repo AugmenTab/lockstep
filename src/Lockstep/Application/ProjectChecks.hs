@@ -23,7 +23,7 @@ module Lockstep.Application.ProjectChecks
 
 import Data.ByteString.Lazy qualified as LBS
 import Data.List qualified as L
-import Data.Maybe (catMaybes, fromMaybe, isJust, mapMaybe)
+import Data.Maybe (catMaybes, isJust, mapMaybe)
 import Data.Ord (Down (..))
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
@@ -144,10 +144,13 @@ data ExpectedChecks
   | ExpectProfile T.Text
   deriving (Eq, Show)
 
--- | Pre-freeze stub (C-C.R1): not implemented yet.
-chooseChecksExpecting :: DatabaseRuntime -> T.Text -> ExpectedChecks -> T.Text -> Bool -> IO (Either NotReadyReason (Either T.Text ChecksOutcome))
-chooseChecksExpecting _ _ _ _ _ =
-  pure (Right (Left (T.pack "not-implemented")))
+-- | Whether the page's choice is the current one; nothing chosen is never a set of checks.
+expectationMet :: Maybe T.Text -> ExpectedChecks -> Bool
+expectationMet current expected =
+  case (current, expected) of
+    (Nothing, ExpectNothing) -> True
+    (Just c, ExpectProfile e) -> c == e
+    _ -> False
 
 choiceOf :: Store.ProfileRow -> ChecksChoice
 choiceOf row =
@@ -272,9 +275,18 @@ projectChecks runtime pid = do
               , checksQueue = queue
               }
 
--- | L4, in its order; every refusal from @checks-changed@ on leaves a decision row.
+{- | L4 with the C-P3.7 text for what the page showed: @none@ is "nothing
+chosen" and only that (C-C.R1 R10), so when a set of checks called @none@ is
+the current one the request cannot be told apart and is refused
+@checks-changed@.
+-}
 chooseChecks :: DatabaseRuntime -> T.Text -> T.Text -> T.Text -> Bool -> IO (Either NotReadyReason (Either T.Text ChecksOutcome))
-chooseChecks runtime pid expected choice confirmed = do
+chooseChecks runtime pid expected =
+  chooseChecksExpecting runtime pid (if expected == T.pack "none" then ExpectNothing else ExpectProfile expected)
+
+-- | L4, in its order; every refusal from @checks-changed@ on leaves a decision row.
+chooseChecksExpecting :: DatabaseRuntime -> T.Text -> ExpectedChecks -> T.Text -> Bool -> IO (Either NotReadyReason (Either T.Text ChecksOutcome))
+chooseChecksExpecting runtime pid expected choice confirmed = do
   found <- findProject runtime pid
   case found of
     Left reason -> pure (Left reason)
@@ -301,7 +313,7 @@ chooseChecks runtime pid expected choice confirmed = do
               refuse d code = do
                 _ <- Store.insertProfileDecision d {Store.profileDecisionOutcome = T.pack "refused", Store.profileDecisionRefusal = Just code}
                 pure (Left code)
-            if fromMaybe (T.pack "none") currentId /= expected
+            if not (expectationMet currentId expected)
               then refuse decision (T.pack "checks-changed")
               else do
                 when (choice == basicChecksId) registerBasic

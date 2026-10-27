@@ -20,6 +20,7 @@ import Brigid.HTML.Types qualified as HTML
 import Brigid.Types qualified as B
 import Data.ByteString.Lazy qualified as LBS
 import Data.List qualified as L
+import Data.Maybe (isJust)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (show)
@@ -161,6 +162,7 @@ choiceForm pc =
     E.form
       [attr "id" "checks-form", A.method B.FormPOST, A.action (B.mkRawURL ("/app/api/projects/" <> projectId (checksProject pc) <> "/checks"))]
       [ E.input [A.type_ HTML.InputHidden, attr "name" "expected", attr "value" expected]
+      , E.input [A.type_ HTML.InputHidden, attr "name" "expected_set", attr "value" (if isJust (checksCurrent pc) then "yes" else "no")]
       , E.fieldset [] (E.legend [] [E.text "Which checks should apply?"] : fmap option (checksChoices pc))
       , E.div
           [cls "ls-choice"]

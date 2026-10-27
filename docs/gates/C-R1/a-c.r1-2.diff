@@ -1,0 +1,22 @@
+diff --git a/test/integration/Lockstep/GateCRemediationPageTest.hs b/test/integration/Lockstep/GateCRemediationPageTest.hs
+index cf027d5..a5971b0 100644
+--- a/test/integration/Lockstep/GateCRemediationPageTest.hs
++++ b/test/integration/Lockstep/GateCRemediationPageTest.hs
+@@ -166,12 +166,16 @@ tests =
+             ( \bad -> do
+                 decided <- post svc ("/app/api/tasks/" <> tid <> "/decide") [("ticket_revision", bad), ("action", "ready")]
+                 has (responseBody decided) [unreadable]
++            )
++            ["4294967297", "2147483648", "18446744073709551617", " 1", "1x", "-1"]
++          traverse_
++            ( \bad -> do
+                 edited <- post svc ("/app/api/tasks/" <> tid <> "/edit") [("revision", bad), ("title", "Buy rye bread"), ("acceptance", ""), ("priority", "normal")]
+                 has (responseBody edited) [unreadable]
+                 connected <- post svc ("/app/api/projects/" <> pid <> "/connect") [("revision", bad), ("folder", "later")]
+                 has (responseBody connected) [unreadable]
+             )
+-            ["4294967297", "18446744073709551617", " 1", "1x", "-1"]
++            ["9223372036854775808", "18446744073709551617", " 1", "1x", "-1"]
+           count (svcLedger svc) ("lockstep_decision_refusals WHERE subject_id = '" <> tid <> "'") >>= (@?= 0)
+           after <- ready (findTask (lgRuntime (svcLedger svc)) (taskId t))
+           fmap (\v -> (taskTitle v, taskRevision v, taskTicketRevision v)) after @?= Just ("Buy bread", 1, 1)

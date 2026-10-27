@@ -28,7 +28,7 @@ import Text.Show (Show)
 import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), checkReadiness, withDatabase)
 import Lockstep.Application.Identity (newUuid)
-import Lockstep.Application.Ledger (LedgerFailure (..), createTicketIn, decideTicket, ledgerFailureCode, noFaults, reviseTicketIn, ticketFactsIn)
+import Lockstep.Application.Ledger (LedgerFailure (..), createTicketIn, decideTicketIn, ledgerFailureCode, reviseTicketIn, ticketFactsIn)
 import Lockstep.Kernel.Evidence (mkHumanSignoff)
 import Lockstep.Kernel.Identity (TicketId (..), parseUuid, uuidText)
 import Lockstep.Kernel.Task
@@ -163,7 +163,9 @@ createTask runtime request =
           Store.lockTasks
           existing <- Store.findTaskByKey (idempotencyKeyText (newTaskKey request))
           case existing of
-            Just row -> loadView row
+            Just row
+              | Store.rowProjectId row /= projectId -> pure (refuse "key-conflict")
+              | otherwise -> loadView row
             Nothing -> do
               project <- Projects.findProjectById projectId
               case project of
@@ -220,30 +222,32 @@ editTask runtime rawId expected edit =
                                   Store.replaceDependencies tid ids
                                   Store.findTaskRow tid >>= maybe (pure (refuse "unknown-task")) loadView
 
+{- | K2 as C-C.R1 R7 enforces it: one transaction under the task lock; the
+C-P2.2 Ticket decision runs inside it. A Ticket revision outside the stored
+range is refused before anything is read or recorded (C-C.R1 R3).
+-}
 decideTask :: DatabaseRuntime -> T.Text -> T.Text -> Int -> TaskDecision -> IO (Either NotReadyReason (Either T.Text TaskView))
 decideTask runtime session rawId expected decision =
   whenReady runtime $
-    case canonicalId rawId of
-      Nothing -> pure (Right (refuse "unknown-task"))
-      Just tid -> do
-        known <- findTask runtime tid
-        case known of
-          Left reason -> pure (Left reason)
-          Right Nothing -> pure (Right (refuse "unknown-task"))
-          Right (Just _) ->
-            case input of
-              Left code -> pure (Right (Left code))
-              Right ticketInput ->
-                case parseUuid tid of
-                  Left _ -> pure (Right (refuse "unknown-task"))
-                  Right u -> do
-                    decided <- decideTicket runtime noFaults (TicketId u) expected (Command Human ticketInput)
-                    case decided of
-                      Left (LedgerRefused code _)
-                        | code == T.pack "stale-revision" -> pure (Right (refuse "stale-revision"))
-                        | otherwise -> pure (Right (refuse "not-allowed-now"))
-                      Left failure -> pure (Right (Left (ledgerFailureCode failure)))
-                      Right _ -> fmap (maybe (refuse "unknown-task") Right) <$> findTask runtime tid
+    case (canonicalId rawId, parseUuid rawId) of
+      (Just tid, Right u)
+        | expected < 0 || expected > 2147483647 -> pure (Right (refuse "revision-out-of-range"))
+        | otherwise ->
+            withDatabase runtime . O.withTransaction $ do
+              Store.lockTasks
+              found <- Store.findTaskRow tid
+              case (found, input) of
+                (Nothing, _) -> pure (refuse "unknown-task")
+                (Just _, Left code) -> pure (Left code)
+                (Just row, Right ticketInput) -> do
+                  decided <- decideTicketIn (TicketId u) expected (Command Human ticketInput)
+                  case decided of
+                    Left (LedgerRefused code _)
+                      | code == T.pack "stale-revision" -> pure (refuse "stale-revision")
+                      | otherwise -> pure (refuse "not-allowed-now")
+                    Left failure -> pure (Left (ledgerFailureCode failure))
+                    Right _ -> loadView row
+      _ -> pure (Right (refuse "unknown-task"))
  where
   input =
     case decision of

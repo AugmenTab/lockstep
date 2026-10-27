@@ -5,6 +5,7 @@ folder.
 -}
 module Lockstep.Effects.ProjectFolders
   ( makeProjectFolder
+  , removeProjectFolder
   , isProjectFolder
   , childFolders
   ) where
@@ -13,7 +14,7 @@ import Control.Exception (IOException, try)
 import Data.List qualified as L
 import Data.Text qualified as T
 import Flipstone.Prelude
-import System.Directory (createDirectory, doesDirectoryExist, doesPathExist, listDirectory, pathIsSymbolicLink)
+import System.Directory (createDirectory, doesDirectoryExist, doesPathExist, listDirectory, pathIsSymbolicLink, removeDirectoryRecursive)
 import System.Exit (ExitCode (ExitSuccess))
 import System.IO (FilePath)
 import System.Process qualified as Process
@@ -67,7 +68,19 @@ makeProjectFolder root candidates =
           made <- tryIO (createDirectory path)
           case made of
             Left err -> pure (Left (T.take 200 (T.pack ("the folder could not be made: " <> show' err))))
-            Right () -> initialize path
+            Right () -> do
+              initialized <- initialize path
+              when (isLeft initialized) (removeProjectFolder path)
+              pure initialized
+
+{- | Removes a folder 'makeProjectFolder' made for an attempt that did not end
+connected (C-C.R1 R5). Only a real directory is removed, never a link; a
+folder that cannot be removed is left as it is.
+-}
+removeProjectFolder :: FilePath -> IO ()
+removeProjectFolder path = do
+  real <- realDirectory path
+  when real (void (tryIO (removeDirectoryRecursive path)))
 
 initialize :: FilePath -> IO (Either T.Text FilePath)
 initialize path = do

@@ -103,6 +103,7 @@ library
       Lockstep.Persistence.Queries
       Lockstep.Persistence.Repositories
       Lockstep.Persistence.Sandbox
+      Lockstep.Persistence.SessionLocks
       Lockstep.Persistence.Tasks
       Lockstep.Web.ActivityPage
       Lockstep.Web.App
