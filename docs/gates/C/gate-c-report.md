@@ -61,7 +61,7 @@ agent or a model, and nothing is pushed. Its table is the record for C1–C4.
 | Amend `HandoverTest.hs` (`drop 7` → `drop 6`) | **APPROVED and applied** (Planner, 2026-10-27); re-frozen; passing on Mac and Linux |
 | Retire the cookie pages | **(c) deferred until after Gate C-UX** (Planner, 2026-10-27): no new capabilities for them, users go through the application only, Gate B walkthrough still possible; final retirement needs its own exact amendment set |
 | Review dispositions 1–10 (`review.md`): accept as proposed / change. #1 needs a mechanism choice (a or b); #7 a choice between amending C-P3.6 K2 and changing the code | |
-| Dogfood checkpoint / C1–C4 human results | |
+| Dogfood checkpoint / C1–C4 human results | Checkpoint **PASSED**, steps 1–11, run by the owner 2026-10-27 (`docs/gates/P3.6/dogfood-checkpoint.md`; 2 findings). Whether it counts as the C1–C4 human results is your call |
 | C8 result (your Gate B walkthrough) | |
 | C9 results (real participants) | |
 | Gate C accepted / not accepted, with exceptions | |
