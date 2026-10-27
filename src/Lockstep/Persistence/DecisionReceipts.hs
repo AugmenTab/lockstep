@@ -7,7 +7,7 @@ module Lockstep.Persistence.DecisionReceipts
   , findReceipt
   , insertReceipt
   , latestReceiptFor
-  , attemptExists
+  , attemptDigest
   , insertAttempt
   ) where
 
@@ -94,14 +94,14 @@ insertReceipt row =
         <> sql ") ON CONFLICT (idempotency_key) DO NOTHING RETURNING id"
     )
 
--- | Whether an attempt was ever started with this key.
-attemptExists :: O.MonadOrville m => T.Text -> m Bool
-attemptExists key =
-  not . null
+-- | The payload digest of the attempt started with this key, if one was.
+attemptDigest :: O.MonadOrville m => T.Text -> m (Maybe T.Text)
+attemptDigest key =
+  headMay
     <$> O.executeAndDecode
       O.SelectQuery
-      (sql "SELECT id FROM lockstep_decision_attempts WHERE idempotency_key = " <> text key)
-      (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.bigIntegerField "id")))
+      (sql "SELECT payload_digest FROM lockstep_decision_attempts WHERE idempotency_key = " <> text key)
+      (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.unboundedTextField "payload_digest")))
 
 -- | Records that an attempt with this key starts now; True when this call recorded it.
 insertAttempt :: O.MonadOrville m => T.Text -> T.Text -> T.Text -> m Bool

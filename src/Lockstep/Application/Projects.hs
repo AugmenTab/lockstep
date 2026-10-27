@@ -18,6 +18,7 @@ module Lockstep.Application.Projects
   , offeredFolders
   ) where
 
+import Control.Exception (onException)
 import Control.Monad (filterM)
 import Data.List qualified as L
 import Data.Maybe (fromMaybe)
@@ -201,10 +202,14 @@ attempt runtime folders view choice = do
   folder <- chooseFolder runtime folders slug choice
   case folder of
     Left code -> settle Nothing (recordIn view SetupFailed (Just code) Nothing (projectEngineer view) Nothing)
-    Right (path, made) -> do
-      first <- observeRegistration path Nothing
-      fallback <- observeRegistration path (Just (T.pack "origin"))
-      settle (if made then Just path else Nothing) (connectIn view slug path first fallback)
+    Right (path, made) ->
+      -- A folder this attempt made goes again if anything throws before the attempt settles.
+      ( do
+          first <- observeRegistration path Nothing
+          fallback <- observeRegistration path (Just (T.pack "origin"))
+          settle (if made then Just path else Nothing) (connectIn view slug path first fallback)
+      )
+        `onException` when made (removeProjectFolder path)
  where
   settle made action = do
     result <-
