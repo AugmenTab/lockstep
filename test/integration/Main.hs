@@ -21,6 +21,10 @@ import Lockstep.ExecutorTest qualified as ExecutorTest
 import Lockstep.FaultPlanTest qualified as FaultPlanTest
 import Lockstep.FirstUseJourneyTest qualified as FirstUseJourneyTest
 import Lockstep.FolderHelperTest qualified as FolderHelperTest
+import Lockstep.GateCRemediationBrowserTest qualified as GateCRemediationBrowserTest
+import Lockstep.GateCRemediationFolderTest qualified as GateCRemediationFolderTest
+import Lockstep.GateCRemediationPageTest qualified as GateCRemediationPageTest
+import Lockstep.GateCRemediationTest qualified as GateCRemediationTest
 import Lockstep.HandoverTest qualified as HandoverTest
 import Lockstep.InstallBrowserTest qualified as InstallBrowserTest
 import Lockstep.InstallHelperTest qualified as InstallHelperTest
@@ -107,4 +111,8 @@ main =
       , ActivityPageTest.tests
       , ActivityBrowserTest.tests
       , FirstUseJourneyTest.tests
+      , GateCRemediationTest.tests
+      , GateCRemediationPageTest.tests
+      , GateCRemediationFolderTest.tests
+      , GateCRemediationBrowserTest.tests
       ]

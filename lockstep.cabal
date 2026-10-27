@@ -210,6 +210,10 @@ test-suite lockstep-integration
       Lockstep.FaultPlanTest
       Lockstep.FirstUseJourneyTest
       Lockstep.FolderHelperTest
+      Lockstep.GateCRemediationBrowserTest
+      Lockstep.GateCRemediationFolderTest
+      Lockstep.GateCRemediationPageTest
+      Lockstep.GateCRemediationTest
       Lockstep.HandoverTest
       Lockstep.InstallBrowserTest
       Lockstep.InstallHelperTest
