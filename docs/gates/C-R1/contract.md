@@ -55,7 +55,66 @@ of R6 is tested).
 
 ## 3a. Verification record (after implementation)
 
-To be filled after implementation.
+Implementation: `e49b68e` (on `phase-3`, after the freeze commit `b83db50`), then `e1c56ef` (the
+four LOW findings of the independent review of `e49b68e`). The tested commit is **`e1c56ef`**.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Frozen files (C-C.R1 and earlier) | digests unchanged; A-C.R1-2's trial file restored and its digest re-checked | §4, earlier contracts' §4 |
+| First run of the C-C.R1 groups against `e49b68e` | 20 of 21 PASSED; the 1 failure is the frozen page case's own fixture (A-C.R1-2) | `first-implementation-integration-run.log` |
+| C-C.R1 groups with the proposed A-C.R1-2 diff (trial, not applied) | 21 of 21 PASSED | `trial-with-proposed-a-c.r1-2.log` |
+| Mac: `scripts/check --integration` at `e49b68e` (plus uncommitted documents) | format, lint, build, unit 800 of 800, no-live-model guard PASSED; integration **402 of 403**, the 1 failure being the A-C.R1-2 case; backup/restore NOT_RUN (it runs only after a green integration step) | `check-integration-e49b68e.log` |
+| Independent read-only review of `7839c21..e49b68e` (an agent, not a human) | no HIGH, no MEDIUM; 4 LOW fixed in `e1c56ef`, 4 INFO kept | `docs/gates/C/review.md`, Review 2 |
+| Affected groups after the fixes (C-C.R1, C-P3.8, C-P3.5, launcher) | 77 of 78; the 1 failure is the A-C.R1-2 case | — |
+| Mac: `scripts/check --integration` at **`e1c56ef`** (plus uncommitted documents) | format, lint, build, unit 800 of 800, guard PASSED; integration **402 of 403**, the same single A-C.R1-2 case; backup/restore NOT_RUN | `check-integration-e1c56ef.log` |
+| Linux clean clone of `e1c56ef` | format, lint, build PASSED; unit 800 of 800; integration **402 of 403**, the same single A-C.R1-2 case; kernel boundary and purity scan clean | `linux-clone.log` |
+| Read-only review of the fix delta `e49b68e..e1c56ef` (an agent) | no HIGH, no MEDIUM; 2 LOW, 2 INFO, not yet fixed (owner asked to hold the next qualification); R1 step (2) of this contract trails the code since `e1c56ef` (another digest on a marker is `key-conflict`), proposed amendment A-C.R1-3 | `docs/gates/C/review.md`, Review 3 |
+
+A Linux clean clone of `e49b68e` was started and stopped unfinished when the review fixes
+superseded it; its log was overwritten by the `e1c56ef` run.
+
+Every earlier frozen case passes on the Mac with the remediation, including the C-P3.5 projects,
+C-P3.6 tasks, C-P3.7 checks and C-P3.8 decisions suites whose code changed.
+
+Implementation notes (decisions within the design, recorded here):
+
+- **The lock's lifetime, as built.** `Lockstep.Application.Database.withSessionLock` makes a pool of
+  exactly one connection for each locked request (`MaxConnectionsTotal 1`, outside the service
+  pool), pins that connection with Orville's `withConnection_`, and gives the body a runner bound to
+  that pinned connection. The service pool has one connection per capability (one in the service),
+  so work under the lock must not use the lock's connection for its ledger operations, and does
+  not: the C-P2.5/C-P2.9 operations keep their own transactions on the service pool, unchanged. The
+  lock ends in three independent ways, whichever comes first: `pg_advisory_unlock`, the connection
+  being destroyed when anything throws inside the pinned scope, and the pool being destroyed in a
+  `finally`. A lost connection cannot be reused: the receipt is written on the lock's own
+  connection, inside a transaction that first proves the lock is held by that backend
+  (`pg_locks`: advisory, granted, `pid = pg_backend_pid()`, classid 7301, objid `hashtext(key)`,
+  objsubid 2). The interruption case of the frozen suite kills that backend while the operation
+  waits; the operation then completes on the service pool, no receipt is written, and the same key
+  is answered `decision-outcome-uncertain`.
+- **Why a marker, not a pending receipt.** The marker table is append-only like the receipts; no row
+  is ever updated, so M4's "rows never update" holds. The marker is committed before the operation,
+  so a crash, a lost lock connection or an unavailable database after it can never lead to the
+  operation being run again under the same key, nor to a receipt that guesses what happened.
+  Reloading the decision page gives a fresh key and shows the ledger as it is.
+- **Residual window, stated.** Between the marker and the receipt, a crash leaves an applied (or
+  refused) operation with a marker and no receipt. The answer to that key is then "cannot tell",
+  never a wrong receipt; the C-P3.8 §3a limitation (a wrong `refused` receipt after such a crash)
+  is gone.
+- **Busy, not unavailable.** A lock wait longer than 5 s (`lock_timeout`, SQLSTATE 55P03) is
+  `decision-busy` / `project-busy`: nothing was read or written for the request.
+- **Freshness basis.** `order:<revision>` comes from the C-P2.5 receipt of the operation;
+  `intent:<state>:<generation>` from the intent the C-P2.9 operation returned. The current basis is
+  read with `showWorkOrder` / `loadIntent`. Work put back in line and then claimed again is no
+  longer "current" for the old receipt: the closed page then says the decision is no longer waiting
+  rather than "Done".
+- **Project attempt.** The read-only Git observations (with and without `origin`) run before the
+  transaction; the transaction takes the projects lock, checks the revision again, then the Engineer
+  (C-P2.1 rows as before), the registration (as before, under the registration lock) and the setup
+  row. A `git init` that fails removes the folder it was run in. Lock order inside the transaction
+  is projects → repositories, as no other path takes them the other way.
+- **Task lock.** `decideTask` takes `lockTasks` (the whole task table, as `createTask` and `editTask`
+  already do); C-P3.6 K2 says "a lock on the project's tasks", which the table lock includes.
 
 ## 4. Freeze record
 
@@ -103,3 +162,7 @@ Pre-freeze verification:
 Finding 9 asks that "a key reused with different input must conflict". Two frozen tests assert the
 opposite for the same project, so this part is **not** implemented: `docs/gates/C-R1/amendment-request-1.md`
 holds the exact diffs, provenance and the code change it would authorize.
+
+Status 2026-10-27 (later): A-C.R1-1 and A-C.R1-2 are **approved in principle** by the Planner, not
+yet authorized for editing; A-C.R1-3 (R1 step (2) and one new frozen case) is requested. No frozen
+file has changed (digests re-checked).

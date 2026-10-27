@@ -63,11 +63,31 @@ inside a project arrives in a later update.
    the owner: an active virtual environment, or anything else earlier on `PATH` named `lockstep`,
    shadows the command the launcher offers to install in `~/.local/bin` (`offer_path` returns
    early only when `command -v lockstep` is already that file). Not fixed; reported.
+   **Planner disposition (2026-10-27): a product finding.** Addressed by C-C.R1 R12
+   (`docs/gates/C-R1/contract.md`): `lockstep setup-path` and an interactive `./lockstep` name the
+   other program, point to an active virtual environment when it is the cause, and say to run
+   `./lockstep` (or the checkout's full path); nothing outside Lockstep's own link is touched. The
+   setup instructions (README, OPERATOR_GUIDE) say the same. Tested automatically (a `.venv`
+   `lockstep` first on `PATH`); not yet seen by the owner in their own terminal.
 2. **Step 10 was wrong in this document.** `./lockstep stop` answered "Stopped the Lockstep
    control pane. The Lockstep service and database keep running.", which is correct behaviour
    (C-P3.2), so reopening would not have tested that the data survives a restart. Step 10 now
    stops and starts the service and database from the pane. The writing agent's error, not the
-   product's.
+   product's. Resolved (Planner, 2026-10-27).
+
+## What was tested, and what was installed (provenance)
+
+The owner ran these steps on the installed build of **`b963527`** (`.local/install/VERSION`:
+`commit b963527…`, `dirty false`, binary SHA-256 `72ce6570…7c5b`, installed 2026-10-27T20:32:42Z,
+database `ready 15`; the binary's SHA-256 was checked against that record). The Gate C machine
+qualification ran on **`bd94c96`**. The two commits are different identities with the same code:
+`b963527` is `bd94c96` plus four documents (`gate-c-report.md`, `dogfood-checkpoint.md` and two
+qualification logs), and their trees are byte-identical for `src`, `app`, `scripts`, `static`,
+`test`, `package.yaml`, `stack.yaml.lock`, `Dockerfile` and the `lockstep` launcher (equal Git tree
+and blob hashes). The installed binary is not the binary the tests ran: the pane built it from
+`b963527` on the owner's Mac, and the tests built their own from `bd94c96` in the dev container;
+byte-identical builds are not claimed. The remediation code (`C-C.R1`, after `7839c21`) is newer
+than both and has **not** been installed or dogfooded.
 
 ## What to record
 
