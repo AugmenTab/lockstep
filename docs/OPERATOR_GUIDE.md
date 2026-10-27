@@ -62,6 +62,14 @@ in your shell's start-up file (`~/.zprofile` for zsh; `~/.bash_profile` for bash
 `~/.bashrc` on Linux). For other shells it prints the line to add and changes nothing. The first
 interactive `lockstep` offers this once.
 
+If another program called `lockstep` comes first on your `PATH` (for example an active Python
+virtual environment's `.venv/bin/lockstep`), typing `lockstep` runs that program, not Lockstep.
+`lockstep setup-path` and every interactive `./lockstep` then name it and say how to run Lockstep
+instead (C-C.R1 R12): `./lockstep` in the checkout, or the checkout's full path, e.g.
+`~/personal/lockstep/lockstep stop`. Lockstep never changes or removes the other program; to make
+`lockstep` find Lockstep again, `deactivate` the virtual environment (or open a new terminal), or
+move `~/.local/bin` earlier on your `PATH`. `command -v lockstep` shows which one a terminal runs.
+
 What the sign-in does not protect against (C-P3.1 §6): anyone running as your user (or root) can
 read `.local/control` and your browser profile; while the browser is being opened, the address
 with its one-time token is briefly visible in the process list, on macOS also to other local

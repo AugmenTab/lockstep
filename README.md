@@ -93,6 +93,10 @@ Every request must be addressed to `127.0.0.1:<port>` exactly (not
 ./lockstep stop
 ```
 
+If `command -v lockstep` names another program (an active virtual environment's
+`.venv/bin/lockstep`, say), `lockstep` runs that one: use `./lockstep` in the checkout instead.
+`setup-path` and `./lockstep` say so and leave the other program alone (docs/OPERATOR_GUIDE.md).
+
 Opens the local control pane in the default browser, already signed in (one-time token in the
 URL fragment, header session, no cookie). It works while the database or service is down and
 shows why. The first run builds the pane once; already-compatible services are started; nothing

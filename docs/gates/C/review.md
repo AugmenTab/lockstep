@@ -8,7 +8,8 @@
   repository) and ran no tests.
 - Date: 2026-10-27. Result: **no HIGH findings**; 2 MEDIUM, 5 LOW, 3 INFO.
 - Dispositions are **proposed** by the writing agent (Implementer). Nothing has been changed; the
-  tested commit stays `0c8d9ee`. Items marked **owner** need the owner's decision.
+  tested commit stays `0c8d9ee`. Items marked **owner** need the owner's decision. (Superseded:
+  the Planner decided them on 2026-10-27; see "Planner dispositions" below.)
 
 ## Findings and proposed dispositions
 
@@ -25,6 +26,23 @@
 | 9 | INFO | A reused creation key returns the earlier task/project even when the new request names another project; `CreateTaskRoute pid` can answer with another project's task. | Return `key-conflict` when the project differs (matches C-P1.5's key rule better; small contract amendment). |
 | 10 | INFO | `none` is the "nothing chosen" sentinel for `expected` in the checks form; a profile registered with id `none` would be confused with it. | Reserve the id `none` (refuse it in `profile add`), or use an impossible sentinel. |
 
+## Planner dispositions (2026-10-27) and what was done
+
+The Planner decided all ten (`.local/plans/phase-03_update2.md`); the remediation is contract
+**C-C.R1** (`docs/gates/C-R1/contract.md`), frozen before the code changed.
+
+| # | Planner's decision | Done in C-C.R1 | Open |
+|---|---|---|---|
+| 1 | Option B: session-level advisory lock over lookup → operation → receipt; digests on every replay path; bounded wait; fail closed | R1, R2: dedicated lock connection, 5 s bound (`decision-busy`), attempt marker before the operation, lock proved held before the receipt insert, `decision-outcome-uncertain` instead of a replay or a guessed receipt; receipts still insert-only | — |
+| 2 | Serialize per project, re-read under the lock, no orphans | R5: per-project lock; Engineer, registration and setup in one transaction; a folder the attempt made is removed unless connected | — |
+| 3–4 | One check; reject links and escaped paths before mounting | R6 | the helper's check-to-write window has no deterministic test (C-C.R1 §3) |
+| 5 | Refuse out-of-range revisions before any operation or receipt | R3 | A-C.R1-2 (a frozen page case's own fixture is wrong) |
+| 6 | Compare the receipt's ledger basis with the subject's latest | R4 | — |
+| 7 | Enforce K2 in code; stale → typed `stale-revision` | R7 | — |
+| 8 | Test quoted attributes through the renderer and a browser | R8 (and `attr` escapes `"` itself) | — |
+| 9 | Bind replay to the project and the request | R9: another project's key is `key-conflict` | the same key with other content: **A-C.R1-1**, contradicts frozen C-P3.5/C-P3.6 tests |
+| 10 | An unambiguous form value, no restricted IDs | R10: `expected_set`; old `none` fails closed | — |
+
 ## Checked and found clean (reviewer's list, condensed)
 
 Route guard (every data-carrying or acting `/app` route needs the session header, exact Host and
@@ -37,3 +55,67 @@ and status words honest (PASSED only for PASSED, ATTESTED not verified, unknowns
 unreadable projection never empty); decision kinds checked (`fits`), Give up re-checks the
 generation, Try again needs the acknowledgment, text rules before any receipt; sign-in tokens only in
 URL fragments, cleaned from the address bar.
+
+## Review 2 — the remediation diff (C-C.R1)
+
+- Reviewer: a fresh, separate **read-only** reviewer agent of the same model family (read files and
+  read-only git only; no edit, build, Docker or network). **Not a human review.**
+- Scope: `git diff 7839c21..e49b68e -- src app scripts static lockstep`, against C-C.R1 R1–R12, the
+  findings above and the Planner disposition. Date 2026-10-27. Result: **no HIGH, no MEDIUM**;
+  4 LOW, 4 INFO.
+
+| # | Sev. | Finding (condensed) | Disposition |
+|---|---|---|---|
+| 1 | LOW | The marker path answers `decision-outcome-uncertain` without comparing digests; the disposition asks for a digest comparison on every replay/conflict path | **Fixed in `e1c56ef`**: the marker's digest is read; another digest is `key-conflict`, the same is `decision-outcome-uncertain` |
+| 2 | LOW | A failed `pg_advisory_unlock` after a committed receipt answers "unavailable" for an applied, receipted decision | **Fixed in `e1c56ef`**: the unlock is best effort; closing the connection releases the lock |
+| 3 | LOW | A folder the attempt made survives an exception thrown before the attempt settles | **Fixed in `e1c56ef`**: removed on any exception (`onException`) |
+| 4 | LOW | The launcher compares one link level literally; a relative or chained link to this Lockstep is reported as another program | **Fixed in `e1c56ef`**: the whole link chain is followed |
+| 5 | INFO | One new pool (one connection) per locked request, outside the service pool's cap | **Deferred to Phase 4** (Planner, 2026-10-27): a bounded-concurrency concern that must be addressed before concurrent live-engineering workloads (cap the number of lock connections, or share a bounded lock pool) |
+| 6 | INFO | Async exceptions inside the lock become "unavailable" (as `withDatabase` already does) | **Accepted as documented** (Planner): it fails closed (marker stays, connection destroyed) |
+| 7 | INFO | A marker left by an unavailable database poisons that key | **Accepted as documented** (Planner): intended (R1); a reloaded page has a fresh key |
+| 8 | INFO | The PATH warning repeats on every interactive launch while shadowed | **Accepted as documented** (Planner): intended (R12) |
+
+Planner disposition of Review 2 (2026-10-27, `.local/plans/phase-03_update3.md`): the four LOW
+corrections in `e1c56ef` are **accepted provisionally**, subject to a narrow read-only review of the
+`e49b68e..e1c56ef` delta (Review 3, below).
+
+## Review 3 — the review fixes (`e49b68e..e1c56ef`)
+
+- Reviewer: another fresh **read-only** reviewer agent (same rules). **Not a human review.** Scope:
+  `git diff e49b68e e1c56ef`. Result: **no HIGH, no MEDIUM**; 2 LOW, 2 INFO.
+- The tested commit stays `e1c56ef`: the owner asked that no new Mac qualification run yet, so the
+  proposed changes below are **not made**. They are small and go with the next code change, which
+  the A-C.R1-2 re-freeze needs anyway (one qualification for both).
+
+| # | Sev. | Finding (condensed) | Proposed disposition |
+|---|---|---|---|
+| 1 | LOW | The best-effort unlock's `try` (`Database.hs`, `withSessionLock`) also catches asynchronous exceptions, so a thread kill during the unlock is swallowed. The lock is still released (the one-connection pool is destroyed) | Rethrow asynchronous exceptions there (catch synchronous ones only) |
+| 2 | LOW (contract text) | Frozen C-C.R1 R1 step (2) says a marker without a receipt is `decision-outcome-uncertain`; since `e1c56ef` a marker with **another** digest is `key-conflict` (as the Planner's "compare digests on every path" requires). No frozen test covers that branch | **Planner**: amend R1 (2) to "… same digest → `decision-outcome-uncertain`, other digest → `key-conflict`" and add a frozen case for it (A-C.R1-3, to be written with A-C.R1-2's re-freeze). Until then the contract text trails the code on this branch |
+| 3 | INFO | An asynchronous exception after the project transaction committed `connected` but before `settle` returns would remove the folder the project now records | Re-read the project before removing a made folder; remove only if it does not record that folder |
+| 4 | INFO (older) | An ambiguous COMMIT (committed on the server, a connection error on the client) also removes a recorded folder | The same fix as 3 |
+
+The four points the Planner asked Review 3 to verify:
+
+| Point | Verdict | Basis |
+|---|---|---|
+| Markers tell same-digest uncertainty from other-digest conflict | **Verified in code** (receipt first, then the marker's digest: other → `key-conflict`, same → `decision-outcome-uncertain`); **not covered by a frozen test**, and frozen R1 (2) text trails it | Review 3 "checked clean"; finding 2 → A-C.R1-3 |
+| Post-commit lock cleanup cannot turn an applied, receipted action into a false refusal | **Verified**: a failing unlock is ignored and the result returned; the one-connection pool is destroyed, so the lock never survives on a reused connection. Residue: finding 1 (an async kill during the unlock is swallowed; it is not a refusal) | Review 3 finding 1 and "checked clean" |
+| Exception cleanup cannot delete a directory after a successful connection, or anything the attempt did not create | **Not fully met.** Nothing the attempt did not create is ever removed (only the folder `makeProjectFolder` made, after a real-directory check). But a folder a *successful* connection records can be removed in two narrow windows: an asynchronous exception after the commit (finding 3) or an ambiguous COMMIT (finding 4) | Review 3 findings 3, 4 |
+| Chained symlink resolution handles cycles and foreign targets safely | **Verified**: at most 20 links, cycles and dangling targets reported as another program, relative links resolved against their own directory, nothing changed on disk | Review 3 "checked clean" |
+
+### Correction plan for the remaining findings (not applied; no qualification started)
+
+1. Point 3 / findings 3, 4 (`Application/Projects.hs`, `attempt`/`settle`): before removing a made
+   folder, on the normal path and in the exception handler alike, re-read the project (`findProjectById`
+   on the service pool) and remove the folder only when the project does **not** record it as its
+   folder. If that read fails, keep the folder: a possibly orphaned new folder is preferred to
+   deleting a connected project's folder. Test: inject a failure *after* the commit (a trigger cannot
+   do that; a test fault hook in `settle`, as C-P2.5's `Faults`, is needed), and an ambiguous-commit
+   case if it can be forced.
+2. Finding 1 (`Application/Database.hs`): catch only synchronous exceptions around the unlock and
+   rethrow asynchronous ones.
+3. Finding 2: A-C.R1-3 (contract text and one frozen case).
+
+These, together with A-C.R1-1's production change and the A-C.R1-2 / A-C.R1-3 re-freezes, need one
+new Mac qualification and one Linux clean clone, which wait for the owner (stop instruction of
+2026-10-27).

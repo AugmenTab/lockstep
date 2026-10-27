@@ -1,6 +1,9 @@
 # Amendment request A-C.R1-1 — a creation key reused with different content (for the Planner)
 
-- Status: **REQUESTED, NOT APPLIED.** Nothing below is in the code or the tests.
+- Status: **APPROVED IN PRINCIPLE** (Planner, 2026-10-27, `.local/plans/phase-03_update3.md`:
+  "replay keys must be bound to the original request identity and content, with conflicting reuse
+  refused"). **Not authorized for editing; not applied.** Nothing below is in the code or the
+  frozen tests. Final authorization packet: "For final authorization" at the end.
 - Raised 2026-10-27 by the writing agent (Implementer, manual) under C-C.R1 §5.
 - Authority asked for: the Planner disposition of 2026-10-27, item 9 ("A key reused with different
   input must conflict, not return another project's resource"), and its remediation discipline
@@ -78,10 +81,33 @@ be re-frozen at their new digests in their contracts' §4, as A1 was for `Handov
   today. Words for projects: "This form was already used for another project. Nothing was changed.
   Open New project again."
 
-## What the Planner decides
+## For final authorization (prepared 2026-10-27, after the Planner's approval in principle)
 
-1. Approve the two diffs and the contract wording (then the change above is implemented under a
-   C-C.R1 addendum, with the same Mac and Linux qualification), or
-2. keep the C-P3.5/C-P3.6 rule (same key → the first result, whatever the content) and record
-   item 9 as met by R9 only, or
-3. another rule.
+The diffs above were superseded by the exact `git diff --no-index` output of the frozen files
+against amended copies (`.local/amend-c-r1/`, outside the test tree; the frozen files were not
+touched): `docs/gates/C-R1/a-c.r1-1-projects.diff` and `docs/gates/C-R1/a-c.r1-1-tasks.diff`. They
+change one case each and nothing else.
+
+| File | Frozen digest (now) | Digest after the amendment | Recorded in |
+|---|---|---|---|
+| `test/integration/Lockstep/ProjectsTest.hs` | `0e47aac63eb0874a85ed0faa7d1bb7c7ef5951e42d8d4c8188798bb2bade5342` | `be24e197af637c96f82930ca190b204d53504041bc6c12c63802908c92d50d83` | C-P3.5 §4 |
+| `test/integration/Lockstep/TasksTest.hs` | `181cb31396381fe46a32c53de8f411cc1168320eb6bc9fa04cadc7a4bd4266ca` | `e4e29fc2b8e3ddde11ecf4220676c2695bcd5c4bd297b6a3ae819eb5de2c4e56` | C-P3.6 §4 |
+
+Contract assertions affected:
+
+| Contract | Now | After |
+|---|---|---|
+| C-P3.5 J2 | "A repeated creation key returns the project it created and creates nothing." | "A repeated creation key returns the project it created and creates nothing when the request is the same; the same key with other content is refused `key-conflict` and creates nothing." |
+| C-P3.5 §3 (`ProjectsTest.hs` row) | "repeated creation key" | "repeated creation key (same content replays, other content `key-conflict`)" |
+| C-P3.6 K2 | "A repeated creation key returns the task it created." | "A repeated creation key returns the task it created when the request is the same; the same key in another project or with other content is refused `key-conflict`." |
+| C-P3.6 §3 (`TasksTest.hs` row) | "repeated creation key" | as for C-P3.5 |
+| C-C.R1 R9 | first half done, second half stopped (§5) | both halves done; §5 closed |
+
+Production change that goes with it (described above; not written): migration 17
+(`creation_digest`), the canonical project and task request texts, the replay rule, and words for
+projects. Tested by the two amended cases; the amended copies have **not** been compiled or run
+(no build or test was started under the current stop instruction).
+
+Expected behaviour of the amended cases: against today's code (`e1c56ef`) both **fail** (the same
+key with other content still returns the first project or task); with the production change both
+should pass. Both are to be shown in the next qualification, before and after.

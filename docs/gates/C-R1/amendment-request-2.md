@@ -1,7 +1,10 @@
 # Amendment request A-C.R1-2 — a defect in the frozen C-C.R1 page test (for the Planner)
 
-- Status: **REQUESTED, NOT APPLIED.** The frozen file is unchanged (digest
-  `4015a2835ae35a6ec3dc018efb31aa0d12e78fc7244203b1cd62a1676c4bd41d`, C-C.R1 §4).
+- Status: **APPROVED IN PRINCIPLE** (Planner, 2026-10-27, `.local/plans/phase-03_update3.md`: "an
+  invalid test fixture should be repaired, not accommodated in production code"). **Not authorized
+  for editing; not applied.** The frozen file is unchanged (digest
+  `4015a2835ae35a6ec3dc018efb31aa0d12e78fc7244203b1cd62a1676c4bd41d`, C-C.R1 §4, checked again
+  2026-10-27). No production code accommodates the fixture.
 - Raised 2026-10-27 by the writing agent (Implementer, manual), after the first run against the
   implementation.
 
@@ -53,7 +56,21 @@ The amended file was put in the working tree for one run of the C-C.R1 groups an
 (`git restore`; the frozen digest above was checked afterwards):
 `docs/gates/C-R1/trial-with-proposed-a-c.r1-2.log`, **21 of 21 passed**.
 
-## What the Planner decides
+## For final authorization
+
+| File | Frozen digest (now) | Digest after the amendment |
+|---|---|---|
+| `test/integration/Lockstep/GateCRemediationPageTest.hs` | `4015a2835ae35a6ec3dc018efb31aa0d12e78fc7244203b1cd62a1676c4bd41d` | `ad05170cefeba7fd9ddf702a3392bd5b6a962c3a3f5c91a233fdbb449bd6806e` |
+
+The after-digest was reproduced from an independent amended copy (`.local/amend-c-r1/`), byte for
+byte the trial file. Contract assertions affected: none changes meaning. C-C.R1 R3 already states
+the ranges (`integer` for `expected` and `ticket_revision`, `bigint` for project and task
+`revision`); the amended case is the first to test each field against its own range. C-C.R1 §4
+gains the new digest and a line recording the amendment. Expected: the amended case passes at
+`e1c56ef` (shown by the trial at `e49b68e`, whose R3 code is unchanged in `e1c56ef`; to be shown
+again at the next qualification).
+
+## What the Planner decides (superseded by the approval in principle)
 
 1. Approve the diff (then it is applied, re-frozen at the digest above, and the qualification
    repeated), or
