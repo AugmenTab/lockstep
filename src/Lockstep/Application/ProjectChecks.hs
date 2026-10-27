@@ -15,8 +15,10 @@ module Lockstep.Application.ProjectChecks
   , QueueEntry (..)
   , ProjectChecks (..)
   , ChecksOutcome (..)
+  , ExpectedChecks (..)
   , projectChecks
   , chooseChecks
+  , chooseChecksExpecting
   ) where
 
 import Data.ByteString.Lazy qualified as LBS
@@ -135,6 +137,17 @@ data ChecksOutcome
   = ChecksChosen
   | ChecksUnchanged
   deriving (Eq, Show)
+
+-- | What the page showed as the current choice (C-C.R1 R10): nothing, or one set of checks.
+data ExpectedChecks
+  = ExpectNothing
+  | ExpectProfile T.Text
+  deriving (Eq, Show)
+
+-- | Pre-freeze stub (C-C.R1): not implemented yet.
+chooseChecksExpecting :: DatabaseRuntime -> T.Text -> ExpectedChecks -> T.Text -> Bool -> IO (Either NotReadyReason (Either T.Text ChecksOutcome))
+chooseChecksExpecting _ _ _ _ _ =
+  pure (Right (Left (T.pack "not-implemented")))
 
 choiceOf :: Store.ProfileRow -> ChecksChoice
 choiceOf row =

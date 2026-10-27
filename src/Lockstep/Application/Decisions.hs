@@ -94,6 +94,7 @@ data DecisionReceipt
   , receiptOutcome :: T.Text
   , receiptRefusal :: Maybe T.Text
   , receiptReplayed :: Bool
+  , receiptCurrent :: Bool
   }
   deriving (Eq, Show)
 
@@ -156,6 +157,7 @@ receiptOf replayed row =
     , receiptOutcome = Store.receiptRowOutcome row
     , receiptRefusal = Store.receiptRowRefusal row
     , receiptReplayed = replayed
+    , receiptCurrent = True
     }
 
 payloadDigest :: DecisionRequest -> T.Text
