@@ -126,7 +126,7 @@ tests =
           started <- httpRequest port "POST" "/api/open-application" [("Origin", origin port), ("X-Lockstep-Session", session)] ""
           responseStatus started @?= 202
           let
-            rid = BS8.unpack (BS.take 32 (BS.drop 7 (snd (BS.breakSubstring "\"id\":\"" (responseBody started)))))
+            rid = BS8.unpack (BS.take 32 (BS.drop 6 (snd (BS.breakSubstring "\"id\":\"" (responseBody started)))))
           _ <- await env (T.pack rid)
           withoutSession <- httpRequest port "GET" ("/api/handover/" <> rid) [] ""
           responseStatus withoutSession @?= 401
@@ -144,7 +144,7 @@ tests =
           session <- paneSession env port
           started <- httpRequest port "POST" "/api/open-application" [("Origin", origin port), ("X-Lockstep-Session", session)] ""
           let
-            rid = BS8.unpack (BS.take 32 (BS.drop 7 (snd (BS.breakSubstring "\"id\":\"" (responseBody started)))))
+            rid = BS8.unpack (BS.take 32 (BS.drop 6 (snd (BS.breakSubstring "\"id\":\"" (responseBody started)))))
           _ <- await env (T.pack rid)
           BS.writeFile (aPane env <> "/handover/" <> rid) "port 1\ntoken javascript:alert(1)//aaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
           resp <- httpRequest port "GET" ("/api/handover/" <> rid) [("X-Lockstep-Session", session)] ""
