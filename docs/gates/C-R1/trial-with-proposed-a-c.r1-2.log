@@ -1,0 +1,55 @@
+lockstep-0.2.0.0: unregistering (local file changes:
+test/integration/Lockstep/GateCRemediationPageTest.hs)
+lockstep> configure (lib + test)
+Configuring lockstep-0.2.0.0...
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[46 of 63] Compiling Lockstep.GateCRemediationPageTest [Source file changed]
+[63 of 63] Compiling Main [Lockstep.GateCRemediationPageTest changed]
+[64 of 64] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-integration/lockstep-integration [Objects changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-6ggF0AiJnRUCIB81Gsi4xx
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-integration, args: -p C-C.R1)
+
+lockstep-integration
+  Gate C review remediation (C-C.R1; real PostgreSQL)
+    decisions serialized per key (R1)
+      two answers with one key at once: the first is applied, the other is a key conflict and never reaches the work:        OK (2.46s)
+      the same answer sent twice at once: applied once, the second is the first's receipt:                                   OK (2.45s)
+      a key whose lock is held elsewhere is refused as busy after the bound, and nothing is recorded:                        OK (5.39s)
+      the lock's connection lost while the work changes: no receipt is made up, and the key is never replayed:               OK (1.92s)
+      attempt markers cannot be changed or deleted:                                                                          OK (0.39s)
+    expected values outside the stored range are refused before any receipt (R3):                                            OK (0.40s)
+    a receipt is current only while nothing else changed its work (R4):                                                      OK (0.30s)
+    project connection serialized per project (R5)
+      two connects of one project at once: one Engineer, one registration, one folder:                                       OK (2.30s)
+      a failure at the Engineer, the registration or the project write leaves nothing behind:                                OK (0.95s)
+    tasks (R3, R7, R9)
+      a task decision waits for the task lock:                                                                               OK (1.79s)
+      a decision on a task whose title changed since is stale; one outside the stored range is refused and recorded nowhere: OK (0.28s)
+      a creation key used in another project is a key conflict and shows nothing of that project:                            OK (0.27s)
+    a Profile called none is a choice like any other, and the old form value fails closed (R10):                             OK (0.19s)
+  Gate C review remediation over HTTP (C-C.R1)
+    out-of-range or non-decimal expected values are a form error and record nothing (R3):                                    OK (0.87s)
+    out-of-range task and project revisions are a form error and change nothing (R3):                                        OK (0.91s)
+    a closed decision that changed elsewhere does not show the earlier answer as how it stands (R4):                         OK (0.78s)
+    a title made to look like markup stays text inside the attribute (R8):                                                   OK (0.80s)
+    the checks form says whether anything is chosen, apart from the chosen ID (R10):                                         OK (0.75s)
+  Gate C review remediation on the host (C-C.R1 R6, R12)
+    scripts/service mounts a listed folder only when its real path is the listed path (R6):                                  OK (0.01s)
+    setup-path names another lockstep found first on PATH, and leaves it alone (R12):                                        OK (0.01s)
+  attribute escaping in a real browser (C-C.R1 R8)
+    a task titled like markup: no injected attribute, and the title field holds the exact text:                              OK (2.25s)
+
+All 21 tests passed (25.49s)
+
+
+
+lockstep> Test suite lockstep-integration passed
+Completed 2 action(s).

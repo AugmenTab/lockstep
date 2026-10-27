@@ -185,6 +185,7 @@ projectWords =
     , ("project-name-taken", "Lockstep already has a project with this name. Choose another name.")
     , ("stale-revision", "This project changed since this page was shown. Nothing was changed; the page now shows it as it is.")
     , ("already-connected", "This project already has its folder.")
+    , ("project-busy", "This project is being set up right now. Nothing was changed. Try again in a moment.")
     , ("unknown-project", "Lockstep has no such project.")
     , ("name-empty", "Give the project a name.")
     , ("name-too-long", "A project name can be at most 80 characters long.")

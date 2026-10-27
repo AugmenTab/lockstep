@@ -18,6 +18,7 @@ import Brigid.HTML.Elements qualified as E
 import Brigid.HTML.Types qualified as HTML
 import Brigid.Types qualified as B
 import Data.ByteString.Lazy qualified as LBS
+import Data.List qualified as L
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (show)
@@ -146,18 +147,31 @@ decisionPage decision key notice =
            , E.p [] [E.a [href "/app/decisions", attr "id" "back-to-decisions"] [E.text "Back to Decisions"]]
            ]
 
--- | What was recorded; also the page of a decision that is no longer open.
+{- | What was recorded; also the page of a decision that is no longer open. A
+receipt that is no longer current (C-C.R1 R4: the work changed after it) is
+never shown as how things stand; the earlier answer stays under Technical
+details.
+-}
 donePage :: DecisionReceipt -> Maybe T.Text -> LBS.ByteString
 donePage receipt notice =
   let
     (label, consequence) = choiceWords (receiptChoice receipt)
+    outcome
+      | receiptCurrent receipt =
+          [ E.h1 [] [E.text "Done"]
+          , E.p [cls "ls-good-text"] [E.text ("Recorded: " <> label <> ".")]
+          , E.p [] [E.text consequence]
+          ]
+      | otherwise =
+          [ E.h1 [] [E.text "Nothing to decide here now"]
+          , E.p [] [E.text "This decision is no longer waiting for you. It was decided or changed elsewhere after the last answer recorded on this page, so that answer is not how it stands now."]
+          , E.p [] [E.text "Decisions shows everything that needs you."]
+          ]
   in
     fragment $
-      [E.h1 [] [E.text "Done"]]
+      L.take 1 outcome
         <> [E.p [cls "ls-notice", attr "role" "alert"] [E.text n] | Just n <- [notice]]
-        <> [ E.p [cls "ls-good-text"] [E.text ("Recorded: " <> label <> ".")]
-           , E.p [] [E.text consequence]
-           ]
+        <> L.drop 1 outcome
         <> [E.p [] [E.text "This answer was already recorded; nothing was done twice."] | receiptReplayed receipt]
         <> [ E.details
                []

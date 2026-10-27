@@ -234,6 +234,8 @@ refusals =
     , ("unknown-project", "Lockstep has no such project.")
     , ("not-allowed-now", "That cannot be done to the task as it is now. The page shows what can.")
     , ("reason-empty", "Say why it is blocked, so whoever looks at it next knows.")
+    , ("key-conflict", "This form was already used for another project. Nothing was changed. Open New task again.")
+    , ("revision-out-of-range", "Lockstep could not read this form. Try again.")
     ]
 
 taskRefusalCodes :: [T.Text]

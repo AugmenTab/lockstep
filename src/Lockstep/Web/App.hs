@@ -22,6 +22,7 @@ import Brigid.Types qualified as B
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as LBS
+import Data.Char qualified as Char
 import Data.List qualified as L
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
@@ -41,7 +42,7 @@ import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason (..), Read
 import Lockstep.Application.Decisions (DecisionReceipt (..), OpenDecision (..), applyDecision, decidedReceipt, findDecision, listDecisions)
 import Lockstep.Application.LedgerView (EffectLine (..), LedgerProjection (..), OrderLine (..), projectLedger)
 import Lockstep.Application.OperatorTrust (Session (..), exchangeSignIn, lookupSession, revokeSession)
-import Lockstep.Application.ProjectChecks (ChecksOutcome (..), ProjectChecks, chooseChecks, projectChecks)
+import Lockstep.Application.ProjectChecks (ChecksOutcome (..), ExpectedChecks (..), ProjectChecks, chooseChecksExpecting, projectChecks)
 import Lockstep.Application.Projects
   ( NewProject (..)
   , ProjectFolders (..)
@@ -263,7 +264,7 @@ handleWithDatabase db route request =
       withForm $ \fields -> do
         let
           value name = TE.decodeUtf8With TEE.lenientDecode <$> L.lookup name fields
-          revision = value "revision" >>= readMaybe . T.unpack
+          revision = value "revision" >>= decimalUpTo bigintMax
           choice = value "folder" >>= \f -> parseFolderChoice f (value "path")
         folders <- projectFoldersFromEnvironment
         current <- findProject db pid
@@ -322,7 +323,7 @@ handleWithDatabase db route request =
       withForm $ \fields -> do
         let
           form = taskFormFrom fields
-          revision = L.lookup "revision" fields >>= readMaybe . BS8.unpack
+          revision = L.lookup "revision" fields >>= decimalUpTo bigintMax . TE.decodeUtf8With TEE.lenientDecode
         found <- findTask db tid
         case found of
           Left _ -> pure notReady
@@ -343,7 +344,7 @@ handleWithDatabase db route request =
       withForm $ \fields -> do
         let
           value name = TE.decodeUtf8With TEE.lenientDecode <$> L.lookup name fields
-          revision = L.lookup "ticket_revision" fields >>= readMaybe . BS8.unpack
+          revision = L.lookup "ticket_revision" fields >>= decimalUpTo integerMax . TE.decodeUtf8With TEE.lenientDecode
           decision =
             case value "action" of
               Just "ready" -> Just MarkReady
@@ -376,12 +377,19 @@ handleWithDatabase db route request =
         let
           value name = TE.decodeUtf8With TEE.lenientDecode <$> L.lookup name fields
           confirmed = value "confirm_fewer" == Just "yes"
+          -- C-C.R1 R10: with expected_set the value is taken literally; without it, the C-P3.7 text.
+          expectation =
+            case (value "expected", value "expected_set") of
+              (Just e, Nothing) -> Just (if e == "none" then ExpectNothing else ExpectProfile e)
+              (Just e, Just "yes") -> Just (ExpectProfile e)
+              (Just _, Just "no") -> Just ExpectNothing
+              _ -> Nothing
         found <- projectChecks db pid
-        case (found, value "expected", value "choice") of
+        case (found, expectation, value "choice") of
           (Left _, _, _) -> pure notReady
           (Right Nothing, _, _) -> pure (errorJson HTTP.status404 "not-found")
           (Right (Just before), Just expected, Just choice) -> do
-            chosen <- chooseChecks db pid expected choice confirmed
+            chosen <- chooseChecksExpecting db pid expected choice confirmed
             case chosen of
               Left _ -> pure notReady
               Right (Right ChecksChosen) -> checksAnswer db pid before (Just "Saved.")
@@ -401,7 +409,7 @@ handleWithDatabase db route request =
       withForm $ \fields -> do
         let
           value name = TE.decodeUtf8With TEE.lenientDecode <$> L.lookup name fields
-          expected = value "expected" >>= readMaybe . T.unpack
+          expected = value "expected" >>= decimalUpTo integerMax
           text = fromMaybe "" (value "text")
           acknowledged = value "acknowledge" == Just "yes"
           wanted =
@@ -448,6 +456,27 @@ handleWithDatabase db route request =
     case body of
       Nothing -> pure (errorJson HTTP.status413 "too-large")
       Just bytes -> withSession $ \_ _ -> action (HTTP.parseSimpleQuery bytes)
+
+{- | A form's number: plain decimal digits only (no sign, space or other
+spelling), at most the stored range's largest value (C-C.R1 R3).
+-}
+decimalUpTo :: Num a => Integer -> T.Text -> Maybe a
+decimalUpTo limit text
+  | T.null text || T.length text > 19 || not (T.all Char.isDigit text) = Nothing
+  | otherwise =
+      case readMaybe (T.unpack text) :: Maybe Integer of
+        Just n | n <= limit -> Just (fromInteger n)
+        _ -> Nothing
+
+-- | The largest PostgreSQL @integer@ (expected values and Ticket revisions).
+integerMax :: Integer
+integerMax =
+  2147483647
+
+-- | The largest PostgreSQL @bigint@ (project and task revisions).
+bigintMax :: Integer
+bigintMax =
+  9223372036854775807
 
 -- | The project page, with its address for the page's history.
 projectAnswer :: DatabaseRuntime -> ProjectView -> Maybe T.Text -> IO Wai.Response

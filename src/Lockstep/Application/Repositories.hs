@@ -10,7 +10,11 @@ module Lockstep.Application.Repositories
   , RepositoryRecord (..)
   , RegisterRequest (..)
   , addEngineer
+  , addEngineerIn
+  , Observed
+  , observeRegistration
   , registerRepository
+  , registerObservedIn
   , listRepositories
   ) where
 
@@ -45,6 +49,7 @@ import Lockstep.Kernel.Repository
   , OwnedRepository (..)
   , Ownership (..)
   , PhysicalId (..)
+  , RegistrationRefusal
   , RegistrationRequest (..)
   , RemoteIdentity (..)
   , RepositoryObservation (..)
@@ -114,7 +119,15 @@ refusedWith decision code message = do
 
 addEngineer :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Either Refused EngineerRecord))
 addEngineer runtime name = do
-  engineerId@(EngineerId uuid) <- newEngineerId
+  engineerId <- newEngineerId
+  whenReady runtime . withDatabase runtime . O.withTransaction $ addEngineerIn engineerId name
+
+{- | 'addEngineer' inside the caller's transaction, with the same decision rows
+(C-C.R1 R5: a project's Engineer, registration and setup are one transaction).
+The caller checks readiness.
+-}
+addEngineerIn :: EngineerId -> T.Text -> O.Orville (Either Refused EngineerRecord)
+addEngineerIn engineerId@(EngineerId uuid) name = do
   let
     decision =
       Store.NewDecision
@@ -127,20 +140,29 @@ addEngineer runtime name = do
         , Store.decisionRepositoryId = Nothing
         , Store.decisionObservation = Nothing
         }
-  whenReady runtime . withDatabase runtime . O.withTransaction $
-    if not (validEngineerName name)
-      then
-        refusedWith
-          decision
-          (T.pack "engineer-name-invalid")
-          (T.pack "an Engineer name is a-z followed by up to 39 of a-z, 0-9 and -")
-      else do
-        inserted <- Store.insertEngineer (uuidText uuid) name
-        if not inserted
-          then refusedWith decision (T.pack "engineer-name-taken") (T.pack "an Engineer with this name exists")
-          else do
-            _ <- record decision {Store.decisionEngineerId = Just (uuidText uuid)}
-            pure (Right (EngineerRecord engineerId name))
+  if not (validEngineerName name)
+    then
+      refusedWith
+        decision
+        (T.pack "engineer-name-invalid")
+        (T.pack "an Engineer name is a-z followed by up to 39 of a-z, 0-9 and -")
+    else do
+      inserted <- Store.insertEngineer (uuidText uuid) name
+      if not inserted
+        then refusedWith decision (T.pack "engineer-name-taken") (T.pack "an Engineer with this name exists")
+        else do
+          _ <- record decision {Store.decisionEngineerId = Just (uuidText uuid)}
+          pure (Right (EngineerRecord engineerId name))
+
+-- | A folder as Git showed it, read-only, before any registration transaction.
+data Observed
+  = Observed FilePath (Maybe T.Text) RepositoryId (Either RegistrationRefusal RepositoryObservation)
+
+-- | The read-only C-P2.1 observation of a folder (and the remote chosen, if any).
+observeRegistration :: FilePath -> Maybe T.Text -> IO Observed
+observeRegistration path remote = do
+  observed <- observeRepository path remote
+  Observed path remote <$> newRepositoryId <*> pure observed
 
 registerRepository :: DatabaseRuntime -> RegisterRequest -> IO (Either NotReadyReason (Either Refused RepositoryRecord))
 registerRepository runtime request = do
@@ -149,44 +171,52 @@ registerRepository runtime request = do
     NotReady reason ->
       pure (Left reason)
     Ready _ -> do
-      observed <- observeRepository (registrationPath request) (registrationRemote request)
-      repositoryId@(RepositoryId repositoryUuid) <- newRepositoryId
-      withDatabase runtime . O.withTransaction $ do
-        Store.lockRepositories
-        engineer <- Store.findEngineerByName (registrationEngineer request)
-        let
-          decision =
-            Store.NewDecision
-              { Store.decisionOperation = T.pack "repository-register"
-              , Store.decisionEngineerName = registrationEngineer request
-              , Store.decisionPath = Just (T.pack (registrationPath request))
-              , Store.decisionRemote = registrationRemote request
-              , Store.decisionRefusal = Nothing
-              , Store.decisionEngineerId = engineer
-              , Store.decisionRepositoryId = Nothing
-              , Store.decisionObservation = either (const Nothing) (Just . renderObservation) observed
-              }
-          refuse refusal = refusedWith decision (refusalCode refusal) (renderRefusal refusal)
-        case (engineer >>= fmap EngineerId . either (const Nothing) Just . parseUuid, observed) of
-          (Nothing, _) ->
-            refusedWith decision (T.pack "unknown-engineer") (T.pack "there is no Engineer with this name")
-          (Just _, Left refusal) ->
+      observed <- observeRegistration (registrationPath request) (registrationRemote request)
+      withDatabase runtime . O.withTransaction $ registerObservedIn (registrationEngineer request) observed
+
+{- | Registration of an observed folder inside the caller's transaction, under
+the registration lock, with the same decision row (C-C.R1 R5). The caller
+checks readiness.
+-}
+registerObservedIn :: T.Text -> Observed -> O.Orville (Either Refused RepositoryRecord)
+registerObservedIn engineerName (Observed path remote repositoryId@(RepositoryId repositoryUuid) observed) = do
+  let
+    request = RegisterRequest engineerName path remote
+  Store.lockRepositories
+  engineer <- Store.findEngineerByName (registrationEngineer request)
+  let
+    decision =
+      Store.NewDecision
+        { Store.decisionOperation = T.pack "repository-register"
+        , Store.decisionEngineerName = registrationEngineer request
+        , Store.decisionPath = Just (T.pack (registrationPath request))
+        , Store.decisionRemote = registrationRemote request
+        , Store.decisionRefusal = Nothing
+        , Store.decisionEngineerId = engineer
+        , Store.decisionRepositoryId = Nothing
+        , Store.decisionObservation = either (const Nothing) (Just . renderObservation) observed
+        }
+    refuse refusal = refusedWith decision (refusalCode refusal) (renderRefusal refusal)
+  case (engineer >>= fmap EngineerId . either (const Nothing) Just . parseUuid, observed) of
+    (Nothing, _) ->
+      refusedWith decision (T.pack "unknown-engineer") (T.pack "there is no Engineer with this name")
+    (Just _, Left refusal) ->
+      refuse refusal
+    (Just engineerId@(EngineerId engineerUuid), Right observation) -> do
+      rows <- Store.activeRepositories
+      let
+        owned = mapMaybe ownedFromRow rows
+      if L.length owned /= L.length rows
+        then liftIO (throwIO (userError "lockstep: a stored repository row is malformed"))
+        else case decideRegistration owned (RegistrationRequest repositoryId engineerId observation) of
+          Left refusal ->
             refuse refusal
-          (Just engineerId@(EngineerId engineerUuid), Right observation) -> do
-            rows <- Store.activeRepositories
+          Right _ -> do
             let
-              owned = mapMaybe ownedFromRow rows
-            if L.length owned /= L.length rows
-              then liftIO (throwIO (userError "lockstep: a stored repository row is malformed"))
-              else case decideRegistration owned (RegistrationRequest repositoryId engineerId observation) of
-                Left refusal ->
-                  refuse refusal
-                Right _ -> do
-                  let
-                    row = rowFor (uuidText repositoryUuid) (uuidText engineerUuid) observation (registrationEngineer request)
-                  Store.insertRepository row (observationDigest observation)
-                  _ <- record decision {Store.decisionRepositoryId = Just (uuidText repositoryUuid)}
-                  pure (Right (recordFromRow row))
+              row = rowFor (uuidText repositoryUuid) (uuidText engineerUuid) observation (registrationEngineer request)
+            Store.insertRepository row (observationDigest observation)
+            _ <- record decision {Store.decisionRepositoryId = Just (uuidText repositoryUuid)}
+            pure (Right (recordFromRow row))
 
 listRepositories :: DatabaseRuntime -> IO (Either NotReadyReason [RepositoryRecord])
 listRepositories runtime =

@@ -2,6 +2,8 @@
 created first, under the projects lock; connecting it to a folder is a separate
 step that records each attempt as one revision, so a refused folder leaves an
 organized project that says why, and Try again needs the current revision.
+Attempts are serialized per project, and each one's database writes are one
+transaction (C-C.R1 R5).
 -}
 module Lockstep.Application.Projects
   ( ProjectFolders (..)
@@ -27,10 +29,10 @@ import System.IO (FilePath)
 import Text.Show (Show)
 
 import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
-import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), checkReadiness, withDatabase)
-import Lockstep.Application.Identity (newUuid)
-import Lockstep.Application.Repositories (Refused (..), RegisterRequest (..), RepositoryRecord (..), addEngineer, registerRepository)
-import Lockstep.Effects.ProjectFolders (childFolders, isProjectFolder, makeProjectFolder)
+import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason, Readiness (..), SessionLock (..), checkReadiness, withDatabase, withSessionLock)
+import Lockstep.Application.Identity (newEngineerId, newUuid)
+import Lockstep.Application.Repositories (Observed, Refused (..), RepositoryRecord (..), addEngineerIn, observeRegistration, registerObservedIn)
+import Lockstep.Effects.ProjectFolders (childFolders, isProjectFolder, makeProjectFolder, removeProjectFolder)
 import Lockstep.Foundation.FolderProtocol (validFolderPath)
 import Lockstep.Kernel.Identity (parseUuid, uuidText)
 import Lockstep.Kernel.Project
@@ -154,102 +156,143 @@ createProject runtime folders request =
           Right (Right (row, True)) ->
             case newProjectFolder request of
               DecideLater -> pure (Right (Right (viewOf row)))
-              choice -> attempt runtime folders (viewOf row) choice
+              choice -> connectLocked runtime folders (Store.rowId row) (Store.rowRevision row) choice
 
 connectProject :: DatabaseRuntime -> ProjectFolders -> T.Text -> Int64 -> FolderChoice -> IO (Either NotReadyReason (Either T.Text ProjectView))
 connectProject runtime folders rawId expected choice =
   whenReady runtime $
     case parseUuid rawId of
       Left _ -> pure (Right (Left (T.pack "unknown-project")))
-      Right parsed -> do
-        found <- withDatabase runtime (Store.findProjectById (uuidText parsed))
-        case fmap (fmap viewOf) found of
-          Left reason -> pure (Left reason)
-          Right Nothing -> pure (Right (Left (T.pack "unknown-project")))
-          Right (Just view)
-            | projectSetup view == Connected -> pure (Right (Left (T.pack "already-connected")))
-            | projectRevision view /= expected -> pure (Right (Left (T.pack "stale-revision")))
-            | choice == DecideLater -> pure (Right (Right view))
-            | otherwise -> attempt runtime folders view choice
+      Right parsed -> connectLocked runtime folders (uuidText parsed) expected choice
 
--- | One connection attempt at the project's current revision.
+{- | C-C.R1 R5: one connection attempt at a time per project, under the session
+lock for the project; the project is read again under it, so a stale or
+already-connected request is answered before any side effect.
+-}
+connectLocked :: DatabaseRuntime -> ProjectFolders -> T.Text -> Int64 -> FolderChoice -> IO (Either NotReadyReason (Either T.Text ProjectView))
+connectLocked runtime folders pid expected choice = do
+  locked <-
+    withSessionLock runtime ProjectConnectLock pid $ \_ -> do
+      found <- withDatabase runtime (Store.findProjectById pid)
+      case fmap (fmap viewOf) found of
+        Left reason -> pure (Left reason)
+        Right Nothing -> pure (Right (Left (T.pack "unknown-project")))
+        Right (Just view)
+          | projectSetup view == Connected -> pure (Right (Left (T.pack "already-connected")))
+          | projectRevision view /= expected -> pure (Right (Left (T.pack "stale-revision")))
+          | choice == DecideLater -> pure (Right (Right view))
+          | otherwise -> attempt runtime folders view choice
+  pure $
+    case locked of
+      Right result -> result
+      Left LockBusy -> Right (Left (T.pack "project-busy"))
+      Left (LockUnavailable reason) -> Left reason
+
+{- | One connection attempt at the project's current revision: the folder and
+the read-only Git observations first, then one transaction that adds the
+Engineer, registers the repository and records the attempt, so a failure
+leaves none of them. A folder this attempt made is removed unless the project
+ends connected.
+-}
 attempt :: DatabaseRuntime -> ProjectFolders -> ProjectView -> FolderChoice -> IO (Either NotReadyReason (Either T.Text ProjectView))
 attempt runtime folders view choice = do
   let
     slug = either (const (T.pack "project")) projectSlug (mkProjectName (projectName view))
-    record = recordAttempt runtime view
   folder <- chooseFolder runtime folders slug choice
   case folder of
-    Left code -> record SetupFailed (Just code) Nothing (projectEngineer view) Nothing
-    Right path -> do
-      engineer <- ensureEngineer runtime view slug
-      case engineer of
-        Left reason -> pure (Left reason)
-        Right (Left code) -> record SetupFailed (Just code) Nothing (projectEngineer view) Nothing
-        Right (Right name) -> do
-          registered <- register runtime name path
-          case registered of
-            Left reason -> pure (Left reason)
-            Right (Left code) -> record SetupFailed (Just code) Nothing (Just name) Nothing
-            Right (Right repository) -> record Connected Nothing (Just (T.pack path)) (Just name) (Just (repositoryRecordId repository))
+    Left code -> settle Nothing (recordIn view SetupFailed (Just code) Nothing (projectEngineer view) Nothing)
+    Right (path, made) -> do
+      first <- observeRegistration path Nothing
+      fallback <- observeRegistration path (Just (T.pack "origin"))
+      settle (if made then Just path else Nothing) (connectIn view slug path first fallback)
+ where
+  settle made action = do
+    result <-
+      withDatabase runtime . O.withTransaction $ do
+        Store.lockProjects
+        current <- Store.findProjectById (projectId view)
+        case current of
+          Nothing -> pure (Left (T.pack "unknown-project"))
+          Just row
+            | Store.rowRevision row /= projectRevision view -> pure (Left (T.pack "stale-revision"))
+            | otherwise -> action
+    case made of
+      Just path | not (endsConnected result) -> removeProjectFolder path
+      _ -> pure ()
+    pure result
+  endsConnected result =
+    case result of
+      Right (Right v) -> projectSetup v == Connected
+      _ -> False
 
--- | Stores the attempt if the project is still at the revision it was read at; the new state, or stale-revision.
-recordAttempt :: DatabaseRuntime -> ProjectView -> SetupState -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> IO (Either NotReadyReason (Either T.Text ProjectView))
-recordAttempt runtime view setup refusal folder engineer repository =
-  withDatabase runtime . O.withTransaction $ do
-    Store.lockProjects
-    updated <- Store.updateProjectSetup (projectId view) (projectRevision view) (setupStateCode setup) refusal folder engineer repository
-    if updated
-      then maybe (Left (T.pack "unknown-project")) (Right . viewOf) <$> Store.findProjectById (projectId view)
-      else pure (Left (T.pack "stale-revision"))
+-- | The Engineer, the registration and the recorded attempt, inside the attempt's transaction.
+connectIn :: ProjectView -> T.Text -> FilePath -> Observed -> Observed -> O.Orville (Either T.Text ProjectView)
+connectIn view slug path first fallback = do
+  engineer <- ensureEngineerIn view slug
+  case engineer of
+    Left code -> recordIn view SetupFailed (Just code) Nothing (projectEngineer view) Nothing
+    Right name -> do
+      registered <- registerIn name first fallback
+      case registered of
+        Left code -> recordIn view SetupFailed (Just code) Nothing (Just name) Nothing
+        Right repository -> recordIn view Connected Nothing (Just (T.pack path)) (Just name) (Just (repositoryRecordId repository))
 
-chooseFolder :: DatabaseRuntime -> ProjectFolders -> T.Text -> FolderChoice -> IO (Either T.Text FilePath)
+-- | Records the attempt at the revision it was read at; the new state.
+recordIn :: ProjectView -> SetupState -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> O.Orville (Either T.Text ProjectView)
+recordIn view setup refusal folder engineer repository = do
+  updated <- Store.updateProjectSetup (projectId view) (projectRevision view) (setupStateCode setup) refusal folder engineer repository
+  if updated
+    then maybe (Left (T.pack "unknown-project")) (Right . viewOf) <$> Store.findProjectById (projectId view)
+    else pure (Left (T.pack "stale-revision"))
+
+-- | The folder to connect, and whether this attempt made it.
+chooseFolder :: DatabaseRuntime -> ProjectFolders -> T.Text -> FolderChoice -> IO (Either T.Text (FilePath, Bool))
 chooseFolder runtime folders slug choice =
   case choice of
     DecideLater -> pure (Left (T.pack "folder-not-offered"))
     ExistingFolder path -> do
       offered <- offeredFolders runtime folders
-      pure (if T.unpack path `L.elem` offered then Right (T.unpack path) else Left (T.pack "folder-not-offered"))
+      pure (if T.unpack path `L.elem` offered then Right (T.unpack path, False) else Left (T.pack "folder-not-offered"))
     NewFolder ->
       case foldersRoot folders of
         Nothing -> pure (Left (T.pack "no-projects-folder"))
         Just root -> do
           made <- makeProjectFolder root (fmap (slugCandidate slug) [1 .. 99])
-          pure (either (const (Left (T.pack "folder-create-failed"))) Right made)
+          pure (either (const (Left (T.pack "folder-create-failed"))) (\p -> Right (p, True)) made)
 
 -- | The project's Engineer: the one it already has, else the first free @p-<slug>@, @p-<slug>-2@ ….
-ensureEngineer :: DatabaseRuntime -> ProjectView -> T.Text -> IO (Either NotReadyReason (Either T.Text T.Text))
-ensureEngineer runtime view slug =
+ensureEngineerIn :: ProjectView -> T.Text -> O.Orville (Either T.Text T.Text)
+ensureEngineerIn view slug =
   case projectEngineer view of
-    Just name -> pure (Right (Right name))
+    Just name -> pure (Right name)
     Nothing -> go (1 :: Int)
  where
   go n
-    | n > 99 = pure (Right (Left (T.pack "engineer-name-taken")))
+    | n > 99 = pure (Left (T.pack "engineer-name-taken"))
     | otherwise = do
         let
           name = engineerNameFor (slugCandidate slug n)
-        added <- addEngineer runtime name
+        engineerId <- liftIO newEngineerId
+        added <- addEngineerIn engineerId name
         case added of
-          Left reason -> pure (Left reason)
-          Right (Right _) -> pure (Right (Right name))
-          Right (Left refused)
+          Right _ -> pure (Right name)
+          Left refused
             | refusedCode refused == T.pack "engineer-name-taken" -> go (n + 1)
-            | otherwise -> pure (Right (Left (refusedCode refused)))
+            | otherwise -> pure (Left (refusedCode refused))
 
 -- | C-P2.1 registration; with several remotes and none chosen, @origin@ is tried once.
-register :: DatabaseRuntime -> T.Text -> FilePath -> IO (Either NotReadyReason (Either T.Text RepositoryRecord))
-register runtime engineer path = do
-  first <- registerRepository runtime (RegisterRequest engineer path Nothing)
-  case first of
-    Right (Left refused)
+registerIn :: T.Text -> Observed -> Observed -> O.Orville (Either T.Text RepositoryRecord)
+registerIn engineer first fallback = do
+  registered <- registerObservedIn engineer first
+  case registered of
+    Left refused
       | refusedCode refused == T.pack "authoritative-remote-ambiguous" -> do
-          second <- registerRepository runtime (RegisterRequest engineer path (Just (T.pack "origin")))
+          second <- registerObservedIn engineer fallback
           pure $ case second of
-            Right (Left again)
-              | refusedCode again == T.pack "authoritative-remote-unknown" -> Right (Left (refusedCode refused))
-            other -> fmap (either (Left . refusedCode) Right) other
-    other -> pure (fmap (either (Left . refusedCode) Right) other)
+            Left again
+              | refusedCode again == T.pack "authoritative-remote-unknown" -> Left (refusedCode refused)
+            other -> either (Left . refusedCode) Right other
+    other -> pure (either (Left . refusedCode) Right other)
 
 listProjects :: DatabaseRuntime -> IO (Either NotReadyReason [ProjectView])
 listProjects runtime =

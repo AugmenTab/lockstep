@@ -54,13 +54,13 @@ cls :: T.Text -> A.Attribute tag
 cls =
   A.class_ . HTML.Class
 
-{- | An attribute whose value is escaped: Brigid escapes quotes in custom
-attributes; ampersands and angle brackets are escaped here, so typed text never
-appears as markup anywhere in a page.
+{- | An attribute whose value is escaped: ampersands, angle brackets and double
+quotes are escaped here (C-C.R1 R8), so typed text never appears as markup
+anywhere in a page and no value depends on Brigid escaping quotes.
 -}
 attr :: T.Text -> T.Text -> A.Attribute tag
 attr name =
-  A.customAttribute name . T.replace ">" "&gt;" . T.replace "<" "&lt;" . T.replace "&" "&amp;"
+  A.customAttribute name . T.replace "\"" "&quot;" . T.replace ">" "&gt;" . T.replace "<" "&lt;" . T.replace "&" "&amp;"
 
 href :: T.Text -> A.Attribute E.Anchor
 href =

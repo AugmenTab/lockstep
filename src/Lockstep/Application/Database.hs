@@ -25,9 +25,14 @@ module Lockstep.Application.Database
   , ServiceStarts (..)
   , recordServiceStart
   , readServiceStarts
+  , SessionLock (..)
+  , Locked (..)
+  , LockFailure (..)
+  , withSessionLock
   ) where
 
-import Control.Exception (SomeException, fromException, try)
+import Control.Exception (SomeException, finally, fromException, throwIO, try)
+import Data.ByteString.Char8 qualified as BS8
 import Data.List qualified as L
 import Data.Text qualified as T
 import Data.Time qualified as Time
@@ -40,7 +45,7 @@ import Text.Show (Show, show)
 
 import Lockstep.Foundation.Cli (BackupPolicy (..))
 import Lockstep.Foundation.SystemConfig (DatabaseConfig)
-import Lockstep.Persistence.Connection (poolOptions)
+import Lockstep.Persistence.Connection (connectionString, poolOptions)
 import Lockstep.Persistence.Migrate (MigrateFailure (..), applyPending)
 import Lockstep.Persistence.Migration
   ( Migration (..)
@@ -51,6 +56,7 @@ import Lockstep.Persistence.Migration
   )
 import Lockstep.Persistence.Migrations (migrations)
 import Lockstep.Persistence.Queries qualified as Queries
+import Lockstep.Persistence.SessionLocks qualified as SessionLocks
 
 data DatabaseRuntime
   = DatabaseRuntime
@@ -286,3 +292,85 @@ readServiceStarts runtime = do
 lastMay :: [a] -> Maybe a
 lastMay =
   L.foldl' (\_ x -> Just x) Nothing
+
+-- Session locks (C-C.R1 R1, R5) ----------------------------------------------
+
+-- | What a session lock serializes; each kind has its own fixed namespace.
+data SessionLock
+  = DecisionKeyLock
+  | ProjectConnectLock
+  deriving (Eq, Show)
+
+lockNamespace :: SessionLock -> Int32
+lockNamespace lock =
+  case lock of
+    DecisionKeyLock -> 7301
+    ProjectConnectLock -> 7302
+
+-- | How long a request waits for a lock another request holds.
+lockWaitSeconds :: Int
+lockWaitSeconds =
+  5
+
+{- | Runs Orville actions on the lock's own connection, and proves the lock is
+still held there.
+-}
+data Locked
+  = Locked
+  { onLockConnection :: forall a. O.Orville a -> IO a
+  , lockStillHeld :: O.Orville Bool
+  }
+
+data LockFailure
+  = LockBusy
+  | LockUnavailable NotReadyReason
+  deriving (Eq, Show)
+
+{- | Takes the session-level advisory lock for the key on a connection of its
+own (a pool of one, outside the service pool, so work done under the lock can
+use the service pool without waiting for itself), runs the action while that
+connection stays pinned, then unlocks and closes the connection whatever
+happened; closing ends the session and so releases the lock even when the
+unlock could not run. A lock not granted within 'lockWaitSeconds' is
+'LockBusy'. Any failure of the lock's connection is 'LockUnavailable': the
+caller cannot know how far its action got, so it must not guess.
+-}
+withSessionLock :: DatabaseRuntime -> SessionLock -> T.Text -> (Locked -> IO a) -> IO (Either LockFailure a)
+withSessionLock runtime lock key action = do
+  pool <- O.createConnectionPool (lockOptions (runtimeConfig runtime))
+  let
+    namespace = lockNamespace lock
+    locked = O.withConnection_ $ do
+      state <- O.askOrvilleState
+      acquired <- liftIO (try (O.runOrvilleWithState state (SessionLocks.acquire namespace lockWaitSeconds key)))
+      case acquired of
+        Left err
+          | lockTimedOut err -> pure Nothing
+          | otherwise -> liftIO (throwIO err)
+        Right () -> do
+          result <- liftIO (action (Locked (O.runOrvilleWithState state) (SessionLocks.held namespace key)))
+          _ <- SessionLocks.release namespace key
+          pure (Just result)
+  outcome <- try (O.runOrville pool locked) `finally` Connection.destroyIdleConnections pool
+  pure $
+    case outcome of
+      Right (Just result) -> Right result
+      Right Nothing -> Left LockBusy
+      Left err -> Left (LockUnavailable (classifyException err))
+
+lockTimedOut :: SomeException -> Bool
+lockTimedOut err =
+  case fromException err of
+    Just failure -> Connection.sqlExecutionErrorSqlState failure == Just (BS8.pack "55P03")
+    Nothing -> False
+
+-- | One connection, never shared: the lock lives exactly as long as it.
+lockOptions :: DatabaseConfig -> O.ConnectionOptions
+lockOptions config =
+  O.ConnectionOptions
+    { O.connectionString = connectionString config
+    , O.connectionNoticeReporting = O.DisableNoticeReporting
+    , O.connectionPoolStripes = O.StripeCount 1
+    , O.connectionPoolLingerTime = 1
+    , O.connectionPoolMaxConnections = O.MaxConnectionsTotal 1
+    }
