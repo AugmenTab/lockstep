@@ -3,7 +3,8 @@ created first, under the projects lock; connecting it to a folder is a separate
 step that records each attempt as one revision, so a refused folder leaves an
 organized project that says why, and Try again needs the current revision.
 Attempts are serialized per project, and each one's database writes are one
-transaction (C-C.R1 R5).
+transaction (C-C.R1 R5). A folder an attempt published is never removed, even
+when the attempt does not end connected (C-C.R1 R6-1).
 -}
 module Lockstep.Application.Projects
   ( ProjectFolders (..)
@@ -22,7 +23,7 @@ module Lockstep.Application.Projects
   , offeredFolders
   ) where
 
-import Control.Exception (onException)
+import Control.Applicative ((<|>))
 import Control.Monad (filterM)
 import Data.List qualified as L
 import Data.Maybe (fromMaybe, isJust, isNothing)
@@ -37,8 +38,8 @@ import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
 import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason, Readiness (..), SessionLock (..), checkReadiness, withDatabase, withSessionLock)
 import Lockstep.Application.Identity (newEngineerId, newUuid)
 import Lockstep.Application.Profiles (sha256Hasher)
-import Lockstep.Application.Repositories (Observed, Refused (..), RepositoryRecord (..), activePhysicalKeys, addEngineerIn, observeRegistration, observedIdentity, physicalKey, registerObservedIn)
-import Lockstep.Effects.ProjectFolders (childFolders, gitIdentity, isProjectFolder, makeProjectFolder, removeProjectFolder)
+import Lockstep.Application.Repositories (Observed, Refused (..), RepositoryRecord (..), addEngineerIn, observeRegistration, observedIdentity, registerObservedIn)
+import Lockstep.Effects.ProjectFolders (childFolders, gitIdentity, isProjectFolder, makeProjectFolder)
 import Lockstep.Foundation.FolderProtocol (validFolderPath)
 import Lockstep.Kernel.Identity (parseUuid, uuidText)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
@@ -252,8 +253,9 @@ connectLocked hooks runtime folders pid expected choice = do
 {- | One connection attempt at the project's current revision: the folder and
 the read-only Git observations first, then one transaction that adds the
 Engineer, registers the repository and records the attempt, so a failure
-leaves none of them. A folder this attempt made is removed unless the project
-ends connected.
+leaves none of them. A folder this attempt made stays whatever the outcome
+(C-C.R1 R6-1): once published it may already be someone else's, and a kept
+folder no project is connected to is offered again, so Try again can connect it.
 -}
 attempt :: Hooks -> DatabaseRuntime -> ProjectFolders -> ProjectView -> FolderChoice -> IO (Either NotReadyReason (Either T.Text ProjectView))
 attempt (Hooks afterFolder faults) runtime folders view choice = do
@@ -261,18 +263,14 @@ attempt (Hooks afterFolder faults) runtime folders view choice = do
     slug = either (const (T.pack "project")) projectSlug (mkProjectName (projectName view))
   folder <- chooseFolder runtime folders slug choice
   case folder of
-    Left code -> settle Nothing (recordIn view SetupFailed (Just code) Nothing (projectEngineer view) Nothing)
-    Right (path, made) ->
-      -- A folder this attempt made goes again if anything throws before the attempt settles.
-      ( do
-          first <- observeRegistration path Nothing
-          fallback <- observeRegistration path (Just (T.pack "origin"))
-          afterFolder path
-          settle (if made then Just path else Nothing) (connectIn view slug path first fallback)
-      )
-        `onException` when made (removeUnrecorded path)
+    Left code -> settle (recordIn view SetupFailed (Just code) Nothing (projectEngineer view) Nothing)
+    Right path -> do
+      first <- observeRegistration path Nothing
+      fallback <- observeRegistration path (Just (T.pack "origin"))
+      afterFolder path
+      settle (connectIn view slug path first fallback)
  where
-  settle made action = do
+  settle action = do
     committed <-
       withDatabase runtime . O.withTransaction $ do
         Store.lockProjects
@@ -282,51 +280,20 @@ attempt (Hooks afterFolder faults) runtime folders view choice = do
           Just row
             | Store.rowRevision row /= projectRevision view -> pure (Left (T.pack "stale-revision"))
             | otherwise -> action
-    result <- faultAfterCommit faults committed
-    case made of
-      Just path | not (endsConnected result) -> removeUnrecorded path
-      _ -> pure ()
-    pure result
-  endsConnected result =
-    case result of
-      Right (Right v) -> projectSetup v == Connected
-      _ -> False
-  -- C-C.R1 R13, R13a: what the attempt's caller saw may be wrong (an interruption after
-  -- the commit, a COMMIT whose answer was lost), and another project may have connected
-  -- the folder meanwhile, so the database decides, under the projects lock: the folder
-  -- this attempt made is removed only when this project is not connected and does not
-  -- record it, no project is connected to it, and no active repository registration has
-  -- its physical identity, whatever path spelling was used (C-C.R1 R5-1); when any of
-  -- that cannot be read, it is kept.
-  removeUnrecorded path = do
-    _ <-
-      withDatabase runtime . O.withTransaction $ do
-        Store.lockProjects
-        own <- Store.findProjectById (projectId view)
-        connected <- Store.connectedFolders
-        registered <- activePhysicalKeys
-        identity <- liftIO (gitIdentity path)
-        case (own, identity) of
-          (Just row, Just physical)
-            | Store.rowSetup row /= setupStateCode Connected
-            , Store.rowFolder row /= Just (T.pack path)
-            , T.pack path `L.notElem` connected
-            , physicalKey physical `L.notElem` registered ->
-                liftIO (removeProjectFolder path)
-          _ -> pure ()
-    pure ()
+    faultAfterCommit faults committed
 
 -- | The Engineer, the registration and the recorded attempt, inside the attempt's transaction.
 connectIn :: ProjectView -> T.Text -> FilePath -> Observed -> Observed -> O.Orville (Either T.Text ProjectView)
 connectIn view slug path first fallback = do
-  -- C-C.R1 R13b, R5-2: under the projects lock, the folder must still be there and be the
-  -- one that was observed (the same physical Git directory, not merely the same path):
+  -- C-C.R1 R13b, R5-2, R6-2: under the projects lock, the folder must still be there and be
+  -- the one the registrable observation saw (the first one if it succeeded, else the
+  -- @origin@ fallback; the same physical Git directory, not merely the same path):
   -- another attempt may have removed it, or something else replaced it, meanwhile.
   present <- liftIO (isProjectFolder path)
   current <- liftIO (gitIdentity path)
   let
-    observed = observedIdentity first
-    replaced = isNothing current || (isJust observed && current /= observed)
+    registrable = observedIdentity first <|> observedIdentity fallback
+    replaced = isNothing current || (isJust registrable && current /= registrable)
   if not present || replaced
     then recordIn view SetupFailed (Just (T.pack "folder-not-offered")) Nothing (projectEngineer view) Nothing
     else do
@@ -334,7 +301,7 @@ connectIn view slug path first fallback = do
       case engineer of
         Left code -> recordIn view SetupFailed (Just code) Nothing (projectEngineer view) Nothing
         Right name -> do
-          registered <- registerIn name first fallback
+          registered <- registerIn name path first fallback
           case registered of
             Left code -> recordIn view SetupFailed (Just code) Nothing (Just name) Nothing
             Right repository -> recordIn view Connected Nothing (Just (T.pack path)) (Just name) (Just (repositoryRecordId repository))
@@ -347,20 +314,20 @@ recordIn view setup refusal folder engineer repository = do
     then maybe (Left (T.pack "unknown-project")) (Right . viewOf) <$> Store.findProjectById (projectId view)
     else pure (Left (T.pack "stale-revision"))
 
--- | The folder to connect, and whether this attempt made it.
-chooseFolder :: DatabaseRuntime -> ProjectFolders -> T.Text -> FolderChoice -> IO (Either T.Text (FilePath, Bool))
+-- | The folder to connect: an offered one, or a new one this attempt made.
+chooseFolder :: DatabaseRuntime -> ProjectFolders -> T.Text -> FolderChoice -> IO (Either T.Text FilePath)
 chooseFolder runtime folders slug choice =
   case choice of
     DecideLater -> pure (Left (T.pack "folder-not-offered"))
     ExistingFolder path -> do
       offered <- offeredFolders runtime folders
-      pure (if T.unpack path `L.elem` offered then Right (T.unpack path, False) else Left (T.pack "folder-not-offered"))
+      pure (if T.unpack path `L.elem` offered then Right (T.unpack path) else Left (T.pack "folder-not-offered"))
     NewFolder ->
       case foldersRoot folders of
         Nothing -> pure (Left (T.pack "no-projects-folder"))
         Just root -> do
           made <- makeProjectFolder root (fmap (slugCandidate slug) [1 .. 99])
-          pure (either (const (Left (T.pack "folder-create-failed"))) (\p -> Right (p, True)) made)
+          pure (either (const (Left (T.pack "folder-create-failed"))) Right made)
 
 -- | The project's Engineer: the one it already has, else the first free @p-<slug>@, @p-<slug>-2@ ….
 ensureEngineerIn :: ProjectView -> T.Text -> O.Orville (Either T.Text T.Text)
@@ -382,19 +349,36 @@ ensureEngineerIn view slug =
             | refusedCode refused == T.pack "engineer-name-taken" -> go (n + 1)
             | otherwise -> pure (Left (refusedCode refused))
 
--- | C-P2.1 registration; with several remotes and none chosen, @origin@ is tried once.
-registerIn :: T.Text -> Observed -> Observed -> O.Orville (Either T.Text RepositoryRecord)
-registerIn engineer first fallback = do
-  registered <- registerObservedIn engineer first
+{- | C-P2.1 registration; with several remotes and none chosen, @origin@ is tried
+once. C-C.R1 R6-2: right before an observation that succeeded is registered,
+the first one or the fallback, the folder's current identity must still be the
+one that observation saw; otherwise @folder-not-offered@ and nothing is
+registered. A refused observation registers nothing; its refusal is recorded
+as before.
+-}
+registerIn :: T.Text -> FilePath -> Observed -> Observed -> O.Orville (Either T.Text RepositoryRecord)
+registerIn engineer path first fallback = do
+  registered <- registerSame first
   case registered of
-    Left refused
+    Left (Right refused)
       | refusedCode refused == T.pack "authoritative-remote-ambiguous" -> do
-          second <- registerObservedIn engineer fallback
+          second <- registerSame fallback
           pure $ case second of
-            Left again
+            Left (Right again)
               | refusedCode again == T.pack "authoritative-remote-unknown" -> Left (refusedCode refused)
-            other -> either (Left . refusedCode) Right other
-    other -> pure (either (Left . refusedCode) Right other)
+            other -> codeOf other
+    other -> pure (codeOf other)
+ where
+  codeOf =
+    either (Left . either id refusedCode) Right
+  registerSame observed =
+    case observedIdentity observed of
+      Nothing -> either (Left . Right) Right <$> registerObservedIn engineer observed
+      Just seen -> do
+        current <- liftIO (gitIdentity path)
+        if current == Just seen
+          then either (Left . Right) Right <$> registerObservedIn engineer observed
+          else pure (Left (Left (T.pack "folder-not-offered")))
 
 listProjects :: DatabaseRuntime -> IO (Either NotReadyReason [ProjectView])
 listProjects runtime =
