@@ -48,7 +48,14 @@ points work; they are **not evidence of real model coding capability** (handoff 
 - **The engine has not been run with the container runner.** It is verified with the direct runner (no
   boundary, tests only); the container runner is verified on its own by C-P4.2's host check.
 - **Independent read-only review of the Phase 4 code** (an agent, not a person; requested by the owner
-  2026-10-28): PENDING.
+  2026-10-28; `docs/reviews/phase-4-review-2026-10-28.md`): no HIGH; **five MEDIUM, confirmed, not remediated**
+  — (1) a crash or database failure right after the freeze moves the branch halts the fix for good; (2) a
+  finished role's answer is held in memory until its stage ends, so a restart in that window re-runs the role
+  by itself, without bound; (3) marking a cut-short role uncertain and halting are two transactions, with the
+  same effect if the second fails; (4) test paths the Planner may choose can be refused by the container
+  runner, halting for good; (5) the snapshot comparison holds the whole tree in memory. Six LOW recorded.
+  These concern crash recovery and resource bounds, not the person's authority, which the review found
+  correct.
 - **Known debt, deferred by the owner (2026-10-28):** the persistence layer uses hand-written SQL rather than
   Orville's typed API, and JSON responses are built by hand rather than with Fleece encoders
   (`docs/reviews/simple-haskell-audit-2026-10-28.md`, `docs/reviews/fleece-audit-2026-10-28.md`); Phase 4 was
