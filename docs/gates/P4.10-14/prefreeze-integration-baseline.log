@@ -1,0 +1,53 @@
+lockstep> test (suite: lockstep-integration, args: -p C-P4.10-14)
+
+lockstep-integration
+  C-P4.10-14 the Implementer, verification, the challenge after it, review and acceptance (real Git, processes, PostgreSQL)
+    the fix becomes the Supervisor's candidate commit and passes verification on that exact commit:                  FAIL (0.49s)
+      test/integration/Lockstep/EngineImplementTest.hs:86:
+      refused: "stage-not-built"
+      Use -p '/C-P4.10-14/&&/the fix becomes the Supervisor'\''s candidate commit and passes verification on that exact commit/' to rerun this test only.
+    a protected test, a path outside the scope, a .git, a link or no change is refused as an attempt:                FAIL (0.49s)
+      test/integration/Lockstep/EngineImplementTest.hs:86:
+      refused: "stage-not-built"
+      Use -p '/C-P4.10-14/&&/a protected test, a path outside the scope, a .git, a link or no change is refused as an attempt/' to rerun this test only.
+    a fix that fails verification uses the second attempt; a second failure halts attempts-exhausted:                FAIL (0.49s)
+      test/integration/Lockstep/EngineImplementTest.hs:86:
+      refused: "stage-not-built"
+      Use -p '/C-P4.10-14/&&/a fix that fails verification uses the second attempt; a second failure halts attempts-exhausted/' to rerun this test only.
+    wrong but green: the challenger's counterexample is CONFIRMED and sends it back; the second attempt is accepted: FAIL (0.45s)
+      test/integration/Lockstep/EngineImplementTest.hs:86:
+      refused: "stage-not-built"
+      Use -p '/C-P4.10-14/&&/wrong but green: the challenger'\''s counterexample is CONFIRMED and sends it back; the second attempt is accepted/' to rerun this test only.
+    a Reviewer's rejection blocks acceptance and uses an attempt; needs-human halts:                                 FAIL (0.49s)
+      test/integration/Lockstep/EngineImplementTest.hs:86:
+      refused: "stage-not-built"
+      Use -p '/C-P4.10-14/&&/a Reviewer'\''s rejection blocks acceptance and uses an attempt; needs-human halts/' to rerun this test only.
+    acceptance moves the work branch from the freeze to the exact verified, reviewed commit; nothing else changes:   FAIL (0.53s)
+      test/integration/Lockstep/EngineImplementTest.hs:86:
+      refused: "stage-not-built"
+      Use -p '/C-P4.10-14/&&/acceptance moves the work branch from the freeze to the exact verified, reviewed commit; nothing else changes/' to rerun this test only.
+    a work branch moved by someone else is never accepted over:                                                      FAIL (0.49s)
+      test/integration/Lockstep/EngineImplementTest.hs:86:
+      refused: "stage-not-built"
+      Use -p '/C-P4.10-14/&&/a work branch moved by someone else is never accepted over/' to rerun this test only.
+    the challenger and the Reviewer never receive the Implementer's words:                                           FAIL (0.47s)
+      test/integration/Lockstep/EngineImplementTest.hs:86:
+      refused: "stage-not-built"
+      Use -p '/C-P4.10-14/&&/the challenger and the Reviewer never receive the Implementer'\''s words/' to rerun this test only.
+
+8 out of 8 tests failed (3.91s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

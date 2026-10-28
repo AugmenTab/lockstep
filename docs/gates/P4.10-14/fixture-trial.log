@@ -1,0 +1,35 @@
+lockstep-0.2.0.0: unregistering (local file changes: src/Lockstep/Application/Engine.hs)
+lockstep> configure (lib + test)
+Configuring lockstep-0.2.0.0...
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+[ 95 of 122] Compiling Lockstep.Application.Engine [Source file changed]
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+[2 of 2] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep/lockstep [Library changed]
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[79 of 79] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-integration/lockstep-integration [Library changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-6ggF0AiJnRUCIB81Gsi4xx
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-integration, args: -p C-P4.10-14)
+
+lockstep-integration
+  C-P4.10-14 the Implementer, verification, the challenge after it, review and acceptance (real Git, processes, PostgreSQL)
+    the fix becomes the Supervisor's candidate commit and passes verification on that exact commit:                  OK (0.60s)
+    a protected test, a path outside the scope, a .git, a link or no change is refused as an attempt:                OK (1.90s)
+    a fix that fails verification uses the second attempt; a second failure halts attempts-exhausted:                OK (0.75s)
+    wrong but green: the challenger's counterexample is CONFIRMED and sends it back; the second attempt is accepted: OK (0.91s)
+    a Reviewer's rejection blocks acceptance and uses an attempt; needs-human halts:                                 OK (1.49s)
+    acceptance moves the work branch from the freeze to the exact verified, reviewed commit; nothing else changes:   OK (0.69s)
+    a work branch moved by someone else is never accepted over:                                                      OK (0.70s)
+    the challenger and the Reviewer never receive the Implementer's words:                                           OK (0.72s)
+
+All 8 tests passed (7.76s)
+
+
+
+lockstep> Test suite lockstep-integration passed
+Completed 2 action(s).
