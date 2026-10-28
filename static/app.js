@@ -23,7 +23,7 @@
   var TASK = new RegExp('^/app/tasks/' + UUID + '$');
   var CHECKS = new RegExp('^/app/projects/' + UUID + '/checks$');
   var DECISION = new RegExp('^/app/decisions/' + UUID + '$');
-  var FORM_ACTION = new RegExp('^/app/api/(projects|projects/' + UUID + '/(connect|tasks|checks|execution)|tasks/' + UUID + '/(edit|decide|bug)|decisions/' + UUID + ')$');
+  var FORM_ACTION = new RegExp('^/app/api/(projects|projects/' + UUID + '/(connect|tasks|checks|execution)|tasks/' + UUID + '/(edit|decide|bug)|decisions/' + UUID + '|transactions/' + UUID + '/(decision|completion))$');
 
   // The sign-in token arrives in the fragment of /app/sign-in. Take it, then
   // remove it from the address bar and from this history entry before anything else.

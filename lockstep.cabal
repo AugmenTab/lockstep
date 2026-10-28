@@ -40,6 +40,7 @@ library
       Lockstep.Application.Dispatcher
       Lockstep.Application.Engine
       Lockstep.Application.EngineCandidate
+      Lockstep.Application.EngineEvidence
       Lockstep.Application.EngineWorker
       Lockstep.Application.Execution
       Lockstep.Application.Executor
@@ -233,6 +234,7 @@ test-suite lockstep-integration
       Lockstep.EngineCandidateTest
       Lockstep.EngineHumanTest
       Lockstep.EngineImplementTest
+      Lockstep.EnginePageTest
       Lockstep.EngineTest
       Lockstep.ExecutionBrowserTest
       Lockstep.ExecutionPageTest

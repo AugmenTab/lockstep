@@ -24,7 +24,7 @@ import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as LBS
 import Data.Char qualified as Char
 import Data.List qualified as L
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Text.Encoding.Error qualified as TEE
@@ -38,8 +38,10 @@ import Text.Show (show)
 
 import Lockstep.Application.Activity (readActivity)
 import Lockstep.Application.Command (WorkspaceState (..), generateIdempotencyKey, idempotencyKeyText, mkIdempotencyKey, readWorkspace)
+import Lockstep.Application.Conversation (Channel (..), Sender (..), StoredRequest (..), postMessage)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason (..), Readiness (..), checkReadiness, revisionNumber)
 import Lockstep.Application.Decisions (DecisionReceipt (..), OpenDecision (..), applyDecision, decidedReceipt, findDecision, listDecisions)
+import Lockstep.Application.Engine (TransactionView (..), decideCompletion, haltRequest, projectStarted, transactionForWorkOrder, transactionView)
 import Lockstep.Application.Execution (Admission (..), admitBug, enableExecution, executionStatus, findAdmission)
 import Lockstep.Application.LedgerView (EffectLine (..), LedgerProjection (..), OrderLine (..), projectLedger)
 import Lockstep.Application.OperatorTrust (Session (..), exchangeSignIn, lookupSession, revokeSession)
@@ -68,6 +70,7 @@ import Lockstep.Application.Tasks
   , listTasks
   )
 import Lockstep.Foundation.OperatorToken (decodeToken, encodeToken)
+import Lockstep.Kernel.Conversation (RequestInput (..))
 import Lockstep.Kernel.Decision (DecisionRequest (..), decisionRefusalWords)
 import Lockstep.Kernel.Effect (OperationId (..))
 import Lockstep.Kernel.EffectView (EffectStatus (..))
@@ -128,6 +131,8 @@ data AppRoute
   | DecideRoute T.Text
   | EnableExecutionRoute T.Text
   | AdmitBugRoute T.Text
+  | HaltDecisionRoute T.Text
+  | CompletionRoute T.Text
   | ExchangeSession
   | SignOut
 
@@ -165,6 +170,8 @@ matchAppRoute method path =
       ["app", "api", "tasks", tid, "decide"] | post, validId tid -> Just (DecideTaskRoute tid)
       ["app", "api", "projects", pid, "execution"] | post, validId pid -> Just (EnableExecutionRoute pid)
       ["app", "api", "tasks", tid, "bug"] | post, validId tid -> Just (AdmitBugRoute tid)
+      ["app", "api", "transactions", xid, "decision"] | post, validId xid -> Just (HaltDecisionRoute xid)
+      ["app", "api", "transactions", xid, "completion"] | post, validId xid -> Just (CompletionRoute xid)
       ["app", "api", "session"] | post -> Just ExchangeSession
       ["app", "api", "sign-out"] | post -> Just SignOut
       ["app", "api", "projects"] | post -> Just CreateProject
@@ -455,6 +462,45 @@ handleWithDatabase db route request =
                 latest <- findTask db tid
                 taskAnswer db (either (const task) (fromMaybe task) latest) (Just (executionRefusalWords code))
           (Right (Just task), _, _) -> taskAnswer db task (Just "Lockstep could not read this form. Try again.")
+    HaltDecisionRoute xid ->
+      withForm $ \fields -> if T.null T.empty then pure (errorJson HTTP.status501 "stage-not-built") else do
+        let
+          value name = TE.decodeUtf8With TEE.lenientDecode <$> L.lookup name fields
+          revision = value "revision" >>= decimalUpTo integerMax
+          key = value "key" >>= either (const Nothing) Just . mkIdempotencyKey
+        found <- transactionView db xid
+        case found of
+          Left _ -> pure notReady
+          Right Nothing -> pure (errorJson HTTP.status404 "not-found")
+          Right (Just tx) -> do
+            current <- haltRequest db (viewId tx)
+            case (current, key, revision, value "request", value "choice") of
+              (Left _, _, _, _, _) -> pure notReady
+              (Right (Just r), Just k, Just rev, Just rid, Just c)
+                | rid == storedRequestId r -> do
+                    posted <- postMessage db k rid (SenderHuman ApplicationChannel) (HumanDecides rev c "Answered on the task page.")
+                    case posted of
+                      Left _ -> pure notReady
+                      Right (Right _) -> transactionAnswer db tx Nothing
+                      Right (Left code) -> transactionAnswer db tx (Just (haltAnswerWords code))
+              (Right _, Just _, Just _, Just _, Just _) -> transactionAnswer db tx (Just "This is no longer the question Lockstep is waiting on. Here is the fix as it stands now.")
+              (Right _, _, _, _, Nothing) -> transactionAnswer db tx (Just "Choose what should happen next.")
+              _ -> transactionAnswer db tx (Just "Lockstep could not read this form. Try again.")
+    CompletionRoute xid ->
+      withForm $ \fields -> if T.null T.empty then pure (errorJson HTTP.status501 "stage-not-built") else do
+        let
+          value name = TE.decodeUtf8With TEE.lenientDecode <$> L.lookup name fields
+        found <- transactionView db xid
+        case (found, value "choice") of
+          (Left _, _) -> pure notReady
+          (Right Nothing, _) -> pure (errorJson HTTP.status404 "not-found")
+          (Right (Just tx), Nothing) -> transactionAnswer db tx (Just "Choose whether this bug is fixed.")
+          (Right (Just tx), Just c) -> do
+            decided <- decideCompletion db (viewId tx) (SenderHuman ApplicationChannel) c
+            case decided of
+              Left _ -> pure notReady
+              Right (Right updated) -> transactionAnswer db updated Nothing
+              Right (Left code) -> transactionAnswer db tx (Just (completionWords code))
     DecisionFragment did ->
       withSession $ \_ _ -> decisionAnswer db did Nothing
     DecideRoute did ->
@@ -576,12 +622,49 @@ taskAnswer db task notice = do
         pure $ case checks of
           Right (Just pc) -> either (const Nothing) (fmap entryStanding . L.find ((== admissionWorkOrder a) . entryOrder)) (checksQueue pc)
           _ -> Nothing
+  work <-
+    case admission of
+      Nothing -> pure Nothing
+      Just a -> do
+        tx <- transactionForWorkOrder db (admissionWorkOrder a)
+        case tx of
+          Right (Just v) -> do
+            request <- haltRequest db (viewId v)
+            pure (Just (v, fromRight Nothing request))
+          _ -> pure Nothing
   key <- idempotencyKeyText <$> generateIdempotencyKey
   case project of
     Right (Just p) ->
-      pure (respondWith HTTP.status200 [(HTTP.hContentType, "text/html; charset=utf-8"), ("X-Lockstep-Path", TE.encodeUtf8 ("/app/tasks/" <> taskId task))] (taskPage p siblings task (taskFixingSection task status admission standing key) notice))
+      pure (respondWith HTTP.status200 [(HTTP.hContentType, "text/html; charset=utf-8"), ("X-Lockstep-Path", TE.encodeUtf8 ("/app/tasks/" <> taskId task))] (taskPage p siblings task (isJust (work >>= const Nothing)) (taskFixingSection task status admission standing (work >>= const Nothing) key) notice))
     Right Nothing -> pure (errorJson HTTP.status404 "not-found")
     Left _ -> pure notReady
+
+-- | The task page of a transaction's task, after a person's decision about it (C-P4.16).
+transactionAnswer :: DatabaseRuntime -> TransactionView -> Maybe T.Text -> IO Wai.Response
+transactionAnswer db tx notice = do
+  found <- findTask db (viewTask tx)
+  case found of
+    Right (Just task) -> taskAnswer db task notice
+    Right Nothing -> pure (errorJson HTTP.status404 "not-found")
+    Left _ -> pure notReady
+
+haltAnswerWords :: T.Text -> T.Text
+haltAnswerWords code =
+  case T.unpack code of
+    "request-closed" -> "This question was already answered."
+    "stale-revision" -> "The question changed since this page was shown. Look at it again."
+    "unknown-choice" -> "Choose one of the answers shown."
+    "key-conflict" -> "This form was already used for a different answer. Look at the fix again."
+    _ -> "Lockstep could not record this answer. Look at the fix again."
+
+completionWords :: T.Text -> T.Text
+completionWords code =
+  case T.unpack code of
+    "closed" -> "This fix is already decided."
+    "illegal-input" -> "This fix is not ready for your decision yet."
+    "unknown-choice" -> "Choose whether this bug is fixed."
+    "stale-step" -> "The fix changed while you were looking. Here it is as it stands now."
+    _ -> "Lockstep could not record this decision. Look at the fix again."
 
 -- | An HTML answer with the address the page's history should show.
 pathAnswer :: T.Text -> LBS.ByteString -> Wai.Response
@@ -758,13 +841,16 @@ projectPage db view notice = do
   tasks <- fromRight [] <$> listTasks db (projectId view)
   checks <- projectChecks db (projectId view)
   execution <- fromRight Nothing <$> executionStatus db folders (projectId view)
+  started <- (&& T.null "x") . fromRight False <$> projectStarted db (projectId view)
   executionKey <- idempotencyKeyText <$> generateIdempotencyKey
   let
     status =
       case projectSetup view of
         Connected ->
           [ E.p [cls "ls-good-text"] [E.text ("Lockstep can see this folder: " <> fromMaybe "" (projectFolder view))]
-          , E.p [] [E.text "It cannot change it or run anything in it yet; that arrives in a later update of Lockstep."]
+          , if started
+              then E.p [] [E.text "Lockstep works in it only on bugs you hand it, and commits each fix only on its own branch there. It sends nothing anywhere."]
+              else E.p [] [E.text "It cannot change it or run anything in it yet; that arrives in a later update of Lockstep."]
           ]
         Organized ->
           [ E.p [] [E.text "This project is organized but has no folder yet. Its files will live in a folder you choose below."]
@@ -815,7 +901,7 @@ projectPage db view notice = do
          ]
       <> projectTasks view tasks
       <> either (const []) (maybe [] projectChecksSection) checks
-      <> projectExecutionSection view execution executionKey
+      <> projectExecutionSection view execution started executionKey
       <> [E.h2 [] [E.text "Its folder"]]
       <> status
       <> [ E.details

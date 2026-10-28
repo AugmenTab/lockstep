@@ -26,8 +26,10 @@ module Lockstep.Persistence.Transactions
   , AdmissionFacts (..)
   , admissionFacts
   , pendingAdmissions
+  , projectStarted
   ) where
 
+import Data.List qualified as L
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
@@ -405,6 +407,15 @@ admissionFacts workOrder =
             <*> O.marshallField factEngineer (O.unboundedTextField "engineer_name")
             <*> O.marshallField factFolder (O.unboundedTextField "folder")
       )
+
+-- | Whether Lockstep has started on any bug of the project (C-P4.16).
+projectStarted :: O.MonadOrville m => T.Text -> m Bool
+projectStarted project =
+  not . L.null
+    <$> O.executeAndDecode
+      O.SelectQuery
+      (sql "SELECT t.id::text AS id FROM lockstep_transactions t JOIN lockstep_bug_admissions a ON a.work_order_id = t.work_order_id WHERE a.project_id = " <> uuid project <> sql " LIMIT 1")
+      (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.unboundedTextField "id")))
 
 -- | The admitted bug Work Orders that have no transaction yet, in hand-over order (C-P4.15 W1).
 pendingAdmissions :: O.MonadOrville m => m [T.Text]
