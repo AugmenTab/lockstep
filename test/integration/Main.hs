@@ -34,6 +34,7 @@ import Lockstep.GateCRemediationPageTest qualified as GateCRemediationPageTest
 import Lockstep.GateCRemediationRetainTest qualified as GateCRemediationRetainTest
 import Lockstep.GateCRemediationTest qualified as GateCRemediationTest
 import Lockstep.HandoverTest qualified as HandoverTest
+import Lockstep.HelperRunnerTest qualified as HelperRunnerTest
 import Lockstep.InstallBrowserTest qualified as InstallBrowserTest
 import Lockstep.InstallHelperTest qualified as InstallHelperTest
 import Lockstep.InstallPaneTest qualified as InstallPaneTest
@@ -47,6 +48,7 @@ import Lockstep.MigrationDbTest qualified as MigrationDbTest
 import Lockstep.OperatorCommandTest qualified as OperatorCommandTest
 import Lockstep.OperatorLedgerTest qualified as OperatorLedgerTest
 import Lockstep.OperatorTrustTest qualified as OperatorTrustTest
+import Lockstep.ProcessRunnerTest qualified as ProcessRunnerTest
 import Lockstep.ProcessTest qualified as ProcessTest
 import Lockstep.ProfileRegistryTest qualified as ProfileRegistryTest
 import Lockstep.ProjectChecksBrowserTest qualified as ProjectChecksBrowserTest
@@ -131,4 +133,6 @@ main =
       , ExecutionPageTest.tests
       , ExecutionBrowserTest.tests
       , ConversationTest.tests
+      , ProcessRunnerTest.tests
+      , HelperRunnerTest.tests
       ]

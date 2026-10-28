@@ -27,6 +27,7 @@ import Lockstep.Foundation.FolderProtocolTest qualified as FolderProtocolTest
 import Lockstep.Foundation.InstallProtocolTest qualified as InstallProtocolTest
 import Lockstep.Foundation.LifecycleProtocolTest qualified as LifecycleProtocolTest
 import Lockstep.Foundation.OperatorTokenTest qualified as OperatorTokenTest
+import Lockstep.Foundation.RunnerProtocolTest qualified as RunnerProtocolTest
 import Lockstep.Foundation.SessionProtocolTest qualified as SessionProtocolTest
 import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
 import Lockstep.Kernel.ActivityTest qualified as ActivityTest
@@ -49,6 +50,7 @@ import Lockstep.Kernel.RemediationTest qualified as RemediationTest
 import Lockstep.Kernel.RemediationThirdReviewTest qualified as RemediationThirdReviewTest
 import Lockstep.Kernel.RemoteTest qualified as RemoteTest
 import Lockstep.Kernel.RepositoryTest qualified as RepositoryTest
+import Lockstep.Kernel.RunnerTest qualified as RunnerTest
 import Lockstep.Kernel.SchedulerPropertyTest qualified as SchedulerPropertyTest
 import Lockstep.Kernel.SchedulerTest qualified as SchedulerTest
 import Lockstep.Kernel.TaskTest qualified as TaskTest
@@ -137,4 +139,6 @@ main =
       , ActivityTest.tests
       , KernelExecutionTest.tests
       , ConversationTest.tests
+      , RunnerTest.tests
+      , RunnerProtocolTest.tests
       ]
