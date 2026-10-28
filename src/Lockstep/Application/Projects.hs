@@ -291,28 +291,43 @@ attempt (Hooks afterFolder faults) runtime folders view choice = do
     case result of
       Right (Right v) -> projectSetup v == Connected
       _ -> False
-  -- C-C.R1 R13: what the attempt's caller saw may be wrong (an interruption after the
-  -- commit, a COMMIT whose answer was lost), so the database decides: the folder this
-  -- attempt made is removed only when the project is not connected and does not record
-  -- it; when that cannot be read, the folder is kept.
+  -- C-C.R1 R13, R13a: what the attempt's caller saw may be wrong (an interruption after
+  -- the commit, a COMMIT whose answer was lost), and another project may have connected
+  -- the folder meanwhile, so the database decides, under the projects lock: the folder
+  -- this attempt made is removed only when this project is not connected and does not
+  -- record it, and no project is connected to it; when that cannot be read, it is kept.
   removeUnrecorded path = do
-    stored <- withDatabase runtime (Store.findProjectById (projectId view))
-    case stored of
-      Right (Just row)
-        | Store.rowSetup row /= setupStateCode Connected && Store.rowFolder row /= Just (T.pack path) -> removeProjectFolder path
-      _ -> pure ()
+    _ <-
+      withDatabase runtime . O.withTransaction $ do
+        Store.lockProjects
+        own <- Store.findProjectById (projectId view)
+        connected <- Store.connectedFolders
+        case own of
+          Just row
+            | Store.rowSetup row /= setupStateCode Connected
+            , Store.rowFolder row /= Just (T.pack path)
+            , T.pack path `L.notElem` connected ->
+                liftIO (removeProjectFolder path)
+          _ -> pure ()
+    pure ()
 
 -- | The Engineer, the registration and the recorded attempt, inside the attempt's transaction.
 connectIn :: ProjectView -> T.Text -> FilePath -> Observed -> Observed -> O.Orville (Either T.Text ProjectView)
 connectIn view slug path first fallback = do
-  engineer <- ensureEngineerIn view slug
-  case engineer of
-    Left code -> recordIn view SetupFailed (Just code) Nothing (projectEngineer view) Nothing
-    Right name -> do
-      registered <- registerIn name first fallback
-      case registered of
-        Left code -> recordIn view SetupFailed (Just code) Nothing (Just name) Nothing
-        Right repository -> recordIn view Connected Nothing (Just (T.pack path)) (Just name) (Just (repositoryRecordId repository))
+  -- C-C.R1 R13b: under the projects lock, the folder must still be there; another
+  -- attempt that made it may have removed it since it was chosen and observed.
+  present <- liftIO (isProjectFolder path)
+  if not present
+    then recordIn view SetupFailed (Just (T.pack "folder-not-offered")) Nothing (projectEngineer view) Nothing
+    else do
+      engineer <- ensureEngineerIn view slug
+      case engineer of
+        Left code -> recordIn view SetupFailed (Just code) Nothing (projectEngineer view) Nothing
+        Right name -> do
+          registered <- registerIn name first fallback
+          case registered of
+            Left code -> recordIn view SetupFailed (Just code) Nothing (Just name) Nothing
+            Right repository -> recordIn view Connected Nothing (Just (T.pack path)) (Just name) (Just (repositoryRecordId repository))
 
 -- | Records the attempt at the revision it was read at; the new state.
 recordIn :: ProjectView -> SetupState -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> O.Orville (Either T.Text ProjectView)
