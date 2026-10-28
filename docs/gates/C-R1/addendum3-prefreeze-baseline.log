@@ -1,0 +1,43 @@
+lockstep> test (suite: lockstep-integration, args: -p "third addendum")
+
+lockstep-integration
+  Gate C remediation third addendum (C-C.R1 §3d; real PostgreSQL)
+    R5-1: another project connected the made folder under another spelling; the failed attempt keeps it:     FAIL (0.24s)
+      test/integration/Lockstep/GateCRemediationIdentityTest.hs:128:
+      the folder another project is connected to (under another spelling) was removed
+      Use -p '/third addendum/&&/R5-1: another project connected the made folder under another spelling; the failed attempt keeps it/' to rerun this test only.
+    R5-2: a folder replaced while the attempt waits is not connected, and the replacement is not registered: FAIL (0.19s)
+      test/integration/Lockstep/GateCRemediationIdentityTest.hs:140:
+      connected to the replaced folder: Right (Right (Just "/tmp/lockstep-cr1-identity-fad7b5b61f7ab42f/projects/site"))
+      Use -p '/third addendum/&&/R5-2: a folder replaced while the attempt waits is not connected, and the replacement is not registered/' to rerun this test only.
+    R5-3: a folder being initialized is not offered to any project:                                          FAIL (0.16s)
+      test/integration/Lockstep/GateCRemediationIdentityTest.hs:148:
+      expected: []
+       but got: ["/tmp/lockstep-cr1-identity-1d94bc3cae5a72d8/projects/garden"]
+      Use -p '/third addendum/&&/R5-3: a folder being initialized is not offered to any project/' to rerun this test only.
+    R5-3: a destination that appears during initialization is never replaced; the next free name is used:    FAIL (0.14s)
+      test/integration/Lockstep/GateCRemediationIdentityTest.hs:160:
+      no folder was published: Left /tmp/lockstep-cr1-identity-aafa3b8bfc531bee/projects/garden: createDirectory: already exists (File exists)
+      Use -p '/third addendum/&&/R5-3: a destination that appears during initialization is never replaced; the next free name is used/' to rerun this test only.
+    R5-3: a failure after initialization removes only what the attempt made:                                 FAIL (0.12s)
+      test/integration/Lockstep/GateCRemediationIdentityTest.hs:171:
+      expected: ["notes"]
+       but got: ["notes","garden"]
+      Use -p '/third addendum/&&/R5-3: a failure after initialization removes only what the attempt made/' to rerun this test only.
+
+5 out of 5 tests failed (0.85s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

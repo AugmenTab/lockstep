@@ -103,6 +103,30 @@ the hook and without R13a, R13b, R9a): **3 of 3 fail**, each for its finding (th
 folder is removed; the second project is recorded as connected to the missing folder; the joined
 dependency text replays the other task).
 
+## 3d. Third addendum (2026-10-27): Review 5, R5-1 to R5-3
+
+Authority: the Planner's final authorization of the same day (Review 5 disposition, given in the
+session): R5-1, R5-2 and R5-3 as one bounded addendum; one independent read-only review of the delta;
+LOW or INFO observations after it are recorded, not remediated, unless they show data loss, a
+security problem or a broken invariant.
+
+| # | Decision |
+|---|---|
+| R5-1 | **Physical identity wins over cleanup.** Under the projects lock, before a folder the attempt made is removed, its Git common directory (`<folder>/.git`, a real directory) is identified by device and inode, the identity C-P2.1 registration records (`physical_id`). If any active repository registration has that identity, or the identity cannot be read while the folder exists, the folder is kept. The R13/R13a checks (own project, connected folder paths) stay. |
+| R5-2 | **A replaced folder is not connected.** Inside the attempt's transaction, under the projects lock and before the Engineer or the registration, the folder's current identity must equal the identity its Git observation recorded; a missing folder, an unreadable identity or a different one is recorded as failed `folder-not-offered`, and nothing is registered. Path equality is not taken as identity. |
+| R5-3 | **A new folder is published only once initialized, and never over anything.** `git init` runs in an attempt-owned directory made by `mkdtemp` in the projects folder, named `.lockstep-new-XXXXXX`, which is never offered (such names are left out of the projects folder's children). After `git init` succeeds, the destination is claimed by `mkdir`, which never replaces an existing file, folder or link (an existing name moves on to the next candidate), and the new `.git` is moved into it. On any failure only the attempt-owned directory, and a destination this attempt has just claimed and that is still empty, are removed. The projects-lock order (projects → repositories) is unchanged; no filesystem step takes a database lock. |
+| R5-4 | **Test-only hook.** `makeProjectFolderWith` runs a hook once `git init` has succeeded, with the directory it ran in; `makeProjectFolder` passes a no-op hook. |
+
+| File | Kind | Covers |
+|---|---|---|
+| `test/integration/Lockstep/GateCRemediationIdentityTest.hs` | integration: real PostgreSQL, Git, in-process, the R15a and R5-4 hooks | R5-1: another project connects the made folder through a symbolic-link parent; the failed attempt keeps it. R5-2: a folder replaced (moved away, a new repository made at the same path) while the attempt waits is not connected and not registered. R5-3: a folder being initialized is not offered; a destination that appears meanwhile is never replaced (the next name is used, the other folder untouched); a failure after `git init` leaves only what was there before |
+
+Pre-freeze baseline (`addendum3-prefreeze-baseline.log`, only these cases, against `b9f7d47` plus the
+hook): **5 of 5 fail**, each for its finding (the alias-connected folder is removed; the replaced
+folder is connected; the folder is offered while being initialized; the destination is the attempt's
+own folder from the start, so a folder made there meanwhile collides with it; the attempt's folder is
+left after a failure).
+
 ## 3a. Verification record (after implementation)
 
 Implementation: `e49b68e` (on `phase-3`, after the freeze commit `b83db50`), then `e1c56ef` (the
@@ -195,7 +219,8 @@ Frozen 2026-10-27 by the writing agent (manual), before any of the fixes was imp
 | `test/integration/Lockstep/GateCRemediationPageTest.hs` | `ad05170cefeba7fd9ddf702a3392bd5b6a962c3a3f5c91a233fdbb449bd6806e` (amendment A-C.R1-2; was `4015a2835ae35a6ec3dc018efb31aa0d12e78fc7244203b1cd62a1676c4bd41d`) |
 | `test/integration/Lockstep/GateCRemediationFolderTest.hs` | `6497ba92949811893e5e61cdfacba234653a2b4518ebdfc2e84fef141b92e18f` |
 | `test/integration/Lockstep/GateCRemediationBrowserTest.hs` | `d95ecee895ef0a1f3ea72effb153799643e6e6f85fcdc054f3f322c45ea652a9` |
-| `test/integration/Main.hs` (runner, additive) | `c3450061e7e08a4fa34dcb3f15cacd1427e7ccc58796c37df9101ce027198999` (second addendum; before it `0f7613e8…6193` for the addendum; originally `fd71561c3342b6c788aeeebf4dea9f882b8546f487a0d67068555d1c34f51982`) |
+| `test/integration/Main.hs` (runner, additive) | `dfdb6c343a1c0f858eb15d2f106e16e8dae39877b8920b0d37acef7322f4e0db` (third addendum; before it `c3450061…8999` for the second, `0f7613e8…6193` for the first; originally `fd71561c3342b6c788aeeebf4dea9f882b8546f487a0d67068555d1c34f51982`) |
+| `test/integration/Lockstep/GateCRemediationIdentityTest.hs` (third addendum, §3d) | `4dcd8569425233ad070cb9cc3b02b4a27f3c76fa872b4d8b2cef9540f25a314f` |
 | `test/integration/Lockstep/GateCRemediationAddendumTest.hs` (addendum, §3b) | `16235a713b695f91f196a42379ad08c5aff5ecb54cbafc52ea0c3dd4493451ec` |
 | `test/integration/Lockstep/GateCRemediationFolderRaceTest.hs` (second addendum, §3c) | `b5872215d9ff11c12a03eac615386ee9bfdf3aee0736e8f1450a3cf87e6029bb` |
 
