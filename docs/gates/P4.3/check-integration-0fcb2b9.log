@@ -1,0 +1,25 @@
+== dev image
+== step 1 format
+Loaded config from: /work/fourmolu.yaml
+test/unit/Main.hs
+@@ -30,11 +30,11 @@
+  import Lockstep.Foundation.SessionProtocolTest qualified as SessionProtocolTest
+  import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
+  import Lockstep.Kernel.ActivityTest qualified as ActivityTest
++ import Lockstep.Kernel.ConversationTest qualified as ConversationTest
+  import Lockstep.Kernel.DecisionTest qualified as DecisionTest
+  import Lockstep.Kernel.DeliveryTest qualified as DeliveryTest
+  import Lockstep.Kernel.EffectTest qualified as EffectTest
+  import Lockstep.Kernel.EffectViewTest qualified as EffectViewTest
+- import Lockstep.Kernel.ConversationTest qualified as ConversationTest
+  import Lockstep.Kernel.EventCodecTest qualified as EventCodecTest
+  import Lockstep.Kernel.ExecutionTest qualified as KernelExecutionTest
+  import Lockstep.Kernel.IdentityTest qualified as IdentityTest
+
+== summary (tested revision 0fcb2b9b2b8e41194703514a3b7073518e370434)
+  1 format                     FAILED
+  2 lint and static checks     NOT_RUN
+  3 build                      NOT_RUN
+  4 unit tests                 NOT_RUN
+  5 no-live-model guard        NOT_RUN
+  6 integration + backup/restore NOT_RUN
