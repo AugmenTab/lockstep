@@ -195,7 +195,12 @@ After the Planner's final authorization (addenda, §3b and §3c), at **`d064150`
 | Format, lint, pedantic build, unit (800) at `671b957` | PASSED | — |
 | C-C.R1 (with all three addenda), C-P3.5, C-P3.6 and C-P3.7 integration groups at **`671b957`** (targeted, not a qualification) | **99 of 99 PASSED** | `addendum3-implementation-run.log` |
 | Independent read-only review of `b9f7d47..671b957` (an agent, limited to R5-1–R5-3) | **3 MEDIUM** (a made folder replaced while waiting can be deleted; the `origin` fallback observation is registered without its identity being compared; the cleanup does not take the registration lock), LOW/INFO recorded; **escalated to the Planner, not fixed** (stopping rule) | `docs/gates/C/review.md`, Review 6 |
-| Mac `scripts/check --integration` and Linux clean clone of the tip | **NOT_RUN** (owner's stop; one consolidated run to come) | — |
+| Fourth addendum (Review 6, §3e) frozen in `a518450`: its cases against `671b957` | 5 of 5 fail, each for its finding | `addendum4-prefreeze-baseline.log` |
+| Format, lint, pedantic build, unit (800) at **`fd5bb90`** (R6-1, R6-2, R6-3) | PASSED | — |
+| C-C.R1 (all four addenda), C-P3.5, C-P3.6, C-P3.7 integration groups at `fd5bb90` (targeted, not a qualification) | **101 of 104**: every new case passes; the 3 failures are exactly the frozen cases that assert the superseded removal (A-C.R1-4), each failing only because the folder is kept | `addendum4-implementation-run.log` |
+| C-C.R1 groups with the proposed A-C.R1-4 diffs (trial; then the three frozen files restored with `git checkout` and their digests re-checked as in §4) | **40 of 40 PASSED** | `trial-with-proposed-a-c.r1-4.log` |
+| Final focused read-only review of the R6 change (an agent, Review 7) | **no HIGH, no MEDIUM**; 1 LOW, 4 INFO recorded, not remediated (stopping rule); nothing calling for disabling new-folder creation | `docs/gates/C/review.md`, Review 7 |
+| Mac `scripts/check --integration` and Linux clean clone of the tip | **NOT_RUN** (not authorized; one consolidated run to come, after A-C.R1-4 is decided) | — |
 
 Every earlier frozen case passes on the Mac with the remediation, including the C-P3.5 projects,
 C-P3.6 tasks, C-P3.7 checks and C-P3.8 decisions suites whose code changed.

@@ -1,8 +1,10 @@
 # Gate C (C-UX) — status and decision packet
 
-- Status: **NOT ACCEPTED. All authorized remediation, including Review 5's three filesystem fixes,
-  is implemented at `671b957`; it is verified by targeted runs only and waits for one consolidated
-  Mac qualification and Linux clean clone, which the owner has asked not to start yet.** The concise
+- Status: **NOT ACCEPTED. All authorized remediation, including Review 6's three MEDIUM corrections
+  (published folders never removed), is implemented at the final candidate `fd5bb90`; it is verified
+  by targeted runs only. Three frozen cases still assert the superseded removal and need the
+  Planner's authorization (A-C.R1-4) before the one consolidated Mac qualification and Linux clean
+  clone, which are not authorized yet.** The concise
   decision packet is `decision-packet.md`. The Implementer cannot accept Gate C (Phase 3 handoff
   P3.11). C8 and C9 are **NOT_RUN**. Phase 4 is not started and will not be without the owner's
   authorization.
@@ -13,9 +15,11 @@
   code + the C-C.R1 remediation `e49b68e` + its review fixes). Since then, **not qualified**:
   `e679d97` (the authorized amendments A-C.R1-1, -2, -3 and the frozen addendum suite),
   `d064150` (migration 17, R13, R14), `11a035d` (second addendum frozen, from Review 4),
-  `b9f7d47` (R13a, R13b, R9a), `33e0beb` (third addendum frozen, from Review 5) and `671b957`
-  (R5-1, R5-2, R5-3). **Next qualification: one Mac `scripts/check --integration` and one Linux clean
-  clone of the tip of `phase-3`** (`671b957`, or a later documents-only commit).
+  `b9f7d47` (R13a, R13b, R9a), `33e0beb` (third addendum frozen, from Review 5), `671b957`
+  (R5-1, R5-2, R5-3), `a518450` (fourth addendum frozen, from Review 6) and **`fd5bb90`** (R6-1,
+  R6-2, R6-3). **Next qualification: one Mac `scripts/check --integration` and one Linux clean
+  clone of the tip of `phase-3`** (`fd5bb90` plus the A-C.R1-4 test amendment once authorized, or a
+  later documents-only commit).
 - Authority: Phase 3 handoff P3.11; PRD v0.3 FR-UX-01…10, NFR-15…18; Plan v0.3 §4 P3.11; the
   Planner disposition of 2026-10-27.
 
@@ -111,20 +115,22 @@ Not started without authorization: the consolidated qualification, cookie-page r
 | R14 under a real asynchronous exception during the unlock | Not testable deterministically; code review only |
 | Read-only code review of `e1c56ef..d064150` (Review 4) | 1 MEDIUM, 1 LOW, 3 INFO; MEDIUM and LOW fixed in `b9f7d47` (`review.md`) |
 | Read-only check of `d064150..b9f7d47` (Review 5) | no HIGH, no MEDIUM; 3 LOW, **fixed in `671b957`** under the Planner's final authorization (C-C.R1 §3d); 5 frozen cases, failing before, passing after; targeted 99 of 99 |
-| Independent read-only review of `b9f7d47..671b957` (Review 6) | **3 MEDIUM, escalated to the Planner, not fixed** (`review.md`, Review 6: one data-loss path in the folder cleanup, one identity bypass on the `origin` fallback, one race with the CLI registration); correction plan ready |
+| Independent read-only review of `b9f7d47..671b957` (Review 6) | 3 MEDIUM; **corrected in `fd5bb90`** under the Planner's final engineering authorization (C-C.R1 §3e): no published folder is ever removed; the identity of the observation actually registered is checked, `origin` fallback included; ownership is checked only under the registration lock. 5 frozen cases, failing before, passing after; targeted 101 of 104 (the 3 being A-C.R1-4's cases); unit 800 of 800 |
+| A-C.R1-4 (`docs/gates/C-R1/amendment-request-4.md`) | **Prepared, not applied**: three frozen cases assert the superseded removal; exact diffs and digests ready; trial with them 40 of 40 |
+| Final focused read-only review of `fd5bb90` (Review 7) | **no HIGH, no MEDIUM**; 1 LOW, 4 INFO recorded (`review.md`) |
 | The remediation on the owner's installation | **Not installed, not dogfooded** (it adds migrations 16 and 17) |
 | Gate C | **Not accepted**. C8, C9 NOT_RUN |
 
 Next required actions, in order:
 
-1. **Planner**: Review 6's three MEDIUM findings (escalated): authorize the correction plan in
-   `review.md` (one small addendum, frozen first), or accept them as named exceptions. The
-   qualification should run on the commit that follows that decision, not on `671b957`.
-2. **Owner**: say when the consolidated qualification may start (`decision-packet.md` §3).
-2. Implementer: **one** Mac `scripts/check --integration` and **one** Linux clean clone
+1. **Planner**: authorize A-C.R1-4 (three frozen-test diffs, `amendment-request-4.md`); the
+   Implementer then applies them at the stated digests (one documents-and-tests commit on top of
+   `fd5bb90`, no code change).
+2. **Owner/Planner**: authorize the consolidated qualification (`decision-packet.md` §3).
+3. Implementer: **one** Mac `scripts/check --integration` and **one** Linux clean clone
    (`.local/linux-clone-run-cr1.sh <commit>`), both on the tip of `phase-3`; record both here and in
    C-C.R1 §3a. No intermediate full runs.
-3. The Gate C decision by the owner (C8 and C9 still open; Phase 4, cookie-page retirement and
+4. The Gate C decision by the owner (C8 and C9 still open; Phase 4, cookie-page retirement and
    installing on the owner's Mac only with the owner's authorization).
 
 ## 6. Residual risks, stated
@@ -134,8 +140,12 @@ Next required actions, in order:
 
 - A crash between a decision's operation and its receipt leaves a marker and no receipt; that key
   then answers "cannot tell", never a guessed receipt (C-C.R1 §3a).
-- A failed project attempt whose project state cannot be read keeps the folder it made (R13 prefers
-  a possibly orphaned new folder to deleting a connected project's folder).
+- A failed project attempt keeps any folder it published, always (C-C.R1 R6-1): an orphaned new
+  folder is preferred to deleting someone else's repository. Kept folders are offered again, so Try
+  again can connect one; they accumulate (`name`, `name-2`, …) if attempts keep failing.
+- Folder identity is (device, inode); a `.git` re-created by someone else inside the
+  observation-to-transaction window on a filesystem that reuses inodes at once could pass the
+  check (Review 7 LOW; recorded).
 - A creation key made before migration 17 replays only when the request is shown equal; a new-folder
   project request of that age always conflicts (fails closed).
 - The helper's check-then-write window for an added folder has no deterministic test; the mount-time
