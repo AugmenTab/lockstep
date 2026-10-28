@@ -6,9 +6,10 @@
 - **Qualified candidate: `36cff9b`** on `phase-3` (production code `fd5bb90`: P3.1–P3.10 + the
   C-C.R1 remediation and its four addenda; A-C.R1-4 applied). Full record: `gate-c-report.md`;
   remediation: `docs/gates/C-R1/contract.md`.
-- **Status: NOT ACCEPTED. Machine qualification PASSED on Mac and on a Linux clean clone
-  (2026-10-27).** No Planner decision is outstanding. Open: C8, C9 and the owner's Gate C decision.
-  Nothing installed, no legacy page retired, Phase 4 not started.
+- **Status: ACCEPTED WITH EXCEPTIONS** by the owner, 2026-10-27 (`docs/governance/DECISION_REGISTER.md`):
+  machine qualification PASSED on Mac and a Linux clean clone; **C8 and C9 NOT_RUN — DEFERRED BY
+  OWNER** (named exceptions, carried into the Phase 4 backlog). Nothing installed, no legacy page
+  retired. **Phase 4 not started** (owner's instruction).
 
 ## 0. What the Planner's Review 6 disposition asked, and where it stands
 
@@ -44,8 +45,8 @@
 | C3 Upgrade and recovery | PASSED | dogfood step 2 (upgrade only; failed-upgrade recovery not done by a person) | PASSED as exercised |
 | C4 Project onboarding | PASSED | dogfood steps 3, 5–7, 11 | PASSED as exercised |
 | C5 Tasks, C6 Decisions, C7 Evidence | PASSED | — (C6, C7 seen empty only) | automated PASSED |
-| **C8** Deferred Gate B walkthrough | — | the owner's browser walkthrough deferred from Gate B (`docs/gates/B/decision-packet.md`) | **NOT_RUN** |
-| **C9** Nontechnical usability | journey automated only (not evidence) | at least 3 people new to Lockstep, journeys J1–J8, no help (`docs/gates/P3.10/usability-protocol.md`) | **NOT_RUN** |
+| **C8** Deferred Gate B walkthrough | — | the owner's browser walkthrough deferred from Gate B (`docs/gates/B/decision-packet.md`) | **NOT_RUN — DEFERRED BY OWNER** |
+| **C9** Nontechnical usability | journey automated only (not evidence) | at least 3 people new to Lockstep, journeys J1–J8, no help (`docs/gates/P3.10/usability-protocol.md`) | **NOT_RUN — DEFERRED BY OWNER** |
 
 "Automated PASSED" is from the qualification of `36cff9b` (Mac and Linux, 422 of 422). The dogfood ran on the installed build `b963527`, not on the candidate
 (which adds migrations 16 and 17 and has not been installed).
@@ -96,7 +97,8 @@
 |---|---|
 | A-C.R1-4 authorized (date) | 2026-10-27 (Planner, final); applied |
 | Consolidated qualification: go-ahead given (date) | 2026-10-27 (owner); PASSED on Mac and Linux at `36cff9b` |
-| C8 result | |
-| C9 result, or named exception | |
-| Gate C: accepted / accepted with exceptions / not accepted | |
-| Decided by / at | |
+| C8 result | **NOT_RUN — DEFERRED BY OWNER** (named exception; Phase 4 backlog) |
+| C9 result, or named exception | **NOT_RUN — DEFERRED BY OWNER** (named exception; Phase 4 backlog) |
+| Gate C: accepted / accepted with exceptions / not accepted | **ACCEPTED WITH EXCEPTIONS** (candidate `36cff9b`, code `fd5bb90`) |
+| Decided by / at | The owner, 2026-10-27 (in the session; provenance `.local/plans/phase-03_gate-c-decision.md`) |
+| Phase 4 | **Not started**: the owner's instruction "DO NOT BEGIN PHASE 4" overrides the authorization text |
