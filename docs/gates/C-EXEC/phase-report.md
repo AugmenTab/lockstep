@@ -17,9 +17,14 @@
 | P4.4 | **VERIFIED** (Mac `4f110cd`; checkpoint `cbd7394` Mac and Linux, unit 854/854, integration 500/500) | `C-P4.4` | `docs/gates/P4.4/` |
 | P4.5 | **VERIFIED** at checkpoint `cbd7394` (Mac and Linux); the live Claude adapter NOT_BUILT (separately authorized) | `C-P4.5` | `docs/gates/P4.5/` |
 | P4.6 | **VERIFIED** at `cbd7394` (Mac and Linux, unit 854/854, integration 500/500) | `C-P4.6` | `docs/gates/P4.6/` |
-| P4.7–P4.9 | **IMPLEMENTED** (frozen `be020cc`; targeted 10/10); full qualification at the P4.10–14 checkpoint | `C-P4.7-9` | `docs/gates/P4.7-9/` |
-| P4.10–P4.14 | **IMPLEMENTED** (frozen `5fa1b15`; targeted 8/8); full qualification at the P4.7–14 checkpoint | `C-P4.10-14` | `docs/gates/P4.10-14/` |
-| P4.15–P4.17 | not started | — | — |
+| P4.7–P4.9 | **VERIFIED** at checkpoint `30facae` (frozen `be020cc`): Mac and Linux clean clone, unit 862/862, integration 518/518 | `C-P4.7-9` | `docs/gates/P4.7-9/` |
+| P4.10–P4.14 | **VERIFIED** at checkpoint `30facae` (frozen `5fa1b15`): Mac and Linux clean clone, unit 862/862, integration 518/518 | `C-P4.10-14` | `docs/gates/P4.10-14/` |
+| P4.15 | in progress | `C-P4.15` | `docs/gates/P4.15/` |
+| P4.16–P4.17 | not started | — | — |
+
+The first full check at `0b8dbad` failed one test of 518: a start-up race in the folder helper (C-P3.5), which
+gave the pane its copy after placing the list the frozen test waits on. Fixed in the helper at `30facae` (the
+order of the two writes only); the frozen test is unchanged.
 
 ## Known debt, deferred by the owner (2026-10-28)
 
@@ -39,17 +44,12 @@ schema registration are not set up); fix the whole layer after the post-Phase-4 
 
 Neither is run or represented by automation. Their protocols are unchanged (`docs/gates/C/`).
 
-## Open owner decisions
+## Owner decisions
 
-1. DG-06, DG-07, DG-17 — `design-gates-decision-request.md` (recommended options and the minimum
-   decision for each). **Every remaining sub-phase waits on these**: P4.2, P4.5, P4.10 on DG-17; P4.7 on
-   DG-07; P4.8 on DG-06; P4.4, P4.6, P4.9 and P4.11–P4.17 follow from them.
-2. O-1 there: the built-in Bug Profile content (`lockstep-bug-fix` v1), built in P4.1.
-3. A-P4.3-1 — `docs/gates/P4.3/amendment-request-1.md`: move one import line in the frozen unit runner
-   (fourmolu order); digests before and after given; trialled green; not applied.
+Decided in `.local/plans/phase-04_update1.md` (sha256 `4cb620d3…a6f1d7`): DG-17 accepted; DG-06 and DG-07
+accepted with clarification; O-1 accepted; A-P4.3-1 approved (applied). A-P4.2-1 approved (applied).
 
-## Where it stopped (2026-10-28)
+## Where it stands (2026-10-28)
 
-P4.1 verified (Mac and Linux, `bd4512b`). P4.3 implemented on `phase-4`; its qualification waits for A-P4.3-1.
-No further sub-phase can be frozen without DG-06/07/17. Nothing was installed, pushed or published; no
+P4.1–P4.14 verified (Mac and Linux). P4.15 in progress. Nothing was installed, pushed or published; no
 provider was invoked (the guard's sentinel log is empty in every run). Gate C-EXEC is not claimed.
