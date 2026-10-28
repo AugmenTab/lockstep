@@ -245,8 +245,8 @@ taskRefusalCodes =
 
 {- | The canonical text of a task's creation request (C-C.R1 R9, migration 17):
 its creation digest is the SHA-256 of it. The project, then the checked title,
-acceptance and priority, then the dependencies sorted without repeats; free
-text quoted with @\\@, @"@ and new lines escaped.
+acceptance and priority, then the dependencies sorted without repeats, each
+quoted (C-C.R1 R9a); free text quoted with @\\@, @"@ and new lines escaped.
 -}
 taskRequestText :: T.Text -> TaskTitle -> T.Text -> Priority -> [T.Text] -> T.Text
 taskRequestText project title acceptance priority dependencies =
@@ -256,7 +256,7 @@ taskRequestText project title acceptance priority dependencies =
     , T.pack "title " <> quotedText (taskTitleText title)
     , T.pack "acceptance " <> quotedText acceptance
     , T.pack "priority " <> priorityCode priority
-    , T.pack "depends " <> T.intercalate (T.pack ",") (L.sort (L.nub dependencies))
+    , T.pack "depends " <> T.intercalate (T.pack ",") (fmap quotedText (L.sort (L.nub dependencies)))
     ]
 
 quotedText :: T.Text -> T.Text
