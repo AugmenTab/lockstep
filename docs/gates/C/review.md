@@ -119,3 +119,41 @@ The four points the Planner asked Review 3 to verify:
 These, together with A-C.R1-1's production change and the A-C.R1-2 / A-C.R1-3 re-freezes, need one
 new Mac qualification and one Linux clean clone, which wait for the owner (stop instruction of
 2026-10-27).
+
+**Outcome (2026-10-27):** the Planner gave final authorization (`.local/plans/phase-03_update4.md`)
+for the three amendments and the corrections above; all were applied (`e679d97`, `d064150`; C-C.R1
+§3b).
+
+## Review 4 — migration 17 and the Review 3 corrections (`e1c56ef..d064150`)
+
+- Reviewer: a fresh **read-only** reviewer agent (same rules). **Not a human review.** Scope: `src`
+  of `e1c56ef..d064150`, with the test amendments of `e1c56ef..e679d97` for intent. Result:
+  **1 MEDIUM**, 1 LOW, 3 INFO.
+
+| # | Sev. | Finding (condensed) | Disposition |
+|---|---|---|---|
+| 1 | MEDIUM | R13 re-read only the attempt's own project. A folder `git init` has just made is offered to every other project at once, so another project can connect it while the attempt runs; if the attempt then fails, it removes a folder that project is connected to | **Fixed in `b9f7d47`** (C-C.R1 §3c R13a, R13b), under the Planner's authorization ("preserve the folder if it is connected"): the check and the removal run in one transaction under the projects lock and keep any folder any project is connected to; and an attempt is recorded as connected only if its folder is still there, under the same lock. Both orders of the race are frozen cases (`GateCRemediationFolderRaceTest.hs`), failing before the fix |
+| 2 | LOW | A dependency that is not a task id went into the task's canonical text unquoted, so joined text could equal another list and replay | **Fixed in `b9f7d47`** (R9a): each dependency quoted; frozen case |
+| 3 | INFO | Asynchronous exceptions inside the locked work still pass through `withDatabase`, which turns them into a database failure | Kept: R14 leaves `withDatabase` unchanged on purpose; the outcomes are safe (a failed read keeps the folder) |
+| 4 | INFO | A synchronous failure while destroying the lock's pool (after the `try`) would escape as an exception | Kept: not new; noted |
+| 5 | INFO | A row made before migration 17 whose project or task changed since now refuses its own replay | Intended (R9: fail closed) |
+
+## Review 5 — the second addendum (`d064150..b9f7d47`)
+
+- Reviewer: a fresh **read-only** reviewer agent (same rules). **Not a human review.** Result:
+  **no HIGH, no MEDIUM**; 3 LOW, 1 INFO. R13a/R13b serialization, lock order, R9a, R15a and the frozen
+  expectations checked clean.
+- **Not fixed** (each needs its own frozen case; held for the Planner so that the remediation stops at
+  a qualifiable commit rather than another fix-and-review round). Correction plan below.
+
+| # | Sev. | Finding (condensed) | Proposed correction |
+|---|---|---|---|
+| 1 | LOW | R13a compares folders by path text. An added folder that names the same place as a projects-folder child under another spelling (a symbolic-link parent, or other letter case on a case-insensitive disk) is not seen as connected, so a failed attempt can still remove it | Under the projects lock, keep the folder when any active repository row has the same physical identity (common directory / physical id) as the folder, not only the same path text |
+| 2 | LOW | R13b checks only that something is at the path; if the folder was removed and a new one made at the same path, a waiting attempt records its stale observation | In the attempt's transaction, re-observe the folder's identity and compare it with the observation; differ → `folder-not-offered` |
+| 3 | LOW (older code) | `makeProjectFolder` removes its folder when `git init` fails, outside the lock and the database checks; if `.git` already exists another request could connect it first | Make the folder under a temporary name and rename it into place only after `git init` succeeds (nothing is offered until then) |
+| 4 | INFO | Tasks created at `d064150` with the earlier unquoted format would conflict on replay (fails closed; that format was never released). Removal holds the projects table lock while deleting a fresh folder (bounded; reads still allowed) | None |
+
+All three need an operator-made folder alias or a second near-simultaneous attempt on the same
+folder; none affects a single person using the pages in order. The Planner decides whether they are
+fixed before the consolidated qualification (one more small addendum, frozen first) or recorded as
+Gate C exceptions.

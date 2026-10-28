@@ -1,6 +1,6 @@
 # Gate C (C-UX) — status and decision packet
 
-- Status: **NOT ACCEPTED. All authorized remediation is implemented at `d064150`; it is verified by
+- Status: **NOT ACCEPTED. All authorized remediation is implemented at `b9f7d47`; it is verified by
   targeted runs only and waits for one consolidated Mac qualification and Linux clean clone, which
   the owner has asked not to start yet.** The Implementer cannot accept Gate C (Phase 3 handoff
   P3.11). C8 and C9 are **NOT_RUN**. Phase 4 is not started and will not be without the owner's
@@ -10,9 +10,10 @@
   `bd94c96` (§7).
 - Branch `phase-3` (from `v2` at `8e71039`). Last fully qualified commit: **`e1c56ef`** (the P3.10
   code + the C-C.R1 remediation `e49b68e` + its review fixes). Since then, **not qualified**:
-  `e679d97` (the authorized amendments A-C.R1-1, -2, -3 and the frozen addendum suite) and
-  `d064150` (migration 17, R13, R14). **Next qualification: one Mac `scripts/check --integration`
-  and one Linux clean clone of the tip of `phase-3`** (`d064150` or a later documents-only commit).
+  `e679d97` (the authorized amendments A-C.R1-1, -2, -3 and the frozen addendum suite),
+  `d064150` (migration 17, R13, R14), `11a035d` (second addendum frozen, from Review 4) and
+  `b9f7d47` (R13a, R13b, R9a). **Next qualification: one Mac `scripts/check --integration` and one
+  Linux clean clone of the tip of `phase-3`** (`b9f7d47`, or a later documents-only commit).
 - Authority: Phase 3 handoff P3.11; PRD v0.3 FR-UX-01…10, NFR-15…18; Plan v0.3 §4 P3.11; the
   Planner disposition of 2026-10-27.
 
@@ -28,9 +29,9 @@
   (§2).
 - **Since then (2026-10-27, Planner's final authorization):** A-C.R1-1, -2 and -3 applied at their
   authorized digests; migration 17 binds creation keys to request content; a connected project's
-  folder is never removed; asynchronous exceptions propagate from the session lock. Targeted runs:
-  75 of 75 affected integration cases and 800 of 800 unit cases pass at `d064150`; the full
-  qualification is still to run (§5a).
+  folder is never removed, by any attempt of any project (Review 4's MEDIUM, fixed); asynchronous
+  exceptions propagate from the session lock. Targeted runs: 78 of 78 affected integration cases
+  and 800 of 800 unit cases pass at `b9f7d47`; the full qualification is still to run (§5a).
 - **Waiting on the owner:** the go-ahead for the consolidated qualification, then the Gate C
   decision. What is and is not verified, and the next actions: §5a.
 
@@ -103,16 +104,19 @@ Not started without authorization: the consolidated qualification, cookie-page r
 |---|---|
 | `e1c56ef` on the Mac and a Linux clean clone | **Qualified**: 402 of 403 each (the 1 being the fixture A-C.R1-2 has since repaired) |
 | A-C.R1-1, -2, -3 in the frozen tests | **Applied** at the authorized digests (checked before and after) |
-| Migration 17, R13, R14 at `d064150` | **Verified by targeted runs only**: format, lint, pedantic build, unit 800 of 800; integration groups C-C.R1 (with the addendum), C-P3.5, C-P3.6: 75 of 75 (`docs/gates/C-R1/addendum-implementation-run.log`); the amended and new cases failed before for their findings (`addendum-prefreeze-baseline.log`) |
-| `d064150` across the whole suite (Mac and Linux) | **NOT_RUN**: not qualified, not to be called verified |
+| Migration 17, R13, R14 (`d064150`) and R13a, R13b, R9a (`b9f7d47`) | **Verified by targeted runs only**: format, lint, pedantic build, unit 800 of 800; integration groups C-C.R1 (with both addenda), C-P3.5, C-P3.6: 78 of 78 at `b9f7d47` (`docs/gates/C-R1/addendum2-implementation-run.log`); every amended or new case failed before for its finding (`addendum-prefreeze-baseline.log`, `addendum2-prefreeze-baseline.log`) |
+| The tip across the whole suite (Mac and Linux) | **NOT_RUN**: not qualified, not to be called verified |
 | R14 under a real asynchronous exception during the unlock | Not testable deterministically; code review only |
-| Read-only code review of `e1c56ef..d064150` | REVIEW4_STATUS |
-| `d064150` on the owner's installation | **Not installed, not dogfooded** (it adds migrations 16 and 17) |
+| Read-only code review of `e1c56ef..d064150` (Review 4) | 1 MEDIUM, 1 LOW, 3 INFO; MEDIUM and LOW fixed in `b9f7d47` (`review.md`) |
+| Read-only check of `d064150..b9f7d47` (Review 5) | no HIGH, no MEDIUM; 3 LOW edge cases **not fixed** (folder identity by path text; a re-made folder at the same path; the older `git init` cleanup); correction plan in `review.md` for the Planner |
+| The remediation on the owner's installation | **Not installed, not dogfooded** (it adds migrations 16 and 17) |
 | Gate C | **Not accepted**. C8, C9 NOT_RUN |
 
 Next required actions, in order:
 
-1. **Owner**: say when the consolidated qualification may start.
+1. **Planner**: Review 5's three LOW findings: fix before the qualification (one small addendum,
+   frozen first) or record as Gate C exceptions. **Owner**: say when the consolidated
+   qualification may start.
 2. Implementer: **one** Mac `scripts/check --integration` and **one** Linux clean clone
    (`.local/linux-clone-run-cr1.sh <commit>`), both on the tip of `phase-3`; record both here and in
    C-C.R1 §3a. No intermediate full runs.
