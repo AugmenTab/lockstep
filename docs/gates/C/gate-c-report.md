@@ -1,16 +1,18 @@
 # Gate C (C-UX) — status and decision packet
 
-- Status: **NOT ACCEPTED. Remediation implemented and qualified on the Mac at `e1c56ef`; amendments
-  and a small correction plan wait for the Planner; no further qualification until the owner is
-  back.** The
-  Implementer cannot accept Gate C (Phase 3 handoff P3.11). C8 and C9 are **NOT_RUN**. Phase 4 is
-  not started and will not be without the owner's authorization.
-- Revision 3, 2026-10-27, after the Planner disposition of the same day
-  (`.local/plans/phase-03_update2.md`), by the writing agent (Implementer, manual). Revision 2 was at
+- Status: **NOT ACCEPTED. All authorized remediation is implemented at `d064150`; it is verified by
+  targeted runs only and waits for one consolidated Mac qualification and Linux clean clone, which
+  the owner has asked not to start yet.** The Implementer cannot accept Gate C (Phase 3 handoff
+  P3.11). C8 and C9 are **NOT_RUN**. Phase 4 is not started and will not be without the owner's
+  authorization.
+- Revision 3, 2026-10-27, updated after the Planner's final authorization of the same day
+  (`.local/plans/phase-03_update4.md`), by the writing agent (Implementer, manual). Revision 2 was at
   `bd94c96` (§7).
-- Branch `phase-3` (from `v2` at `8e71039`). Tested commit: **`e1c56ef`** = the P3.10 code + the
-  C-C.R1 remediation (`e49b68e`) + the fixes from its independent review (`e1c56ef`). Documents after
-  it are not code.
+- Branch `phase-3` (from `v2` at `8e71039`). Last fully qualified commit: **`e1c56ef`** (the P3.10
+  code + the C-C.R1 remediation `e49b68e` + its review fixes). Since then, **not qualified**:
+  `e679d97` (the authorized amendments A-C.R1-1, -2, -3 and the frozen addendum suite) and
+  `d064150` (migration 17, R13, R14). **Next qualification: one Mac `scripts/check --integration`
+  and one Linux clean clone of the tip of `phase-3`** (`d064150` or a later documents-only commit).
 - Authority: Phase 3 handoff P3.11; PRD v0.3 FR-UX-01…10, NFR-15…18; Plan v0.3 §4 P3.11; the
   Planner disposition of 2026-10-27.
 
@@ -24,9 +26,13 @@
   not in the product (A-C.R1-2, below); with the proposed one-hunk fix it passes.
 - **Owner's dogfood:** PASSED, steps 1–11, recorded as the human evidence for C1–C4 as far as it went
   (§2).
-- **Waiting on the Planner:** final authorization of A-C.R1-1 and A-C.R1-2 (approved in principle),
-  a decision on A-C.R1-3 and the Review 3 correction plan (§5), then the Gate C decision. What is
-  and is not verified, and the next actions: §5a.
+- **Since then (2026-10-27, Planner's final authorization):** A-C.R1-1, -2 and -3 applied at their
+  authorized digests; migration 17 binds creation keys to request content; a connected project's
+  folder is never removed; asynchronous exceptions propagate from the session lock. Targeted runs:
+  75 of 75 affected integration cases and 800 of 800 unit cases pass at `d064150`; the full
+  qualification is still to run (§5a).
+- **Waiting on the owner:** the go-ahead for the consolidated qualification, then the Gate C
+  decision. What is and is not verified, and the next actions: §5a.
 
 ## 2. Scenario matrix
 
@@ -78,41 +84,40 @@ nothing had run.
 | `.venv` shadowing | Product finding; C-C.R1 R12 and the setup instructions |
 | Dogfood step 10 correction | Resolved |
 | Review 2 (`review.md`) | **Decided** (Planner, 2026-10-27): the four LOW fixes in `e1c56ef` accepted **provisionally**, subject to the delta review (Review 3); INFO 6–8 accepted as documented; **INFO 5 deferred to Phase 4** (bounded concurrency for lock connections, to be addressed before concurrent live-engineering workloads) |
-| **A-C.R1-1** (`docs/gates/C-R1/amendment-request-1.md`): bind a creation key to the request's content | **Approved in principle** (Planner); **final authorization pending**: exact diffs `a-c.r1-1-projects.diff`, `a-c.r1-1-tasks.diff`, before/after digests and the C-P3.5 J2 / C-P3.6 K2 wording are ready. Production change (migration 17) not written |
-| **A-C.R1-2** (`docs/gates/C-R1/amendment-request-2.md`): repair one frozen C-C.R1 page fixture | **Approved in principle** (Planner); **final authorization pending**: `a-c.r1-2.diff`, after-digest `ad05170c…806e` |
-| **A-C.R1-3** (`docs/gates/C-R1/amendment-request-3.md`): R1 step (2) states the marker digest rule; one new frozen case | **Requested** (from Review 3); not yet approved in any form |
-| Review 3 (`review.md`) | Two of the four points verified, one verified in code but not by a frozen test (→ A-C.R1-3), one **not fully met** (a connected project's folder can be removed in two narrow windows); correction plan recorded, not applied |
+| **A-C.R1-1** (`docs/gates/C-R1/amendment-request-1.md`): bind a creation key to the request's content | **Approved** (Planner, final, 2026-10-27) and **applied** (`e679d97`, `d064150`: migration 17) |
+| **A-C.R1-2** (`docs/gates/C-R1/amendment-request-2.md`): repair one frozen C-C.R1 page fixture | **Approved** and **applied** (`e679d97`); production limits unchanged |
+| **A-C.R1-3** (`docs/gates/C-R1/amendment-request-3.md`): R1 step (2) states the marker digest rule; one new frozen case | **Approved** and **applied** (`e679d97`) |
+| Review 3 (`review.md`) corrections | **Authorized** and **implemented** (`d064150`, C-C.R1 §3b R13–R15), with a frozen addendum suite and a test-only post-commit hook |
+| Consolidated Mac qualification and Linux clean clone of the tip | **Owner**: when to start (not before the owner's go-ahead) |
 | C1–C4 human results | Recorded as PASSED as exercised by the dogfood (§2); the owner may add or correct |
 | C8, C9 | NOT_RUN |
 | Gate C accepted / not accepted, with exceptions | |
 | Decided by / at | |
 
-Not started without authorization: cookie-page retirement (deferred, option c), installing
-`e1c56ef` on the owner's Mac, and Phase 4.
+Not started without authorization: the consolidated qualification, cookie-page retirement
+(deferred, option c), installing the remediation on the owner's Mac, and Phase 4.
 
-## 5a. Verified and not verified (2026-10-27, at the stop)
+## 5a. Verified and not verified (2026-10-27, at the stop before qualification)
 
 | Item | Status |
 |---|---|
-| Code at `e1c56ef` on the Mac | **Verified**: 402 of 403 (the 1 being the fixture of A-C.R1-2) |
-| Code at `e1c56ef` on a Linux clean clone | **Verified**: 402 of 403 (the same A-C.R1-2 case) |
-| The four Review 2 fixes | Accepted provisionally; Review 3 done; one point not fully met (above) |
-| The correction plan for Review 3 | **Not written in code, not verified** |
-| A-C.R1-1, A-C.R1-2, A-C.R1-3 amended files | Prepared as copies and exact diffs only; **not compiled, not run, not applied** |
-| A-C.R1-1 production change (migration 17) | **Not written** |
-| `e1c56ef` on the owner's installation | **Not installed, not dogfooded** |
+| `e1c56ef` on the Mac and a Linux clean clone | **Qualified**: 402 of 403 each (the 1 being the fixture A-C.R1-2 has since repaired) |
+| A-C.R1-1, -2, -3 in the frozen tests | **Applied** at the authorized digests (checked before and after) |
+| Migration 17, R13, R14 at `d064150` | **Verified by targeted runs only**: format, lint, pedantic build, unit 800 of 800; integration groups C-C.R1 (with the addendum), C-P3.5, C-P3.6: 75 of 75 (`docs/gates/C-R1/addendum-implementation-run.log`); the amended and new cases failed before for their findings (`addendum-prefreeze-baseline.log`) |
+| `d064150` across the whole suite (Mac and Linux) | **NOT_RUN**: not qualified, not to be called verified |
+| R14 under a real asynchronous exception during the unlock | Not testable deterministically; code review only |
+| Read-only code review of `e1c56ef..d064150` | REVIEW4_STATUS |
+| `d064150` on the owner's installation | **Not installed, not dogfooded** (it adds migrations 16 and 17) |
 | Gate C | **Not accepted**. C8, C9 NOT_RUN |
 
-Next required actions, in order (none started):
+Next required actions, in order:
 
-1. Planner: final authorization of A-C.R1-1 and A-C.R1-2; a decision on A-C.R1-3 and the Review 3
-   correction plan.
-2. Implementer (after the owner is back): apply the authorized amendments and re-freeze; write the
-   A-C.R1-1 production change and the Review 3 corrections; show the amended cases failing before
-   and passing after.
-3. One Mac qualification and one Linux clean clone of the resulting commit; a read-only review of
-   that delta.
-4. The Gate C decision (C8 and C9 still open; Phase 4 only with the owner's authorization).
+1. **Owner**: say when the consolidated qualification may start.
+2. Implementer: **one** Mac `scripts/check --integration` and **one** Linux clean clone
+   (`.local/linux-clone-run-cr1.sh <commit>`), both on the tip of `phase-3`; record both here and in
+   C-C.R1 §3a. No intermediate full runs.
+3. The Gate C decision by the owner (C8 and C9 still open; Phase 4, cookie-page retirement and
+   installing on the owner's Mac only with the owner's authorization).
 
 ## 6. Residual risks, stated
 
@@ -121,8 +126,10 @@ Next required actions, in order (none started):
 
 - A crash between a decision's operation and its receipt leaves a marker and no receipt; that key
   then answers "cannot tell", never a guessed receipt (C-C.R1 §3a).
-- A connected project's new folder can be removed in two narrow windows (an asynchronous exception
-  after the commit, an ambiguous COMMIT); correction planned (`review.md`, Review 3).
+- A failed project attempt whose project state cannot be read keeps the folder it made (R13 prefers
+  a possibly orphaned new folder to deleting a connected project's folder).
+- A creation key made before migration 17 replays only when the request is shown equal; a new-folder
+  project request of that age always conflicts (fails closed).
 - The helper's check-then-write window for an added folder has no deterministic test; the mount-time
   re-check that closes it is tested.
 

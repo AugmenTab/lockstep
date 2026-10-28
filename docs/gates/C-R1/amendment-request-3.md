@@ -1,8 +1,10 @@
 # Amendment request A-C.R1-3 — the marker digest rule in R1, and its frozen case (for the Planner)
 
-- Status: **REQUESTED, NOT APPLIED; not yet approved in any form.** Raised 2026-10-27 by the
-  writing agent (Implementer, manual) from Review 3, finding 2 (`docs/gates/C/review.md`).
-- The frozen files are unchanged.
+- Status: **APPROVED AND APPLIED.** Raised 2026-10-27 by the writing agent from Review 3, finding 2
+  (`docs/gates/C/review.md`); final authorization by the Planner the same day
+  (`.local/plans/phase-03_update4.md`); applied in `e679d97` (the case, R1 step (2) and the §3 row):
+  digest `8e7beb24…a9c8` checked before, `97b255e2…05fe` after. The history below is kept as it was
+  written.
 
 ## Why
 

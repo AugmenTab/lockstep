@@ -1,10 +1,10 @@
 # Amendment request A-C.R1-2 — a defect in the frozen C-C.R1 page test (for the Planner)
 
-- Status: **APPROVED IN PRINCIPLE** (Planner, 2026-10-27, `.local/plans/phase-03_update3.md`: "an
-  invalid test fixture should be repaired, not accommodated in production code"). **Not authorized
-  for editing; not applied.** The frozen file is unchanged (digest
-  `4015a2835ae35a6ec3dc018efb31aa0d12e78fc7244203b1cd62a1676c4bd41d`, C-C.R1 §4, checked again
-  2026-10-27). No production code accommodates the fixture.
+- Status: **APPROVED AND APPLIED.** Final authorization by the Planner, 2026-10-27
+  (`.local/plans/phase-03_update4.md`); applied in `e679d97`: digest
+  `4015a2835ae35a6ec3dc018efb31aa0d12e78fc7244203b1cd62a1676c4bd41d` checked before,
+  `ad05170cefeba7fd9ddf702a3392bd5b6a962c3a3f5c91a233fdbb449bd6806e` after. The production revision
+  limits are unchanged. The history below is kept as it was written.
 - Raised 2026-10-27 by the writing agent (Implementer, manual), after the first run against the
   implementation.
 

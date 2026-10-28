@@ -79,10 +79,36 @@ marker case (the code has compared marker digests since `e1c56ef`), the A-C.R1-2
 fixture is repaired), and "a really failed attempt still removes the folder it made" (R13 must not
 keep orphans).
 
+## 3c. Second addendum (2026-10-27): Review 4 of `e1c56ef..d064150`
+
+Review 4 (an agent, read-only; `docs/gates/C/review.md`) found that R13 checked only the attempt's own
+project. A folder `git init` has just made is already offered to every other project, so another
+project can connect it while the attempt runs; the attempt then removed a folder that project is
+connected to. That breaks what the Planner authorized ("preserve the folder if it is connected"), so
+it is corrected here under the same authorization, with the dependency-quoting finding (LOW).
+
+| # | Decision |
+|---|---|
+| R13a | **No project's connected folder is removed.** The re-read and the removal happen in one transaction holding the projects lock: the folder is removed only when the attempt's own project is not connected and does not record it, **and no project is connected to it**; if that cannot be read, it is kept. |
+| R13b | **No project is recorded as connected to a missing folder.** Inside the attempt's transaction, under the projects lock and before the Engineer or the registration, the chosen folder must still be a project folder (a real directory with a real `.git`); otherwise the attempt is recorded as failed with `folder-not-offered`. With R13a, either the removal or the connection comes first under the lock, never both. |
+| R9a | **Dependencies quoted one by one** in a task's canonical request text, so a dependency that is not a task id cannot join into another list. |
+| R15a | **Second test-only hook.** `connectProjectAround` runs a hook once the attempt has its folder and has observed it, right before its transaction (the window of both races). `connectProject` and `connectProjectWith` pass no-op hooks; nothing in the service, pages or CLI reaches it. |
+
+| File | Kind | Covers |
+|---|---|---|
+| `test/integration/Lockstep/GateCRemediationFolderRaceTest.hs` | integration: real PostgreSQL, Git, in-process, the R15a hook | R13a: another project connects the folder an attempt made; the attempt fails and the folder stays. R13b: an attempt waits with a folder the other attempt made and then removed; it is not recorded as connected, and no repository is registered. R9a: joined dependency text is not the same request |
+
+Pre-freeze baseline (`addendum2-prefreeze-baseline.log`, only these cases, against the code with
+the hook and without R13a, R13b, R9a): **3 of 3 fail**, each for its finding (the connected project's
+folder is removed; the second project is recorded as connected to the missing folder; the joined
+dependency text replays the other task).
+
 ## 3a. Verification record (after implementation)
 
 Implementation: `e49b68e` (on `phase-3`, after the freeze commit `b83db50`), then `e1c56ef` (the
-four LOW findings of the independent review of `e49b68e`). The tested commit is **`e1c56ef`**.
+four LOW findings of the independent review of `e49b68e`). The last fully qualified commit is
+**`e1c56ef`**; after it, `e679d97` (authorized amendments) and `d064150` (migration 17, R13, R14)
+are verified only by the targeted runs below, **not qualified**.
 
 | Check | Result | Evidence |
 |---|---|---|
@@ -98,6 +124,18 @@ four LOW findings of the independent review of `e49b68e`). The tested commit is 
 
 A Linux clean clone of `e49b68e` was started and stopped unfinished when the review fixes
 superseded it; its log was overwritten by the `e1c56ef` run.
+
+After the Planner's final authorization (addendum, §3b), at **`d064150`** (not yet qualified):
+
+| Check | Result | Evidence |
+|---|---|---|
+| Amendments A-C.R1-1, -2, -3 | original digests checked, exactly the authorized hunks applied to the four test paths, the authorized digests matched (§4; C-P3.5 §4, C-P3.6 §4); applied in `e679d97` | — |
+| Addendum suite frozen before R9's second half, R13 and R14 | §4 (`GateCRemediationAddendumTest.hs`, runner) | — |
+| Amended and new cases against the code before the implementation (only those cases) | 6 of 9 fail, each for its finding; 3 pass as expected (§3b) | `addendum-prefreeze-baseline.log` |
+| Format, lint, pedantic build, unit (800) at `d064150` | PASSED | — |
+| C-C.R1 (with the addendum), C-P3.5 and C-P3.6 integration groups at `d064150` (targeted, not a qualification) | **75 of 75 PASSED**, including the A-C.R1-2 case and every case that failed in the baseline | `addendum-implementation-run.log` |
+| Mac `scripts/check --integration` and Linux clean clone of `d064150` | **NOT_RUN** (owner's stop; one consolidated run to come) | — |
+| Read-only code review of `e1c56ef..d064150` (an agent) | REVIEW4_PLACEHOLDER | `docs/gates/C/review.md`, Review 4 |
 
 Every earlier frozen case passes on the Mac with the remediation, including the C-P3.5 projects,
 C-P3.6 tasks, C-P3.7 checks and C-P3.8 decisions suites whose code changed.
@@ -152,8 +190,9 @@ Frozen 2026-10-27 by the writing agent (manual), before any of the fixes was imp
 | `test/integration/Lockstep/GateCRemediationPageTest.hs` | `ad05170cefeba7fd9ddf702a3392bd5b6a962c3a3f5c91a233fdbb449bd6806e` (amendment A-C.R1-2; was `4015a2835ae35a6ec3dc018efb31aa0d12e78fc7244203b1cd62a1676c4bd41d`) |
 | `test/integration/Lockstep/GateCRemediationFolderTest.hs` | `6497ba92949811893e5e61cdfacba234653a2b4518ebdfc2e84fef141b92e18f` |
 | `test/integration/Lockstep/GateCRemediationBrowserTest.hs` | `d95ecee895ef0a1f3ea72effb153799643e6e6f85fcdc054f3f322c45ea652a9` |
-| `test/integration/Main.hs` (runner, additive) | `0f7613e809e43c18ebea2c6c33c90b6cc8d0d9cf0eb54bf3205d67a6ff036193` (addendum, one import and one group; was `fd71561c3342b6c788aeeebf4dea9f882b8546f487a0d67068555d1c34f51982`) |
+| `test/integration/Main.hs` (runner, additive) | `c3450061e7e08a4fa34dcb3f15cacd1427e7ccc58796c37df9101ce027198999` (second addendum; before it `0f7613e8…6193` for the addendum; originally `fd71561c3342b6c788aeeebf4dea9f882b8546f487a0d67068555d1c34f51982`) |
 | `test/integration/Lockstep/GateCRemediationAddendumTest.hs` (addendum, §3b) | `16235a713b695f91f196a42379ad08c5aff5ecb54cbafc52ea0c3dd4493451ec` |
+| `test/integration/Lockstep/GateCRemediationFolderRaceTest.hs` (second addendum, §3c) | `b5872215d9ff11c12a03eac615386ee9bfdf3aee0736e8f1450a3cf87e6029bb` |
 
 No earlier frozen file is changed; the runner only gains four lines of imports and four groups.
 
