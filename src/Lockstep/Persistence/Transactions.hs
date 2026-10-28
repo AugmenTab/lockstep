@@ -15,6 +15,7 @@ module Lockstep.Persistence.Transactions
   , findTransactionByWorkOrder
   , busyTransactions
   , runningTransactions
+  , activeTransactions
   , updateTransaction
   , appendRecord
   , transactionRecords
@@ -24,6 +25,7 @@ module Lockstep.Persistence.Transactions
   , transactionInvocations
   , AdmissionFacts (..)
   , admissionFacts
+  , pendingAdmissions
   ) where
 
 import Data.Text qualified as T
@@ -218,6 +220,11 @@ runningTransactions :: O.MonadOrville m => m [TransactionRow]
 runningTransactions =
   selectTransactions (sql "WHERE state = 'running' ORDER BY created_at, id")
 
+-- | Every running or halted transaction, in start order (C-P4.15 W1).
+activeTransactions :: O.MonadOrville m => m [TransactionRow]
+activeTransactions =
+  selectTransactions (sql "WHERE state IN ('running', 'halted') ORDER BY created_at, id")
+
 -- | Rewrites the head row (call under 'lockTransaction').
 updateTransaction :: O.MonadOrville m => TransactionRow -> m ()
 updateTransaction row =
@@ -398,3 +405,11 @@ admissionFacts workOrder =
             <*> O.marshallField factEngineer (O.unboundedTextField "engineer_name")
             <*> O.marshallField factFolder (O.unboundedTextField "folder")
       )
+
+-- | The admitted bug Work Orders that have no transaction yet, in hand-over order (C-P4.15 W1).
+pendingAdmissions :: O.MonadOrville m => m [T.Text]
+pendingAdmissions =
+  O.executeAndDecode
+    O.SelectQuery
+    (sql "SELECT a.work_order_id::text AS work_order_id FROM lockstep_bug_admissions a WHERE NOT EXISTS (SELECT 1 FROM lockstep_transactions t WHERE t.work_order_id = a.work_order_id) ORDER BY a.id")
+    (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.unboundedTextField "work_order_id")))
