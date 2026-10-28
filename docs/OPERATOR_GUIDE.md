@@ -272,6 +272,26 @@ holding effect. To go on:
 A key belongs to one logical effect per work order. A
 queryable effect interrupted in flight waits for `supervisor reconcile-once`.
 
+### Fixing bugs: allowing Lockstep to work in a project (Phase 4, C-P4.1)
+
+A project with a folder is *organized*, not *executable*. On the project's page, **Fixing bugs** →
+**Let Lockstep fix bugs here** allows it, once. This is refused unless:
+
+- the project's folder is directly inside Lockstep's projects folder (`~/lockstep-projects`). A folder
+  added from elsewhere in the control pane is mounted read-only, so Lockstep only reads it;
+- the folder's `.git` is still the one registered, owned by the project's own Engineer only;
+- the project's checks contain the five checks of the built-in **Bug Profile** (`lockstep-bug-fix`
+  version 1: reproduction, impact and requirements, frozen regression tests, verification, independent
+  review). With nothing chosen, or only the always-on rules, allowing switches the project to
+  `lockstep-bug-fix`. Lockstep never removes a check you chose: with other checks lacking these, it is
+  refused and nothing changes.
+
+Then, on a task that is **Ready to work on**, **Ask Lockstep to fix this bug** creates one engineering
+work order classed `bug` for the project's Engineer, at the task's priority, with no plan reference. It
+waits in line; **nothing runs it yet** (running work arrives with the later Phase 4 steps, which need the
+owner's DG-17 decision). Both records are immutable (`lockstep_execution_enablements`,
+`lockstep_bug_admissions`, migration 18).
+
 ## 7. Troubleshooting
 
 | Symptom | Cause / action |
