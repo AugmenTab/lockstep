@@ -24,6 +24,7 @@ module Lockstep.Application.Engine
   ) where
 
 import Control.Exception (IOException, try)
+import Control.Monad ((>=>))
 import Crypto.Hash (SHA256 (SHA256), hashWith)
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import Data.ByteString qualified as BS
@@ -34,27 +35,44 @@ import Data.Text.Encoding qualified as TE
 import Data.Text.Encoding.Error (lenientDecode)
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, pathIsSymbolicLink)
 import System.IO (FilePath)
 import Text.Show (Show, show)
 
 import Lockstep.Application.Command (mkIdempotencyKey)
 import Lockstep.Application.Conversation (NewHumanRequest (..), Sender (..), openRequest)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), checkReadiness, withDatabase)
+import Lockstep.Application.EngineCandidate (baselineJson, candidateJson, findingJson, frozenContract, recordedCandidate, testFiles, unchangedAtBasis)
 import Lockstep.Application.Identity (newUuid)
 import Lockstep.Application.Repositories (ownershipHolds)
 import Lockstep.Application.Tasks (TaskView (..), findTaskIn)
-import Lockstep.Effects.GitSupervisor (Basis (..), createWorkBranch, observeBasis, writeSnapshot)
+import Lockstep.Effects.GitSupervisor (Basis (..), CommitMeta (..), advanceBranch, branchHead, commitChanges, commitTime, createWorkBranch, observeBasis, writeSnapshot)
 import Lockstep.Effects.Process (RunResult (..))
 import Lockstep.Effects.Roles (Adapter (..), Runner (..), RunnerFailure (..), Workspace (..), decodeAnswer, prepareRole, runPrepared)
 import Lockstep.Effects.Roles qualified as Roles
 import Lockstep.Foundation.Json (Json (..), renderJson, string, strings)
 import Lockstep.Foundation.RunnerProtocol (RunProfile (..))
-import Lockstep.Kernel.GitBasis (TreeEntry (..), workBranch)
+import Lockstep.Kernel.Candidate (MutantRun (..), classifyTest, disposeFinding, quoteGrounded)
+import Lockstep.Kernel.GitBasis (Change (..), TreeEntry (..), TreeMode (..), treePathValid, workBranch)
 import Lockstep.Kernel.Identity (parseUuid, uuidText)
-import Lockstep.Kernel.Roles (Check (..), Citation (..), Discovery (..), Role (..), RoleAnswer (..), roleName)
+import Lockstep.Kernel.Roles
+  ( Candidate (..)
+  , CandidateTest (..)
+  , Challenge (..)
+  , Check (..)
+  , Citation (..)
+  , Criterion (..)
+  , Discovery (..)
+  , FileContent (..)
+  , Finding (..)
+  , Role (..)
+  , RoleAnswer (..)
+  , roleName
+  )
 import Lockstep.Kernel.Runner (RoleKind (..), RunOutcome (..), outcomeName, roleLimits)
 import Lockstep.Kernel.Transaction
-  ( Counters (..)
+  ( BaselineClass (..)
+  , Counters (..)
   , Stage (..)
   , Transaction (..)
   , TxInput (..)
@@ -460,6 +478,9 @@ runStage runtime engine row stage =
     StageBasis -> basisStage runtime row
     StageDiscovery -> discoveryStage runtime engine row
     StageReproduction -> reproductionStage runtime engine row
+    StageCandidate -> candidateStage runtime engine row
+    StageChallengePre -> challengeStage runtime engine row
+    StageFreeze -> freezeStage runtime row
     _ -> pure (Left (T.pack "stage-not-built"))
 
 -- | Applies the input and returns it.
@@ -515,15 +536,44 @@ basisStage runtime row = do
 
 -- Workspaces ---------------------------------------------------------------------------
 
--- | A fresh workspace with the exact tree of the commit.
-workspaceAt :: Engine -> Store.TransactionRow -> T.Text -> IO (Either T.Text (Workspace, [TreeEntry]))
-workspaceAt engine row commit = do
+-- | A file added to a snapshot: its tree path and bytes.
+type ExtraFile =
+  (T.Text, BS.ByteString)
+
+{- | A fresh workspace with the exact tree of the commit, and the extra files
+written into it (a test, a mutant). An extra file's path must be valid
+(C-P4.4 G1) and no segment on its way may be a link (@extra-file-unusable@).
+-}
+workspaceAt :: Engine -> Store.TransactionRow -> T.Text -> [ExtraFile] -> IO (Either T.Text (Workspace, [TreeEntry]))
+workspaceAt engine row commit extras = do
   prepared <- runnerPrepare (engineRunner engine)
   case prepared of
     Left code -> pure (Left code)
     Right workspace -> do
       written <- writeSnapshot (T.unpack (Store.txRowFolder row)) commit (workspaceTree workspace)
-      pure ((,) workspace <$> written)
+      case written of
+        Left code -> pure (Left code)
+        Right entries -> do
+          added <- traverse (writeExtra (workspaceTree workspace)) extras
+          pure $
+            if L.and added
+              then Right (workspace, entries)
+              else Left (T.pack "extra-file-unusable")
+
+writeExtra :: FilePath -> ExtraFile -> IO Bool
+writeExtra tree (path, bytes)
+  | not (treePathValid path) = pure False
+  | otherwise = do
+      let
+        segments = T.splitOn (T.pack "/") path
+        parents = L.drop 1 (L.scanl (\acc s -> acc <> "/" <> T.unpack s) tree (L.take (L.length segments - 1) segments))
+        target = tree <> "/" <> T.unpack path
+      linked <- traverse (\p -> fromRight False <$> (try (pathIsSymbolicLink p) :: IO (Either IOException Bool))) (parents <> [target])
+      if L.or linked
+        then pure False
+        else do
+          made <- try (traverse_ (createDirectoryIfMissing False) parents >> BS.writeFile target bytes)
+          pure (either (\(_ :: IOException) -> False) (const True) made)
 
 -- Discovery (E6) -----------------------------------------------------------------------
 
@@ -550,7 +600,7 @@ discoveryStage runtime engine row =
                   , (T.pack "basis", string basis)
                   , (T.pack "answer", JObject [(T.pack "file", string (T.pack "result.json")), (T.pack "kind", string (T.pack "discovery"))])
                   ]
-          invoked <- invokeRecorded runtime engine row Planner StageDiscovery basis context
+          invoked <- invokeRecorded runtime engine row Planner StageDiscovery basis [] context
           case invoked of
             Left code -> pure (Left code)
             Right (Left input) -> settle runtime row input [] id
@@ -601,8 +651,8 @@ recordedDiscovery body =
 ended without an answer (its input); Right Right: the answer, the snapshot's
 entries, the workspace and the invocation id.
 -}
-invokeRecorded :: DatabaseRuntime -> Engine -> Store.TransactionRow -> Role -> Stage -> T.Text -> T.Text -> IO (Either T.Text (Either TxInput (RoleAnswer, [TreeEntry], Workspace, T.Text)))
-invokeRecorded runtime engine row role stage commit context = do
+invokeRecorded :: DatabaseRuntime -> Engine -> Store.TransactionRow -> Role -> Stage -> T.Text -> [ExtraFile] -> T.Text -> IO (Either T.Text (Either TxInput (RoleAnswer, [TreeEntry], Workspace, T.Text)))
+invokeRecorded runtime engine row role stage commit extras context = do
   ordinal <- db runtime (Right . L.length . L.filter ((== roleName role) . Store.invocationRowWhat) <$> Store.transactionInvocations (Store.txRowId row))
   case ordinal of
     Left code -> pure (Left code)
@@ -610,7 +660,7 @@ invokeRecorded runtime engine row role stage commit context = do
       case engineAdapter engine role n of
         Nothing -> pure (Right (Left (RoleFailed (T.pack "no-coding-agent"))))
         Just adapter -> do
-          ws <- workspaceAt engine row commit
+          ws <- workspaceAt engine row commit extras
           case ws of
             Left code -> pure (Right (Left (SupervisorFailed code)))
             Right (workspace, entries) -> do
@@ -688,7 +738,7 @@ reproductionStage runtime engine row = do
             Just check -> runCheck basis check
  where
   runCheck basis check = do
-    ws <- workspaceAt engine row basis
+    ws <- workspaceAt engine row basis []
     case ws of
       Left code -> settle runtime row (SupervisorFailed code) [] id
       Right (workspace, _) -> do
@@ -752,6 +802,302 @@ reproductionStage runtime engine row = do
     case outcome of
       Exited n -> Just n
       _ -> Nothing
+
+-- Commands and records (C-P4.7-9) ---------------------------------------------------------
+
+{- | A command the Supervisor runs in a workspace (command limits, the
+verification profile), recorded as an invocation before it runs and finished
+after. Left: the runner refused it or its result is unknown (finished
+@runner-failed@).
+-}
+runCommand :: DatabaseRuntime -> Engine -> Store.TransactionRow -> Stage -> T.Text -> Workspace -> [T.Text] -> IO (Either T.Text RunResult)
+runCommand runtime engine row stage what workspace argv = do
+  u <- newUuid
+  let
+    invocation = uuidText u
+  started <-
+    db runtime $ do
+      Store.insertInvocation
+        Store.InvocationRow
+          { Store.invocationRowId = invocation
+          , Store.invocationRowTransaction = Store.txRowId row
+          , Store.invocationRowStage = stageName stage
+          , Store.invocationRowWhat = what
+          , Store.invocationRowRunner = runnerName (engineRunner engine)
+          , Store.invocationRowAdapter = T.pack "supervisor"
+          , Store.invocationRowArgv = renderJson (strings argv)
+          , Store.invocationRowOutcome = Nothing
+          , Store.invocationRowExit = Nothing
+          , Store.invocationRowMillis = Nothing
+          , Store.invocationRowStdoutBytes = Nothing
+          , Store.invocationRowStderrBytes = Nothing
+          , Store.invocationRowStdoutDigest = Nothing
+          , Store.invocationRowStderrDigest = Nothing
+          , Store.invocationRowStdoutTail = Nothing
+          , Store.invocationRowStderrTail = Nothing
+          }
+      pure (Right ())
+  case started of
+    Left code -> pure (Left code)
+    Right () -> do
+      ran <- try (runnerRun (engineRunner engine) workspace ProfileVerify (roleLimits RoleCommand) argv [])
+      let
+        failed code = do
+          _ <- db runtime (Right <$> Store.finishInvocation invocation (emptyFinish (T.pack "runner-failed")))
+          pure (Left code)
+      case ran of
+        Left (_ :: IOException) -> failed (T.pack "runner-exception")
+        Right (Left (RunnerRefused code)) -> failed code
+        Right (Left (RunnerUncertain code)) -> failed code
+        Right (Right result) -> do
+          finished <- db runtime (Right <$> Store.finishInvocation invocation (finishOf (outcomeName (resultOutcome result)) result))
+          pure (result <$ finished)
+
+-- | The body of the latest record of a kind.
+latestRecord :: T.Text -> [Store.RecordRow] -> Maybe T.Text
+latestRecord kind records =
+  case L.reverse [Store.recordRowBody r | r <- records, Store.recordRowKind r == kind] of
+    body : _ -> Just body
+    [] -> Nothing
+
+-- | The task's title and what done looks like.
+taskTexts :: DatabaseRuntime -> Store.TransactionRow -> IO (Either T.Text (T.Text, T.Text))
+taskTexts runtime row = do
+  task <- db runtime (fromMaybe (Left (T.pack "unknown-task")) <$> findTaskIn (Store.txRowTask row))
+  pure ((\v -> (taskTitle v, taskAcceptance v)) <$> task)
+
+-- | The Ticket, the discovery, the reproduction record and earlier feedback records.
+gathered :: DatabaseRuntime -> Store.TransactionRow -> IO (Either T.Text ((T.Text, T.Text), Json, T.Text, [T.Text], [Store.RecordRow]))
+gathered runtime row = do
+  ticket <- taskTexts runtime row
+  records <- db runtime (Right <$> Store.transactionRecords (Store.txRowId row))
+  pure $ do
+    t <- ticket
+    rs <- records
+    d <- maybe (Left (T.pack "discovery-missing")) Right (latestRecord (T.pack "discovery") rs >>= recordedDiscovery)
+    reproduction <- maybe (Left (T.pack "reproduction-missing")) Right (latestRecord (T.pack "reproduction") rs)
+    let
+      feedback = [Store.recordRowBody r | r <- rs, Store.recordRowKind r `L.elem` fmap T.pack ["baseline", "finding", "candidate-rejected"]]
+    Right (t, discoveryJson d, reproduction, feedback, rs)
+
+-- A program the runner could not find: never a test result (DG-17 D-17.9).
+environmentMissing :: T.Text -> Bool
+environmentMissing code =
+  T.pack "executable-missing" `T.isInfixOf` code
+
+-- Candidate (C-P4.7-9 S1) -----------------------------------------------------------------
+
+{- | S1: the Planner's Contract and candidate tests, checked, then each test
+run by the Supervisor at the basis with all the tests added and classified
+('classifyTest'). See C-P4.7-9 S1 for every refusal.
+-}
+candidateStage :: DatabaseRuntime -> Engine -> Store.TransactionRow -> IO (Either T.Text TxInput)
+candidateStage runtime engine row =
+  case Store.txRowBasis row of
+    Nothing -> settle runtime row (SupervisorFailed (T.pack "basis-missing")) [] id
+    Just basis -> do
+      g <- gathered runtime row
+      case g of
+        Left code -> settle runtime row (SupervisorFailed code) [] id
+        Right ((title, acceptance), discovery, reproduction, feedback, _) -> do
+          let
+            context =
+              renderJson $
+                JObject
+                  [ (T.pack "role", string (roleName Planner))
+                  , (T.pack "stage", string (stageName StageCandidate))
+                  , (T.pack "ticket", JObject [(T.pack "title", string title), (T.pack "what_done_looks_like", string acceptance)])
+                  , (T.pack "basis", string basis)
+                  , (T.pack "discovery", discovery)
+                  , (T.pack "reproduction", JRaw reproduction)
+                  , (T.pack "feedback", JArray (fmap JRaw feedback))
+                  , (T.pack "answer", JObject [(T.pack "file", string (T.pack "result.json")), (T.pack "kind", string (T.pack "candidate"))])
+                  ]
+          invoked <- invokeRecorded runtime engine row Planner StageCandidate basis [] context
+          case invoked of
+            Left code -> pure (Left code)
+            Right (Left input) -> settle runtime row input [] id
+            Right (Right (AnswerCandidate c, entries, workspace, _)) -> examine basis (title, acceptance) c entries workspace
+            Right (Right _) -> settle runtime row (RoleFailed (T.pack "answer-invalid wrong-stage")) [] id
+ where
+  examine basis (title, acceptance) c entries workspace = do
+    cited <- citationsHold (workspaceTree workspace) entries (L.concatMap criterionCitations (candidateCriteria c))
+    unusable <- traverse (unusablePath (workspaceTree workspace) entries . testPath) (candidateTests c)
+    let
+      record = (T.pack "candidate", candidateJson c)
+      rejected code = settle runtime row (CandidateRejected code) [record, (T.pack "candidate-rejected", JObject [(T.pack "code", string code)])] id
+    case () of
+      _
+        | not (L.all (quoteGrounded [title, acceptance] . criterionTicketQuote) (candidateCriteria c)) -> rejected (T.pack "criterion-not-grounded")
+        | not cited -> rejected (T.pack "citation-outside-source")
+        | L.or unusable -> rejected (T.pack "test-path-unusable")
+        | otherwise -> baseline basis c entries [record]
+  baseline basis c entries records = do
+    runs <- traverse (baselineRun basis c) (candidateTests c)
+    let
+      missing = L.any (either environmentMissing (const False)) runs
+      outcomes = rights runs
+    case () of
+      _
+        | missing || L.any (\(_, r, _) -> resultOutcome r == Exited 127) outcomes ->
+            settle runtime row (VerificationInconclusive (T.pack "verification-environment-missing")) (records <> [(T.pack "baseline", b) | (_, _, b) <- outcomes]) id
+        | otherwise ->
+            case sequenceA runs of
+              Left code -> settle runtime row (SupervisorFailed code) records id
+              Right classified -> do
+                let
+                  bodies = records <> [(T.pack "baseline", body) | (_, _, body) <- classified]
+                  existingFailed =
+                    L.or [cls == GreenCandidateFailed && unchangedAtBasis entries t | (t, (cls, _, _)) <- L.zip (candidateTests c) classified]
+                if existingFailed
+                  then settle runtime row RegressionFailed bodies id
+                  else settle runtime row (CandidateClassified [cls | (cls, _, _) <- classified]) bodies id
+  baselineRun basis c t = do
+    ws <- workspaceAt engine row basis (testFiles c)
+    case ws of
+      Left code -> pure (Left code)
+      Right (workspace, _) -> do
+        ran <- runCommand runtime engine row StageCandidate (T.pack "baseline") workspace (testArgv t)
+        pure $ do
+          r <- ran
+          let
+            cls = classifyTest (testExpectation t) (testPath t) (testSignature t) (resultOutcome r) (decodeLenient (resultStdout r)) (decodeLenient (resultStderr r))
+          Right (cls, r, baselineJson t cls (outcomeName (resultOutcome r)) (tailOf (resultStdout r)) (tailOf (resultStderr r)))
+
+-- | A test path that the basis already has as a link or a directory.
+unusablePath :: FilePath -> [TreeEntry] -> T.Text -> IO Bool
+unusablePath tree entries path =
+  if L.any (\e -> entryPath e == path && entryMode e == ModeSymlink) entries
+    then pure True
+    else doesDirectoryExist (tree <> "/" <> T.unpack path)
+
+-- Challenge before the freeze (C-P4.7-9 S2) ---------------------------------------------------
+
+{- | S2: the challenger, read-only, on the basis with the candidate tests, given
+the Ticket, the Contract, the discovery and the reproduction record — no
+transcript. The Supervisor runs every mutant and demonstration itself;
+'disposeFinding' decides from what it observed.
+-}
+challengeStage :: DatabaseRuntime -> Engine -> Store.TransactionRow -> IO (Either T.Text TxInput)
+challengeStage runtime engine row =
+  case Store.txRowBasis row of
+    Nothing -> settle runtime row (SupervisorFailed (T.pack "basis-missing")) [] id
+    Just basis -> do
+      g <- gathered runtime row
+      case g of
+        Left code -> settle runtime row (SupervisorFailed code) [] id
+        Right ((title, acceptance), discovery, reproduction, _, rs) ->
+          case latestRecord (T.pack "candidate") rs >>= recordedCandidate of
+            Nothing -> settle runtime row (SupervisorFailed (T.pack "candidate-missing")) [] id
+            Just c -> do
+              let
+                context =
+                  renderJson $
+                    JObject
+                      [ (T.pack "role", string (roleName Challenger))
+                      , (T.pack "stage", string (stageName StageChallengePre))
+                      , (T.pack "ticket", JObject [(T.pack "title", string title), (T.pack "what_done_looks_like", string acceptance)])
+                      , (T.pack "basis", string basis)
+                      , (T.pack "contract", candidateJson c)
+                      , (T.pack "discovery", discovery)
+                      , (T.pack "reproduction", JRaw reproduction)
+                      , (T.pack "answer", JObject [(T.pack "file", string (T.pack "result.json")), (T.pack "kind", string (T.pack "challenge"))])
+                      ]
+              invoked <- invokeRecorded runtime engine row Challenger StageChallengePre basis (testFiles c) context
+              case invoked of
+                Left code -> pure (Left code)
+                Right (Left input) -> settle runtime row input [] id
+                Right (Right (AnswerChallenge ch, _, _, _)) -> dispose basis c (challengeFindings ch)
+                Right (Right _) -> settle runtime row (RoleFailed (T.pack "answer-invalid wrong-stage")) [] id
+ where
+  dispose basis c findings = do
+    judged <- traverse (judge basis c) findings
+    case sequenceA judged of
+      Left code -> settle runtime row (SupervisorFailed code) [] id
+      Right results ->
+        settle runtime row (ChallengeDisposed (fmap fst results)) [(T.pack "finding", body) | (_, body) <- results] id
+  judge basis c f = do
+    run <- mutantRun basis c f
+    pure $ do
+      r <- run
+      let
+        grounded = findingRequirement f `L.elem` fmap criterionId (candidateCriteria c)
+        disposition = disposeFinding grounded r (findingHint f)
+      Right (disposition, findingJson f grounded r disposition)
+  mutantRun basis c f
+    | L.null (findingMutant f) = pure (Right NoMutant)
+    | L.any ((`L.notElem` candidateAllowedPaths c) . filePath) (findingMutant f) = pure (Right MutantOutsideScope)
+    | otherwise = do
+        let
+          mutant = [(filePath m, TE.encodeUtf8 (fileText m)) | m <- findingMutant f]
+        ws <- workspaceAt engine row basis (testFiles c <> mutant)
+        case ws of
+          Left code -> pure (Left code)
+          Right (workspace, _) -> do
+            runs <- traverse (runCommand runtime engine row StageChallengePre (T.pack "mutant") workspace . testArgv) (candidateTests c)
+            case sequenceA runs of
+              Left code -> pure (Left code)
+              Right results
+                | L.any ((/= Exited 0) . resultOutcome) results -> pure (Right MutantKilled)
+                | otherwise ->
+                    case findingDemonstration f of
+                      Nothing -> pure (Right (MutantSurvived False))
+                      Just demo -> do
+                        shown <- runCommand runtime engine row StageChallengePre (T.pack "demonstration") workspace (checkArgv demo)
+                        pure $ do
+                          r <- shown
+                          Right (MutantSurvived (reproduces demo (resultOutcome r) (decodeLenient (resultStdout r)) (decodeLenient (resultStderr r))))
+
+-- The freeze (C-P4.7-9 S3) -----------------------------------------------------------------
+
+{- | S3: the Supervisor commits exactly the candidate tests on the work branch
+on top of the basis (its identity, the basis's time plus one second, so a
+retry makes the same commit), moves the branch from the basis by
+compare-and-swap, and records the Contract and its digest.
+-}
+freezeStage :: DatabaseRuntime -> Store.TransactionRow -> IO (Either T.Text TxInput)
+freezeStage runtime row = do
+  records <- db runtime (Right <$> Store.transactionRecords (Store.txRowId row))
+  let
+    folder = T.unpack (Store.txRowFolder row)
+    candidate = either (const Nothing) (latestRecord (T.pack "candidate") >=> recordedCandidate) records
+  case (Store.txRowBasis row, Store.txRowBranch row, candidate) of
+    (Just basis, Just branch, Just c) -> do
+      head' <- branchHead folder branch
+      time <- commitTime folder basis
+      case (head', time) of
+        (Right (Just h), Right t) | h == basis -> do
+          let
+            changes = [Change (testPath x) (Just (ModeFile, TE.encodeUtf8 (testContent x))) | x <- candidateTests c]
+            message =
+              T.pack "Lockstep: frozen tests\n\nLockstep-Work-Order: "
+                <> Store.txRowWorkOrder row
+                <> T.pack "\nLockstep-Transaction: "
+                <> Store.txRowId row
+                <> T.pack "\n"
+          committed <- commitChanges folder basis changes (CommitMeta message (t + 1))
+          case committed of
+            Left code -> settle runtime row (SupervisorFailed code) [] id
+            Right freeze -> do
+              moved <- advanceBranch folder branch basis freeze
+              case moved of
+                Left code -> settle runtime row (SupervisorFailed code) [] id
+                Right () -> do
+                  let
+                    contract = frozenContract basis freeze c
+                    digest = sha256Hex (TE.encodeUtf8 (renderJson contract))
+                  settle
+                    runtime
+                    row
+                    TestsFrozen
+                    [(T.pack "contract", contract), (T.pack "freeze", JObject [(T.pack "commit", string freeze), (T.pack "branch", string branch), (T.pack "contract_digest", string digest)])]
+                    (\r -> r {Store.txRowFreeze = Just freeze, Store.txRowContract = Just digest})
+        (Right (Just h), _) | h /= basis -> settle runtime row (SupervisorFailed (T.pack "branch-moved")) [] id
+        (Right Nothing, _) -> settle runtime row (SupervisorFailed (T.pack "branch-missing")) [] id
+        (Left code, _) -> settle runtime row (SupervisorFailed code) [] id
+        (_, Left code) -> settle runtime row (SupervisorFailed code) [] id
+        _ -> settle runtime row (SupervisorFailed (T.pack "branch-moved")) [] id
+    _ -> settle runtime row (SupervisorFailed (T.pack "candidate-missing")) [] id
 
 -- Halts (E3) ---------------------------------------------------------------------------
 
