@@ -54,6 +54,8 @@ library
       Lockstep.Application.Tasks
       Lockstep.Effects.Executor
       Lockstep.Effects.Git
+      Lockstep.Effects.HelperRunner
+      Lockstep.Effects.Process
       Lockstep.Effects.ProjectFolders
       Lockstep.Effects.Reconciler
       Lockstep.Effects.Scripted
@@ -65,6 +67,7 @@ library
       Lockstep.Foundation.InstallProtocol
       Lockstep.Foundation.LifecycleProtocol
       Lockstep.Foundation.OperatorToken
+      Lockstep.Foundation.RunnerProtocol
       Lockstep.Foundation.SessionProtocol
       Lockstep.Foundation.SystemConfig
       Lockstep.Kernel.Activation
@@ -85,6 +88,7 @@ library
       Lockstep.Kernel.Reconciliation
       Lockstep.Kernel.Recovery
       Lockstep.Kernel.Repository
+      Lockstep.Kernel.Runner
       Lockstep.Kernel.Scheduler
       Lockstep.Kernel.Task
       Lockstep.Kernel.Ticket
@@ -231,6 +235,7 @@ test-suite lockstep-integration
       Lockstep.GateCRemediationRetainTest
       Lockstep.GateCRemediationTest
       Lockstep.HandoverTest
+      Lockstep.HelperRunnerTest
       Lockstep.InstallBrowserTest
       Lockstep.InstallHelperTest
       Lockstep.InstallPaneTest
@@ -244,6 +249,7 @@ test-suite lockstep-integration
       Lockstep.OperatorCommandTest
       Lockstep.OperatorLedgerTest
       Lockstep.OperatorTrustTest
+      Lockstep.ProcessRunnerTest
       Lockstep.ProcessTest
       Lockstep.ProfileRegistryTest
       Lockstep.ProjectChecksBrowserTest
@@ -325,6 +331,7 @@ test-suite lockstep-unit
       Lockstep.Foundation.InstallProtocolTest
       Lockstep.Foundation.LifecycleProtocolTest
       Lockstep.Foundation.OperatorTokenTest
+      Lockstep.Foundation.RunnerProtocolTest
       Lockstep.Foundation.SessionProtocolTest
       Lockstep.Foundation.SystemConfigTest
       Lockstep.Kernel.ActivityTest
@@ -348,6 +355,7 @@ test-suite lockstep-unit
       Lockstep.Kernel.RemediationThirdReviewTest
       Lockstep.Kernel.RemoteTest
       Lockstep.Kernel.RepositoryTest
+      Lockstep.Kernel.RunnerTest
       Lockstep.Kernel.SchedulerFixtures
       Lockstep.Kernel.SchedulerPropertyTest
       Lockstep.Kernel.SchedulerTest

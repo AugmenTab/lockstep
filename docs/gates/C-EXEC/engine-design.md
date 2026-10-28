@@ -72,6 +72,40 @@ The Ticket and Work Order ledgers are not advanced by the transaction: `TicketWo
 Phase 4 is recorded on the transaction (Human principal only). Making those ledger events durable is a later
 amendment, not done silently here.
 
+## 3a. Transaction rules (pure Kernel, P4.6 onward)
+
+- Inputs come only from the Supervisor (observations of what a stage did) or a Human (resume with a
+  choice, stop, done); an Agent is never accepted. The Kernel decides the next stage and the counters.
+- **Role invocations** are the only steps never re-run by themselves: recorded `started` before, `finished`
+  after; a `started` one found later is `uncertain` → halted with a human request (`retry` or `stop`).
+  Supervisor Git steps are deterministic (same commit for the same inputs, compare-and-swap refs) and
+  commands run in fresh snapshots, so both may simply run again after a crash.
+- **Baseline (DG-06 D-6.1)** per candidate test at basis + candidate tests: RED needs a failing exit, not
+  126/127, its signature **and** its identity (the test file's stem) in the output → `red-confirmed`;
+  passing → `red-unexpectedly-passed`; failing otherwise → `red-wrong-reason`; GREEN passing →
+  `green-confirmed`, failing → `green-candidate-failed` (a defective new fixture: correctable with this
+  evidence, never relabelled RED); the run itself timed out, too much output, launch failed →
+  `run-failed` (never RED). The Contract's verification commands at the basis (the project's own suite) must
+  pass, else `green-regression-failed`: a pre-existing failure, hard stop for a human.
+- **Corrections (D-6.4)**: at most 2 (3 candidates); correctable: the red/green classes above and a
+  `CONFIRMED` challenge finding; not correctable: `green-regression-failed`, a scope violation, an
+  environment failure.
+- **Challenges (DG-07 as clarified)**: a mutant is applied to a scratch snapshot (basis + candidate tests,
+  or the candidate implementation post-implementation) and the candidate tests run; the mutant *survives* if
+  they all pass. `CONFIRMED` needs a surviving mutant **and** its demonstration check failing on the mutant
+  with its signature (pre-freeze), or a supplemental test failing on the implementation with its signature
+  (post-implementation), **and** a requirement reference that names a Contract criterion (or the Ticket
+  before a Contract exists). A killed mutant is `DISPROVED`. Anything else is `INCONCLUSIVE`, or
+  `NEEDS_HUMAN` when the challenger asks for a person. `NEEDS_HUMAN` blocks (human request); `INCONCLUSIVE`
+  is shown at Done.
+- **Attempts**: at most 2 Implementer attempts; a second only after a typed failure (change refused, a
+  verification failure, a `CONFIRMED` post-implementation finding, a Reviewer rejection), with that
+  feedback. Exhausted → halted for a human.
+- **Kernel Work Unit**: the transaction also drives `stepWorkUnit` (C-P2.2) with Supervisor commands:
+  `WuFreeze` (Contract digest, budget 2, the Bug Profile's acceptance gates), `WuStartAttempt`,
+  `WuImplementationObserved <candidate commit>`, `WuVerificationObserved`, `WuGatePassed` per gate with its
+  evidence, `WuReviewObserved`; acceptance requires its `Accepted` state.
+
 ## 4. Limits (DG-17 D-17.7)
 
 Implementer 20 min; Planner, challenger, Reviewer, verification and reproduction 10 min each; stdout 8 MiB,
