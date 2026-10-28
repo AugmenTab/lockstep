@@ -1,0 +1,61 @@
+lockstep> test (suite: lockstep-integration, args: -p C-P4.7-9)
+
+lockstep-integration
+  C-P4.7-9 candidate tests, the challenge before the freeze, and the freeze (real Git, processes, PostgreSQL)
+    a grounded candidate whose RED test fails for its reason reaches the challenge:                   FAIL (0.34s)
+      test/integration/Lockstep/EngineCandidateTest.hs:90:
+      refused: "stage-not-built"
+      Use -p '/C-P4.7-9/&&/a grounded candidate whose RED test fails for its reason reaches the challenge/' to rerun this test only.
+    an ungrounded criterion or a citation outside the source goes back to the Planner:                FAIL (0.36s)
+      test/integration/Lockstep/EngineCandidateTest.hs:90:
+      refused: "stage-not-built"
+      Use -p '/C-P4.7-9/&&/an ungrounded criterion or a citation outside the source goes back to the Planner/' to rerun this test only.
+    RED that passes, RED for the wrong reason, a failing new GREEN: corrections, then exhausted:      FAIL (0.39s)
+      test/integration/Lockstep/EngineCandidateTest.hs:90:
+      refused: "stage-not-built"
+      Use -p '/C-P4.7-9/&&/RED that passes, RED for the wrong reason, a failing new GREEN: corrections, then exhausted/' to rerun this test only.
+    a failing GREEN test the basis already has is a pre-existing failure: halted for a person:        FAIL (0.34s)
+      test/integration/Lockstep/EngineCandidateTest.hs:90:
+      refused: "stage-not-built"
+      Use -p '/C-P4.7-9/&&/a failing GREEN test the basis already has is a pre-existing failure: halted for a person/' to rerun this test only.
+    a test program that is not there halts: verification-environment-missing:                         FAIL (0.36s)
+      test/integration/Lockstep/EngineCandidateTest.hs:90:
+      refused: "stage-not-built"
+      Use -p '/C-P4.7-9/&&/a test program that is not there halts: verification-environment-missing/' to rerun this test only.
+    a surviving mutant that shows the bug again is CONFIRMED and sends the candidate back:            FAIL (0.36s)
+      test/integration/Lockstep/EngineCandidateTest.hs:90:
+      refused: "stage-not-built"
+      Use -p '/C-P4.7-9/&&/a surviving mutant that shows the bug again is CONFIRMED and sends the candidate back/' to rerun this test only.
+    killed, ungrounded and out-of-scope mutants are never CONFIRMED; the freeze follows:              FAIL (0.40s)
+      test/integration/Lockstep/EngineCandidateTest.hs:90:
+      refused: "stage-not-built"
+      Use -p '/C-P4.7-9/&&/killed, ungrounded and out-of-scope mutants are never CONFIRMED; the freeze follows/' to rerun this test only.
+    a finding that needs a person blocks the freeze with a decision request:                          FAIL (0.34s)
+      test/integration/Lockstep/EngineCandidateTest.hs:90:
+      refused: "stage-not-built"
+      Use -p '/C-P4.7-9/&&/a finding that needs a person blocks the freeze with a decision request/' to rerun this test only.
+    the freeze: the Supervisor commits exactly the tests on the work branch and records the Contract: FAIL (0.33s)
+      test/integration/Lockstep/EngineCandidateTest.hs:90:
+      refused: "stage-not-built"
+      Use -p '/C-P4.7-9/&&/the freeze: the Supervisor commits exactly the tests on the work branch and records the Contract/' to rerun this test only.
+    a work branch moved by someone else is never frozen over:                                         FAIL (0.33s)
+      test/integration/Lockstep/EngineCandidateTest.hs:90:
+      refused: "stage-not-built"
+      Use -p '/C-P4.7-9/&&/a work branch moved by someone else is never frozen over/' to rerun this test only.
+
+10 out of 10 tests failed (3.55s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

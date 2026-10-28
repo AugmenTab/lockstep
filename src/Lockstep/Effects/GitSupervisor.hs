@@ -27,6 +27,7 @@ module Lockstep.Effects.GitSupervisor
   , commitChanges
   , advanceBranch
   , blobId
+  , commitTime
   ) where
 
 import Control.Exception (IOException, finally, try)
@@ -36,6 +37,7 @@ import Data.Bits ((.&.))
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
+import Data.Char qualified as Char
 import Data.List qualified as L
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
@@ -182,6 +184,17 @@ observeBasis repo = do
                     (Right c, Right t') | isCommitId c && isCommitId t' -> Right (Basis c t')
                     _ -> Left (T.pack "no-commit")
         _ -> pure (Left (T.pack "not-a-repository"))
+
+-- | The committer time of a commit, in seconds since the epoch (@commit-invalid@ otherwise).
+commitTime :: FilePath -> T.Text -> IO (Either T.Text Integer)
+commitTime repo commit
+  | not (isCommitId commit) = pure (Left (T.pack "commit-invalid"))
+  | otherwise = do
+      shown <- gitText repo ["show", "-s", "--format=%ct", T.unpack commit]
+      pure $ case shown of
+        Right t | not (T.null t) && T.all Char.isDigit t && T.length t <= 18 -> Right (T.foldl' (\acc c -> acc * 10 + toInteger (Char.ord c - Char.ord '0')) 0 t)
+        Right _ -> Left (T.pack "commit-invalid")
+        Left code -> Left code
 
 -- Branches ----------------------------------------------------------------------
 

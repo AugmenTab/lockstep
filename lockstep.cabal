@@ -39,6 +39,7 @@ library
       Lockstep.Application.Decisions
       Lockstep.Application.Dispatcher
       Lockstep.Application.Engine
+      Lockstep.Application.EngineCandidate
       Lockstep.Application.Execution
       Lockstep.Application.Executor
       Lockstep.Application.Identity
@@ -76,6 +77,7 @@ library
       Lockstep.Foundation.SystemConfig
       Lockstep.Kernel.Activation
       Lockstep.Kernel.Activity
+      Lockstep.Kernel.Candidate
       Lockstep.Kernel.Conversation
       Lockstep.Kernel.Decision
       Lockstep.Kernel.Delivery
@@ -227,6 +229,7 @@ test-suite lockstep-integration
       Lockstep.DecisionsPageTest
       Lockstep.DecisionsTest
       Lockstep.DispatcherTest
+      Lockstep.EngineCandidateTest
       Lockstep.EngineTest
       Lockstep.ExecutionBrowserTest
       Lockstep.ExecutionPageTest
@@ -346,6 +349,7 @@ test-suite lockstep-unit
       Lockstep.Foundation.SessionProtocolTest
       Lockstep.Foundation.SystemConfigTest
       Lockstep.Kernel.ActivityTest
+      Lockstep.Kernel.CandidateTest
       Lockstep.Kernel.ConversationTest
       Lockstep.Kernel.DecisionTest
       Lockstep.Kernel.DeliveryTest

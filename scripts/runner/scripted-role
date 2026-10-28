@@ -25,6 +25,7 @@
 #   run [ARGV]                   run a program; print its exit code
 #   env NAME                     print a variable's value, or <unset>
 #   read PATH                    print a file's first line, or <unreadable>
+#   copy_context PATH            copy the context.json given to this role to PATH
 #   exit CODE                    stop with this exit code
 # A step that fails prints "scripted: <action> failed: <reason>" on standard
 # error and the script goes on.
@@ -96,6 +97,10 @@ def main():
                         print("read: " + f.readline().rstrip("\n"), flush=True)
                 except OSError:
                     print("read: <unreadable>", flush=True)
+            elif action == "copy_context":
+                source = os.path.join(os.path.dirname(script_path), "context.json")
+                with open(source, encoding="utf-8") as f, open(value, "w", encoding="utf-8") as g:
+                    g.write(f.read())
             elif action == "exit":
                 sys.stdout.flush()
                 return int(value)
