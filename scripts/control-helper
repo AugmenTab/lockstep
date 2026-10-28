@@ -828,10 +828,10 @@ plain_path() { # PATH: absolute, printable ASCII, no ':' or ',', no empty, '.' o
   [[ ! $1 =~ [^\ -~] ]]
 }
 
-publish_folders() {
+publish_folders() { # [SOURCE]: the list to copy, the kept list by default
   local tmp
   tmp=$(mktemp "$pane/.folders.XXXXXX") || return 1
-  cat "$folders_file" > "$tmp"
+  cat "${1:-$folders_file}" > "$tmp"
   chmod 600 "$tmp"
   place "$tmp" "$pane/folders" || rm -f "$tmp"
 }
@@ -859,8 +859,9 @@ init_folders() {
     fi
   } > "$tmp"
   chmod 600 "$tmp"
+  # The pane's copy first: the kept list appearing is the sign the helper has started.
+  publish_folders "$tmp" || log "the folder list could not be given to the pane"
   place "$tmp" "$folders_file" || fatal "the folder list cannot be written"
-  publish_folders || log "the folder list could not be given to the pane"
 }
 
 folders_digest() {
