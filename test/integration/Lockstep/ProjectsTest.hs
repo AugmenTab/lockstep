@@ -207,13 +207,13 @@ tests =
           count sc "lockstep_projects" >>= (@?= 0)
           count sc "lockstep_engineers" >>= (@?= 0)
           listDirectory (scRoot sc) >>= (@?= [])
-    , testCase "a repeated creation key returns the first project and creates nothing" $
+    , testCase "a repeated creation key returns the first project and creates nothing; other content is a key conflict" $
         withScenario $ \sc -> do
           first <- created sc (folders sc []) "k-same" "Garden" NewFolder
           again <- created sc (folders sc []) "k-same" "Garden" NewFolder
           projectId again @?= projectId first
-          other <- created sc (folders sc []) "k-same" "Something else" DecideLater
-          projectId other @?= projectId first
+          other <- create sc (folders sc []) "k-same" "Something else" DecideLater
+          fmap projectId other @?= Left "key-conflict"
           count sc "lockstep_projects" >>= (@?= 1)
           count sc "lockstep_repositories" >>= (@?= 1)
           listDirectory (scRoot sc) >>= (@?= ["garden"])
