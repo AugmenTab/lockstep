@@ -22,6 +22,7 @@ module Lockstep.Kernel.Project
   , parseSetupState
   , projectRefusalCodes
   , refusalWords
+  , projectRequestText
   ) where
 
 import Data.Bifunctor (bimap)
@@ -186,6 +187,7 @@ projectWords =
     , ("stale-revision", "This project changed since this page was shown. Nothing was changed; the page now shows it as it is.")
     , ("already-connected", "This project already has its folder.")
     , ("project-busy", "This project is being set up right now. Nothing was changed. Try again in a moment.")
+    , ("key-conflict", "This form was already used for another project. Nothing was changed. Open New project again.")
     , ("unknown-project", "Lockstep has no such project.")
     , ("name-empty", "Give the project a name.")
     , ("name-too-long", "A project name can be at most 80 characters long.")
@@ -222,6 +224,34 @@ registrationWords =
     , ("engineer-already-owns-repository", "This project already has a folder.")
     , ("repository-id-in-use", "Lockstep could not record this folder. Try again.")
     ]
+
+{- | The canonical text of a project's creation request (C-C.R1 R9, migration
+17): its creation digest is the SHA-256 of it. One field per line, the free
+text quoted with @\\@, @"@ and new lines escaped.
+-}
+projectRequestText :: ProjectName -> ProjectOutcome -> FolderChoice -> T.Text
+projectRequestText name outcome choice =
+  T.unlines
+    [ T.pack "lockstep-project-request-v1"
+    , T.pack "name " <> quotedText (projectNameText name)
+    , T.pack "outcome " <> quotedText (projectOutcomeText outcome)
+    , T.pack "folder "
+        <> case choice of
+          NewFolder -> T.pack "new"
+          DecideLater -> T.pack "later"
+          ExistingFolder path -> T.pack "existing " <> quotedText path
+    ]
+
+quotedText :: T.Text -> T.Text
+quotedText text =
+  T.pack "\"" <> T.concatMap escape text <> T.pack "\""
+ where
+  escape c =
+    case c of
+      '\\' -> T.pack "\\\\"
+      '"' -> T.pack "\\\""
+      '\n' -> T.pack "\\n"
+      _ -> T.singleton c
 
 -- | The plain words for a refusal code; a general sentence for a code without its own words.
 refusalWords :: T.Text -> T.Text

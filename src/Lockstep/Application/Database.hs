@@ -31,9 +31,10 @@ module Lockstep.Application.Database
   , withSessionLock
   ) where
 
-import Control.Exception (SomeException, finally, fromException, throwIO, try)
+import Control.Exception (SomeAsyncException, SomeException, finally, fromException, throwIO, try)
 import Data.ByteString.Char8 qualified as BS8
 import Data.List qualified as L
+import Data.Maybe (isJust)
 import Data.Text qualified as T
 import Data.Time qualified as Time
 import Flipstone.Prelude
@@ -332,8 +333,9 @@ use the service pool without waiting for itself), runs the action while that
 connection stays pinned, then unlocks and closes the connection whatever
 happened; closing ends the session and so releases the lock even when the
 unlock could not run. A lock not granted within 'lockWaitSeconds' is
-'LockBusy'. Any failure of the lock's connection is 'LockUnavailable': the
-caller cannot know how far its action got, so it must not guess.
+'LockBusy'. Any synchronous failure of the lock's connection or the action is
+'LockUnavailable': the caller cannot know how far its action got, so it must not
+guess. An asynchronous exception propagates (C-C.R1 R14).
 -}
 withSessionLock :: DatabaseRuntime -> SessionLock -> T.Text -> (Locked -> IO a) -> IO (Either LockFailure a)
 withSessionLock runtime lock key action = do
@@ -350,15 +352,26 @@ withSessionLock runtime lock key action = do
         Right () -> do
           result <- liftIO (action (Locked (O.runOrvilleWithState state) (SessionLocks.held namespace key)))
           -- Best effort: the action's outcome stands even when the unlock cannot run,
-          -- because closing the connection below releases the lock anyway.
-          _ <- liftIO (try (O.runOrvilleWithState state (SessionLocks.release namespace key)) :: IO (Either SomeException Bool))
-          pure (Just result)
+          -- because closing the connection below releases the lock anyway. Only a
+          -- synchronous failure is ignored; an asynchronous exception propagates
+          -- (C-C.R1 R14).
+          unlocked <- liftIO (try (O.runOrvilleWithState state (SessionLocks.release namespace key)))
+          case unlocked of
+            Left err | isAsynchronous err -> liftIO (throwIO err)
+            _ -> pure (Just result)
   outcome <- try (O.runOrville pool locked) `finally` Connection.destroyIdleConnections pool
-  pure $
-    case outcome of
-      Right (Just result) -> Right result
-      Right Nothing -> Left LockBusy
-      Left err -> Left (LockUnavailable (classifyException err))
+  case outcome of
+    Right (Just result) -> pure (Right result)
+    Right Nothing -> pure (Left LockBusy)
+    Left err
+      -- An asynchronous exception (a killed request) is not a database answer: it propagates,
+      -- after the pool above was destroyed and so the lock released (C-C.R1 R14).
+      | isAsynchronous err -> throwIO err
+      | otherwise -> pure (Left (LockUnavailable (classifyException err)))
+
+isAsynchronous :: SomeException -> Bool
+isAsynchronous err =
+  isJust (fromException err :: Maybe SomeAsyncException)
 
 lockTimedOut :: SomeException -> Bool
 lockTimedOut err =
