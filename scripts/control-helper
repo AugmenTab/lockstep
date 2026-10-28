@@ -12,6 +12,13 @@
 #
 # Protocol version 1. Allowlist: status (expect any).
 # Journal: DIR/helper/journal ("<unix> start|end|refused <id> <op|outcome|reason>").
+#
+# With --runner it also serves the runner channel (C-P4.2 R3; DG-17 D-17.1(a)):
+# signed run requests from the Lockstep service in DIR/runner/requests/, each run
+# in a new container from a fixed table (pinned image, no network, read-only
+# root, no capabilities, bounded processes, memory, CPU, time and output), at
+# most one run at a time, results signed with the runner key in
+# DIR/runner/results/.
 set -u
 umask 077
 export LC_ALL=C
@@ -20,7 +27,7 @@ here=$(cd "$(dirname "$0")" && pwd -P)
 root=$(dirname "$here")
 
 usage() {
-  echo "usage: scripts/control-helper --state DIR [--instance NAME] [--service-port N] [--projects DIR]" >&2
+  echo "usage: scripts/control-helper --state DIR [--instance NAME] [--service-port N] [--projects DIR] [--runner]" >&2
   exit 64
 }
 
@@ -28,8 +35,10 @@ state=""
 instance=""
 service_port=8000
 projects=""
+runner_enabled=0
 while [ $# -gt 0 ]; do
   case $1 in
+    --runner) runner_enabled=1; shift ;;
     --state) [ $# -ge 2 ] || usage; state=$2; shift 2 ;;
     --instance) [ $# -ge 2 ] || usage; instance=$2; shift 2 ;;
     --service-port) [ $# -ge 2 ] || usage; service_port=$2; shift 2 ;;
@@ -86,8 +95,9 @@ private_dir "$pane" || fatal "$pane must be a directory owned by this user with 
 log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$helper/helper.log"
 }
+journal_file=$helper/journal
 journal() {
-  printf '%s %s\n' "$(date +%s)" "$*" >> "$helper/journal"
+  printf '%s %s\n' "$(date +%s)" "$*" >> "$journal_file"
 }
 
 # One helper per state directory: a lock directory holding the owner's PID.
@@ -137,15 +147,20 @@ if command -v sha256sum >/dev/null 2>&1; then
 else
   sha256() { shasum -a 256 | cut -d ' ' -f 1; }
 fi
-ipad=""
-opad=""
-i=0
-while [ $i -lt 64 ]; do
-  if [ $i -lt 32 ]; then b=$((16#${key_hex:$((i * 2)):2})); else b=0; fi
-  ipad="$ipad$(printf '\\x%02x' $((b ^ 0x36)))"
-  opad="$opad$(printf '\\x%02x' $((b ^ 0x5c)))"
-  i=$((i + 1))
-done
+pads_for() { # KEY-HEX -> sets pad_in and pad_out
+  local key=$1 i=0 b
+  pad_in=""
+  pad_out=""
+  while [ $i -lt 64 ]; do
+    if [ $i -lt 32 ]; then b=$((16#${key:$((i * 2)):2})); else b=0; fi
+    pad_in="$pad_in$(printf '\\x%02x' $((b ^ 0x36)))"
+    pad_out="$pad_out$(printf '\\x%02x' $((b ^ 0x5c)))"
+    i=$((i + 1))
+  done
+}
+pads_for "$key_hex"
+ipad=$pad_in
+opad=$pad_out
 hex_escapes() {
   local hex=$1 out="" j=0
   while [ $j -lt ${#hex} ]; do
@@ -1059,6 +1074,278 @@ handle() { # NAME
   esac
 }
 
+# ---------------------------------------------------------------- the runner channel (C-P4.2 R3)
+#
+# DIR/runner (0700): channel.key (the runner key, made here, 0600; the service signs
+# with it), requests/, results/, work/<run>/ (made by the service: tree/, input/,
+# output/, argv (NUL-separated), protected (optional, one relative path per line)).
+# A request (.rreq) has seven printable lines:
+#   lockstep-runner-request 1 | id <32 hex> | issued <unix> | op run-readonly|run-write|
+#   run-verify|cancel-run | expect run-<32 hex> | argv <64 hex: SHA-256 of the argv file,
+#   or "none" for cancel-run> | mac <64 hex>
+# Nothing a request names reaches a host command line except the run directory's
+# name (32 hex) and the argument vector, which is only ever given to the program
+# inside the container. Image, mounts, options, network and limits come from here.
+
+runner=$state/runner
+runner_requests=$runner/requests
+runner_results=$runner/results
+runner_work=$runner/work
+runner_tag=${LOCKSTEP_RUNNER_IMAGE:-lockstep-dev:p1}
+runner_image=""
+runner_name_prefix=lockstep-run-${instance:-main}-
+active_pid=""
+active_run=""
+
+re_runner_header='^lockstep-runner-request ([^ ]+)$'
+re_argv='^argv ([0-9a-f]{64}|none)$'
+re_protected='^[A-Za-z0-9._+@-][A-Za-z0-9._+@/-]*$'
+
+# Limits (DG-17 D-17.7): wall seconds, stdout bytes, stderr bytes. LOCKSTEP_RUNNER_TEST_LIMITS=1
+# at helper start (the host check only) shortens them; a request cannot choose them.
+runner_limits() { # OP -> "WALL STDOUT STDERR"
+  if [ "${LOCKSTEP_RUNNER_TEST_LIMITS:-0}" = 1 ]; then
+    echo "6 65536 16384"
+    return
+  fi
+  case $1 in
+    run-write) echo "1200 8388608 2097152" ;;
+    *) echo "600 8388608 2097152" ;;
+  esac
+}
+
+init_runner() {
+  local d
+  for d in "$runner" "$runner_requests" "$runner_results" "$runner_work"; do
+    [ -L "$d" ] && fatal "$d must not be a symlink"
+    [ -d "$d" ] || mkdir -m 700 "$d" || fatal "cannot make $d"
+    private_dir "$d" || fatal "$d must be a directory owned by this user with mode 0700"
+  done
+  case $runner in
+    *,* | *:*) fatal "the state directory must not contain ',' or ':' to serve the runner" ;;
+  esac
+  if [ ! -f "$runner/channel.key" ] || [ -L "$runner/channel.key" ]; then
+    rm -f "$runner/channel.key"
+    head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$runner/channel.key"
+  fi
+  chmod 600 "$runner/channel.key"
+  runner_key=$(head -c 64 "$runner/channel.key")
+  case $runner_key in
+    *[!0123456789abcdef]* | "") fatal "$runner/channel.key is invalid" ;;
+  esac
+  [ ${#runner_key} -eq 64 ] || fatal "$runner/channel.key is invalid"
+  pads_for "$runner_key"
+  ripad=$pad_in
+  ropad=$pad_out
+  runner_image=$(docker image inspect --format '{{.Id}}' "$runner_tag" 2>/dev/null || true)
+  # Containers of an earlier helper that stopped while a run went on.
+  docker ps -aq --filter "name=^$runner_name_prefix" 2>/dev/null | while read -r c; do
+    docker rm -f "$c" >/dev/null 2>&1 || true
+  done
+  export LOCKSTEP_SERVICE_RUNNER=$runner
+}
+
+# A directory under work/ that this user owns and that is not a symlink.
+plain_dir() {
+  [ -d "$1" ] && [ ! -L "$1" ] && [ -O "$1" ]
+}
+
+# Checks the run directory; prints a refusal code, or nothing.
+run_refusal() { # OP RUN ARGV-SHA
+  local op=$1 dir=$runner_work/$2 sha=$3 p part walk n=0
+  plain_dir "$dir" || { echo run-missing; return; }
+  for p in tree input output; do
+    plain_dir "$dir/$p" || { echo run-missing; return; }
+  done
+  [ -f "$dir/argv" ] && [ ! -L "$dir/argv" ] || { echo argv-missing; return; }
+  [ "$(wc -c < "$dir/argv" | tr -d ' ')" -le 300000 ] || { echo argv-too-large; return; }
+  [ "$(sha256 < "$dir/argv")" = "$sha" ] || { echo argv-mismatch; return; }
+  [ "$(tail -c 1 "$dir/argv" | od -An -tx1 | tr -d ' \n')" = 00 ] || { echo argv-malformed; return; }
+  [ "$(head -c 1 "$dir/argv" | od -An -tx1 | tr -d ' \n')" != 00 ] || { echo argv-malformed; return; }
+  if [ -e "$dir/protected" ] || [ -L "$dir/protected" ]; then
+    [ -f "$dir/protected" ] && [ ! -L "$dir/protected" ] || { echo protected-invalid; return; }
+    if grep -q '[^ -~]' "$dir/protected"; then echo protected-invalid; return; fi
+    while IFS= read -r p; do
+      n=$((n + 1))
+      [ $n -le 200 ] || { echo protected-invalid; return; }
+      [[ $p =~ $re_protected ]] || { echo protected-invalid; return; }
+      walk=$dir/tree
+      IFS=/ read -r -a parts <<< "$p"
+      for part in "${parts[@]}"; do
+        case $part in "" | . | ..) echo protected-invalid; return ;; esac
+        walk=$walk/$part
+        [ -L "$walk" ] && { echo protected-invalid; return; }
+      done
+      [ -f "$walk" ] || { echo protected-invalid; return; }
+    done < "$dir/protected"
+  fi
+  [ -n "$runner_image" ] || runner_image=$(docker image inspect --format '{{.Id}}' "$runner_tag" 2>/dev/null || true)
+  [ -n "$runner_image" ] || { echo runner-image-missing; return; }
+  : "$op"
+}
+
+# Runs one container and writes the signed result. Runs in the background.
+execute_run() { # ID OP RUN
+  local id=$1 op=$2 run=$3 dir=$runner_work/$3 name=$runner_name_prefix$3 wall outlim errlim lim
+  local ipad=$ripad opad=$ropad results=$runner_results journal_file=$helper/runner-journal
+  local started finished rc outcome marker=$runner_work/$3/.timed-out watchdog p out_bytes err_bytes
+  local -a argv=() args=()
+  read -r wall outlim errlim <<< "$(runner_limits "$op")"
+  while IFS= read -r -d '' p; do argv+=("$p"); done < "$dir/argv"
+  local tree_mount="type=bind,source=$dir/tree,target=/work/tree"
+  [ "$op" = run-write ] || tree_mount="$tree_mount,readonly"
+  args=(run --rm --name "$name" --network none --read-only
+    --tmpfs /tmp:rw,nosuid,nodev,size=268435456
+    --cap-drop ALL --security-opt no-new-privileges
+    --pids-limit 256 --memory 4g --memory-swap 4g --cpus 2
+    --user "$(id -u):$(id -g)"
+    --env HOME=/tmp --env PATH=/usr/local/bin:/usr/bin:/bin --env LANG=C.UTF-8 --env LC_ALL=C.UTF-8 --env TZ=UTC
+    --log-driver none --workdir /work/tree
+    --mount "$tree_mount"
+    --mount "type=bind,source=$dir/input,target=/input,readonly"
+    --mount "type=bind,source=$dir/output,target=/output")
+  if [ -f "$dir/protected" ]; then
+    while IFS= read -r p; do
+      args+=(--mount "type=bind,source=$dir/tree/$p,target=/work/tree/$p,readonly")
+    done < "$dir/protected"
+  fi
+  args+=("$runner_image" "${argv[@]}")
+  started=$(date +%s)
+  journal "start $id $op"
+  rm -f "$marker"
+  (
+    sleep "$wall"
+    : > "$marker"
+    docker kill "$name" >/dev/null 2>&1
+  ) &
+  watchdog=$!
+  docker "${args[@]}" < /dev/null 2> >(head -c $((errlim + 1)) > "$dir/stderr") | head -c $((outlim + 1)) > "$dir/stdout"
+  rc=${PIPESTATUS[0]}
+  kill "$watchdog" 2>/dev/null
+  pkill -P "$watchdog" 2>/dev/null
+  wait "$watchdog" 2>/dev/null
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  sleep 0.2
+  finished=$(date +%s)
+  out_bytes=$(wc -c < "$dir/stdout" | tr -d ' ')
+  err_bytes=$(wc -c < "$dir/stderr" | tr -d ' ')
+  if [ -e "$runner_work/$run/.cancelled" ]; then
+    outcome=cancelled
+  elif [ -e "$marker" ]; then
+    outcome=timed-out
+  elif [ "$out_bytes" -gt "$outlim" ] || [ "$err_bytes" -gt "$errlim" ]; then
+    outcome=output-limit
+  elif [ "$rc" = 125 ]; then
+    outcome=launch-failed
+  else
+    outcome=exited
+  fi
+  for p in stdout stderr; do
+    lim=$outlim
+    [ $p = stderr ] && lim=$errlim
+    if [ "$(wc -c < "$dir/$p" | tr -d ' ')" -gt "$lim" ]; then
+      head -c "$lim" "$dir/$p" > "$dir/.$p.cut" && place "$dir/.$p.cut" "$dir/$p"
+    fi
+  done
+  rm -f "$marker" "$runner_work/$run/.cancelled"
+  write_result "$id" "$op" "$outcome" - "$started" "$finished" "" \
+    "exit $rc" "run $run" "image $runner_image" \
+    "stdout-bytes $out_bytes" "stderr-bytes $err_bytes" \
+    "stdout-sha256 $(sha256 < "$dir/stdout")" "stderr-sha256 $(sha256 < "$dir/stderr")" \
+    "limits $wall $outlim $errlim" || true
+  journal "end $id $outcome"
+  log "$op $id: $outcome (exit $rc)"
+}
+
+handle_runner() { # NAME
+  local name=$1 path=$runner_requests/$1 id size lines line mac op run sha issued now
+  local ipad=$ripad opad=$ropad results=$runner_results journal_file=$helper/runner-journal
+  case $name in .*) return ;; esac
+  if [[ ! $name =~ ^[0-9a-f]{32}\.rreq$ ]]; then
+    rm -f -- "$path"
+    log "removed a runner file that is not a request: name not allowed"
+    return
+  fi
+  id=${name%.rreq}
+  if [ -L "$path" ] || [ ! -f "$path" ]; then rm -f -- "$path"; refuse "$id" unknown not-regular-file; return; fi
+  if [ ! -O "$path" ]; then rm -f -- "$path"; refuse "$id" unknown not-owner; return; fi
+  size=$(wc -c < "$path" | tr -d ' ')
+  if [ "$size" -gt 1024 ]; then rm -f -- "$path"; refuse "$id" unknown too-large; return; fi
+  if grep -q '[^ -~]' "$path" || [ "$(tail -c 1 "$path" | wc -l | tr -d ' ')" != 1 ]; then
+    rm -f -- "$path"; refuse "$id" unknown malformed; return
+  fi
+  lines=()
+  while IFS= read -r line; do lines+=("$line"); done < "$path"
+  if [ ${#lines[@]} -ne 7 ] || [[ ! ${lines[6]} =~ $re_mac ]]; then
+    rm -f -- "$path"; refuse "$id" unknown malformed; return
+  fi
+  mac=${BASH_REMATCH[1]}
+  if [ "$(head -n 6 "$path" | hmac)" != "$mac" ]; then
+    rm -f -- "$path"; refuse "$id" unknown bad-mac; return
+  fi
+  rm -f -- "$path"
+  [[ ${lines[0]} =~ $re_runner_header ]] || { refuse "$id" unknown malformed; return; }
+  [ "${BASH_REMATCH[1]}" = 1 ] || { refuse "$id" unknown bad-version; return; }
+  if [[ ! ${lines[1]} =~ $re_id ]] || [ "${BASH_REMATCH[1]}" != "$id" ]; then refuse "$id" unknown malformed; return; fi
+  [[ ${lines[2]} =~ $re_issued ]] || { refuse "$id" unknown malformed; return; }
+  issued=${BASH_REMATCH[1]}
+  [[ ${lines[3]} =~ $re_op ]] || { refuse "$id" unknown malformed; return; }
+  op=${BASH_REMATCH[1]}
+  case $op in
+    run-readonly | run-write | run-verify | cancel-run) ;;
+    *) refuse "$id" unknown unknown-op; return ;;
+  esac
+  [[ ${lines[4]} =~ ^expect\ run-([0-9a-f]{32})$ ]] || { refuse "$id" "$op" bad-expect; return; }
+  run=${BASH_REMATCH[1]}
+  [[ ${lines[5]} =~ $re_argv ]] || { refuse "$id" "$op" malformed; return; }
+  sha=${BASH_REMATCH[1]}
+  if grep -qxF "$id" "$helper/runner-seen" 2>/dev/null; then
+    journal "refused $id replayed"
+    log "refused $id: replayed"
+    return
+  fi
+  now=$(date +%s)
+  if [ "$issued" -lt $((now - 120)) ] || [ "$issued" -gt $((now + 10)) ]; then
+    refuse "$id" "$op" stale
+    return
+  fi
+  echo "$id" >> "$helper/runner-seen"
+  if [ "$op" = cancel-run ]; then
+    if [ -n "$active_pid" ] && [ "$active_run" = "$run" ]; then
+      : > "$runner_work/$run/.cancelled"
+      docker kill "$runner_name_prefix$run" >/dev/null 2>&1 || true
+      now=$(date +%s)
+      write_result "$id" "$op" ok - "$now" "$now" "" "run $run" || true
+    else
+      refuse "$id" "$op" not-running
+    fi
+    return
+  fi
+  [ "$sha" != none ] || { refuse "$id" "$op" malformed; return; }
+  if [ -n "$active_pid" ]; then refuse "$id" "$op" busy; return; fi
+  local refusal
+  refusal=$(run_refusal "$op" "$run" "$sha")
+  if [ -n "$refusal" ]; then refuse "$id" "$op" "$refusal"; return; fi
+  execute_run "$id" "$op" "$run" < /dev/null > /dev/null 2>&1 &
+  active_pid=$!
+  active_run=$run
+}
+
+runner_tick() {
+  if [ -n "$active_pid" ] && ! kill -0 "$active_pid" 2>/dev/null; then
+    wait "$active_pid" 2>/dev/null
+    active_pid=""
+    active_run=""
+  fi
+  private_dir "$runner_requests" || return 0
+  while IFS= read -r name; do
+    [ "$stopping" = 0 ] || break
+    [ -n "$name" ] && handle_runner "$name"
+  done <<EOF
+$(ls -1tr "$runner_requests" 2>/dev/null)
+EOF
+}
+
 # An upgrade that was running when the helper stopped is interrupted at its step (U6).
 if [ "$(record_get status)" = running ]; then
   record_set status interrupted
@@ -1078,9 +1365,23 @@ if [ -f "$helper/journal" ]; then
 fi
 
 init_folders
-log "started (pid $$, protocol 1, timeout ${timeout}s${instance:+, instance $instance})"
+if [ "$runner_enabled" = 1 ]; then
+  init_runner
+  # A run that started and never ended was interrupted (the helper stopped).
+  if [ -f "$helper/runner-journal" ]; then
+    awk '$2 == "start" { open[$3] = $4 } $2 == "end" { delete open[$3] } END { for (id in open) print id, open[id] }' "$helper/runner-journal" |
+      while read -r id op; do
+        case $id in *[!0123456789abcdef]*) continue ;; esac
+        now=$(date +%s)
+        ipad=$ripad opad=$ropad results=$runner_results write_result "$id" "$op" interrupted - "$now" "$now" "the helper stopped while this ran" || true
+        journal_file=$helper/runner-journal journal "end $id interrupted"
+      done
+  fi
+fi
+log "started (pid $$, protocol 1, timeout ${timeout}s${instance:+, instance $instance}${runner_image:+, runner image $runner_image})"
 warned=""
 while [ "$stopping" = 0 ]; do
+  [ "$runner_enabled" = 1 ] && runner_tick
   if private_dir "$pane" && private_dir "$requests" && [ -d "$results" ] && [ ! -L "$results" ]; then
     warned=""
     while IFS= read -r name; do
@@ -1095,4 +1396,8 @@ EOF
   fi
   sleep 0.2
 done
+if [ -n "$active_pid" ]; then
+  docker rm -f "$runner_name_prefix$active_run" >/dev/null 2>&1 || true
+  wait "$active_pid" 2>/dev/null
+fi
 log "stopped"
