@@ -23,6 +23,8 @@ data Json
   | JNull
   | JArray [Json]
   | JObject [(T.Text, Json)]
+  | -- | a document Lockstep rendered earlier, kept exactly as it is
+    JRaw T.Text
   deriving (Eq, Show)
 
 string :: T.Text -> Json
@@ -45,6 +47,7 @@ renderJson value =
       T.pack "{"
         <> T.intercalate (T.pack ",") [quoted k <> T.pack ":" <> renderJson v | (k, v) <- fields]
         <> T.pack "}"
+    JRaw text -> text
 
 quoted :: T.Text -> T.Text
 quoted text =

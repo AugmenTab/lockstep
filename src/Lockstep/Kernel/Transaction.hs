@@ -222,6 +222,7 @@ data TxInput
   | Reproduced
   | NotReproduced
   | CandidateClassified [BaselineClass]
+  | CandidateRejected T.Text
   | RegressionFailed
   | ChallengeDisposed [Disposition]
   | TestsFrozen
@@ -254,6 +255,7 @@ txInputName input =
       Reproduced -> "reproduced"
       NotReproduced -> "not-reproduced"
       CandidateClassified _ -> "candidate-classified"
+      CandidateRejected _ -> "candidate-rejected"
       RegressionFailed -> "regression-failed"
       ChallengeDisposed _ -> "challenge-disposed"
       TestsFrozen -> "tests-frozen"
@@ -357,6 +359,14 @@ stepTransaction principal input tx
                   if candidatesMade made <= maxCorrections
                     then toWith (Running StageCandidate) made
                     else toWith (Halted StageCandidate (T.pack "candidates-exhausted")) made
+      (StageCandidate, CandidateRejected _) ->
+        let
+          made = counters {candidatesMade = candidatesMade counters + 1}
+        in
+          if candidatesMade made <= maxCorrections
+            then toWith (Running StageCandidate) made
+            else toWith (Halted StageCandidate (T.pack "candidates-exhausted")) made
+      (StageCandidate, VerificationInconclusive code) -> to (Halted StageCandidate code)
       (StageCandidate, RegressionFailed) -> halt StageCandidate "green-regression-failed"
       (StageCandidate, ScopeRefused code) -> to (Halted StageCandidate code)
       (StageChallengePre, ChallengeDisposed ds)

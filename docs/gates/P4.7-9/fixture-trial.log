@@ -1,0 +1,20 @@
+lockstep> test (suite: lockstep-integration, args: -p C-P4.7-9)
+
+lockstep-integration
+  C-P4.7-9 candidate tests, the challenge before the freeze, and the freeze (real Git, processes, PostgreSQL)
+    a grounded candidate whose RED test fails for its reason reaches the challenge:                   OK (0.48s)
+    an ungrounded criterion or a citation outside the source goes back to the Planner:                OK (0.56s)
+    RED that passes, RED for the wrong reason, a failing new GREEN: corrections, then exhausted:      OK (0.83s)
+    a failing GREEN test the basis already has is a pre-existing failure: halted for a person:        OK (0.49s)
+    a test program that is not there halts: verification-environment-missing:                         OK (0.40s)
+    a surviving mutant that shows the bug again is CONFIRMED and sends the candidate back:            OK (0.56s)
+    killed, ungrounded and out-of-scope mutants are never CONFIRMED; the freeze follows:              OK (0.58s)
+    a finding that needs a person blocks the freeze with a decision request:                          OK (0.50s)
+    the freeze: the Supervisor commits exactly the tests on the work branch and records the Contract: OK (0.53s)
+    a work branch moved by someone else is never frozen over:                                         OK (0.53s)
+
+All 10 tests passed (5.45s)
+
+
+
+lockstep> Test suite lockstep-integration passed

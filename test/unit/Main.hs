@@ -31,6 +31,7 @@ import Lockstep.Foundation.RunnerProtocolTest qualified as RunnerProtocolTest
 import Lockstep.Foundation.SessionProtocolTest qualified as SessionProtocolTest
 import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
 import Lockstep.Kernel.ActivityTest qualified as ActivityTest
+import Lockstep.Kernel.CandidateTest qualified as KernelCandidateTest
 import Lockstep.Kernel.ConversationTest qualified as ConversationTest
 import Lockstep.Kernel.DecisionTest qualified as DecisionTest
 import Lockstep.Kernel.DeliveryTest qualified as DeliveryTest
@@ -147,4 +148,5 @@ main =
       , GitBasisTest.tests
       , KernelRolesTest.tests
       , KernelTransactionTest.tests
+      , KernelCandidateTest.tests
       ]
