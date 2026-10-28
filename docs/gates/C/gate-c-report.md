@@ -1,9 +1,10 @@
 # Gate C (C-UX) — status and decision packet
 
-- Status: **NOT ACCEPTED. The candidate `36cff9b` (code `fd5bb90`) is QUALIFIED: Mac
-  `scripts/check --integration` and a Linux clean clone, each unit 800 of 800 and integration 422 of
-  422, backup/restore PASSED on the Mac (2026-10-27, after the owner released the hold). All
-  remediation and amendments are done; no Planner decision is outstanding. C8 and C9 remain.** The concise
+- Status: **ACCEPTED WITH EXCEPTIONS** (the owner, 2026-10-27; `docs/governance/DECISION_REGISTER.md`).
+  The candidate `36cff9b` (code `fd5bb90`) is QUALIFIED: Mac `scripts/check --integration` and a
+  Linux clean clone, each unit 800 of 800 and integration 422 of 422, backup/restore PASSED on the
+  Mac. **C8 and C9: NOT_RUN — DEFERRED BY OWNER** (named exceptions, carried into the Phase 4
+  backlog). **Phase 4 not started** (owner's instruction). The concise
   decision packet is `decision-packet.md`. The Implementer cannot accept Gate C (Phase 3 handoff
   P3.11). C8 and C9 are **NOT_RUN**. Phase 4 is not started and will not be without the owner's
   authorization.
@@ -51,8 +52,8 @@
 | C5 Tasks | C-P3.6; C-C.R1 R7, R9 | (step 6 only) | automated PASSED |
 | C6 Decisions | C-P3.8; C-C.R1 R1–R4 | (step 8: the empty Decisions page only) | automated PASSED |
 | C7 Evidence | C-P3.9 | (step 9: the empty Activity page only) | automated PASSED |
-| C8 Deferred Gate B walkthrough | — | — | **NOT_RUN** |
-| C9 Nontechnical usability | C-P3.10 automated journey (not evidence that a person succeeded) | — | **NOT_RUN** |
+| C8 Deferred Gate B walkthrough | — | — | **NOT_RUN — DEFERRED BY OWNER** (named exception; Phase 4 backlog) |
+| C9 Nontechnical usability | C-P3.10 automated journey (not evidence that a person succeeded) | — | **NOT_RUN — DEFERRED BY OWNER** (named exception; Phase 4 backlog) |
 
 Human and automated evidence stay distinct: the human column is what the owner reported doing and
 seeing (the writing agent recorded it and did not observe it); "as exercised" means only the steps

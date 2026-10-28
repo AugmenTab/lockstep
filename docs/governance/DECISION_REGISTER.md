@@ -121,6 +121,24 @@ Governing documents v0.3 and Bible alignment, 2026-10-25 (approval record `LS-V2
 - New gates recorded as defined in PRD v0.3 §4 and §8: **DG-14** (email approval authentication; OPEN, before any email action authorization), **DG-15** (= DR-P3.1, ACCEPTED above), **DG-16** (Phase 3 browser-managed effects: verified helper protocol and authorization, privilege separation, operation locks, durable results, no shell injection; to be met by P3.2–P3.3 Contracts), **DG-17** (Phase 4 live coding confinement; OPEN, hard precondition to live consequential work).
 - The approval authorizes no agent code execution and asserts no gate passed.
 
+Gate C-UX owner decision, 2026-10-27 (given in the session after the consolidated qualification;
+provenance note `.local/plans/phase-03_gate-c-decision.md`; recorded by the writing agent at the
+owner's instruction):
+
+- **Gate C-UX ACCEPTED WITH EXCEPTIONS** on candidate `36cff9b` (production code `fd5bb90`). Evidence:
+  Mac `scripts/check --integration` unit 800/800, integration 422/422, backup/restore PASSED; Linux
+  clean clone unit 800/800, integration 422/422 (`docs/gates/C-R1/check-integration-36cff9b.log`,
+  `linux-clone-36cff9b.log`); final independent read-only review (Review 7) with no HIGH or MEDIUM;
+  owner dogfood steps 1–11 PASSED on the earlier installed build `b963527` (not the candidate).
+- **Named exceptions:** **UX-C8** (the Gate B browser walkthrough) and **UX-C9** (the nontechnical
+  first-time-user usability study) are **NOT_RUN — DEFERRED BY OWNER**, not PASSED. They are not
+  cancelled; they are carried into the Phase 4 backlog and do not block Phase 4 implementation.
+- **Phase 4 not started.** The decision text also authorized Phase 4; the owner's accompanying
+  instruction overrode it ("DO NOT BEGIN PHASE 4"). Phase 4 / Gate C-EXEC needs a further owner
+  instruction to begin.
+- Unchanged: the cookie-page retirement (deferred, needs its own authorization) and installing the
+  candidate on the owner's Mac (separate authorization).
+
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.
 
