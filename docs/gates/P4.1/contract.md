@@ -1,7 +1,8 @@
 # Contract — P4.1 A project Lockstep may work in, and a bug handed to it
 
 - Contract ID: `C-P4.1@v1`
-- Status: **FROZEN** (2026-10-27; §4)
+- Status: **FROZEN** (2026-10-27; §4). **VERIFIED** at `bd4512b` (Mac and Linux clean clone, §3a); not
+  accepted: acceptance is the owner's, at Gate C-EXEC.
 - Authority: Phase 4 handoff P4.1 ("Provide an execution-capable repository-bound Engineer and admit
   one no-plan bug Ticket under the effective Bug Profile. Prove that an organized project is not
   automatically authorized to execute, that repository ownership is valid and exclusive, and that no
@@ -71,7 +72,29 @@
 
 ## 3a. Verification record (after implementation)
 
-*(empty until implemented)*
+| Check | Result | Evidence |
+|---|---|---|
+| Frozen files (P4.1 and earlier) | digests unchanged after implementation (checked against §4) | §4, earlier contracts' §4 |
+| `scripts/check --integration` on `bd4512b`, clean tree | format, lint, build (Kernel boundary and purity scan, 24 files), unit **808 of 808**, no-live-model guard PASSED; integration **446 of 446** and backup/restore PASSED | `check-integration.log` |
+| C-P4.1 groups | unit 8 of 8; in-process 16 of 16; pages 7 of 7; the real-browser journey (a project in a new folder → Let Lockstep fix bugs here by keyboard → a task → ready → Ask Lockstep to fix this bug by keyboard → in line → reload: still in line; one enablement, one admission, one Work Order, no schedule decision) PASSED | `check-integration.log` |
+| Linux clean clone of `bd4512b` | format, lint, build, unit **808 of 808**, integration **446 of 446** PASSED; case-sensitive filesystem; Kernel boundary and purity scan clean | `linux-clone.log` |
+
+Implementation runs (targeted, `.local/run-integration-pattern.sh`): the first passed 23 of 24. The browser
+journey failed in the implementation, not the test: `static/app.js` sends a form through htmx (with the
+session header) only when its action matches an allowlist, and the two new addresses were not on it. Added to
+the allowlist. Two reruns then still failed because `stack test` alone did not rebuild the binary after the
+embedded `app.js` changed (a stale binary, confirmed by searching it); after the build step the journey passed.
+
+Implementation notes (decisions within the design, recorded here):
+
+- `Lockstep.Application.Ledger.createWorkOrder` is now `createWorkOrderIn` (the same body) inside its own
+  transaction; its local `decideCreation` uses the id in scope instead of taking it as a parameter. Behaviour is
+  unchanged: the C-P2.5 and later tests pass.
+- Allowing decides from the built-in definition before writing anything; the Bug Profile is registered only
+  when the switch is certain, so a refusal writes nothing (X4).
+- The ownership check (X5) reads the active repositories and the folder's `.git` identity inside the caller's
+  transaction; it is read-only.
+- The task page shows the bug's place in line from the C-P3.7 queue preview (read-only).
 
 ## 4. Freeze record
 

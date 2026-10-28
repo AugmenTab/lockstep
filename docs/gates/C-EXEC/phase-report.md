@@ -11,9 +11,9 @@
 
 | ID | Status | Contract | Record |
 |---|---|---|---|
-| P4.1 | in progress | `C-P4.1` | `docs/gates/P4.1/` |
+| P4.1 | **VERIFIED** at `bd4512b` (frozen `C-P4.1`; Mac unit 808/808, integration 446/446; Linux clean clone the same) | `C-P4.1` | `docs/gates/P4.1/` |
 | P4.2 | **BLOCKED — waiting for DG-17** (owner) | — | `design-gates-decision-request.md` |
-| P4.3 | not started (dependency-ready after P4.1) | — | — |
+| P4.3 | in progress | `C-P4.3` | `docs/gates/P4.3/` |
 | P4.4 | blocked behind P4.2 | — | — |
 | P4.5 | **BLOCKED — waiting for DG-17** | — | — |
 | P4.6 | blocked behind P4.5 | — | — |
