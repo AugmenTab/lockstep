@@ -46,7 +46,7 @@ import Lockstep.Application.EngineCandidate (baselineJson, candidateJson, findin
 import Lockstep.Application.Identity (newUuid)
 import Lockstep.Application.Repositories (ownershipHolds)
 import Lockstep.Application.Tasks (TaskView (..), findTaskIn)
-import Lockstep.Effects.GitSupervisor (Basis (..), CommitMeta (..), advanceBranch, branchHead, commitChanges, commitTime, createWorkBranch, observeBasis, writeSnapshot)
+import Lockstep.Effects.GitSupervisor (Basis (..), CommitMeta (..), advanceBranch, branchHead, commitChanges, commitTime, createWorkBranch, observeBasis, snapshotChanges, writeSnapshot)
 import Lockstep.Effects.Process (RunResult (..))
 import Lockstep.Effects.Roles (Adapter (..), Runner (..), RunnerFailure (..), Workspace (..), decodeAnswer, prepareRole, runPrepared)
 import Lockstep.Effects.Roles qualified as Roles
@@ -65,9 +65,13 @@ import Lockstep.Kernel.Roles
   , Discovery (..)
   , FileContent (..)
   , Finding (..)
+  , Implementation (..)
+  , Review (..)
   , Role (..)
   , RoleAnswer (..)
+  , Verdict (..)
   , roleName
+  , verdictName
   )
 import Lockstep.Kernel.Runner (RoleKind (..), RunOutcome (..), outcomeName, roleLimits)
 import Lockstep.Kernel.Transaction
@@ -481,7 +485,11 @@ runStage runtime engine row stage =
     StageCandidate -> candidateStage runtime engine row
     StageChallengePre -> challengeStage runtime engine row
     StageFreeze -> freezeStage runtime row
-    _ -> pure (Left (T.pack "stage-not-built"))
+    StageImplement -> implementStage runtime engine row
+    StageVerify -> verifyStage runtime engine row
+    StageChallengePost -> challengePostStage runtime engine row
+    StageReview -> reviewStage runtime engine row
+    StageAccept -> acceptStage runtime row
 
 -- | Applies the input and returns it.
 settle :: DatabaseRuntime -> Store.TransactionRow -> TxInput -> [(T.Text, Json)] -> (Store.TransactionRow -> Store.TransactionRow) -> IO (Either T.Text TxInput)
@@ -600,7 +608,7 @@ discoveryStage runtime engine row =
                   , (T.pack "basis", string basis)
                   , (T.pack "answer", JObject [(T.pack "file", string (T.pack "result.json")), (T.pack "kind", string (T.pack "discovery"))])
                   ]
-          invoked <- invokeRecorded runtime engine row Planner StageDiscovery basis [] context
+          invoked <- invokeRecorded runtime engine row Planner StageDiscovery basis [] [] context
           case invoked of
             Left code -> pure (Left code)
             Right (Left input) -> settle runtime row input [] id
@@ -651,8 +659,8 @@ recordedDiscovery body =
 ended without an answer (its input); Right Right: the answer, the snapshot's
 entries, the workspace and the invocation id.
 -}
-invokeRecorded :: DatabaseRuntime -> Engine -> Store.TransactionRow -> Role -> Stage -> T.Text -> [ExtraFile] -> T.Text -> IO (Either T.Text (Either TxInput (RoleAnswer, [TreeEntry], Workspace, T.Text)))
-invokeRecorded runtime engine row role stage commit extras context = do
+invokeRecorded :: DatabaseRuntime -> Engine -> Store.TransactionRow -> Role -> Stage -> T.Text -> [ExtraFile] -> [T.Text] -> T.Text -> IO (Either T.Text (Either TxInput (RoleAnswer, [TreeEntry], Workspace, T.Text)))
+invokeRecorded runtime engine row role stage commit extras protected context = do
   ordinal <- db runtime (Right . L.length . L.filter ((== roleName role) . Store.invocationRowWhat) <$> Store.transactionInvocations (Store.txRowId row))
   case ordinal of
     Left code -> pure (Left code)
@@ -701,7 +709,7 @@ invokeRecorded runtime engine row role stage commit extras context = do
                   case started of
                     Left code -> pure (Left code)
                     Right () -> do
-                      outcome <- runPrepared (engineRunner engine) role workspace argv []
+                      outcome <- runPrepared (engineRunner engine) role workspace argv protected
                       let
                         (code, evidence, input) =
                           case outcome of
@@ -913,7 +921,7 @@ candidateStage runtime engine row =
                   , (T.pack "feedback", JArray (fmap JRaw feedback))
                   , (T.pack "answer", JObject [(T.pack "file", string (T.pack "result.json")), (T.pack "kind", string (T.pack "candidate"))])
                   ]
-          invoked <- invokeRecorded runtime engine row Planner StageCandidate basis [] context
+          invoked <- invokeRecorded runtime engine row Planner StageCandidate basis [] [] context
           case invoked of
             Left code -> pure (Left code)
             Right (Left input) -> settle runtime row input [] id
@@ -1003,7 +1011,7 @@ challengeStage runtime engine row =
                       , (T.pack "reproduction", JRaw reproduction)
                       , (T.pack "answer", JObject [(T.pack "file", string (T.pack "result.json")), (T.pack "kind", string (T.pack "challenge"))])
                       ]
-              invoked <- invokeRecorded runtime engine row Challenger StageChallengePre basis (testFiles c) context
+              invoked <- invokeRecorded runtime engine row Challenger StageChallengePre basis (testFiles c) [] context
               case invoked of
                 Left code -> pure (Left code)
                 Right (Left input) -> settle runtime row input [] id
@@ -1098,6 +1106,306 @@ freezeStage runtime row = do
         (_, Left code) -> settle runtime row (SupervisorFailed code) [] id
         _ -> settle runtime row (SupervisorFailed (T.pack "branch-moved")) [] id
     _ -> settle runtime row (SupervisorFailed (T.pack "candidate-missing")) [] id
+
+-- The implementer (C-P4.10-14 I1) ---------------------------------------------------------
+
+{- | I1: one Implementer invocation on a Git-free snapshot of the freeze commit
+(the protected tests mounted read-only by the container runner), then the
+Supervisor's own comparison: refused, as one attempt, for a link, a special
+file or a @.git@ (C-P4.4 G5), a change outside the allowed implementation
+paths (@change-outside-scope@), any change to a protected test
+(@protected-test-changed@), or no change at all (@no-change@). Otherwise the
+Supervisor writes the candidate commit (its identity; on no branch) on top of
+the freeze commit.
+-}
+implementStage :: DatabaseRuntime -> Engine -> Store.TransactionRow -> IO (Either T.Text TxInput)
+implementStage runtime engine row = do
+  records <- db runtime (Right <$> Store.transactionRecords (Store.txRowId row))
+  ticket <- taskTexts runtime row
+  case (records, ticket, Store.txRowFreeze row) of
+    (Left code, _, _) -> pure (Left code)
+    (_, Left code, _) -> settle runtime row (SupervisorFailed code) [] id
+    (_, _, Nothing) -> settle runtime row (SupervisorFailed (T.pack "freeze-missing")) [] id
+    (Right rs, Right (title, acceptance), Just freeze) ->
+      case latestRecord (T.pack "candidate") rs >>= recordedCandidate of
+        Nothing -> settle runtime row (SupervisorFailed (T.pack "candidate-missing")) [] id
+        Just c -> do
+          let
+            protected = fmap testPath (candidateTests c)
+            feedback = [Store.recordRowBody r | r <- rs, Store.recordRowKind r `L.elem` fmap T.pack ["implementation-refused", "verification", "post-finding", "review"]]
+            context =
+              renderJson $
+                JObject
+                  [ (T.pack "role", string (roleName Implementer))
+                  , (T.pack "stage", string (stageName StageImplement))
+                  , (T.pack "ticket", JObject [(T.pack "title", string title), (T.pack "what_done_looks_like", string acceptance)])
+                  , (T.pack "contract", JRaw (fromMaybe (T.pack "null") (latestRecord (T.pack "contract") rs)))
+                  , (T.pack "allowed_paths", strings (candidateAllowedPaths c))
+                  , (T.pack "protected_tests", strings protected)
+                  , (T.pack "feedback", JArray (fmap JRaw feedback))
+                  , (T.pack "answer", JObject [(T.pack "file", string (T.pack "result.json")), (T.pack "kind", string (T.pack "implementation"))])
+                  ]
+          invoked <- invokeRecorded runtime engine row Implementer StageImplement freeze [] protected context
+          case invoked of
+            Left code -> pure (Left code)
+            Right (Left input) -> settle runtime row input [] id
+            Right (Right (AnswerImplementation i, entries, workspace, invocation)) -> do
+              found <- snapshotChanges entries (workspaceTree workspace)
+              let
+                refused code paths = settle runtime row (ImplementationRefused code) [(T.pack "implementation-refused", JObject [(T.pack "code", string code), (T.pack "paths", strings paths), (T.pack "invocation", string invocation)])] id
+              case found of
+                Left code -> refused code []
+                Right changes
+                  | L.null changes -> refused (T.pack "no-change") []
+                  | L.any ((`L.elem` protected) . changePath) changes -> refused (T.pack "protected-test-changed") (L.filter (`L.elem` protected) (fmap changePath changes))
+                  | L.any ((`L.notElem` candidateAllowedPaths c) . changePath) changes -> refused (T.pack "change-outside-scope") (L.filter (`L.notElem` candidateAllowedPaths c) (fmap changePath changes))
+                  | otherwise -> do
+                      time <- commitTime (T.unpack (Store.txRowFolder row)) freeze
+                      case time of
+                        Left code -> settle runtime row (SupervisorFailed code) [] id
+                        Right t -> do
+                          let
+                            attempt = Store.txRowAttempts row + 1
+                            message =
+                              T.pack "Fix: "
+                                <> title
+                                <> T.pack "\n\nLockstep-Work-Order: "
+                                <> Store.txRowWorkOrder row
+                                <> T.pack "\nLockstep-Contract: "
+                                <> fromMaybe T.empty (Store.txRowContract row)
+                                <> T.pack "\nLockstep-Attempt: "
+                                <> T.pack (show attempt)
+                                <> T.pack "\n"
+                          committed <- commitChanges (T.unpack (Store.txRowFolder row)) freeze changes (CommitMeta message (t + toInteger attempt))
+                          case committed of
+                            Left code -> refused code []
+                            Right candidate ->
+                              settle
+                                runtime
+                                row
+                                Implemented
+                                [
+                                  ( T.pack "implementation"
+                                  , JObject
+                                      [ (T.pack "summary", string (implementationSummary i))
+                                      , (T.pack "changed", strings (fmap changePath changes))
+                                      , (T.pack "candidate", string candidate)
+                                      , (T.pack "attempt", JNumber (toInteger attempt))
+                                      , (T.pack "invocation", string invocation)
+                                      ]
+                                  )
+                                ]
+                                (\r -> r {Store.txRowCandidate = Just candidate})
+            Right (Right _) -> settle runtime row (RoleFailed (T.pack "answer-invalid wrong-stage")) [] id
+
+-- Verification (C-P4.10-14 V1) -------------------------------------------------------------
+
+{- | V1: the exact candidate commit, on a fresh snapshot: every protected test's
+bytes there must be its frozen bytes (@protected-test-changed@ otherwise);
+then every verification command and every frozen test runs. All pass →
+passed. A program that is not there → @verification-environment-missing@; a
+run that did not end normally → @verification-run-failed@ (both halt); any
+other failure → failed (another attempt, if one is left).
+-}
+verifyStage :: DatabaseRuntime -> Engine -> Store.TransactionRow -> IO (Either T.Text TxInput)
+verifyStage runtime engine row = do
+  records <- db runtime (Right <$> Store.transactionRecords (Store.txRowId row))
+  case (records, Store.txRowCandidate row) of
+    (Left code, _) -> pure (Left code)
+    (_, Nothing) -> settle runtime row (SupervisorFailed (T.pack "candidate-commit-missing")) [] id
+    (Right rs, Just candidate) ->
+      case latestRecord (T.pack "candidate") rs >>= recordedCandidate of
+        Nothing -> settle runtime row (SupervisorFailed (T.pack "candidate-missing")) [] id
+        Just c -> do
+          ws <- workspaceAt engine row candidate []
+          case ws of
+            Left code -> settle runtime row (SupervisorFailed code) [] id
+            Right (workspace, entries)
+              | not (L.all (unchangedAtBasis entries) (candidateTests c)) ->
+                  settle runtime row (VerificationInconclusive (T.pack "protected-test-changed")) [] id
+              | otherwise -> do
+                  let
+                    commands = candidateVerification c <> fmap testArgv (candidateTests c)
+                  runs <- traverse (\argv -> fmap ((,) argv) <$> runCommand runtime engine row StageVerify (T.pack "verification") workspace argv) commands
+                  let
+                    missing = L.any (either environmentMissing (const False)) runs
+                    results = rights runs
+                    bodies = [(T.pack "verification", JObject [(T.pack "command", strings argv), (T.pack "outcome", string (outcomeName (resultOutcome r))), (T.pack "stdout_tail", string (tailOf (resultStdout r))), (T.pack "stderr_tail", string (tailOf (resultStderr r)))]) | (argv, r) <- results]
+                    summary passed = (T.pack "verification-summary", JObject [(T.pack "commit", string candidate), (T.pack "passed", JBool passed)])
+                  case () of
+                    _
+                      | missing || L.any ((== Exited 127) . resultOutcome . snd) results ->
+                          settle runtime row (VerificationInconclusive (T.pack "verification-environment-missing")) (bodies <> [summary False]) id
+                      | L.any isLeft runs || not (L.all (exited . resultOutcome . snd) results) ->
+                          settle runtime row (VerificationInconclusive (T.pack "verification-run-failed")) (bodies <> [summary False]) id
+                      | L.all ((== Exited 0) . resultOutcome . snd) results ->
+                          settle runtime row VerificationPassed (bodies <> [summary True]) id
+                      | otherwise -> settle runtime row VerificationFailed (bodies <> [summary False]) id
+ where
+  exited outcome =
+    case outcome of
+      Exited _ -> True
+      _ -> False
+
+-- Challenge after the implementation (C-P4.10-14 C1) ----------------------------------------
+
+{- | C1: the challenger again, read-only, on the exact candidate commit, given
+the Ticket, the Contract, the change (paths and their new bytes) and the
+verification results — never the Implementer's words. A finding's test is
+added by the Supervisor to a fresh copy of the candidate and run: failing
+with its signature is an observed counterexample. 'disposeFinding' decides
+(a counterexample that does not appear is DISPROVED).
+-}
+challengePostStage :: DatabaseRuntime -> Engine -> Store.TransactionRow -> IO (Either T.Text TxInput)
+challengePostStage runtime engine row = do
+  records <- db runtime (Right <$> Store.transactionRecords (Store.txRowId row))
+  ticket <- taskTexts runtime row
+  case (records, ticket, Store.txRowCandidate row, Store.txRowFreeze row) of
+    (Left code, _, _, _) -> pure (Left code)
+    (_, Left code, _, _) -> settle runtime row (SupervisorFailed code) [] id
+    (Right rs, Right (title, acceptance), Just candidate, Just _) ->
+      case latestRecord (T.pack "candidate") rs >>= recordedCandidate of
+        Nothing -> settle runtime row (SupervisorFailed (T.pack "candidate-missing")) [] id
+        Just c -> do
+          let
+            context =
+              renderJson $
+                JObject
+                  [ (T.pack "role", string (roleName Challenger))
+                  , (T.pack "stage", string (stageName StageChallengePost))
+                  , (T.pack "ticket", JObject [(T.pack "title", string title), (T.pack "what_done_looks_like", string acceptance)])
+                  , (T.pack "contract", JRaw (fromMaybe (T.pack "null") (latestRecord (T.pack "contract") rs)))
+                  , (T.pack "candidate", string candidate)
+                  , (T.pack "verification", JArray (fmap JRaw [Store.recordRowBody r | r <- rs, Store.recordRowKind r == T.pack "verification"]))
+                  , (T.pack "answer", JObject [(T.pack "file", string (T.pack "result.json")), (T.pack "kind", string (T.pack "challenge"))])
+                  ]
+          invoked <- invokeRecorded runtime engine row Challenger StageChallengePost candidate [] [] context
+          case invoked of
+            Left code -> pure (Left code)
+            Right (Left input) -> settle runtime row input [] id
+            Right (Right (AnswerChallenge ch, entries, _, _)) -> do
+              judged <- traverse (judge candidate c entries) (challengeFindings ch)
+              case sequenceA judged of
+                Left code -> settle runtime row (SupervisorFailed code) [] id
+                Right results -> settle runtime row (ChallengeDisposed (fmap fst results)) [(T.pack "post-finding", body) | (_, body) <- results] id
+            Right (Right _) -> settle runtime row (RoleFailed (T.pack "answer-invalid wrong-stage")) [] id
+    _ -> settle runtime row (SupervisorFailed (T.pack "candidate-commit-missing")) [] id
+ where
+  judge candidate c entries f = do
+    let
+      grounded = findingRequirement f `L.elem` fmap criterionId (candidateCriteria c)
+    run <-
+      case findingTest f of
+        Nothing -> pure (Right NoMutant)
+        Just (file, check)
+          | filePath file `L.elem` fmap entryPath entries || filePath file `L.elem` candidateAllowedPaths c -> pure (Right MutantOutsideScope)
+          | otherwise -> do
+              ws <- workspaceAt engine row candidate [(filePath file, TE.encodeUtf8 (fileText file))]
+              case ws of
+                Left code -> pure (Left code)
+                Right (workspace, _) -> do
+                  ran <- runCommand runtime engine row StageChallengePost (T.pack "counterexample") workspace (checkArgv check)
+                  pure $ do
+                    r <- ran
+                    Right $
+                      if reproduces check (resultOutcome r) (decodeLenient (resultStdout r)) (decodeLenient (resultStderr r))
+                        then MutantSurvived True
+                        else MutantKilled
+    pure $ do
+      r <- run
+      let
+        disposition = disposeFinding grounded r (findingHint f)
+      Right (disposition, findingJson f grounded r disposition)
+
+-- Review (C-P4.10-14 R1) ------------------------------------------------------------------------
+
+{- | R1: an independent Reviewer, read-only, on the exact candidate commit, given
+the Ticket, the Contract, the change, the verification results and every
+finding — not the Implementer's words. Its verdict decides; its words are
+recorded. It cannot change anything (read-only profile; the Supervisor
+compares nothing it could have written, because the candidate commit is
+already fixed).
+-}
+reviewStage :: DatabaseRuntime -> Engine -> Store.TransactionRow -> IO (Either T.Text TxInput)
+reviewStage runtime engine row = do
+  records <- db runtime (Right <$> Store.transactionRecords (Store.txRowId row))
+  ticket <- taskTexts runtime row
+  case (records, ticket, Store.txRowCandidate row) of
+    (Left code, _, _) -> pure (Left code)
+    (_, Left code, _) -> settle runtime row (SupervisorFailed code) [] id
+    (_, _, Nothing) -> settle runtime row (SupervisorFailed (T.pack "candidate-commit-missing")) [] id
+    (Right rs, Right (title, acceptance), Just candidate) -> do
+      let
+        kinds = fmap T.pack ["verification", "verification-summary", "finding", "post-finding"]
+        context =
+          renderJson $
+            JObject
+              [ (T.pack "role", string (roleName Reviewer))
+              , (T.pack "stage", string (stageName StageReview))
+              , (T.pack "ticket", JObject [(T.pack "title", string title), (T.pack "what_done_looks_like", string acceptance)])
+              , (T.pack "contract", JRaw (fromMaybe (T.pack "null") (latestRecord (T.pack "contract") rs)))
+              , (T.pack "candidate", string candidate)
+              , (T.pack "freeze", string (fromMaybe T.empty (Store.txRowFreeze row)))
+              , (T.pack "evidence", JArray [JObject [(T.pack "kind", string (Store.recordRowKind r)), (T.pack "body", JRaw (Store.recordRowBody r))] | r <- rs, Store.recordRowKind r `L.elem` kinds])
+              , (T.pack "answer", JObject [(T.pack "file", string (T.pack "result.json")), (T.pack "kind", string (T.pack "review"))])
+              ]
+      invoked <- invokeRecorded runtime engine row Reviewer StageReview candidate [] [] context
+      case invoked of
+        Left code -> pure (Left code)
+        Right (Left input) -> settle runtime row input [] id
+        Right (Right (AnswerReview r, _, _, invocation)) -> do
+          let
+            input =
+              case reviewVerdict r of
+                Approve -> ReviewApproved
+                Reject -> ReviewRejected
+                NeedsHuman -> ReviewNeedsHuman
+          settle runtime row input [(T.pack "review", JObject [(T.pack "commit", string candidate), (T.pack "verdict", string (verdictName (reviewVerdict r))), (T.pack "reasons", strings (reviewReasons r)), (T.pack "invocation", string invocation)])] id
+        Right (Right _) -> settle runtime row (RoleFailed (T.pack "answer-invalid wrong-stage")) [] id
+
+-- Acceptance (C-P4.10-14 A1) ------------------------------------------------------------------------
+
+{- | A1: the Supervisor accepts only the exact commit that passed verification
+and review in this attempt, with no confirmed or human-needing finding left
+for it, the Engineer still owning the repository, and the work branch still
+at the freeze commit; then it moves the branch to the candidate commit by
+compare-and-swap. Anything else halts with its reason; nothing is pushed.
+-}
+acceptStage :: DatabaseRuntime -> Store.TransactionRow -> IO (Either T.Text TxInput)
+acceptStage runtime row = do
+  records <- db runtime (Right <$> Store.transactionRecords (Store.txRowId row))
+  owned <-
+    db runtime $ do
+      facts <- Store.admissionFacts (Store.txRowWorkOrder row)
+      case facts of
+        Nothing -> pure (Left (T.pack "not-admitted"))
+        Just f -> fmap Right (ownershipHolds (Store.factRepository f) (Store.factEngineer f) (T.unpack (Store.txRowFolder row)))
+  case (records, owned, Store.txRowCandidate row, Store.txRowFreeze row, Store.txRowBranch row) of
+    (Left code, _, _, _, _) -> pure (Left code)
+    (_, Left code, _, _, _) -> pure (Left code)
+    (_, Right (Left code), _, _, _) -> settle runtime row (SupervisorFailed code) [] id
+    (Right rs, Right (Right ()), Just candidate, Just freeze, Just branch) -> do
+      let
+        verified = latestRecord (T.pack "verification-summary") rs
+        reviewed = latestRecord (T.pack "review") rs
+        passed = maybe False (\b -> T.pack "\"passed\":true" `T.isInfixOf` b && candidate `T.isInfixOf` b) verified
+        approved = maybe False (\b -> T.pack "\"verdict\":\"approve\"" `T.isInfixOf` b && candidate `T.isInfixOf` b) reviewed
+      case () of
+        _
+          | not passed -> settle runtime row (SupervisorFailed (T.pack "verification-not-passed")) [] id
+          | not approved -> settle runtime row (SupervisorFailed (T.pack "review-not-approved")) [] id
+          | otherwise -> do
+              moved <- advanceBranch (T.unpack (Store.txRowFolder row)) branch freeze candidate
+              case moved of
+                Left code -> settle runtime row (SupervisorFailed code) [] id
+                Right () ->
+                  settle
+                    runtime
+                    row
+                    CommitAccepted
+                    [(T.pack "acceptance", JObject [(T.pack "commit", string candidate), (T.pack "branch", string branch), (T.pack "from", string freeze)])]
+                    (\r -> r {Store.txRowAccepted = Just candidate})
+    _ -> settle runtime row (SupervisorFailed (T.pack "acceptance-inputs-missing")) [] id
 
 -- Halts (E3) ---------------------------------------------------------------------------
 

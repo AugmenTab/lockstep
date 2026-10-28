@@ -18,7 +18,8 @@
 | P4.5 | **VERIFIED** at checkpoint `cbd7394` (Mac and Linux); the live Claude adapter NOT_BUILT (separately authorized) | `C-P4.5` | `docs/gates/P4.5/` |
 | P4.6 | **VERIFIED** at `cbd7394` (Mac and Linux, unit 854/854, integration 500/500) | `C-P4.6` | `docs/gates/P4.6/` |
 | P4.7–P4.9 | **IMPLEMENTED** (frozen `be020cc`; targeted 10/10); full qualification at the P4.10–14 checkpoint | `C-P4.7-9` | `docs/gates/P4.7-9/` |
-| P4.9–P4.17 | blocked behind the above (P4.10 also on DG-17) | — | — |
+| P4.10–P4.14 | **IMPLEMENTED** (frozen `5fa1b15`; targeted 8/8); full qualification at the P4.7–14 checkpoint | `C-P4.10-14` | `docs/gates/P4.10-14/` |
+| P4.15–P4.17 | not started | — | — |
 
 ## Known debt, deferred by the owner (2026-10-28)
 
