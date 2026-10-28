@@ -55,7 +55,9 @@
 | Check | Result | Evidence |
 |---|---|---|
 | C-P4.5 integration group, targeted | 7 of 7 at the first implementation run; build, format, lint clean | `.local/p45-run1.log` (not committed) |
-| `scripts/check --integration` (Mac) and Linux clean clone | at the P4.6 checkpoint | — |
+| Checkpoint `cbd7394` (P4.4–P4.6): Mac `scripts/check --integration` and Linux clean clone | unit 854 of 854, integration 500 of 500 on both | `docs/gates/P4.6/check-integration-cbd7394.log`, `docs/gates/P4.6/linux-clone-cbd7394.log` |
+
+**Status: VERIFIED** at `cbd7394` (Mac and Linux).
 
 ## 4. Freeze record
 

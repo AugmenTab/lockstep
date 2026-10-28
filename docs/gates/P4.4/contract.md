@@ -46,9 +46,9 @@ touched (a *worktree* is therefore not needed: the snapshot replaces it, and not
 |---|---|---|
 | C-P4.4 integration group, targeted | 13 of 13 at the first implementation run | `.local/p44-run1.log` (not committed) |
 | `scripts/check --integration` on the Mac, `4f110cd`, clean tree | all six steps PASSED: unit 836 of 836, integration 483 of 483, backup/restore | `check-integration-4f110cd.log` |
-| Linux clean clone | at the next checkpoint (after P4.6), per the handoff's "meaningful stable checkpoints" | — |
+| Checkpoint `cbd7394` (P4.4–P4.6): Mac `scripts/check --integration` and Linux clean clone | unit 854 of 854, integration 500 of 500 on both | `docs/gates/P4.6/check-integration-cbd7394.log`, `docs/gates/P4.6/linux-clone-cbd7394.log` |
 
-**Status: IMPLEMENTED, Mac-qualified** at `4f110cd`; Linux clean clone pending at the P4.6 checkpoint.
+**Status: VERIFIED** (Mac at `4f110cd` and `cbd7394`; Linux at `cbd7394`).
 
 ## 4. Freeze record
 
