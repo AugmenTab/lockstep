@@ -5,6 +5,7 @@ folder.
 -}
 module Lockstep.Effects.ProjectFolders
   ( makeProjectFolder
+  , makeProjectFolderWith
   , removeProjectFolder
   , isProjectFolder
   , childFolders
@@ -53,7 +54,14 @@ any file, folder or link, and runs @git init -q -b main@ in it (no commit, no
 remote). Returns the folder's path, or the reason as text.
 -}
 makeProjectFolder :: FilePath -> [T.Text] -> IO (Either T.Text FilePath)
-makeProjectFolder root candidates =
+makeProjectFolder =
+  makeProjectFolderWith (const (pure ()))
+
+{- | Test-only (C-C.R1 §3d): 'makeProjectFolder' with a hook run once @git init@
+has succeeded, with the directory it ran in. The service never calls it.
+-}
+makeProjectFolderWith :: (FilePath -> IO ()) -> FilePath -> [T.Text] -> IO (Either T.Text FilePath)
+makeProjectFolderWith afterInit root candidates =
   case candidates of
     [] -> pure (Left (T.pack "no free folder name"))
     name : rest -> do
@@ -63,7 +71,7 @@ makeProjectFolder root candidates =
       -- A dangling symbolic link does not "exist" but still takes the name.
       link <- fromRight False <$> tryIO (pathIsSymbolicLink path)
       if present || link
-        then makeProjectFolder root rest
+        then makeProjectFolderWith afterInit root rest
         else do
           made <- tryIO (createDirectory path)
           case made of
@@ -71,6 +79,7 @@ makeProjectFolder root candidates =
             Right () -> do
               initialized <- initialize path
               when (isLeft initialized) (removeProjectFolder path)
+              when (isRight initialized) (afterInit path)
               pure initialized
 
 {- | Removes a folder 'makeProjectFolder' made for an attempt that did not end
