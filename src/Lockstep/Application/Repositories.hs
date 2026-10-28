@@ -12,6 +12,9 @@ module Lockstep.Application.Repositories
   , addEngineer
   , addEngineerIn
   , Observed
+  , observedIdentity
+  , activePhysicalKeys
+  , physicalKey
   , observeRegistration
   , registerRepository
   , registerObservedIn
@@ -157,6 +160,16 @@ addEngineerIn engineerId@(EngineerId uuid) name = do
 -- | A folder as Git showed it, read-only, before any registration transaction.
 data Observed
   = Observed FilePath (Maybe T.Text) RepositoryId (Either RegistrationRefusal RepositoryObservation)
+
+-- | The physical identity of the Git common directory the observation saw, if it succeeded (C-C.R1 R5-2).
+observedIdentity :: Observed -> Maybe PhysicalId
+observedIdentity (Observed _ _ _ observed) =
+  either (const Nothing) (Just . observedPhysical) observed
+
+-- | The physical identities of every active repository registration, as stored (C-C.R1 R5-1).
+activePhysicalKeys :: O.Orville [T.Text]
+activePhysicalKeys =
+  fmap Store.rowPhysicalId <$> Store.activeRepositories
 
 -- | The read-only C-P2.1 observation of a folder (and the remote chosen, if any).
 observeRegistration :: FilePath -> Maybe T.Text -> IO Observed
