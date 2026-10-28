@@ -113,7 +113,9 @@ Changed: `src/Lockstep/Application/Ledger.hs` (`createWorkOrderIn`, the body of 
 the caller's transaction; `createWorkOrder` unchanged in behaviour), `src/Lockstep/Application/Repositories.hs`
 (`ownershipHolds`, read-only), `src/Lockstep/Persistence/Migrations.hs` (append 18),
 `src/Lockstep/Web/App.hs` and `src/Lockstep/Web/TaskPages.hs` (the sections and two routes),
-`static/lockstep.css` if needed, `lockstep.cabal` (generated), the two runners (additive),
+`static/lockstep.css` if needed, `static/app.js` (its form-action allowlist gains the two new
+addresses; added during implementation, see §3a), `src/Lockstep/Application/Tasks.hs` (`findTaskIn`, the
+task view inside the caller's transaction; added during implementation), `lockstep.cabal` (generated), the two runners (additive),
 `docs/gates/P4.1/**`, `docs/gates/C-EXEC/phase-report.md`, `docs/OPERATOR_GUIDE.md`.
 
 ## 6. Budget, stop, rollback

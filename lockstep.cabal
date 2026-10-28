@@ -118,6 +118,7 @@ library
       Lockstep.Web.Components.Page404
       Lockstep.Web.Control
       Lockstep.Web.DecisionPages
+      Lockstep.Web.ExecutionPages
       Lockstep.Web.Fragment
       Lockstep.Web.Handler.NoPermissionError
       Lockstep.Web.Handler.NoUser

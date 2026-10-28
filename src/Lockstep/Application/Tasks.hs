@@ -16,6 +16,7 @@ module Lockstep.Application.Tasks
   , listTasks
   , listAllTasks
   , findTask
+  , findTaskIn
   , mostImportantReadyTask
   ) where
 
@@ -308,6 +309,11 @@ findTask runtime rawId =
         case found of
           Nothing -> pure Nothing
           Just row -> either (const Nothing) Just <$> loadView row
+
+-- | A task as it stands, inside the caller's transaction (C-P4.1 X6); a Ticket that does not replay is its code.
+findTaskIn :: T.Text -> O.Orville (Maybe (Either T.Text TaskView))
+findTaskIn tid =
+  Store.findTaskRow tid >>= traverse loadView
 
 -- | The SHA-256 of a canonical request text, as 64 lowercase hex.
 sha256Text :: T.Text -> T.Text

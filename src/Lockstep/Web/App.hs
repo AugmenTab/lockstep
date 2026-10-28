@@ -40,9 +40,10 @@ import Lockstep.Application.Activity (readActivity)
 import Lockstep.Application.Command (WorkspaceState (..), generateIdempotencyKey, idempotencyKeyText, mkIdempotencyKey, readWorkspace)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason (..), Readiness (..), checkReadiness, revisionNumber)
 import Lockstep.Application.Decisions (DecisionReceipt (..), OpenDecision (..), applyDecision, decidedReceipt, findDecision, listDecisions)
+import Lockstep.Application.Execution (Admission (..), admitBug, enableExecution, executionStatus, findAdmission)
 import Lockstep.Application.LedgerView (EffectLine (..), LedgerProjection (..), OrderLine (..), projectLedger)
 import Lockstep.Application.OperatorTrust (Session (..), exchangeSignIn, lookupSession, revokeSession)
-import Lockstep.Application.ProjectChecks (ChecksOutcome (..), ExpectedChecks (..), ProjectChecks, chooseChecksExpecting, projectChecks)
+import Lockstep.Application.ProjectChecks (ChecksOutcome (..), ExpectedChecks (..), ProjectChecks (..), QueueEntry (..), chooseChecksExpecting, projectChecks)
 import Lockstep.Application.Projects
   ( NewProject (..)
   , ProjectFolders (..)
@@ -70,6 +71,7 @@ import Lockstep.Foundation.OperatorToken (decodeToken, encodeToken)
 import Lockstep.Kernel.Decision (DecisionRequest (..), decisionRefusalWords)
 import Lockstep.Kernel.Effect (OperationId (..))
 import Lockstep.Kernel.EffectView (EffectStatus (..))
+import Lockstep.Kernel.Execution (executionRefusalWords)
 import Lockstep.Kernel.Identity (WorkOrderId (..), parseUuid)
 import Lockstep.Kernel.Policy (checksRefusalWords, lossWords)
 import Lockstep.Kernel.Project (SetupState (..), parseFolderChoice, refusalWords, setupStateCode)
@@ -77,6 +79,7 @@ import Lockstep.Kernel.Task (parsePriority, taskRefusalWords)
 import Lockstep.Web.ActivityPage (activityPage)
 import Lockstep.Web.ChecksPages (checksPage, choiceLosses, projectChecksSection)
 import Lockstep.Web.DecisionPages (decisionPage, decisionsOverview, donePage)
+import Lockstep.Web.ExecutionPages (projectExecutionSection, taskFixingSection)
 import Lockstep.Web.Fragment (attr, cls, fragment, href)
 import Lockstep.Web.RequestGuard (RouteClass (..))
 import Lockstep.Web.SecureResponse (errorJson, htmlResponse, jsonResponse, jsonString, readBodyLimited, respondWith)
@@ -123,6 +126,8 @@ data AppRoute
   | ChooseChecksRoute T.Text
   | DecisionFragment T.Text
   | DecideRoute T.Text
+  | EnableExecutionRoute T.Text
+  | AdmitBugRoute T.Text
   | ExchangeSession
   | SignOut
 
@@ -158,6 +163,8 @@ matchAppRoute method path =
       ["app", "api", "projects", pid, "tasks"] | post, validId pid -> Just (CreateTaskRoute pid)
       ["app", "api", "tasks", tid, "edit"] | post, validId tid -> Just (EditTaskRoute tid)
       ["app", "api", "tasks", tid, "decide"] | post, validId tid -> Just (DecideTaskRoute tid)
+      ["app", "api", "projects", pid, "execution"] | post, validId pid -> Just (EnableExecutionRoute pid)
+      ["app", "api", "tasks", tid, "bug"] | post, validId tid -> Just (AdmitBugRoute tid)
       ["app", "api", "session"] | post -> Just ExchangeSession
       ["app", "api", "sign-out"] | post -> Just SignOut
       ["app", "api", "projects"] | post -> Just CreateProject
@@ -403,6 +410,51 @@ handleWithDatabase db route request =
                       else ""
                 checksAnswer db pid before (Just (checksRefusalWords code <> lost))
           (Right (Just before), _, _) -> checksAnswer db pid before (Just "Lockstep could not read this form. Try again.")
+    EnableExecutionRoute pid ->
+      withForm $ \fields -> do
+        let
+          value name = TE.decodeUtf8With TEE.lenientDecode <$> L.lookup name fields
+          -- C-C.R1 R10, as for the checks form: with expected_set the value is taken literally.
+          expectation =
+            case (value "expected", value "expected_set") of
+              (Just e, Just "yes") -> Just (ExpectProfile e)
+              (Just _, Just "no") -> Just ExpectNothing
+              _ -> Nothing
+          key = value "key" >>= either (const Nothing) Just . mkIdempotencyKey
+        found <- findProject db pid
+        case (found, key, expectation) of
+          (Left _, _, _) -> pure notReady
+          (Right Nothing, _, _) -> pure (errorJson HTTP.status404 "not-found")
+          (Right (Just view), Just k, Just expected) -> do
+            folders <- projectFoldersFromEnvironment
+            enabled <- enableExecution db folders k pid expected
+            case enabled of
+              Left _ -> pure notReady
+              Right (Right _) -> projectAnswer db view Nothing
+              Right (Left code) -> projectAnswer db view (Just (executionRefusalWords code))
+          (Right (Just view), _, _) -> projectAnswer db view (Just "Lockstep could not read this form. Try again.")
+    AdmitBugRoute tid ->
+      withForm $ \fields -> do
+        let
+          value name = TE.decodeUtf8With TEE.lenientDecode <$> L.lookup name fields
+          revision = value "ticket_revision" >>= decimalUpTo integerMax
+          key = value "key" >>= either (const Nothing) Just . mkIdempotencyKey
+        found <- findTask db tid
+        case (found, key, revision) of
+          (Left _, _, _) -> pure notReady
+          (Right Nothing, _, _) -> pure (errorJson HTTP.status404 "not-found")
+          (Right (Just task), Just k, Just r) -> do
+            folders <- projectFoldersFromEnvironment
+            admitted <- admitBug db folders k tid r
+            case admitted of
+              Left _ -> pure notReady
+              Right (Right _) -> do
+                latest <- findTask db tid
+                taskAnswer db (either (const task) (fromMaybe task) latest) Nothing
+              Right (Left code) -> do
+                latest <- findTask db tid
+                taskAnswer db (either (const task) (fromMaybe task) latest) (Just (executionRefusalWords code))
+          (Right (Just task), _, _) -> taskAnswer db task (Just "Lockstep could not read this form. Try again.")
     DecisionFragment did ->
       withSession $ \_ _ -> decisionAnswer db did Nothing
     DecideRoute did ->
@@ -513,9 +565,21 @@ taskAnswer :: DatabaseRuntime -> TaskView -> Maybe T.Text -> IO Wai.Response
 taskAnswer db task notice = do
   project <- findProject db (taskProject task)
   siblings <- fromRight [] <$> listTasks db (taskProject task)
+  folders <- projectFoldersFromEnvironment
+  status <- fromRight Nothing <$> executionStatus db folders (taskProject task)
+  admission <- fromRight Nothing <$> findAdmission db (taskId task)
+  standing <-
+    case admission of
+      Nothing -> pure Nothing
+      Just a -> do
+        checks <- projectChecks db (taskProject task)
+        pure $ case checks of
+          Right (Just pc) -> either (const Nothing) (fmap entryStanding . L.find ((== admissionWorkOrder a) . entryOrder)) (checksQueue pc)
+          _ -> Nothing
+  key <- idempotencyKeyText <$> generateIdempotencyKey
   case project of
     Right (Just p) ->
-      pure (respondWith HTTP.status200 [(HTTP.hContentType, "text/html; charset=utf-8"), ("X-Lockstep-Path", TE.encodeUtf8 ("/app/tasks/" <> taskId task))] (taskPage p siblings task notice))
+      pure (respondWith HTTP.status200 [(HTTP.hContentType, "text/html; charset=utf-8"), ("X-Lockstep-Path", TE.encodeUtf8 ("/app/tasks/" <> taskId task))] (taskPage p siblings task (taskFixingSection task status admission standing key) notice))
     Right Nothing -> pure (errorJson HTTP.status404 "not-found")
     Left _ -> pure notReady
 
@@ -693,6 +757,8 @@ projectPage db view notice = do
   offered <- offeredFolders db folders
   tasks <- fromRight [] <$> listTasks db (projectId view)
   checks <- projectChecks db (projectId view)
+  execution <- fromRight Nothing <$> executionStatus db folders (projectId view)
+  executionKey <- idempotencyKeyText <$> generateIdempotencyKey
   let
     status =
       case projectSetup view of
@@ -749,6 +815,7 @@ projectPage db view notice = do
          ]
       <> projectTasks view tasks
       <> either (const []) (maybe [] projectChecksSection) checks
+      <> projectExecutionSection view execution executionKey
       <> [E.h2 [] [E.text "Its folder"]]
       <> status
       <> [ E.details

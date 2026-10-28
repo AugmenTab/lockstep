@@ -17,6 +17,7 @@ module Lockstep.Application.Repositories
   , registerRepository
   , registerObservedIn
   , listRepositories
+  , ownershipHolds
   ) where
 
 import Control.Exception (throwIO)
@@ -44,6 +45,7 @@ import Lockstep.Application.Database
   )
 import Lockstep.Application.Identity (newEngineerId, newRepositoryId)
 import Lockstep.Effects.Git (observeRepository)
+import Lockstep.Effects.ProjectFolders (gitIdentity)
 import Lockstep.Kernel.Identity (EngineerId (..), RepositoryId (..), parseUuid, uuidText)
 import Lockstep.Kernel.Repository
   ( AuthoritativeRemote (..)
@@ -229,6 +231,25 @@ registerObservedIn engineerName (Observed path remote repositoryId@(RepositoryId
 listRepositories :: DatabaseRuntime -> IO (Either NotReadyReason [RepositoryRecord])
 listRepositories runtime =
   whenReady runtime (withDatabase runtime (fmap (fmap recordFromRow) Store.activeRepositories))
+
+{- | C-P4.1 X5, read-only, inside the caller's transaction: the Engineer owns
+exactly one active repository, it is this one, and the physical identity of
+@<folder>/.git@ read now is the registered one. @ownership-invalid@ or
+@repository-changed@ otherwise.
+-}
+ownershipHolds :: T.Text -> T.Text -> FilePath -> O.Orville (Either T.Text ())
+ownershipHolds repositoryId engineer folder = do
+  rows <- Store.activeRepositories
+  current <- liftIO (gitIdentity folder)
+  let
+    owned = [r | r <- rows, Store.rowOwnerName r == engineer]
+  pure $
+    case owned of
+      [row]
+        | Store.rowRepositoryId row /= repositoryId -> Left (T.pack "ownership-invalid")
+        | fmap physicalKey current /= Just (Store.rowPhysicalId row) -> Left (T.pack "repository-changed")
+        | otherwise -> Right ()
+      _ -> Left (T.pack "ownership-invalid")
 
 rowFor :: T.Text -> T.Text -> RepositoryObservation -> T.Text -> Store.RepositoryRow
 rowFor repositoryId ownerId observation ownerName =

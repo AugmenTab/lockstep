@@ -155,8 +155,9 @@ actions task =
       "done" -> []
       _ -> [block, cancel]
 
-taskPage :: ProjectView -> [TaskView] -> TaskView -> Maybe T.Text -> LBS.ByteString
-taskPage project siblings task notice =
+-- | One task's page; @fixing@ is the C-P4.1 Fixing it section (empty when the project does not allow it).
+taskPage :: ProjectView -> [TaskView] -> TaskView -> [E.ChildHTML E.Division E.Body] -> Maybe T.Text -> LBS.ByteString
+taskPage project siblings task fixing notice =
   let
     others = [t | t <- siblings, taskId t /= taskId task]
     priority = priorityOf (taskPriority task)
@@ -170,7 +171,9 @@ taskPage project siblings task notice =
         <> notices notice
         <> [ E.p [cls (readinessClass (taskReadinessOf task))] [E.text (readinessWords (taskReadinessOf task))]
            , E.p [cls "ls-muted"] [E.text "Lockstep keeps track of this task. Nothing runs it yet; that arrives in a later update of Lockstep."]
-           , E.h2 [] [E.text "What done looks like"]
+           ]
+        <> fixing
+        <> [ E.h2 [] [E.text "What done looks like"]
            , if T.null (taskAcceptance task)
                then E.p [cls "ls-muted"] [E.text "Not written down yet."]
                else E.p [cls "ls-outcome"] [E.text (taskAcceptance task)]
