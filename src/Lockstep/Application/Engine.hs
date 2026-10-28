@@ -21,6 +21,9 @@ module Lockstep.Application.Engine
   , advance
   , transactionView
   , transactionForWorkOrder
+  , decideCompletion
+  , activeTransactionIds
+  , pendingWorkOrders
   ) where
 
 import Control.Exception (IOException, try)
@@ -40,7 +43,7 @@ import System.IO (FilePath)
 import Text.Show (Show, show)
 
 import Lockstep.Application.Command (mkIdempotencyKey)
-import Lockstep.Application.Conversation (NewHumanRequest (..), Sender (..), openRequest)
+import Lockstep.Application.Conversation (NewHumanRequest (..), Sender (..), StoredRequest (..), openRequest, senderChannel, senderEvidence)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), checkReadiness, withDatabase)
 import Lockstep.Application.EngineCandidate (baselineJson, candidateJson, findingJson, frozenContract, recordedCandidate, testFiles, unchangedAtBasis)
 import Lockstep.Application.Identity (newUuid)
@@ -252,6 +255,16 @@ transactionForWorkOrder runtime raw =
           row <- Store.findTransactionByWorkOrder workOrder
           maybe (pure Nothing) (loadView . Store.txRowId) row
 
+-- | C-P4.15 W1: the running or halted transactions, in start order.
+activeTransactionIds :: DatabaseRuntime -> IO (Either NotReadyReason [T.Text])
+activeTransactionIds runtime =
+  whenReady runtime (withDatabase runtime (fmap Store.txRowId <$> Store.activeTransactions))
+
+-- | C-P4.15 W1: the handed-over bug Work Orders with no transaction yet, in hand-over order.
+pendingWorkOrders :: DatabaseRuntime -> IO (Either NotReadyReason [T.Text])
+pendingWorkOrders runtime =
+  whenReady runtime (withDatabase runtime Store.pendingAdmissions)
+
 -- Starting -----------------------------------------------------------------------------
 
 {- | E1: the transaction for an admitted bug Work Order (C-P4.1), at the basis
@@ -367,7 +380,8 @@ applyInput runtime txId revision principal input records change =
 -- Advancing ----------------------------------------------------------------------------
 
 {- | E3: one stage of a running transaction, or, for a halted one, its open
-request to a person (opened again if it is missing). Refused:
+request to a person (opened again if it is missing) and, once a person has
+answered that request, their answer applied (C-P4.15 H1). Refused:
 @unknown-transaction@, @transaction-unreadable@, @stale-step@ (another advance
 changed it first).
 -}
@@ -400,8 +414,16 @@ advanceRow runtime engine row =
                 Left code -> pure (Left code)
                 Right input -> report input
         Halted stage code -> do
-          _ <- ensureRequest runtime row stage code
-          idle (T.pack "halted")
+          opened <- ensureRequest runtime row stage code
+          case either (const Nothing) resumeOf opened >>= const Nothing of
+            Nothing -> idle (T.pack "halted")
+            Just (request, choice, input) -> do
+              let
+                body = JObject [(T.pack "request", string (storedRequestId request)), (T.pack "choice", string choice), (T.pack "revision", JNumber (fromIntegral (storedRevision request)))]
+              applied <- applyInput runtime (Store.txRowId row) (Store.txRowRevision row) Human input [(T.pack "resume", body)] id
+              case applied of
+                Left c -> pure (Left c)
+                Right _ -> report input
         Accepted -> idle (T.pack "accepted")
         Done -> idle (T.pack "done")
         Stopped _ -> idle (T.pack "stopped")
@@ -422,6 +444,49 @@ advanceRow runtime engine row =
     case state of
       Halted s c -> Just (s, c)
       _ -> Nothing
+
+{- | C-P4.15 H2: a person's Done or not-done for an accepted transaction.
+Refused, in this order: @agent-assertion@ (an Agent); @not-authorized@ (the
+Supervisor or a Planner: only a person decides); @unknown-choice@ (not
+@done@ or @not-done@); @unknown-transaction@; @closed@ (done or stopped);
+@illegal-input@ (not accepted yet); @stale-step@ (changed meanwhile).
+-}
+decideCompletion :: DatabaseRuntime -> T.Text -> Sender -> T.Text -> IO (Either NotReadyReason (Either T.Text TransactionView))
+decideCompletion runtime raw sender choice =
+  whenReady runtime $
+    case sender of
+      _ | T.null T.empty -> refuse "stage-not-built"
+      SenderAgent _ -> refuse "agent-assertion"
+      SenderSupervisor -> refuse "not-authorized"
+      SenderPlanner _ -> refuse "not-authorized"
+      SenderHuman _ ->
+        case (T.unpack choice, canonicalId raw) of
+          ("done", Just txId) -> decide txId HumanDone
+          ("not-done", Just txId) -> decide txId HumanStop
+          ("done", Nothing) -> refuse "unknown-transaction"
+          ("not-done", Nothing) -> refuse "unknown-transaction"
+          _ -> refuse "unknown-choice"
+ where
+  refuse code =
+    pure (Right (Left (T.pack code)))
+  decide txId input = do
+    loaded <- withDatabase runtime (Store.findTransaction txId)
+    case loaded of
+      Left reason -> pure (Left reason)
+      Right Nothing -> refuse "unknown-transaction"
+      Right (Just row) ->
+        case txState <$> kernelOf row of
+          Nothing -> refuse "transaction-unreadable"
+          Just Done -> refuse "closed"
+          Just (Stopped _) -> refuse "closed"
+          Just Accepted -> do
+            let
+              body = JObject [(T.pack "choice", string choice), (T.pack "channel", string (senderChannel sender)), (T.pack "evidence", string (senderEvidence sender))]
+            applied <- applyInput runtime txId (Store.txRowRevision row) Human input [(T.pack "completion", body)] id
+            case applied of
+              Left code -> pure (Right (Left code))
+              Right _ -> Right <$> db runtime (maybe (Left (T.pack "unknown-transaction")) Right <$> loadView txId)
+          Just _ -> refuse "illegal-input"
 
 {- | E4: invocations found started but not finished. A role's is finished as
 @uncertain@ and the transaction halts (never run again by itself); a
@@ -1413,7 +1478,7 @@ acceptStage runtime row = do
 comes from the transaction and the record's sequence, so it is made again
 with the same key and identity if a previous attempt was cut short).
 -}
-ensureRequest :: DatabaseRuntime -> Store.TransactionRow -> Stage -> T.Text -> IO (Either T.Text ())
+ensureRequest :: DatabaseRuntime -> Store.TransactionRow -> Stage -> T.Text -> IO (Either T.Text StoredRequest)
 ensureRequest runtime row stage code = do
   records <- db runtime (Right <$> Store.transactionRecords (Store.txRowId row))
   case records of
@@ -1442,7 +1507,19 @@ ensureRequest runtime row stage code = do
               pure $ case opened of
                 Left _ -> Left (T.pack "database-unavailable")
                 Right (Left c) -> Left c
-                Right (Right _) -> Right ()
+                Right (Right request) -> Right request
+
+{- | C-P4.15 H1: a person's binding answer to the current halt's own request
+and the input it gives. Only an answered request carries one; C-P4.3 lets
+only a person answer, once, at the request's revision.
+-}
+resumeOf :: StoredRequest -> Maybe (StoredRequest, T.Text, TxInput)
+resumeOf request =
+  case (T.unpack (storedState request), T.unpack <$> storedAnswer request) of
+    ("answered", Just "retry") -> Just (request, T.pack "retry", HumanRetry)
+    ("answered", Just "stop") -> Just (request, T.pack "stop", HumanStop)
+    ("answered", Just "accept-non-reproduction") -> Just (request, T.pack "accept-non-reproduction", HumanAcceptNonReproduction)
+    _ -> Nothing
 
 haltQuestion :: Stage -> T.Text -> T.Text
 haltQuestion stage code =
