@@ -38,6 +38,7 @@ import Lockstep.Kernel.EffectTest qualified as EffectTest
 import Lockstep.Kernel.EffectViewTest qualified as EffectViewTest
 import Lockstep.Kernel.EventCodecTest qualified as EventCodecTest
 import Lockstep.Kernel.ExecutionTest qualified as KernelExecutionTest
+import Lockstep.Kernel.GitBasisTest qualified as GitBasisTest
 import Lockstep.Kernel.IdentityTest qualified as IdentityTest
 import Lockstep.Kernel.LifecyclePropertyTest qualified as LifecyclePropertyTest
 import Lockstep.Kernel.PolicyTest qualified as PolicyTest
@@ -141,4 +142,5 @@ main =
       , ConversationTest.tests
       , RunnerTest.tests
       , RunnerProtocolTest.tests
+      , GitBasisTest.tests
       ]
