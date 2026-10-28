@@ -1,0 +1,33 @@
+lockstep-0.2.0.0: unregistering (components added: test:lockstep-integration)
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+[2 of 2] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep/lockstep [Library changed]
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[ 6 of 75] Compiling Lockstep.RolesTest [Source file changed]
+[75 of 75] Compiling Main [Lockstep.RolesTest changed]
+[76 of 76] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-integration/lockstep-integration [Objects changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-6ggF0AiJnRUCIB81Gsi4xx
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-integration, args: -p C-P4.5)
+
+lockstep-integration
+  C-P4.5 role invocation (scripted adapter, direct runner, real processes)
+    an honest role answers through result.json and its context is given to it: OK (0.03s)
+    a missing, linked, oversized or malformed answer is a typed failure:       OK (0.09s)
+    crash, provider refusal, timeout and flood are each typed:                 OK (3.18s)
+    a cancelled role is role-cancelled:                                        OK (0.56s)
+    the Implementer changes its own tree; its answer is only in the output:    OK (0.03s)
+    an answer that would widen anything is refused; its words are only text:   OK (0.02s)
+    a runner without a result is an uncertain outcome; a refusal is a failure: OK
+
+All 7 tests passed (3.91s)
+
+
+
+lockstep> Test suite lockstep-integration passed
+Completed 2 action(s).

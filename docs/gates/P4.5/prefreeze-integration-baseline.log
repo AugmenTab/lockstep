@@ -1,0 +1,55 @@
+lockstep> test (suite: lockstep-integration, args: -p C-P4.5)
+
+lockstep-integration
+  C-P4.5 role invocation (scripted adapter, direct runner, real processes)
+    an honest role answers through result.json and its context is given to it: FAIL
+      test/integration/Lockstep/RolesTest.hs:97:
+      not answered: RoleFailed "not-implemented" Nothing
+      Use -p '/C-P4.5/&&/an honest role answers through result.json and its context is given to it/' to rerun this test only.
+    a missing, linked, oversized or malformed answer is a typed failure:       FAIL
+      test/integration/Lockstep/RolesTest.hs:107:
+      expected: "output-missing"
+       but got: "not-implemented"
+      Use -p '/C-P4.5/&&/a missing, linked, oversized or malformed answer is a typed failure/' to rerun this test only.
+    crash, provider refusal, timeout and flood are each typed:                 FAIL
+      test/integration/Lockstep/RolesTest.hs:128:
+      expected: "role-crashed"
+       but got: "not-implemented"
+      Use -p '/C-P4.5/&&/crash, provider refusal, timeout and flood are each typed/' to rerun this test only.
+    a cancelled role is role-cancelled:                                        FAIL (0.50s)
+      test/integration/Lockstep/RolesTest.hs:147:
+      expected: "role-cancelled"
+       but got: "not-implemented"
+      Use -p '/C-P4.5/&&/a cancelled role is role-cancelled/' to rerun this test only.
+    the Implementer changes its own tree; its answer is only in the output:    FAIL
+      test/integration/Lockstep/RolesTest.hs:167:
+      expected: "answered"
+       but got: "not-implemented"
+      Use -p '/C-P4.5/&&/the Implementer changes its own tree; its answer is only in the output/' to rerun this test only.
+    an answer that would widen anything is refused; its words are only text:   FAIL
+      test/integration/Lockstep/RolesTest.hs:191:
+      expected: "answer-invalid paths-invalid"
+       but got: "not-implemented"
+      Use -p '/C-P4.5/&&/an answer that would widen anything is refused; its words are only text/' to rerun this test only.
+    a runner without a result is an uncertain outcome; a refusal is a failure: FAIL
+      test/integration/Lockstep/RolesTest.hs:201:
+      expected: "uncertain helper-no-result"
+       but got: "not-implemented"
+      Use -p '/C-P4.5/&&/a runner without a result is an uncertain outcome; a refusal is a failure/' to rerun this test only.
+
+7 out of 7 tests failed (0.51s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

@@ -64,6 +64,7 @@ import Lockstep.RemediationReviewTest qualified as RemediationReviewTest
 import Lockstep.RemediationTest qualified as RemediationTest
 import Lockstep.RemediationThirdReviewTest qualified as RemediationThirdReviewTest
 import Lockstep.RepositoryOwnershipTest qualified as RepositoryOwnershipTest
+import Lockstep.RolesTest qualified as RolesTest
 import Lockstep.ServiceDbTest qualified as ServiceDbTest
 import Lockstep.TasksBrowserTest qualified as TasksBrowserTest
 import Lockstep.TasksPageTest qualified as TasksPageTest
@@ -137,4 +138,5 @@ main =
       , ProcessRunnerTest.tests
       , HelperRunnerTest.tests
       , GitSupervisorTest.tests
+      , RolesTest.tests
       ]
