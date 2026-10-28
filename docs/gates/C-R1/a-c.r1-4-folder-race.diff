@@ -1,0 +1,35 @@
+diff --git a/test/integration/Lockstep/GateCRemediationFolderRaceTest.hs b/.local/amend-c-r1-4/GateCRemediationFolderRaceTest.hs
+index 15152ac..2750813 100644
+--- a/test/integration/Lockstep/GateCRemediationFolderRaceTest.hs
++++ b/.local/amend-c-r1-4/GateCRemediationFolderRaceTest.hs
+@@ -15,7 +15,7 @@ import Control.Exception (SomeException, throwIO, try)
+ import Data.List qualified as L
+ import Data.Text qualified as T
+ import Flipstone.Prelude
+-import System.Directory (createDirectory, doesDirectoryExist)
++import System.Directory (createDirectory, doesDirectoryExist, removeDirectoryRecursive)
+ import System.IO (FilePath)
+ import System.IO.Error (userError)
+ import System.IO.Temp (withSystemTempDirectory)
+@@ -114,7 +114,7 @@ tests =
+           recorded sc b >>= (@?= Just (Connected, Just (T.pack folder)))
+           kept <- doesDirectoryExist folder
+           assertBool "the folder another project is connected to was removed" kept
+-    , testCase "an attempt waits with a folder another attempt made and then removed; it is not recorded as connected to a missing folder" $
++    , testCase "an attempt waits with a folder another attempt made, kept, and someone then removed; it is not recorded as connected to a missing folder" $
+         withScenario $ \sc -> do
+           a <- made sc "a" "Garden"
+           b <- made sc "b" "Orchard"
+@@ -130,8 +130,10 @@ tests =
+               throwIO (userError "injected: the first attempt is interrupted before its transaction")
+           ra <- try (connectProjectAround interruptA noProjectFaults (scRuntime sc) (rootFolders sc) (projectId a) 1 NewFolder) :: IO (Either SomeException Outcome)
+           assertBool ("the interrupted attempt connected: " <> show (fmap (fmap (fmap projectId)) ra)) (either (const True) (either (const True) (const False)) ra)
+-          gone <- not <$> doesDirectoryExist (scRoot sc <> "/garden")
+-          assertBool "the first attempt's own folder was not removed" gone
++          kept <- doesDirectoryExist (scRoot sc <> "/garden/.git")
++          assertBool "the first attempt's published folder was removed" kept
++          -- C-C.R1 R6-1: Lockstep keeps it; someone else removes it while the second attempt waits.
++          removeDirectoryRecursive (scRoot sc <> "/garden")
+           putMVar resume ()
+           box <- takeMVar second
+           rb <- await "the second attempt" box

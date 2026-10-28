@@ -1,0 +1,83 @@
+lockstep-0.2.0.0: unregistering (local file changes:
+test/integration/Lockstep/GateCRemediationAddendumTest.hs
+test/integration/Lockstep/GateCRemediat...)
+lockstep> configure (lib + test)
+Configuring lockstep-0.2.0.0...
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[14 of 67] Compiling Lockstep.GateCRemediationFolderRaceTest [Source file changed]
+[15 of 67] Compiling Lockstep.GateCRemediationAddendumTest [Source file changed]
+[26 of 67] Compiling Lockstep.GateCRemediationTest [Source file changed]
+[67 of 67] Compiling Main [Lockstep.GateCRemediationAddendumTest changed]
+[68 of 68] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-integration/lockstep-integration [Objects changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-6ggF0AiJnRUCIB81Gsi4xx
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-integration, args: -p /C-C.R1/)
+
+lockstep-integration
+  Gate C review remediation (C-C.R1; real PostgreSQL)
+    decisions serialized per key (R1)
+      two answers with one key at once: the first is applied, the other is a key conflict and never reaches the work:                                    OK (2.43s)
+      the same answer sent twice at once: applied once, the second is the first's receipt:                                                               OK (2.46s)
+      a key whose lock is held elsewhere is refused as busy after the bound, and nothing is recorded:                                                    OK (5.38s)
+      the lock's connection lost while the work changes: no receipt is made up, and the key is never replayed:                                           OK (1.95s)
+      attempt markers cannot be changed or deleted:                                                                                                      OK (0.46s)
+      a marker left by another answer with the same key is a key conflict, and nothing runs:                                                             OK (0.38s)
+    expected values outside the stored range are refused before any receipt (R3):                                                                        OK (0.35s)
+    a receipt is current only while nothing else changed its work (R4):                                                                                  OK (0.32s)
+    project connection serialized per project (R5)
+      two connects of one project at once: one Engineer, one registration, one folder:                                                                   OK (2.33s)
+      a failure at the Engineer, the registration or the project write leaves no Engineer, registration or project change, and keeps the folder it made: OK (1.01s)
+    tasks (R3, R7, R9)
+      a task decision waits for the task lock:                                                                                                           OK (1.78s)
+      a decision on a task whose title changed since is stale; one outside the stored range is refused and recorded nowhere:                             OK (0.29s)
+      a creation key used in another project is a key conflict and shows nothing of that project:                                                        OK (0.27s)
+    a Profile called none is a choice like any other, and the old form value fails closed (R10):                                                         OK (0.16s)
+  Gate C review remediation over HTTP (C-C.R1)
+    out-of-range or non-decimal expected values are a form error and record nothing (R3):                                                                OK (3.45s)
+    out-of-range task and project revisions are a form error and change nothing (R3):                                                                    OK (1.25s)
+    a closed decision that changed elsewhere does not show the earlier answer as how it stands (R4):                                                     OK (1.61s)
+    a title made to look like markup stays text inside the attribute (R8):                                                                               OK (0.98s)
+    the checks form says whether anything is chosen, apart from the chosen ID (R10):                                                                     OK (0.83s)
+  Gate C review remediation on the host (C-C.R1 R6, R12)
+    scripts/service mounts a listed folder only when its real path is the listed path (R6):                                                              OK (0.01s)
+    setup-path names another lockstep found first on PATH, and leaves it alone (R12):                                                                    OK (0.01s)
+  attribute escaping in a real browser (C-C.R1 R8)
+    a task titled like markup: no injected attribute, and the title field holds the exact text:                                                          OK (2.26s)
+  Gate C remediation addendum (C-C.R1 §3b; real PostgreSQL)
+    a connected project's folder is never removed (Review 3 findings 3, 4)
+      an interruption right after the commit leaves the connected project and its new folder:                                                            OK (0.15s)
+      a COMMIT whose answer was lost leaves the connected project and its new folder, and nothing else is touched:                                       OK (0.17s)
+      a failed attempt keeps the folder it made and records nothing (R6-1):                                                                              OK (0.32s)
+    rows made before migration 17 replay only when the request is shown equal (A-C.R1-1)
+      a project without a creation digest:                                                                                                               OK (0.35s)
+      a task without a creation digest, before and after an edit:                                                                                        OK (0.27s)
+  Gate C remediation second addendum (C-C.R1 §3c; real PostgreSQL)
+    another project connects the folder an attempt made; the attempt fails, and the folder stays with the connected project:                             OK (0.18s)
+    an attempt waits with a folder another attempt made, kept, and someone then removed; it is not recorded as connected to a missing folder:            OK (0.29s)
+    a task's dependencies are part of its creation digest one by one, so joined text is not the same request:                                            OK (0.17s)
+  Gate C remediation third addendum (C-C.R1 §3d; real PostgreSQL)
+    R5-1: another project connected the made folder under another spelling; the failed attempt keeps it:                                                 OK (0.19s)
+    R5-2: a folder replaced while the attempt waits is not connected, and the replacement is not registered:                                             OK (0.28s)
+    R5-3: a folder being initialized is not offered to any project:                                                                                      OK (0.14s)
+    R5-3: a destination that appears during initialization is never replaced; the next free name is used:                                                OK (0.14s)
+    R5-3: a failure after initialization removes only what the attempt made:                                                                             OK (0.13s)
+  Gate C remediation fourth addendum (C-C.R1 §3e; real PostgreSQL)
+    Review 6 #1: a made folder replaced by someone else's repository while the attempt waits is kept intact:                                             OK (0.28s)
+    Review 6 #1: a failed attempt keeps the folder it published; it is not connected, and it can be chosen as an existing folder:                        OK (0.32s)
+    Review 6 #1: an attempt interrupted after publishing keeps the folder:                                                                               OK (0.15s)
+    Review 6 #2: a two-remote folder replaced while waiting is not connected from its stale origin observation:                                          OK (0.32s)
+    Review 6 #3: a command-line registration of the made folder, uncommitted while the attempt fails, keeps the folder and its registration:             OK (3.33s)
+
+All 40 tests passed (37.18s)
+
+
+
+lockstep> Test suite lockstep-integration passed
+Completed 2 action(s).

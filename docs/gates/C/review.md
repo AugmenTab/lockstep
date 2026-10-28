@@ -183,3 +183,33 @@ registered `physical_id`, same `physicalKey` text, independent of spelling); R5-
 path; the safe parts of R5-3 (init only in the unoffered `mkdtemp` directory, no-overwrite `mkdir`,
 empty-only removal of a claimed destination, workspace removed on every path, links never followed);
 no new lock and the projects → repositories order kept.
+
+**Outcome (2026-10-27):** the Planner gave final engineering authorization
+(`.local/plans/phase-03_update5.md`): remove destructive rollback of published folders, compare the
+identity of the observation actually registered, serialize ownership checks with the command line.
+Fourth addendum C-C.R1 §3e (R6-1–R6-3), frozen first (`GateCRemediationRetainTest.hs`, 5 of 5 failing
+before). Three earlier frozen cases assert the old removal: amendment request **A-C.R1-4**, not applied.
+
+## Review 7 — the Review 6 corrections (R6-1–R6-3, the final focused review)
+
+- Reviewer: a fresh **read-only** reviewer agent (same rules), asked only whether repository data
+  can be deleted, ownership fabricated, or a stale identity registered. **Not a human review.**
+  Scope: the `src` change on top of `671b957`, read in the working tree and committed unchanged as
+  `fd5bb90`. Result: **no HIGH, no
+  MEDIUM**; nothing remaining in automatic new-folder creation that would call for disabling it.
+- Recorded, not remediated (the Planner's stopping rule):
+
+| # | Sev. | Observation | Disposition |
+|---|---|---|---|
+| 1 | LOW | The identity is (device, inode). On a filesystem that reuses inodes at once (ext4), a `.git` deleted and re-created by someone else between the observation and the transaction could get the same inode and pass the check; already present in R5-2, not added by R6; unlikely on APFS | Recorded (inside the known filesystem check-to-use window) |
+| 2 | INFO | A first observation refused with another code, a successful fallback, and the folder changed between the two observations: now `folder-not-offered` instead of the first refusal code; nothing registered either way | Intended (R6-2 "before the Engineer") |
+| 3 | INFO | A mismatch found right before registration records the attempt with the Engineer it just added, like any registration refusal | As C-P2.1 refusals today |
+| 4 | INFO | Kept folders accumulate (`slug`, `slug-2`, …); a kept folder registered meanwhile by the command line is still offered, and connecting it is refused by C-P2.1 | Intended (R6-1) |
+
+Checked clean: (a) no removal of a published folder or repository data remains (only the unexported
+`removeStaging` of the `mkdtemp` workspace before publication, and `rmdir` of an empty workspace or
+claimed destination); (b) every registration goes through `registerObservedIn` under the
+registration lock, and `connected` is recorded only with the registration of the same transaction;
+(c) the identity is re-read right before each registration, the `origin` fallback included; lock
+order projects → repositories, no new lock; refused-first, refused-fallback and
+`authoritative-remote-unknown` handling unchanged apart from the identity check.
