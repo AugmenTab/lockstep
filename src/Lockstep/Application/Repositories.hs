@@ -13,8 +13,6 @@ module Lockstep.Application.Repositories
   , addEngineerIn
   , Observed
   , observedIdentity
-  , activePhysicalKeys
-  , physicalKey
   , observeRegistration
   , registerRepository
   , registerObservedIn
@@ -166,11 +164,6 @@ observedIdentity :: Observed -> Maybe PhysicalId
 observedIdentity (Observed _ _ _ observed) =
   either (const Nothing) (Just . observedPhysical) observed
 
--- | The physical identities of every active repository registration, as stored (C-C.R1 R5-1).
-activePhysicalKeys :: O.Orville [T.Text]
-activePhysicalKeys =
-  fmap Store.rowPhysicalId <$> Store.activeRepositories
-
 -- | The read-only C-P2.1 observation of a folder (and the remote chosen, if any).
 observeRegistration :: FilePath -> Maybe T.Text -> IO Observed
 observeRegistration path remote = do
@@ -189,7 +182,9 @@ registerRepository runtime request = do
 
 {- | Registration of an observed folder inside the caller's transaction, under
 the registration lock, with the same decision row (C-C.R1 R5). The caller
-checks readiness.
+checks readiness. This is the only ownership check, for the command line and a
+project's attempt alike (C-C.R1 R6-3); an attempt reaches it holding the
+projects lock (projects → repositories).
 -}
 registerObservedIn :: T.Text -> Observed -> O.Orville (Either Refused RepositoryRecord)
 registerObservedIn engineerName (Observed path remote repositoryId@(RepositoryId repositoryUuid) observed) = do

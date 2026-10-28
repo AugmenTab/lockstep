@@ -2,12 +2,13 @@
 a new project folder inside the projects folder, and finding the folders that
 may be offered. Nothing here contacts a network or writes outside the new
 folder and the attempt's own working directory beside it (C-C.R1 R5-3).
+Nothing here removes a published folder, and nothing is exported that could
+(C-C.R1 R6-1): only the attempt's private staging directory is ever removed.
 -}
 module Lockstep.Effects.ProjectFolders
   ( makeProjectFolder
   , makeProjectFolderWith
   , gitIdentity
-  , removeProjectFolder
   , isProjectFolder
   , childFolders
   ) where
@@ -68,7 +69,9 @@ never offered; only after it succeeds is @<root>/<name>@ claimed with @mkdir@
 (which never replaces an existing file, folder or link: a taken name moves on to
 the next candidate) and the new @.git@ moved into it. On any failure only that
 directory, and a destination this attempt has just claimed while it is still
-empty, are removed. Returns the folder's path, or the reason as text.
+empty, are removed. Once the @.git@ is moved in, the folder is published and
+nothing here or in its callers removes it (C-C.R1 R6-1). Returns the folder's
+path, or the reason as text.
 -}
 makeProjectFolder :: FilePath -> [T.Text] -> IO (Either T.Text FilePath)
 makeProjectFolder =
@@ -90,9 +93,12 @@ makeProjectFolderWith afterInit root candidates = do
               Left reason -> pure (Left reason)
               Right _ -> afterInit workspace >> publish workspace candidates
         )
-          `onException` removeProjectFolder workspace
-      -- Empty after a publication; still holding the new .git after a failure. Either way it is this attempt's.
-      removeProjectFolder workspace
+          `onException` removeStaging workspace
+      case result of
+        -- Published: the workspace is empty, so it goes with rmdir, which removes nothing inside.
+        Right _ -> void (tryIO (removeDirectory workspace))
+        -- Not published: the workspace still holds the new .git; it is this attempt's and was never offered.
+        Left _ -> removeStaging workspace
       pure result
  where
   publish workspace names =
@@ -129,12 +135,13 @@ gitIdentity path = do
       Right s | isDirectory s -> Just (PhysicalId (toInteger (deviceID s)) (toInteger (fileID s)))
       _ -> Nothing
 
-{- | Removes a folder 'makeProjectFolder' made for an attempt that did not end
-connected (C-C.R1 R5). Only a real directory is removed, never a link; a
-folder that cannot be removed is left as it is.
+{- | Removes the attempt's private staging directory (@mkdtemp@, never offered,
+never published; C-C.R1 R6-1). Only a real directory is removed, never a link;
+one that cannot be removed is left as it is. Not exported: nothing else may be
+removed this way.
 -}
-removeProjectFolder :: FilePath -> IO ()
-removeProjectFolder path = do
+removeStaging :: FilePath -> IO ()
+removeStaging path = do
   real <- realDirectory path
   when real (void (tryIO (removeDirectoryRecursive path)))
 

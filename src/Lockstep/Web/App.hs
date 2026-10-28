@@ -706,8 +706,12 @@ projectPage db view notice = do
           ]
         SetupFailed ->
           [ E.p [cls "ls-notice"] [E.text ("Setup did not finish: " <> maybe "" refusalWords (projectRefusal view))]
+          , E.p [] [E.text keptFolderWords]
           , connectForm "Try again"
           ]
+    -- C-C.R1 R6-1: a folder an attempt made is kept; one no project uses is offered below.
+    keptFolderWords =
+      "If Lockstep made a new folder for this project, it was kept and nothing in it was removed. To use it, choose it under \"In this folder\" below."
     connectForm label =
       E.form
         [A.method B.FormPOST, A.action (B.mkRawURL ("/app/api/projects/" <> projectId view <> "/connect"))]
