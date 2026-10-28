@@ -495,4 +495,38 @@ ALTER TABLE lockstep_projects ADD COLUMN creation_digest text CHECK (creation_di
 ALTER TABLE lockstep_project_tasks ADD COLUMN creation_digest text CHECK (creation_digest ~ '^[0-9a-f]{64}$');
 |]
       )
+    ,
+      ( [Interpolate.i|projects Lockstep may work in, and bugs handed to it|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_execution_enablements (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  idempotency_key text NOT NULL UNIQUE CHECK (idempotency_key ~ '^[A-Za-z0-9_-]{16,64}$'),
+  payload_digest text NOT NULL CHECK (payload_digest ~ '^[0-9a-f]{64}$'),
+  project_id uuid NOT NULL UNIQUE REFERENCES lockstep_projects (id),
+  repository_id uuid NOT NULL REFERENCES lockstep_repositories (id),
+  engineer_name text NOT NULL,
+  folder text NOT NULL,
+  profile_id text NOT NULL,
+  profile_version integer NOT NULL CHECK (profile_version >= 1),
+  profile_digest text NOT NULL CHECK (profile_digest ~ '^[0-9a-f]{64}$'),
+  actor text NOT NULL,
+  enabled_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TRIGGER lockstep_execution_enablements_immutable BEFORE UPDATE OR DELETE ON lockstep_execution_enablements FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_execution_enablements_no_truncate BEFORE TRUNCATE ON lockstep_execution_enablements FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TABLE lockstep_bug_admissions (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  idempotency_key text NOT NULL UNIQUE CHECK (idempotency_key ~ '^[A-Za-z0-9_-]{16,64}$'),
+  payload_digest text NOT NULL CHECK (payload_digest ~ '^[0-9a-f]{64}$'),
+  task_id uuid NOT NULL UNIQUE REFERENCES lockstep_project_tasks (ticket_id),
+  project_id uuid NOT NULL REFERENCES lockstep_projects (id),
+  work_order_id uuid NOT NULL UNIQUE REFERENCES lockstep_work_orders (id),
+  effective_digest text NOT NULL CHECK (effective_digest ~ '^[0-9a-f]{64}$'),
+  actor text NOT NULL,
+  admitted_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TRIGGER lockstep_bug_admissions_immutable BEFORE UPDATE OR DELETE ON lockstep_bug_admissions FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_bug_admissions_no_truncate BEFORE TRUNCATE ON lockstep_bug_admissions FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+|]
+      )
     ]
