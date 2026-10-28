@@ -45,6 +45,13 @@
 | `test/unit/Lockstep/Kernel/CandidateTest.hs` | unit | K1 names, RED, GREEN, run failures; K2; K3 every combination; K4 rejections and the environment halt |
 | `test/integration/Lockstep/EngineCandidateTest.hs` | integration: real PostgreSQL, Git, processes; scripted Planner and challenger | a grounded candidate reaches the challenge (red-confirmed); ungrounded and out-of-source candidates go back; red-unexpectedly-passed, red-wrong-reason, a failing new GREEN, then candidates-exhausted with a request; an existing failing GREEN halts green-regression-failed; a missing test program halts verification-environment-missing; a special-case mutant that passes the tests and still shows the bug is CONFIRMED and sends the candidate back; killed, ungrounded, out-of-scope and mutant-less findings are not CONFIRMED and the freeze follows; NEEDS_HUMAN blocks with a request; the freeze commit (Supervisor, parent the basis, exactly the test file and its bytes), the Contract with the commit and the test's digest, the freeze record with the Contract's digest, the person's checkout untouched; a moved work branch is never frozen over |
 
+## 3a. Verification record (after implementation)
+
+| Check | Result | Evidence |
+|---|---|---|
+| C-P4.7-9 integration group, targeted | 10 of 10; build and lint clean | `.local/p47-run1.log` (not committed) |
+| Full Mac and Linux qualification | at the next checkpoint (after P4.10–14) | — |
+
 ## 4. Freeze record
 
 Frozen 2026-10-28 by the writing agent (manual), before the stages were wired into the engine.
