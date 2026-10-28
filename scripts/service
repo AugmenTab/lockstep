@@ -95,7 +95,31 @@ run_args() { # common docker arguments
       --env LOCKSTEP_SENTINEL_LOG=/opt/sentinel/sentinel.log)
   fi
   folder_args
+  runner_args
   printf '%s\n' "${args[@]}"
+}
+
+# C-P4.2 R3: the helper's runner channel (LOCKSTEP_SERVICE_RUNNER, set by the helper
+# started with --runner), mounted at its own path so the service can prepare runs and
+# sign requests. Skipped unless it is an absolute, real, private directory.
+runner_args() {
+  local d=${LOCKSTEP_SERVICE_RUNNER:-} real
+  [ -n "$d" ] || return 0
+  case $d in
+    /*) ;;
+    *) return 0 ;;
+  esac
+  case $d in
+    *:* | *,*) return 0 ;;
+  esac
+  [ -d "$d" ] && [ ! -L "$d" ] && [ -O "$d" ] || return 0
+  real=$(cd -P -- "$d" 2>/dev/null && pwd -P || true)
+  [ "$real" = "$d" ] || return 0
+  args+=(--volume "$d:$d" --env "LOCKSTEP_RUNNER_DIR=$d")
+  case " ${args[*]} " in
+    *" --user "*) ;;
+    *) args+=(--user "$(id -u):$(id -g)") ;;
+  esac
 }
 
 # C-P3.5 J5: the folders named by LOCKSTEP_SERVICE_FOLDERS (the helper's list), each

@@ -22,7 +22,8 @@ module Lockstep.Effects.HelperRunner
   ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, try)
+import Control.Exception (IOException, finally, try)
+import Control.Monad (unless)
 import Crypto.Hash (SHA256 (SHA256), hashWith)
 import Crypto.Random (getRandomBytes)
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
@@ -35,8 +36,8 @@ import Data.Text.Encoding qualified as TE
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Flipstone.Prelude
 import System.Directory (createDirectory, doesFileExist, renameFile)
-import System.IO (FilePath)
-import System.Posix.Files (setFileMode)
+import System.IO (FilePath, hClose)
+import System.Posix.IO (OpenFileFlags (creat, exclusive), OpenMode (WriteOnly), defaultFileFlags, fdToHandle, openFd)
 import Text.Read (readMaybe)
 import Text.Show (Show)
 
@@ -64,9 +65,11 @@ runnerDirectory (RunnerChannel dir _) =
 -- | The channel at the directory the helper made (@LOCKSTEP_RUNNER_DIR@).
 openRunnerChannel :: FilePath -> IO (Either T.Text RunnerChannel)
 openRunnerChannel dir = do
-  -- Pre-freeze stub: no channel is ever opened.
-  _ <- try (BS.readFile (dir <> "/channel.key")) :: IO (Either IOException BS.ByteString)
-  pure (maybe (Left (T.pack "not-implemented")) (Right . RunnerChannel dir) (parseChannelKey BS.empty))
+  bytes <- try (BS.readFile (dir <> "/channel.key")) :: IO (Either IOException BS.ByteString)
+  pure $
+    case either (const Nothing) parseChannelKey bytes of
+      Just key -> Right (RunnerChannel dir key)
+      Nothing -> Left (T.pack "runner-unavailable")
 
 data PreparedRun
   = PreparedRun
@@ -117,11 +120,15 @@ submitRun channel prepared profile argv protected waitSeconds =
           let
             dir = runnerDirectory channel <> "/work/" <> T.unpack (preparedName prepared)
             argvBytes = BS.concat [TE.encodeUtf8 a <> BS8.pack "\NUL" | a <- argv]
-          BS.writeFile (dir <> "/argv") argvBytes
-          if L.null protected
-            then pure ()
-            else BS.writeFile (dir <> "/protected") (TE.encodeUtf8 (T.unlines protected))
-          sent <- send channel (RunOp profile) (preparedName prepared) (Just (sha256Hex argvBytes))
+          -- Nothing is sent yet: a failure here is a refusal, not an unknown outcome.
+          written <-
+            try $ do
+              BS.writeFile (dir <> "/argv") argvBytes
+              unless (L.null protected) (BS.writeFile (dir <> "/protected") (TE.encodeUtf8 (T.unlines protected)))
+          sent <-
+            case written of
+              Left (_ :: IOException) -> pure (Left (HelperRequestInvalid (T.pack "run-files-unwritable")))
+              Right () -> send channel (RunOp profile) (preparedName prepared) (Just (sha256Hex argvBytes))
           case sent of
             Left failure -> pure (Left failure)
             Right rid -> do
@@ -159,29 +166,37 @@ send (RunnerChannel dir key) op name digest = do
           let
             bytes = encodeRunnerRequest key (RunnerRequest rid (floor now) op name digest)
             temporary = dir <> "/requests/." <> T.unpack ridText
-          BS.writeFile temporary bytes
-          setFileMode temporary 0o600
-          renameFile temporary (dir <> "/requests/" <> T.unpack ridText <> ".rreq")
-          pure (Right ridText)
+          -- Made 0600 from the start; the request exists for the helper only once renamed.
+          placed <-
+            try $ do
+              fd <- openFd temporary WriteOnly defaultFileFlags {creat = Just 0o600, exclusive = True}
+              h <- fdToHandle fd
+              BS.hPut h bytes `finally` hClose h
+              renameFile temporary (dir <> "/requests/" <> T.unpack ridText <> ".rreq")
+          pure $ case placed of
+            Left (_ :: IOException) -> Left (HelperRequestInvalid (T.pack "request-unwritable"))
+            Right () -> Right ridText
 
 awaitResult :: RunnerChannel -> T.Text -> Int -> IO (Either HelperFailure RunnerResult)
 awaitResult (RunnerChannel dir key) rid ticks = do
   let
     path = dir <> "/results/" <> T.unpack rid <> ".res"
     loop n = do
-      present <- doesFileExist path
-      if present
-        then do
-          bytes <- BS.readFile path
+      -- The helper places a result whole (rename); a read that fails is retried until the time is up.
+      read' <- try (doesFileExist path >>= \present -> if present then Just <$> BS.readFile path else pure Nothing)
+      case read' of
+        Right (Just bytes) ->
           pure $ case decodeRunnerResult key bytes of
             Left _ -> Left (HelperResultInvalid (T.pack "unsigned"))
             Right r
               | runnerResultId r /= rid -> Left (HelperResultInvalid (T.pack "wrong-id"))
               | otherwise -> Right r
-        else
-          if n <= 0
-            then pure (Left HelperNoResult)
-            else threadDelay 100000 >> loop (n - 1 :: Int)
+        Right Nothing -> next n
+        Left (_ :: IOException) -> next n
+    next n =
+      if n <= 0
+        then pure (Left HelperNoResult)
+        else threadDelay 100000 >> loop (n - 1 :: Int)
   loop ticks
 
 {- | The run's result from the signed result and the two captured streams,
