@@ -463,7 +463,7 @@ handleWithDatabase db route request =
                 taskAnswer db (either (const task) (fromMaybe task) latest) (Just (executionRefusalWords code))
           (Right (Just task), _, _) -> taskAnswer db task (Just "Lockstep could not read this form. Try again.")
     HaltDecisionRoute xid ->
-      withForm $ \fields -> if T.null T.empty then pure (errorJson HTTP.status501 "stage-not-built") else do
+      withForm $ \fields -> do
         let
           value name = TE.decodeUtf8With TEE.lenientDecode <$> L.lookup name fields
           revision = value "revision" >>= decimalUpTo integerMax
@@ -487,7 +487,7 @@ handleWithDatabase db route request =
               (Right _, _, _, _, Nothing) -> transactionAnswer db tx (Just "Choose what should happen next.")
               _ -> transactionAnswer db tx (Just "Lockstep could not read this form. Try again.")
     CompletionRoute xid ->
-      withForm $ \fields -> if T.null T.empty then pure (errorJson HTTP.status501 "stage-not-built") else do
+      withForm $ \fields -> do
         let
           value name = TE.decodeUtf8With TEE.lenientDecode <$> L.lookup name fields
         found <- transactionView db xid
@@ -635,7 +635,7 @@ taskAnswer db task notice = do
   key <- idempotencyKeyText <$> generateIdempotencyKey
   case project of
     Right (Just p) ->
-      pure (respondWith HTTP.status200 [(HTTP.hContentType, "text/html; charset=utf-8"), ("X-Lockstep-Path", TE.encodeUtf8 ("/app/tasks/" <> taskId task))] (taskPage p siblings task (isJust (work >>= const Nothing)) (taskFixingSection task status admission standing (work >>= const Nothing) key) notice))
+      pure (respondWith HTTP.status200 [(HTTP.hContentType, "text/html; charset=utf-8"), ("X-Lockstep-Path", TE.encodeUtf8 ("/app/tasks/" <> taskId task))] (taskPage p siblings task (isJust work) (taskFixingSection task status admission standing work key) notice))
     Right Nothing -> pure (errorJson HTTP.status404 "not-found")
     Left _ -> pure notReady
 
@@ -841,7 +841,7 @@ projectPage db view notice = do
   tasks <- fromRight [] <$> listTasks db (projectId view)
   checks <- projectChecks db (projectId view)
   execution <- fromRight Nothing <$> executionStatus db folders (projectId view)
-  started <- (&& T.null "x") . fromRight False <$> projectStarted db (projectId view)
+  started <- fromRight False <$> projectStarted db (projectId view)
   executionKey <- idempotencyKeyText <$> generateIdempotencyKey
   let
     status =
