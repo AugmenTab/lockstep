@@ -488,4 +488,11 @@ CREATE TRIGGER lockstep_decision_attempts_no_truncate BEFORE TRUNCATE ON lockste
 ALTER TABLE lockstep_decision_receipts ADD COLUMN ledger_basis text CHECK (ledger_basis IS NULL OR outcome = 'applied');
 |]
       )
+    ,
+      ( [Interpolate.i|creation digests of projects and tasks|]
+      , [Interpolate.i|
+ALTER TABLE lockstep_projects ADD COLUMN creation_digest text CHECK (creation_digest ~ '^[0-9a-f]{64}$');
+ALTER TABLE lockstep_project_tasks ADD COLUMN creation_digest text CHECK (creation_digest ~ '^[0-9a-f]{64}$');
+|]
+      )
     ]

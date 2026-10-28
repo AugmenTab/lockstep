@@ -30,6 +30,7 @@ data ProjectRow
   , rowFolder :: Maybe T.Text
   , rowEngineerName :: Maybe T.Text
   , rowRevision :: Int64
+  , rowCreationDigest :: Maybe T.Text
   }
 
 sql :: String -> RawSql.RawSql
@@ -54,7 +55,7 @@ maybeUuid =
 
 columns :: String
 columns =
-  "id::text AS id, name, outcome, setup, setup_refusal, folder, engineer_name, revision"
+  "id::text AS id, name, outcome, setup, setup_refusal, folder, engineer_name, revision, creation_digest"
 
 projectMarshaller :: O.AnnotatedSqlMarshaller ProjectRow ProjectRow
 projectMarshaller =
@@ -68,6 +69,7 @@ projectMarshaller =
       <*> O.marshallField rowFolder (O.nullableField (O.unboundedTextField "folder"))
       <*> O.marshallField rowEngineerName (O.nullableField (O.unboundedTextField "engineer_name"))
       <*> O.marshallField rowRevision (O.bigIntegerField "revision")
+      <*> O.marshallField rowCreationDigest (O.nullableField (O.unboundedTextField "creation_digest"))
 
 headMay :: [a] -> Maybe a
 headMay xs =
@@ -99,10 +101,10 @@ projectNameTaken :: O.MonadOrville m => T.Text -> m Bool
 projectNameTaken name =
   not . null <$> selectWhere (sql "lower(name) = lower(" <> text name <> sql ")")
 
-insertProject :: O.MonadOrville m => T.Text -> T.Text -> T.Text -> T.Text -> m ()
-insertProject projectId key name outcome =
+insertProject :: O.MonadOrville m => T.Text -> T.Text -> T.Text -> T.Text -> T.Text -> m ()
+insertProject projectId key name outcome digest =
   O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_projects (id, creation_key, name, outcome, setup) VALUES ("
+    sql "INSERT INTO lockstep_projects (id, creation_key, name, outcome, setup, creation_digest) VALUES ("
       <> uuid projectId
       <> sql ", "
       <> text key
@@ -110,7 +112,9 @@ insertProject projectId key name outcome =
       <> text name
       <> sql ", "
       <> text outcome
-      <> sql ", 'organized')"
+      <> sql ", 'organized', "
+      <> text digest
+      <> sql ")"
 
 {- | Records one connection attempt if the project is still at the expected
 revision; True when it was. The revision goes up by one.

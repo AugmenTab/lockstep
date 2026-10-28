@@ -31,6 +31,7 @@ data TaskRow
   , rowAcceptance :: T.Text
   , rowPriority :: Int32
   , rowRevision :: Int64
+  , rowCreationDigest :: Maybe T.Text
   }
 
 sql :: String -> RawSql.RawSql
@@ -61,6 +62,7 @@ taskMarshaller =
       <*> O.marshallField rowAcceptance (O.unboundedTextField "acceptance")
       <*> O.marshallField rowPriority (O.integerField "priority")
       <*> O.marshallField rowRevision (O.bigIntegerField "revision")
+      <*> O.marshallField rowCreationDigest (O.nullableField (O.unboundedTextField "creation_digest"))
 
 -- | Serializes task changes until the transaction ends; reads stay possible.
 lockTasks :: O.MonadOrville m => m ()
@@ -71,7 +73,7 @@ selectWhere :: O.MonadOrville m => RawSql.RawSql -> String -> m [TaskRow]
 selectWhere condition order =
   O.executeAndDecode
     O.SelectQuery
-    ( sql "SELECT t.ticket_id::text AS task_id, t.project_id::text AS project_id, k.title, t.acceptance, t.priority, t.revision FROM lockstep_project_tasks t JOIN lockstep_tickets k ON k.id = t.ticket_id WHERE "
+    ( sql "SELECT t.ticket_id::text AS task_id, t.project_id::text AS project_id, k.title, t.acceptance, t.priority, t.revision, t.creation_digest FROM lockstep_project_tasks t JOIN lockstep_tickets k ON k.id = t.ticket_id WHERE "
         <> condition
         <> sql (" ORDER BY " <> order)
     )
@@ -94,10 +96,10 @@ allTaskRows :: O.MonadOrville m => m [TaskRow]
 allTaskRows =
   selectWhere (sql "TRUE") "t.project_id, t.priority DESC, t.created_at, t.ticket_id"
 
-insertTask :: O.MonadOrville m => T.Text -> T.Text -> T.Text -> T.Text -> Int -> m ()
-insertTask taskId projectId key acceptance priority =
+insertTask :: O.MonadOrville m => T.Text -> T.Text -> T.Text -> T.Text -> Int -> T.Text -> m ()
+insertTask taskId projectId key acceptance priority digest =
   O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_project_tasks (ticket_id, project_id, creation_key, acceptance, priority) VALUES ("
+    sql "INSERT INTO lockstep_project_tasks (ticket_id, project_id, creation_key, acceptance, priority, creation_digest) VALUES ("
       <> uuid taskId
       <> sql ", "
       <> uuid projectId
@@ -105,7 +107,9 @@ insertTask taskId projectId key acceptance priority =
       <> text key
       <> sql ", "
       <> text acceptance
-      <> sql (", " <> show priority <> ")")
+      <> sql (", " <> show priority <> ", ")
+      <> text digest
+      <> sql ")"
 
 -- | Changes a task if it is still at the expected revision; True when it was.
 updateTask :: O.MonadOrville m => T.Text -> Int64 -> T.Text -> Int -> m Bool

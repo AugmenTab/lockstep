@@ -26,6 +26,7 @@ module Lockstep.Kernel.Task
   , createsCycle
   , taskRefusalCodes
   , taskRefusalWords
+  , taskRequestText
   ) where
 
 import Data.Bifunctor (bimap)
@@ -234,13 +235,40 @@ refusals =
     , ("unknown-project", "Lockstep has no such project.")
     , ("not-allowed-now", "That cannot be done to the task as it is now. The page shows what can.")
     , ("reason-empty", "Say why it is blocked, so whoever looks at it next knows.")
-    , ("key-conflict", "This form was already used for another project. Nothing was changed. Open New task again.")
+    , ("key-conflict", "This form was already used for a different task. Nothing was changed. Open New task again.")
     , ("revision-out-of-range", "Lockstep could not read this form. Try again.")
     ]
 
 taskRefusalCodes :: [T.Text]
 taskRefusalCodes =
   fmap fst refusals
+
+{- | The canonical text of a task's creation request (C-C.R1 R9, migration 17):
+its creation digest is the SHA-256 of it. The project, then the checked title,
+acceptance and priority, then the dependencies sorted without repeats; free
+text quoted with @\\@, @"@ and new lines escaped.
+-}
+taskRequestText :: T.Text -> TaskTitle -> T.Text -> Priority -> [T.Text] -> T.Text
+taskRequestText project title acceptance priority dependencies =
+  T.unlines
+    [ T.pack "lockstep-task-request-v1"
+    , T.pack "project " <> project
+    , T.pack "title " <> quotedText (taskTitleText title)
+    , T.pack "acceptance " <> quotedText acceptance
+    , T.pack "priority " <> priorityCode priority
+    , T.pack "depends " <> T.intercalate (T.pack ",") (L.sort (L.nub dependencies))
+    ]
+
+quotedText :: T.Text -> T.Text
+quotedText text =
+  T.pack "\"" <> T.concatMap escape text <> T.pack "\""
+ where
+  escape c =
+    case c of
+      '\\' -> T.pack "\\\\"
+      '"' -> T.pack "\\\""
+      '\n' -> T.pack "\\n"
+      _ -> T.singleton c
 
 taskRefusalWords :: T.Text -> T.Text
 taskRefusalWords code =

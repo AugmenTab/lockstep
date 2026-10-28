@@ -24,7 +24,7 @@ module Lockstep.Application.Projects
 import Control.Exception (onException)
 import Control.Monad (filterM)
 import Data.List qualified as L
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isNothing)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
@@ -35,10 +35,12 @@ import Text.Show (Show)
 import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
 import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason, Readiness (..), SessionLock (..), checkReadiness, withDatabase, withSessionLock)
 import Lockstep.Application.Identity (newEngineerId, newUuid)
+import Lockstep.Application.Profiles (sha256Hasher)
 import Lockstep.Application.Repositories (Observed, Refused (..), RepositoryRecord (..), addEngineerIn, observeRegistration, registerObservedIn)
 import Lockstep.Effects.ProjectFolders (childFolders, isProjectFolder, makeProjectFolder, removeProjectFolder)
 import Lockstep.Foundation.FolderProtocol (validFolderPath)
 import Lockstep.Kernel.Identity (parseUuid, uuidText)
+import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
 import Lockstep.Kernel.Project
   ( FolderChoice (..)
   , SetupState (..)
@@ -48,6 +50,7 @@ import Lockstep.Kernel.Project
   , parseSetupState
   , projectNameText
   , projectOutcomeText
+  , projectRequestText
   , projectSlug
   , ruleErrorCode
   , setupStateCode
@@ -138,11 +141,24 @@ createProject runtime folders request =
       (_, Left e) -> pure (Right (Left (ruleErrorCode e)))
       (Right name, Right outcome) -> do
         projectUuid <- newUuid
+        let
+          choice = newProjectFolder request
+          digest = sha256Text (projectRequestText name outcome choice)
+          -- C-C.R1 R9: a row made before migration 17 replays only when the request is shown equal.
+          sameAsStored row =
+            Store.rowName row == projectNameText name
+              && Store.rowOutcome row == projectOutcomeText outcome
+              && case choice of
+                DecideLater -> isNothing (Store.rowFolder row)
+                ExistingFolder path -> Store.rowFolder row == Just path
+                NewFolder -> False
         created <- withDatabase runtime . O.withTransaction $ do
           Store.lockProjects
           existing <- Store.findProjectByKey (idempotencyKeyText (newProjectKey request))
           case existing of
-            Just row -> pure (Right (row, False))
+            Just row
+              | maybe (sameAsStored row) (== digest) (Store.rowCreationDigest row) -> pure (Right (row, False))
+              | otherwise -> pure (Left (T.pack "key-conflict"))
             Nothing -> do
               taken <- Store.projectNameTaken (projectNameText name)
               if taken
@@ -150,7 +166,7 @@ createProject runtime folders request =
                 else do
                   let
                     newId = uuidText projectUuid
-                  Store.insertProject newId (idempotencyKeyText (newProjectKey request)) (projectNameText name) (projectOutcomeText outcome)
+                  Store.insertProject newId (idempotencyKeyText (newProjectKey request)) (projectNameText name) (projectOutcomeText outcome) digest
                   row <- Store.findProjectById newId
                   pure (maybe (Left (T.pack "unknown-project")) (\r -> Right (r, True)) row)
         case created of
@@ -158,9 +174,15 @@ createProject runtime folders request =
           Right (Left code) -> pure (Right (Left code))
           Right (Right (row, False)) -> pure (Right (Right (viewOf row)))
           Right (Right (row, True)) ->
-            case newProjectFolder request of
+            case choice of
               DecideLater -> pure (Right (Right (viewOf row)))
-              choice -> connectLocked noProjectFaults runtime folders (Store.rowId row) (Store.rowRevision row) choice
+              _ -> connectLocked noProjectFaults runtime folders (Store.rowId row) (Store.rowRevision row) choice
+
+-- | The SHA-256 of a canonical request text, as 64 lowercase hex.
+sha256Text :: T.Text -> T.Text
+sha256Text text =
+  case sha256Hasher of
+    Hasher f -> contentDigestText (f text)
 
 connectProject :: DatabaseRuntime -> ProjectFolders -> T.Text -> Int64 -> FolderChoice -> IO (Either NotReadyReason (Either T.Text ProjectView))
 connectProject =
@@ -230,7 +252,7 @@ attempt faults runtime folders view choice = do
           fallback <- observeRegistration path (Just (T.pack "origin"))
           settle (if made then Just path else Nothing) (connectIn view slug path first fallback)
       )
-        `onException` when made (removeProjectFolder path)
+        `onException` when made (removeUnrecorded path)
  where
   settle made action = do
     committed <-
@@ -244,13 +266,23 @@ attempt faults runtime folders view choice = do
             | otherwise -> action
     result <- faultAfterCommit faults committed
     case made of
-      Just path | not (endsConnected result) -> removeProjectFolder path
+      Just path | not (endsConnected result) -> removeUnrecorded path
       _ -> pure ()
     pure result
   endsConnected result =
     case result of
       Right (Right v) -> projectSetup v == Connected
       _ -> False
+  -- C-C.R1 R13: what the attempt's caller saw may be wrong (an interruption after the
+  -- commit, a COMMIT whose answer was lost), so the database decides: the folder this
+  -- attempt made is removed only when the project is not connected and does not record
+  -- it; when that cannot be read, the folder is kept.
+  removeUnrecorded path = do
+    stored <- withDatabase runtime (Store.findProjectById (projectId view))
+    case stored of
+      Right (Just row)
+        | Store.rowSetup row /= setupStateCode Connected && Store.rowFolder row /= Just (T.pack path) -> removeProjectFolder path
+      _ -> pure ()
 
 -- | The Engineer, the registration and the recorded attempt, inside the attempt's transaction.
 connectIn :: ProjectView -> T.Text -> FilePath -> Observed -> Observed -> O.Orville (Either T.Text ProjectView)

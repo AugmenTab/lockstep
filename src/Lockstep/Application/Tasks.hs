@@ -20,6 +20,7 @@ module Lockstep.Application.Tasks
   ) where
 
 import Data.List qualified as L
+import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
@@ -29,8 +30,10 @@ import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), checkReadiness, withDatabase)
 import Lockstep.Application.Identity (newUuid)
 import Lockstep.Application.Ledger (LedgerFailure (..), createTicketIn, decideTicketIn, ledgerFailureCode, reviseTicketIn, ticketFactsIn)
+import Lockstep.Application.Profiles (sha256Hasher)
 import Lockstep.Kernel.Evidence (mkHumanSignoff)
 import Lockstep.Kernel.Identity (TicketId (..), parseUuid, uuidText)
+import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
 import Lockstep.Kernel.Task
   ( DependencyFact (..)
   , Priority
@@ -42,6 +45,7 @@ import Lockstep.Kernel.Task
   , mostImportantReady
   , priorityValue
   , taskReadiness
+  , taskRequestText
   , taskRuleCode
   , taskTitleText
   )
@@ -159,13 +163,32 @@ createTask runtime request =
       (_, _, Nothing) -> pure (Right (Left (T.pack "unknown-project")))
       (Right title, Right acceptance, Just projectId) -> do
         u <- newUuid
+        let
+          priority = newTaskPriority request
+          dependencies = L.sort (L.nub (fmap (\d -> fromMaybe d (canonicalId d)) (newTaskDependencies request)))
+          digest = sha256Text (taskRequestText projectId title acceptance priority dependencies)
         withDatabase runtime . O.withTransaction $ do
           Store.lockTasks
           existing <- Store.findTaskByKey (idempotencyKeyText (newTaskKey request))
           case existing of
             Just row
               | Store.rowProjectId row /= projectId -> pure (refuse "key-conflict")
-              | otherwise -> loadView row
+              | otherwise ->
+                  case Store.rowCreationDigest row of
+                    Just stored
+                      | stored == digest -> loadView row
+                      | otherwise -> pure (refuse "key-conflict")
+                    Nothing -> do
+                      -- C-C.R1 R9: a row made before migration 17 replays only when the
+                      -- request is shown equal to it, which needs a task never edited since.
+                      stored <- L.sort <$> Store.dependenciesOf (Store.rowTaskId row)
+                      if Store.rowRevision row == 1
+                        && Store.rowTitle row == taskTitleText title
+                        && Store.rowAcceptance row == acceptance
+                        && fromIntegral (Store.rowPriority row) == priorityValue priority
+                        && stored == dependencies
+                        then loadView row
+                        else pure (refuse "key-conflict")
             Nothing -> do
               project <- Projects.findProjectById projectId
               case project of
@@ -181,7 +204,7 @@ createTask runtime request =
                         Right _ -> do
                           let
                             newId = uuidText u
-                          Store.insertTask newId projectId (idempotencyKeyText (newTaskKey request)) acceptance (priorityValue (newTaskPriority request))
+                          Store.insertTask newId projectId (idempotencyKeyText (newTaskKey request)) acceptance (priorityValue priority) digest
                           Store.replaceDependencies newId ids
                           Store.findTaskRow newId >>= maybe (pure (refuse "unknown-task")) loadView
 
@@ -285,6 +308,12 @@ findTask runtime rawId =
         case found of
           Nothing -> pure Nothing
           Just row -> either (const Nothing) Just <$> loadView row
+
+-- | The SHA-256 of a canonical request text, as 64 lowercase hex.
+sha256Text :: T.Text -> T.Text
+sha256Text text =
+  case sha256Hasher of
+    Hasher f -> contentDigestText (f text)
 
 -- | The most important task that is ready to work on, from a list in the project order.
 mostImportantReadyTask :: [TaskView] -> Maybe TaskView
