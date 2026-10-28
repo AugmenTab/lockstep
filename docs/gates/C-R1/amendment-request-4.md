@@ -1,6 +1,9 @@
 # Amendment request A-C.R1-4 — frozen cases that assert removal of a published folder (for the Planner)
 
-- Status: **PROPOSED, NOT APPLIED.** Raised 2026-10-27 by the writing agent under the Planner's
+- Status: **APPROVED AND APPLIED** (final Planner authorization, 2026-10-27; original digests
+  checked, each diff applied to its intended test path, results equal the authorized digests; C-C.R1
+  §1, §3, §3b, §3c and §4 amended). The history below is kept as it was written.
+- Raised 2026-10-27 by the writing agent under the Planner's
   final engineering authorization for Review 6 (`.local/plans/phase-03_update5.md`, "Contracts and
   tests": "If an existing frozen test conflicts with this safer requirement, prepare its exact
   amendment diff and before/after digests for one consolidated authorization").

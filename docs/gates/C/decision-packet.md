@@ -5,9 +5,10 @@
   Implementer cannot accept Gate C; this packet recommends.
 - **Final candidate commit: `fd5bb90`** on `phase-3` (P3.1–P3.10 + the C-C.R1 remediation and its
   four addenda). Full record: `gate-c-report.md`; remediation: `docs/gates/C-R1/contract.md`.
-- **Status: NOT ACCEPTED. Phase 3 remediation is complete in code.** One frozen-test amendment
-  (A-C.R1-4) needs authorization; the consolidated qualification is **not authorized and has not
-  run**. Nothing installed, no legacy page retired, Phase 4 not started.
+- **Status: NOT ACCEPTED. Phase 3 remediation is complete; the branch is at a clean,
+  ready-to-qualify commit.** A-C.R1-4 is authorized and applied; no Planner decision is outstanding.
+  The consolidated qualification **waits for the owner to release the hold and has not run**.
+  Nothing installed, no legacy page retired, Phase 4 not started.
 
 ## 0. What the Planner's Review 6 disposition asked, and where it stands
 
@@ -18,7 +19,7 @@
 | #2 Stale fallback: compare with the identity of the observation actually registered, `origin` included; mismatch `folder-not-offered` | **Done** (R6-2): before the Engineer and again right before each registration | same; two-remote replacement case |
 | #3 CLI race: keep projects → repositories; serialize ownership checks; never remove repository data | **Done** (R6-3): no removal remains, so the only ownership check is C-P2.1's under the registration lock (CLI and attempts alike); no new lock | same; uncommitted CLI registration case |
 | One addendum, frozen first | **Done**: frozen in `a518450`; 5 of 5 failed against `671b957`, each for its finding | `addendum4-prefreeze-baseline.log` |
-| Conflicting frozen tests: exact diff and digests, one authorization | **Prepared, not applied**: A-C.R1-4, three cases | `docs/gates/C-R1/amendment-request-4.md` |
+| Conflicting frozen tests: exact diff and digests, one authorization | **Authorized and applied**: A-C.R1-4, three cases, at the authorized digests | `docs/gates/C-R1/amendment-request-4.md`; C-C.R1 §4, §5 |
 | One focused read-only review | **Done** (Review 7): no HIGH, no MEDIUM; 1 LOW + 4 INFO recorded, not remediated; no reason to disable new-folder creation | `review.md`, Review 7 |
 
 ## 1. Machine evidence
@@ -27,8 +28,8 @@
 |---|---|
 | Format, lint, pedantic build, unit at `fd5bb90` | PASSED; unit 800 of 800 |
 | Targeted integration at `fd5bb90` (C-C.R1 all addenda, C-P3.5, C-P3.6, C-P3.7) | **101 of 104**; the 3 are exactly A-C.R1-4's cases, failing only because the folder is now kept |
-| Same C-C.R1 groups with the A-C.R1-4 diffs (trial, frozen files then restored, digests re-checked) | 40 of 40 |
-| Frozen tests | every digest as recorded (C-C.R1 §4); no protected file changed |
+| Same C-C.R1 groups with the A-C.R1-4 diffs (trial; the applied files are byte-identical to it) | 40 of 40 |
+| Frozen tests | every digest as recorded (C-C.R1 §4); the three A-C.R1-4 files at their authorized digests |
 | Mac `scripts/check --integration` of the candidate | **NOT_RUN** (not authorized) |
 | Linux clean clone of the candidate | **NOT_RUN** (not authorized) |
 | Last full qualification, `e1c56ef` | Mac and Linux each 402 of 403; the 1 was a frozen fixture since repaired (A-C.R1-2) |
@@ -52,11 +53,9 @@ own full run is pending. The dogfood ran on the installed build `b963527`, not o
 
 ## 3. Decisions needed, in order
 
-1. **Planner — A-C.R1-4**: authorize the three frozen-test diffs (`amendment-request-4.md`; digests
-   before/after there). Then the Implementer applies them exactly, checks the digests, and commits
-   (tests and documents only; the code stays `fd5bb90`).
-2. **Owner/Planner — consolidated qualification**: go-ahead for one Mac `scripts/check
-   --integration` and one Linux clean clone on that commit.
+1. ~~Planner — A-C.R1-4~~: **done** (final authorization; applied at the authorized digests).
+2. **Owner — consolidated qualification**: release the hold for exactly one Mac `scripts/check
+   --integration` and one Linux clean clone on the tip of `phase-3` (code `fd5bb90`).
 3. **C8**: the owner's browser walkthrough deferred from Gate B (about 20 minutes).
 4. **C9**: the usability protocol with at least 3 first-time participants; PASSED only if every one
    completes J1–J8 unaided, or the owner accepts named exceptions in writing.
@@ -86,7 +85,7 @@ own full run is pending. The dogfood ran on the installed build `b963527`, not o
 
 ## 5. Recommended disposition
 
-1. Authorize A-C.R1-4, then the consolidated qualification on the resulting commit. If it is green,
+1. Release the hold for the consolidated qualification on the tip. If it is green,
    **accept the C-UX engineering and machine evidence (C1–C7)** and end Phase 3 remediation there:
    Review 7 found nothing at MEDIUM or above, and no further remediation round is proposed.
 2. **Do not accept Gate C as a whole yet**: C9 is a gate requirement (PRD FR-UX-10: an automated run
@@ -97,7 +96,7 @@ own full run is pending. The dogfood ran on the installed build `b963527`, not o
 
 | Decision | |
 |---|---|
-| A-C.R1-4 authorized (date) | |
+| A-C.R1-4 authorized (date) | 2026-10-27 (Planner, final); applied |
 | Consolidated qualification: go-ahead given (date) | |
 | C8 result | |
 | C9 result, or named exception | |

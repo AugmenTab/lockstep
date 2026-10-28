@@ -116,7 +116,7 @@ tests =
                 folder = scRoot sc <> "/garden"
               recorded sc view >>= (@?= Just (Connected, Just (T.pack folder)))
               listDirectory (scRoot sc) >>= (@?= ["garden", "notes"]) . L.sort
-        , testCase "a failed attempt still removes the folder it made when the project does not record it" $
+        , testCase "a failed attempt keeps the folder it made and records nothing (R6-1)" $
             withScenario $ \sc -> do
               createDirectory (scRoot sc <> "/notes")
               view <- made sc "garden" "Garden" DecideLater
@@ -125,7 +125,7 @@ tests =
               result <- connectProjectWith (ProjectFaults pure) (scRuntime sc) (rootFolders sc) (projectId view) 1 NewFolder
               assertBool ("not a failure: " <> show (fmap (fmap projectId) result)) (either (const True) (const False) result)
               recorded sc view >>= (@?= Just (Organized, Nothing))
-              listDirectory (scRoot sc) >>= (@?= ["notes"])
+              listDirectory (scRoot sc) >>= (@?= ["garden", "notes"]) . L.sort
         ]
     , testGroup
         "rows made before migration 17 replay only when the request is shown equal (A-C.R1-1)"

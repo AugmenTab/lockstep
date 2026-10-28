@@ -374,7 +374,7 @@ tests =
               counted sc "lockstep_engineers" >>= (@?= 1)
               counted sc "lockstep_repositories" >>= (@?= 1)
               listDirectory (scRoot sc) >>= (@?= ["garden"])
-        , testCase "a failure at the Engineer, the registration or the project write leaves nothing behind" $
+        , testCase "a failure at the Engineer, the registration or the project write leaves no Engineer, registration or project change, and keeps the folder it made" $
             traverse_
               ( \(table, event) ->
                   withScenario $ \sc -> do
@@ -383,7 +383,7 @@ tests =
                     execute sc ("CREATE TRIGGER remedy_fail BEFORE " <> event <> " ON " <> table <> " FOR EACH ROW EXECUTE FUNCTION remedy_fail()")
                     r <- connectProject (scRuntime sc) (rootFolders sc) (projectId view) 1 NewFolder
                     assertBool (table <> ": not a failure: " <> show (fmap (fmap projectId) r)) (isLeft r)
-                    listDirectory (scRoot sc) >>= (@?= [])
+                    listDirectory (scRoot sc) >>= (@?= ["garden"])
                     traverse (counted sc) ["lockstep_engineers", "lockstep_repositories", "lockstep_identity_decisions"] >>= (@?= [0, 0, 0])
                     after <- ready (findProject (scRuntime sc) (projectId view))
                     fmap (\v -> (projectSetup v, projectRevision v, projectEngineer v)) after @?= Just (Organized, 1, Nothing)

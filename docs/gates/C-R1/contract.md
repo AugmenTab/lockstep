@@ -16,7 +16,8 @@
    PostgreSQL session-level advisory lock on a connection of its own; an interrupted decision leaves
    a durable marker and is never replayed or given a made-up receipt (findings 1, 5, 6).
 2. Connecting a project is serialized per project from the revision check to the last write; a
-   failed attempt leaves no Engineer, repository registration or new folder behind (findings 2, 3, 4).
+   failed attempt leaves no Engineer or repository registration behind, and keeps any folder it
+   published (R6-1; amendment A-C.R1-4) (findings 2, 3, 4).
 3. Task decisions run under the task lock (C-P3.6 K2 as written) (finding 7).
 4. Attribute escaping proved through the renderer and a real browser; a task creation key bound to
    its project; the "nothing chosen" form value no longer shares a spelling with a Profile ID
@@ -43,7 +44,7 @@
 
 | File | Kind | Covers |
 |---|---|---|
-| `test/integration/Lockstep/GateCRemediationTest.hs` | integration: real PostgreSQL, Git, in-process; two service pools for real concurrency | R1: two concurrent requests with one key and different content → one applied and one `key-conflict`, one receipt, outcome `applied`; with the same content → one applied, one replayed; a key whose lock is held elsewhere → `decision-busy` after the bound, nothing recorded; the lock connection killed while the operation waits → no receipt, the ledger change stands, the same key then `decision-outcome-uncertain` and nothing more; attempt markers immutable; a marker left by another answer with the same key is `key-conflict` (A-C.R1-3). R3: −1 and 2³¹ refused before any receipt. R4: current right after, not current once the work changed elsewhere. R5: two concurrent connects of one project → one Engineer, one registration, one folder; a failure at the Engineer, the registration or the project write → no Engineer, no registration, no new folder, project unchanged. R7: a task decision waits for the task lock; a stale Ticket revision after a title edit is `stale-revision`. R9: a key from another project is `key-conflict`. R10: a Profile called `none`. |
+| `test/integration/Lockstep/GateCRemediationTest.hs` | integration: real PostgreSQL, Git, in-process; two service pools for real concurrency | R1: two concurrent requests with one key and different content → one applied and one `key-conflict`, one receipt, outcome `applied`; with the same content → one applied, one replayed; a key whose lock is held elsewhere → `decision-busy` after the bound, nothing recorded; the lock connection killed while the operation waits → no receipt, the ledger change stands, the same key then `decision-outcome-uncertain` and nothing more; attempt markers immutable; a marker left by another answer with the same key is `key-conflict` (A-C.R1-3). R3: −1 and 2³¹ refused before any receipt. R4: current right after, not current once the work changed elsewhere. R5: two concurrent connects of one project → one Engineer, one registration, one folder; a failure at the Engineer, the registration or the project write → no Engineer, no registration, project unchanged, the new folder kept (A-C.R1-4). R7: a task decision waits for the task lock; a stale Ticket revision after a title edit is `stale-revision`. R9: a key from another project is `key-conflict`. R10: a Profile called `none`. |
 | `test/integration/Lockstep/GateCRemediationPageTest.hs` | integration: real service over HTTP | R3: out-of-range and non-decimal `expected`, `ticket_revision` and `revision` answer the form error and record nothing; R4: a closed decision changed elsewhere shows no Done page; R8: the hostile title escaped in the raw page; R10: `expected_set` on the checks page |
 | `test/integration/Lockstep/GateCRemediationFolderTest.hs` | integration: real `scripts/service` with the docker stub (C-P3.5 support), real launcher | R6: a listed symbolic link and a listed path under a symbolic-link parent are not mounted; R12: a `lockstep` earlier on `PATH` is named, the link is still made, the other program is untouched |
 | `test/integration/Lockstep/GateCRemediationBrowserTest.hs` | integration: headless Chromium (frozen `test/browser/app_driver.py`), real service | R8: the task page with the hostile title has no `onfocus` or `autofocus` attribute, and the title field holds the exact text |
@@ -66,7 +67,7 @@ production change (R9), and Review 3 findings 1, 3 and 4.
 
 | File | Kind | Covers |
 |---|---|---|
-| `test/integration/Lockstep/GateCRemediationAddendumTest.hs` | integration: real PostgreSQL, Git, in-process | R13: an interruption after the commit, and a lost COMMIT answer, leave the connected project and its new folder; nothing else in the projects folder is touched; a really failed attempt still removes the folder it made. R9 (migration 17): rows without a creation digest replay only when the request is shown equal; a project's other name or a new folder, a task's other title, or any task after an edit is `key-conflict` |
+| `test/integration/Lockstep/GateCRemediationAddendumTest.hs` | integration: real PostgreSQL, Git, in-process | R13: an interruption after the commit, and a lost COMMIT answer, leave the connected project and its new folder; nothing else in the projects folder is touched; a really failed attempt keeps the folder it made (A-C.R1-4). R9 (migration 17): rows without a creation digest replay only when the request is shown equal; a project's other name or a new folder, a task's other title, or any task after an edit is `key-conflict` |
 
 Not covered by a test: R14 (an asynchronous exception arriving exactly during the unlock cannot be
 placed deterministically); it is checked by reading the code.
@@ -96,7 +97,7 @@ it is corrected here under the same authorization, with the dependency-quoting f
 
 | File | Kind | Covers |
 |---|---|---|
-| `test/integration/Lockstep/GateCRemediationFolderRaceTest.hs` | integration: real PostgreSQL, Git, in-process, the R15a hook | R13a: another project connects the folder an attempt made; the attempt fails and the folder stays. R13b: an attempt waits with a folder the other attempt made and then removed; it is not recorded as connected, and no repository is registered. R9a: joined dependency text is not the same request |
+| `test/integration/Lockstep/GateCRemediationFolderRaceTest.hs` | integration: real PostgreSQL, Git, in-process, the R15a hook | R13a: another project connects the folder an attempt made; the attempt fails and the folder stays. R13b: an attempt waits with a folder the other attempt made, kept, and someone then removed (A-C.R1-4); it is not recorded as connected, and no repository is registered. R9a: joined dependency text is not the same request |
 
 Pre-freeze baseline (`addendum2-prefreeze-baseline.log`, only these cases, against the code with
 the hook and without R13a, R13b, R9a): **3 of 3 fail**, each for its finding (the connected project's
@@ -134,10 +135,13 @@ Authority: the Planner's final engineering authorization for Review 6's three ME
 compare the identity of the observation actually registered; serialize ownership checks with the
 command-line registration; one addendum frozen first; one read-only review; no qualification.
 
-**Superseded by this addendum** (the safer rule wins; the frozen cases that assert the old rule are
-amendment request A-C.R1-4, `amendment-request-4.md`, not applied): R5's "a folder this attempt made
-is removed when the attempt does not end connected", §1 item 2's "no … new folder behind", the
-removal halves of R13, R13a and R5-1, and the §3/§3b/§3c cases that assert the removal.
+**Superseded by this addendum** (the safer rule wins): R5's "a folder this attempt made is removed
+when the attempt does not end connected", §1 item 2's "no … new folder behind", the removal halves of
+R13, R13a and R5-1, and the §3/§3b/§3c cases that asserted the removal. Those cases and §1, §3, §3b,
+§3c were amended by **A-C.R1-4** (`amendment-request-4.md`; final Planner authorization 2026-10-27,
+applied with the original and authorized digests checked, §4). The governing invariant is final:
+private unpublished staging may be cleaned up; published project folders are retained after
+unsuccessful or uncertain setup.
 
 | # | Decision |
 |---|---|
@@ -198,7 +202,8 @@ After the Planner's final authorization (addenda, §3b and §3c), at **`d064150`
 | Fourth addendum (Review 6, §3e) frozen in `a518450`: its cases against `671b957` | 5 of 5 fail, each for its finding | `addendum4-prefreeze-baseline.log` |
 | Format, lint, pedantic build, unit (800) at **`fd5bb90`** (R6-1, R6-2, R6-3) | PASSED | — |
 | C-C.R1 (all four addenda), C-P3.5, C-P3.6, C-P3.7 integration groups at `fd5bb90` (targeted, not a qualification) | **101 of 104**: every new case passes; the 3 failures are exactly the frozen cases that assert the superseded removal (A-C.R1-4), each failing only because the folder is kept | `addendum4-implementation-run.log` |
-| C-C.R1 groups with the proposed A-C.R1-4 diffs (trial; then the three frozen files restored with `git checkout` and their digests re-checked as in §4) | **40 of 40 PASSED** | `trial-with-proposed-a-c.r1-4.log` |
+| C-C.R1 groups with the proposed A-C.R1-4 diffs (trial; then the three frozen files restored with `git checkout` and their digests re-checked) | **40 of 40 PASSED** | `trial-with-proposed-a-c.r1-4.log` |
+| A-C.R1-4 applied (final Planner authorization) | original digests checked; each `.diff` applied with `patch` to its intended test path; each result equals the authorized digest (§4); no production code changed (code stays `fd5bb90`) | — |
 | Final focused read-only review of the R6 change (an agent, Review 7) | **no HIGH, no MEDIUM**; 1 LOW, 4 INFO recorded, not remediated (stopping rule); nothing calling for disabling new-folder creation | `docs/gates/C/review.md`, Review 7 |
 | Mac `scripts/check --integration` and Linux clean clone of the tip | **NOT_RUN** (not authorized; one consolidated run to come, after A-C.R1-4 is decided) | — |
 
@@ -251,17 +256,19 @@ Frozen 2026-10-27 by the writing agent (manual), before any of the fixes was imp
 
 | File | SHA-256 |
 |---|---|
-| `test/integration/Lockstep/GateCRemediationTest.hs` | `97b255e2f65d0d7abfbd4a73842baf6b95ea81a902f2e675975b35b4510605fe` (amendment A-C.R1-3; was `8e7beb24a0ef48b86eec4a8368d2f180cf2be105ed63c074a45c88f55e01a9c8`) |
+| `test/integration/Lockstep/GateCRemediationTest.hs` | `7001908ecc928fe3aa55468907911e86c67e24cf40e279cc5c974590cef4096c` (amendment A-C.R1-4; was `97b255e2f65d0d7abfbd4a73842baf6b95ea81a902f2e675975b35b4510605fe` after A-C.R1-3, and originally `8e7beb24a0ef48b86eec4a8368d2f180cf2be105ed63c074a45c88f55e01a9c8`) |
 | `test/integration/Lockstep/GateCRemediationPageTest.hs` | `ad05170cefeba7fd9ddf702a3392bd5b6a962c3a3f5c91a233fdbb449bd6806e` (amendment A-C.R1-2; was `4015a2835ae35a6ec3dc018efb31aa0d12e78fc7244203b1cd62a1676c4bd41d`) |
 | `test/integration/Lockstep/GateCRemediationFolderTest.hs` | `6497ba92949811893e5e61cdfacba234653a2b4518ebdfc2e84fef141b92e18f` |
 | `test/integration/Lockstep/GateCRemediationBrowserTest.hs` | `d95ecee895ef0a1f3ea72effb153799643e6e6f85fcdc054f3f322c45ea652a9` |
 | `test/integration/Main.hs` (runner, additive) | `a06703efd75b28ad0048ce79b81b965565e9fc03fbf0fc0691c455e546dd2853` (fourth addendum; before it `dfdb6c34…0db` for the third, `c3450061…8999` for the second, `0f7613e8…6193` for the first; originally `fd71561c3342b6c788aeeebf4dea9f882b8546f487a0d67068555d1c34f51982`) |
 | `test/integration/Lockstep/GateCRemediationRetainTest.hs` (fourth addendum, §3e) | `bb8ff08a753d26eca31491b56fe991a9c316821fbafb5bc6ffd1073bdb9c6e6f` |
 | `test/integration/Lockstep/GateCRemediationIdentityTest.hs` (third addendum, §3d) | `4dcd8569425233ad070cb9cc3b02b4a27f3c76fa872b4d8b2cef9540f25a314f` |
-| `test/integration/Lockstep/GateCRemediationAddendumTest.hs` (addendum, §3b) | `16235a713b695f91f196a42379ad08c5aff5ecb54cbafc52ea0c3dd4493451ec` |
-| `test/integration/Lockstep/GateCRemediationFolderRaceTest.hs` (second addendum, §3c) | `b5872215d9ff11c12a03eac615386ee9bfdf3aee0736e8f1450a3cf87e6029bb` |
+| `test/integration/Lockstep/GateCRemediationAddendumTest.hs` (addendum, §3b) | `36c0e5d8171c8d8f359ee7ff168b97d1b45725cd815695733bec48bb9eb758fd` (amendment A-C.R1-4; was `16235a713b695f91f196a42379ad08c5aff5ecb54cbafc52ea0c3dd4493451ec`) |
+| `test/integration/Lockstep/GateCRemediationFolderRaceTest.hs` (second addendum, §3c) | `3306dc0cef4c7b6709f356164a8d279fd8b055569620628253ee8e1e05404477` (amendment A-C.R1-4; was `b5872215d9ff11c12a03eac615386ee9bfdf3aee0736e8f1450a3cf87e6029bb`) |
 
 No earlier frozen file is changed; the runner only gains four lines of imports and four groups.
+(Later: the runner gains a fifth group for the fourth addendum, and the three C-C.R1 files above
+marked A-C.R1-4 were amended under that authorization, §5.)
 
 Pre-freeze verification:
 
@@ -302,3 +309,12 @@ before the edit, exactly the authorized hunks were applied to the intended test 
 `.local` copies the patch headers name), and each result matches the authorized digest (§4;
 C-P3.5 §4, C-P3.6 §4). R1 step (2), R9 and the §3 row were amended as authorized. R9's second half is
 implemented with migration 17 (§3b).
+
+Status 2026-10-27 (A-C.R1-4): **final Planner authorization** ("FINAL Planner Authorization:
+A-C.R1-4", given in the session) to apply `a-c.r1-4-remediation.diff`, `a-c.r1-4-addendum.diff` and
+`a-c.r1-4-folder-race.diff` to `GateCRemediationTest.hs`, `GateCRemediationAddendumTest.hs` and
+`GateCRemediationFolderRaceTest.hs`, and to amend §1, §3, §3b and §3c. Applied: the original digests
+(`97b255e2…05fe`, `16235a71…51ec`, `b5872215…29bb`) were checked first; each diff was applied to its
+intended test path (not the `.local` copy its header names); the results equal the authorized
+digests (`7001908e…096c`, `36c0e5d8…58fd`, `3306dc0c…4477`). Review 7's LOW/INFO observations are
+accepted as documented carry-forward findings. The production-code candidate remains `fd5bb90`.

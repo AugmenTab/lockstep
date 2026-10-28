@@ -2,9 +2,9 @@
 
 - Status: **NOT ACCEPTED. All authorized remediation, including Review 6's three MEDIUM corrections
   (published folders never removed), is implemented at the final candidate `fd5bb90`; it is verified
-  by targeted runs only. Three frozen cases still assert the superseded removal and need the
-  Planner's authorization (A-C.R1-4) before the one consolidated Mac qualification and Linux clean
-  clone, which are not authorized yet.** The concise
+  by targeted runs only. The frozen-test amendment A-C.R1-4 is authorized and applied; no Planner
+  decision is outstanding. The one consolidated Mac qualification and Linux clean clone wait for
+  the owner to release the hold.** The concise
   decision packet is `decision-packet.md`. The Implementer cannot accept Gate C (Phase 3 handoff
   P3.11). C8 and C9 are **NOT_RUN**. Phase 4 is not started and will not be without the owner's
   authorization.
@@ -18,8 +18,8 @@
   `b9f7d47` (R13a, R13b, R9a), `33e0beb` (third addendum frozen, from Review 5), `671b957`
   (R5-1, R5-2, R5-3), `a518450` (fourth addendum frozen, from Review 6) and **`fd5bb90`** (R6-1,
   R6-2, R6-3). **Next qualification: one Mac `scripts/check --integration` and one Linux clean
-  clone of the tip of `phase-3`** (`fd5bb90` plus the A-C.R1-4 test amendment once authorized, or a
-  later documents-only commit).
+  clone of the tip of `phase-3`** (code `fd5bb90`, with the applied A-C.R1-4 test amendment; the
+  commit that records it, or a later documents-only commit).
 - Authority: Phase 3 handoff P3.11; PRD v0.3 FR-UX-01…10, NFR-15…18; Plan v0.3 §4 P3.11; the
   Planner disposition of 2026-10-27.
 
@@ -116,17 +116,15 @@ Not started without authorization: the consolidated qualification, cookie-page r
 | Read-only code review of `e1c56ef..d064150` (Review 4) | 1 MEDIUM, 1 LOW, 3 INFO; MEDIUM and LOW fixed in `b9f7d47` (`review.md`) |
 | Read-only check of `d064150..b9f7d47` (Review 5) | no HIGH, no MEDIUM; 3 LOW, **fixed in `671b957`** under the Planner's final authorization (C-C.R1 §3d); 5 frozen cases, failing before, passing after; targeted 99 of 99 |
 | Independent read-only review of `b9f7d47..671b957` (Review 6) | 3 MEDIUM; **corrected in `fd5bb90`** under the Planner's final engineering authorization (C-C.R1 §3e): no published folder is ever removed; the identity of the observation actually registered is checked, `origin` fallback included; ownership is checked only under the registration lock. 5 frozen cases, failing before, passing after; targeted 101 of 104 (the 3 being A-C.R1-4's cases); unit 800 of 800 |
-| A-C.R1-4 (`docs/gates/C-R1/amendment-request-4.md`) | **Prepared, not applied**: three frozen cases assert the superseded removal; exact diffs and digests ready; trial with them 40 of 40 |
+| A-C.R1-4 (`docs/gates/C-R1/amendment-request-4.md`) | **Authorized (final) and applied** at the authorized digests; the applied files are byte-identical to the trial copies that passed 40 of 40 at `fd5bb90` |
 | Final focused read-only review of `fd5bb90` (Review 7) | **no HIGH, no MEDIUM**; 1 LOW, 4 INFO recorded (`review.md`) |
 | The remediation on the owner's installation | **Not installed, not dogfooded** (it adds migrations 16 and 17) |
 | Gate C | **Not accepted**. C8, C9 NOT_RUN |
 
 Next required actions, in order:
 
-1. **Planner**: authorize A-C.R1-4 (three frozen-test diffs, `amendment-request-4.md`); the
-   Implementer then applies them at the stated digests (one documents-and-tests commit on top of
-   `fd5bb90`, no code change).
-2. **Owner/Planner**: authorize the consolidated qualification (`decision-packet.md` §3).
+1. ~~Planner: A-C.R1-4~~ — **done** (authorized and applied; no Planner decision outstanding).
+2. **Owner**: release the hold on the consolidated qualification (`decision-packet.md` §3).
 3. Implementer: **one** Mac `scripts/check --integration` and **one** Linux clean clone
    (`.local/linux-clone-run-cr1.sh <commit>`), both on the tip of `phase-3`; record both here and in
    C-C.R1 §3a. No intermediate full runs.
