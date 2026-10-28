@@ -35,4 +35,6 @@
 
 ## Decision
 
-*(for the owner)*
+**APPROVED** 2026-10-28 by the owner in the session (answer to the amendment question: "Approve"). Applied
+exactly; digest after verified `cc3998c29d7365fa39159dca4636bc9f0ff661f6ace466dc2e8915a16b66bb34`. Re-frozen in
+C-P4.2 §4.1.
