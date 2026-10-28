@@ -18,6 +18,7 @@ import Lockstep.DecisionsBrowserTest qualified as DecisionsBrowserTest
 import Lockstep.DecisionsPageTest qualified as DecisionsPageTest
 import Lockstep.DecisionsTest qualified as DecisionsTest
 import Lockstep.DispatcherTest qualified as DispatcherTest
+import Lockstep.EngineTest qualified as EngineTest
 import Lockstep.ExecutionBrowserTest qualified as ExecutionBrowserTest
 import Lockstep.ExecutionPageTest qualified as ExecutionPageTest
 import Lockstep.ExecutionTest qualified as ExecutionTest
@@ -139,4 +140,5 @@ main =
       , HelperRunnerTest.tests
       , GitSupervisorTest.tests
       , RolesTest.tests
+      , EngineTest.tests
       ]

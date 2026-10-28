@@ -573,4 +573,81 @@ CREATE TRIGGER lockstep_conversation_messages_immutable BEFORE UPDATE OR DELETE 
 CREATE TRIGGER lockstep_conversation_messages_no_truncate BEFORE TRUNCATE ON lockstep_conversation_messages FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
 |]
       )
+    ,
+      ( [Interpolate.i|coding transactions, their records and invocations|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_transactions (
+  id uuid PRIMARY KEY,
+  work_order_id uuid NOT NULL UNIQUE REFERENCES lockstep_work_orders (id),
+  task_id uuid NOT NULL REFERENCES lockstep_project_tasks (ticket_id),
+  engineer_name text NOT NULL,
+  folder text NOT NULL,
+  state text NOT NULL CHECK (state IN ('running', 'halted', 'accepted', 'done', 'stopped')),
+  stage text NOT NULL CHECK (stage IN ('basis', 'discovery', 'reproduction', 'candidate', 'challenge-pre', 'freeze', 'implement', 'verify', 'challenge-post', 'review', 'accept')),
+  halt_code text,
+  candidates_made integer NOT NULL DEFAULT 0 CHECK (candidates_made BETWEEN 0 AND 10),
+  attempts_made integer NOT NULL DEFAULT 0 CHECK (attempts_made BETWEEN 0 AND 10),
+  basis_commit text CHECK (basis_commit IS NULL OR basis_commit ~ '^[0-9a-f]{40}$'),
+  branch text,
+  freeze_commit text CHECK (freeze_commit IS NULL OR freeze_commit ~ '^[0-9a-f]{40}$'),
+  candidate_commit text CHECK (candidate_commit IS NULL OR candidate_commit ~ '^[0-9a-f]{40}$'),
+  accepted_commit text CHECK (accepted_commit IS NULL OR accepted_commit ~ '^[0-9a-f]{40}$'),
+  contract_digest text CHECK (contract_digest IS NULL OR contract_digest ~ '^[0-9a-f]{64}$'),
+  revision integer NOT NULL CHECK (revision >= 1),
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((state IN ('halted', 'stopped')) = (halt_code IS NOT NULL))
+);
+CREATE TRIGGER lockstep_transactions_no_delete BEFORE DELETE ON lockstep_transactions FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_transactions_no_truncate BEFORE TRUNCATE ON lockstep_transactions FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TABLE lockstep_transaction_records (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  transaction_id uuid NOT NULL REFERENCES lockstep_transactions (id),
+  sequence integer NOT NULL CHECK (sequence >= 1),
+  kind text NOT NULL CHECK (kind ~ '^[a-z][a-z0-9-]{0,63}$'),
+  principal text NOT NULL CHECK (principal IN ('human', 'supervisor')),
+  stage text NOT NULL,
+  body text NOT NULL CHECK (octet_length(body) <= 4194304),
+  body_digest text NOT NULL CHECK (body_digest ~ '^[0-9a-f]{64}$'),
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (transaction_id, sequence)
+);
+CREATE TRIGGER lockstep_transaction_records_immutable BEFORE UPDATE OR DELETE ON lockstep_transaction_records FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_transaction_records_no_truncate BEFORE TRUNCATE ON lockstep_transaction_records FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TABLE lockstep_invocations (
+  id uuid PRIMARY KEY,
+  transaction_id uuid NOT NULL REFERENCES lockstep_transactions (id),
+  stage text NOT NULL,
+  what text NOT NULL CHECK (what ~ '^[a-z][a-z0-9-]{0,63}$'),
+  runner text NOT NULL CHECK (runner IN ('direct', 'container')),
+  adapter text NOT NULL,
+  argv text NOT NULL,
+  started_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  finished_at timestamptz,
+  outcome text,
+  exit_code integer,
+  millis integer,
+  stdout_bytes integer,
+  stderr_bytes integer,
+  stdout_digest text,
+  stderr_digest text,
+  stdout_tail text,
+  stderr_tail text,
+  CHECK ((finished_at IS NULL) = (outcome IS NULL))
+);
+CREATE FUNCTION lockstep_invocation_finish_once() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.finished_at IS NOT NULL
+     OR NEW.id <> OLD.id OR NEW.transaction_id <> OLD.transaction_id OR NEW.stage <> OLD.stage
+     OR NEW.what <> OLD.what OR NEW.runner <> OLD.runner OR NEW.adapter <> OLD.adapter
+     OR NEW.argv <> OLD.argv OR NEW.started_at <> OLD.started_at THEN
+    RAISE EXCEPTION 'lockstep: an invocation is finished exactly once and never changed';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER lockstep_invocations_finish_once BEFORE UPDATE ON lockstep_invocations FOR EACH ROW EXECUTE FUNCTION lockstep_invocation_finish_once();
+CREATE TRIGGER lockstep_invocations_no_delete BEFORE DELETE ON lockstep_invocations FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_invocations_no_truncate BEFORE TRUNCATE ON lockstep_invocations FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+|]
+      )
     ]
