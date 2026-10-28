@@ -20,7 +20,6 @@ module Lockstep.Application.EngineWorker
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar, tryPutMVar, tryReadMVar)
 import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
-import Data.List qualified as L
 import Data.Text qualified as T
 import Flipstone.Prelude
 
@@ -40,9 +39,9 @@ database).
 engineOnce :: DatabaseRuntime -> Engine -> IO [(T.Text, Either T.Text T.Text)]
 engineOnce runtime engine = do
   pending <- pendingWorkOrders runtime
-  traverse_ (startTransaction runtime) (L.take 0 (fromRight [] pending))
+  traverse_ (startTransaction runtime) (fromRight [] pending)
   active <- activeTransactionIds runtime
-  traverse one (L.take 0 (fromRight [] active))
+  traverse one (fromRight [] active)
  where
   one txId = do
     stepped <- advance runtime engine txId
