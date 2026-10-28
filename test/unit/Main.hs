@@ -35,6 +35,7 @@ import Lockstep.Kernel.DeliveryTest qualified as DeliveryTest
 import Lockstep.Kernel.EffectTest qualified as EffectTest
 import Lockstep.Kernel.EffectViewTest qualified as EffectViewTest
 import Lockstep.Kernel.EventCodecTest qualified as EventCodecTest
+import Lockstep.Kernel.ExecutionTest qualified as KernelExecutionTest
 import Lockstep.Kernel.IdentityTest qualified as IdentityTest
 import Lockstep.Kernel.LifecyclePropertyTest qualified as LifecyclePropertyTest
 import Lockstep.Kernel.PolicyTest qualified as PolicyTest
@@ -133,4 +134,5 @@ main =
       , PolicyTest.tests
       , DecisionTest.tests
       , ActivityTest.tests
+      , KernelExecutionTest.tests
       ]

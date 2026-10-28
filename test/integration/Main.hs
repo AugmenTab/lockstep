@@ -17,6 +17,9 @@ import Lockstep.DecisionsBrowserTest qualified as DecisionsBrowserTest
 import Lockstep.DecisionsPageTest qualified as DecisionsPageTest
 import Lockstep.DecisionsTest qualified as DecisionsTest
 import Lockstep.DispatcherTest qualified as DispatcherTest
+import Lockstep.ExecutionBrowserTest qualified as ExecutionBrowserTest
+import Lockstep.ExecutionPageTest qualified as ExecutionPageTest
+import Lockstep.ExecutionTest qualified as ExecutionTest
 import Lockstep.ExecutorTest qualified as ExecutorTest
 import Lockstep.FaultPlanTest qualified as FaultPlanTest
 import Lockstep.FirstUseJourneyTest qualified as FirstUseJourneyTest
@@ -123,4 +126,7 @@ main =
       , GateCRemediationFolderRaceTest.tests
       , GateCRemediationIdentityTest.tests
       , GateCRemediationRetainTest.tests
+      , ExecutionTest.tests
+      , ExecutionPageTest.tests
+      , ExecutionBrowserTest.tests
       ]
