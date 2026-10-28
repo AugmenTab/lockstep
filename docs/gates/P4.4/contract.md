@@ -40,6 +40,16 @@ touched (a *worktree* is therefore not needed: the snapshot replaces it, and not
 | `test/unit/Lockstep/Kernel/GitBasisTest.hs` | unit | G1 paths, modes, ids, names; `checkChanges` and its order |
 | `test/integration/Lockstep/GitSupervisorTest.hs` | integration, real Git in disposable repositories | G2 clean basis; dirty (changed, staged, untracked; ignored is fine); missing, plain, unborn; G3 branch once, collision, invalid name, nothing checked out or changed; G4 exact tree with modes and link, no `.git`, no submodule, committed not working content; destination rules and an unknown commit; G5 changes in order; link, `.git`, pipe, link-made-file refused; the commit's identity, parent, tree and message; the person's index, files, `HEAD` and branches unchanged; determinism; invalid change sets refused with no object written; G6 compare-and-swap, retry accepted, moved refused, checked out refused; a configured file-system monitor and hooks path never run |
 
+## 3a. Verification record (after implementation)
+
+| Check | Result | Evidence |
+|---|---|---|
+| C-P4.4 integration group, targeted | 13 of 13 at the first implementation run | `.local/p44-run1.log` (not committed) |
+| `scripts/check --integration` on the Mac, `4f110cd`, clean tree | all six steps PASSED: unit 836 of 836, integration 483 of 483, backup/restore | `check-integration-4f110cd.log` |
+| Linux clean clone | at the next checkpoint (after P4.6), per the handoff's "meaningful stable checkpoints" | — |
+
+**Status: IMPLEMENTED, Mac-qualified** at `4f110cd`; Linux clean clone pending at the P4.6 checkpoint.
+
 ## 4. Freeze record
 
 Frozen 2026-10-28 by the writing agent (manual), before the Git boundary was implemented.
