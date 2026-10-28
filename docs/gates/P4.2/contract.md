@@ -50,6 +50,21 @@
 | `test/integration/Lockstep/HelperRunnerTest.hs` | integration, the real helper with a `docker` stand-in | R3/R4 end to end: a signed run and its streams; a helper refusal with nothing run; cancellation; no helper → unknown outcome; client-side refusals with nothing sent |
 | `scripts/lib/check-runner` | host check (Docker, real containers) | R3: signed result and pinned image; no network (only `lo`, no outside connection); read-only root; no Docker socket or home; non-root, no capabilities, no new privileges; no host variable (a canary); read-only tree for read-only roles, writable for `run-write`, no `.git`; protected files unwritable and unremovable; ≤ 256 processes; wall clock (timed-out, container gone); output limit (exact kept size, container gone); cancellation and `busy`; refusals (MAC, stale, op, missing and symlinked run, argv digest, `..` and symlinked protected paths, a non-hex run); replay runs nothing |
 
+## 3a. Verification record (after implementation)
+
+| Check | Result | Evidence |
+|---|---|---|
+| C-P4.2 integration groups, targeted | 16 of 16 at the first implementation run | `.local/p42-run1.log` (not committed) |
+| Host check, frozen script, on `ea9b445` | 43 of 44: the process-limit probe's own defect (A-P4.2-1) | `check-runner-frozen.log` |
+| Host check with A-P4.2-1 (approved, applied), on `b6385b6` | **44 of 44**: signed results, pinned image, no network, read-only root, no socket or home, non-root, no capabilities, no host variables, tree access by profile, no `.git`, protected files, ≤ 256 processes, wall clock, output limit, cancellation, `busy`, every refusal, replay | `check-runner-b6385b6.log` |
+| `scripts/check --integration` on the Mac, `b6385b6` (tree dirty only by the untracked host check log above, outside the build) | all six steps PASSED: unit 831 of 831, integration 470 of 470, backup/restore | `check-integration-b6385b6.log` |
+| Linux clean clone of `b6385b6` | running | — |
+
+The audit items D1 and D2 (`docs/reviews/simple-haskell-audit-2026-10-28.md`) are fixed in this
+implementation: no signal to an ended process group; `waitFor` threads never outlive the call; every client
+file operation caught (before the request: a refusal; after: an unknown outcome); the request file 0600
+from creation.
+
 ## 4. Freeze record
 
 Frozen 2026-10-28 by the writing agent (manual), before the runners were implemented.

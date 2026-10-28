@@ -1,0 +1,45 @@
+PASS result is signed with the runner key
+PASS exit code 3 is reported as exited 3
+PASS standard output is captured
+PASS standard error is captured
+PASS the pinned image is the one that ran
+PASS the stdout digest matches the file
+PASS the container is removed
+PASS only the loopback interface exists
+PASS an outside connection fails
+PASS the root filesystem is read-only
+PASS no Docker socket and no host home
+PASS runs as the invoking user, not root
+PASS no effective capabilities
+PASS no new privileges
+PASS no variable from the host reaches the run (found: none)
+PASS the canary of the helper's environment is absent
+PASS HOME is the private temporary directory
+PASS a read-only role cannot change the tree
+PASS the host file is unchanged
+PASS the snapshot has no .git
+PASS the Implementer can change the tree
+PASS a protected file cannot be written or removed
+PASS the protected file is unchanged on the host
+PASS no more than 256 processes (started: 255)
+PASS a run past its wall clock is timed-out
+PASS it ended within 20 s (6 s)
+PASS the timed-out container is gone
+PASS too much output is output-limit
+PASS the kept output is exactly the limit
+PASS the container that printed too much is gone
+PASS a second run while one runs is refused: busy
+PASS the cancel request is accepted
+PASS the cancelled run reports cancelled
+PASS the cancelled container is gone
+PASS a bad MAC is refused
+PASS a stale request is refused
+PASS an unknown operation is refused
+PASS a missing run directory is refused
+PASS a run directory that is a symlink is refused
+PASS an argument vector that does not match its digest is refused
+PASS a protected path with .. is refused
+PASS a protected path through a symlink is refused
+PASS a run name that is not 32 hex characters is refused
+PASS a replayed request runs nothing and writes no result
+check-runner: 0 failure(s); results in .local/evidence/runner-20261028t160224z/results.txt
