@@ -24,6 +24,8 @@ module Lockstep.Application.Engine
   , decideCompletion
   , activeTransactionIds
   , pendingWorkOrders
+  , haltRequest
+  , projectStarted
   ) where
 
 import Control.Exception (IOException, try)
@@ -42,8 +44,8 @@ import System.Directory (createDirectoryIfMissing, doesDirectoryExist, pathIsSym
 import System.IO (FilePath)
 import Text.Show (Show, show)
 
-import Lockstep.Application.Command (mkIdempotencyKey)
-import Lockstep.Application.Conversation (NewHumanRequest (..), Sender (..), StoredRequest (..), openRequest, senderChannel, senderEvidence)
+import Lockstep.Application.Command (IdempotencyKey, mkIdempotencyKey)
+import Lockstep.Application.Conversation (NewHumanRequest (..), Sender (..), StoredRequest (..), openRequest, requestByKey, senderChannel, senderEvidence)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), checkReadiness, withDatabase)
 import Lockstep.Application.EngineCandidate (baselineJson, candidateJson, findingJson, frozenContract, recordedCandidate, testFiles, unchangedAtBasis)
 import Lockstep.Application.Identity (newUuid)
@@ -259,6 +261,14 @@ transactionForWorkOrder runtime raw =
 activeTransactionIds :: DatabaseRuntime -> IO (Either NotReadyReason [T.Text])
 activeTransactionIds runtime =
   whenReady runtime (withDatabase runtime (fmap Store.txRowId <$> Store.activeTransactions))
+
+-- | C-P4.16: whether Lockstep has started on any bug of the project.
+projectStarted :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason Bool)
+projectStarted runtime raw =
+  whenReady runtime $
+    case canonicalId raw of
+      Nothing -> pure (Right False)
+      Just project -> withDatabase runtime (Store.projectStarted project)
 
 -- | C-P4.15 W1: the handed-over bug Work Orders with no transaction yet, in hand-over order.
 pendingWorkOrders :: DatabaseRuntime -> IO (Either NotReadyReason [T.Text])
@@ -1294,7 +1304,7 @@ verifyStage runtime engine row = do
                   let
                     missing = L.any (either environmentMissing (const False)) runs
                     results = rights runs
-                    bodies = [(T.pack "verification", JObject [(T.pack "command", strings argv), (T.pack "outcome", string (outcomeName (resultOutcome r))), (T.pack "stdout_tail", string (tailOf (resultStdout r))), (T.pack "stderr_tail", string (tailOf (resultStderr r)))]) | (argv, r) <- results]
+                    bodies = [(T.pack "verification", JObject ([(T.pack "command", strings argv), (T.pack "outcome", string (outcomeName (resultOutcome r)))] <> exitField (resultOutcome r) <> [(T.pack "stdout_tail", string (tailOf (resultStdout r))), (T.pack "stderr_tail", string (tailOf (resultStderr r)))])) | (argv, r) <- results]
                     summary passed = (T.pack "verification-summary", JObject [(T.pack "commit", string candidate), (T.pack "passed", JBool passed)])
                   case () of
                     _
@@ -1310,6 +1320,10 @@ verifyStage runtime engine row = do
     case outcome of
       Exited _ -> True
       _ -> False
+  exitField outcome =
+    case outcome of
+      Exited n -> [(T.pack "exit", JNumber (toInteger n))]
+      _ -> []
 
 -- Challenge after the implementation (C-P4.10-14 C1) ----------------------------------------
 
@@ -1483,30 +1497,60 @@ ensureRequest runtime row stage code = do
   case records of
     Left c -> pure (Left c)
     Right rs ->
-      case L.reverse [r | r <- rs, Store.recordRowKind r == T.pack "halt"] of
-        [] -> pure (Left (T.pack "halt-record-missing"))
-        h : _ ->
-          case mkIdempotencyKey (T.pack "halt-" <> T.filter (/= '-') (Store.txRowId row) <> T.pack "-" <> T.pack (show (Store.recordRowSequence h))) of
-            Left _ -> pure (Left (T.pack "halt-key-invalid"))
-            Right key -> do
-              opened <-
-                openRequest
-                  runtime
-                  key
-                  SenderSupervisor
-                  NewHumanRequest
-                    { newRequestWorkOrder = Store.txRowWorkOrder row
-                    , newRequestEngineer = Store.txRowEngineer row
-                    , newRequestContract = Store.txRowContract row
-                    , newRequestChoices = Just (haltChoices stage code)
-                    , newRequestQuestion = haltQuestion stage code
-                    , newRequestEvidence = T.pack "Transaction " <> Store.txRowId row <> T.pack ", record " <> T.pack (show (Store.recordRowSequence h)) <> T.pack ": " <> code
-                    , newRequestAuthority = T.pack "Whether Lockstep tries this step again, accepts it as it is, or stops this bug fix."
-                    }
-              pure $ case opened of
-                Left _ -> Left (T.pack "database-unavailable")
-                Right (Left c) -> Left c
-                Right (Right request) -> Right request
+      case haltKey row rs of
+        Left c -> pure (Left c)
+        Right (key, h) -> do
+          opened <-
+            openRequest
+              runtime
+              key
+              SenderSupervisor
+              NewHumanRequest
+                { newRequestWorkOrder = Store.txRowWorkOrder row
+                , newRequestEngineer = Store.txRowEngineer row
+                , newRequestContract = Store.txRowContract row
+                , newRequestChoices = Just (haltChoices stage code)
+                , newRequestQuestion = haltQuestion stage code
+                , newRequestEvidence = T.pack "Transaction " <> Store.txRowId row <> T.pack ", record " <> T.pack (show (Store.recordRowSequence h)) <> T.pack ": " <> code
+                , newRequestAuthority = T.pack "Whether Lockstep tries this step again, accepts it as it is, or stops this bug fix."
+                }
+          pure $ case opened of
+            Left _ -> Left (T.pack "database-unavailable")
+            Right (Left c) -> Left c
+            Right (Right request) -> Right request
+
+-- | The key of the request for the latest halt record, and that record.
+haltKey :: Store.TransactionRow -> [Store.RecordRow] -> Either T.Text (IdempotencyKey, Store.RecordRow)
+haltKey row rs =
+  case L.reverse [r | r <- rs, Store.recordRowKind r == T.pack "halt"] of
+    [] -> Left (T.pack "halt-record-missing")
+    h : _ ->
+      either
+        (const (Left (T.pack "halt-key-invalid")))
+        (\key -> Right (key, h))
+        (mkIdempotencyKey (T.pack "halt-" <> T.filter (/= '-') (Store.txRowId row) <> T.pack "-" <> T.pack (show (Store.recordRowSequence h))))
+
+{- | C-P4.16: the request for a halted transaction's current halt, as it
+stands (open or answered); Nothing when the transaction is not halted or
+the request is not opened yet. Reads only.
+-}
+haltRequest :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe StoredRequest))
+haltRequest runtime raw =
+  whenReady runtime $
+    case canonicalId raw of
+      Nothing -> pure (Right Nothing)
+      Just txId -> do
+        found <- withDatabase runtime $ do
+          row <- Store.findTransaction txId
+          records <- Store.transactionRecords txId
+          pure ((,) records <$> row)
+        case found of
+          Left reason -> pure (Left reason)
+          Right (Just (rs, row))
+            | Store.txRowState row == T.pack "halted"
+            , Right (key, _) <- haltKey row rs ->
+                requestByKey runtime key
+          Right _ -> pure (Right Nothing)
 
 {- | C-P4.15 H1: a person's binding answer to the current halt's own request
 and the input it gives. Only an answered request carries one; C-P4.3 lets

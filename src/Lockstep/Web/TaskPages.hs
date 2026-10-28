@@ -155,9 +155,11 @@ actions task =
       "done" -> []
       _ -> [block, cancel]
 
--- | One task's page; @fixing@ is the C-P4.1 Fixing it section (empty when the project does not allow it).
-taskPage :: ProjectView -> [TaskView] -> TaskView -> [E.ChildHTML E.Division E.Body] -> Maybe T.Text -> LBS.ByteString
-taskPage project siblings task fixing notice =
+{- | One task's page; @fixing@ is the C-P4.1 Fixing it section (empty when the
+project does not allow it); @underWay@: Lockstep has started on it (C-P4.16).
+-}
+taskPage :: ProjectView -> [TaskView] -> TaskView -> Bool -> [E.ChildHTML E.Division E.Body] -> Maybe T.Text -> LBS.ByteString
+taskPage project siblings task underWay fixing notice =
   let
     others = [t | t <- siblings, taskId t /= taskId task]
     priority = priorityOf (taskPriority task)
@@ -169,9 +171,8 @@ taskPage project siblings task fixing notice =
       , E.p [cls "ls-muted"] [E.text ("In the project " <> projectName project <> " \8212 Priority: " <> priorityWords priority)]
       ]
         <> notices notice
-        <> [ E.p [cls (readinessClass (taskReadinessOf task))] [E.text (readinessWords (taskReadinessOf task))]
-           , E.p [cls "ls-muted"] [E.text "Lockstep keeps track of this task. Nothing runs it yet; that arrives in a later update of Lockstep."]
-           ]
+        <> [E.p [cls (readinessClass (taskReadinessOf task))] [E.text (readinessWords (taskReadinessOf task))]]
+        <> [E.p [cls "ls-muted"] [E.text "Lockstep keeps track of this task. Nothing runs it yet; that arrives in a later update of Lockstep."] | not underWay]
         <> fixing
         <> [ E.h2 [] [E.text "What done looks like"]
            , if T.null (taskAcceptance task)

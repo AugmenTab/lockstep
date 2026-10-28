@@ -18,6 +18,7 @@ module Lockstep.Application.Conversation
   , postMessage
   , conversation
   , openRequests
+  , requestByKey
   ) where
 
 import Data.Char qualified as Char
@@ -357,3 +358,8 @@ conversation runtime rawId =
 openRequests :: DatabaseRuntime -> IO (Either NotReadyReason [StoredRequest])
 openRequests runtime =
   whenReady runtime (withDatabase runtime (fmap requestOf <$> Store.openRequestRows))
+
+-- | The request opened with this key, in whatever state it is now; reads only.
+requestByKey :: DatabaseRuntime -> IdempotencyKey -> IO (Either NotReadyReason (Maybe StoredRequest))
+requestByKey runtime key =
+  whenReady runtime (withDatabase runtime (fmap requestOf <$> Store.findRequestByKey (idempotencyKeyText key)))
