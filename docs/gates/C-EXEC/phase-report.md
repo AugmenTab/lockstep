@@ -15,8 +15,8 @@
 | P4.2 | **VERIFIED** at `b6385b6` (A-P4.2-1 approved): Mac and Linux, unit 831/831, integration 470/470; host container check 44/44 | `C-P4.2` | `docs/gates/P4.2/` |
 | P4.3 | **VERIFIED** at `4ee971d` after A-P4.3-1 (approved 2026-10-28): Mac and Linux clean clone, unit 818/818, integration 454/454 | `C-P4.3` | `docs/gates/P4.3/` |
 | P4.4 | **IMPLEMENTED, Mac-qualified** at `4f110cd` (unit 836/836, integration 483/483); Linux clean clone at the P4.6 checkpoint | `C-P4.4` | `docs/gates/P4.4/` |
-| P4.5 | **IMPLEMENTED** (frozen `d6319fd`; targeted 7/7); full qualification at the P4.6 checkpoint; the live Claude adapter NOT_BUILT (separately authorized) | `C-P4.5` | `docs/gates/P4.5/` |
-| P4.6 | blocked behind P4.5 | — | — |
+| P4.5 | **IMPLEMENTED, Mac-qualified** at the P4.6 checkpoint `cbd7394` (frozen `d6319fd`; targeted 7/7); Linux clone running; the live Claude adapter NOT_BUILT (separately authorized) | `C-P4.5` | `docs/gates/P4.5/` |
+| P4.6 | **IMPLEMENTED, Mac-qualified** at `cbd7394` (unit 854/854, integration 500/500; frozen `59d8517`; targeted 10/10); Linux clone running | `C-P4.6` | `docs/gates/P4.6/` |
 | P4.7 | **BLOCKED — waiting for DG-07** (and P4.5–P4.6) | — | — |
 | P4.8 | **BLOCKED — waiting for DG-06** (and P4.4–P4.7) | — | — |
 | P4.9–P4.17 | blocked behind the above (P4.10 also on DG-17) | — | — |
