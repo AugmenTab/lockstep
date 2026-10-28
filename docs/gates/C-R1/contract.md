@@ -107,8 +107,9 @@ dependency text replays the other task).
 
 Implementation: `e49b68e` (on `phase-3`, after the freeze commit `b83db50`), then `e1c56ef` (the
 four LOW findings of the independent review of `e49b68e`). The last fully qualified commit is
-**`e1c56ef`**; after it, `e679d97` (authorized amendments) and `d064150` (migration 17, R13, R14)
-are verified only by the targeted runs below, **not qualified**.
+**`e1c56ef`**; after it, `e679d97` (authorized amendments), `d064150` (migration 17, R13, R14),
+`11a035d` (second addendum frozen) and `b9f7d47` (R13a, R13b, R9a) are verified only by the targeted
+runs below, **not qualified**.
 
 | Check | Result | Evidence |
 |---|---|---|
@@ -125,7 +126,7 @@ are verified only by the targeted runs below, **not qualified**.
 A Linux clean clone of `e49b68e` was started and stopped unfinished when the review fixes
 superseded it; its log was overwritten by the `e1c56ef` run.
 
-After the Planner's final authorization (addendum, §3b), at **`d064150`** (not yet qualified):
+After the Planner's final authorization (addenda, §3b and §3c), at **`d064150`**, then **`b9f7d47`** (not yet qualified):
 
 | Check | Result | Evidence |
 |---|---|---|
@@ -134,8 +135,12 @@ After the Planner's final authorization (addendum, §3b), at **`d064150`** (not 
 | Amended and new cases against the code before the implementation (only those cases) | 6 of 9 fail, each for its finding; 3 pass as expected (§3b) | `addendum-prefreeze-baseline.log` |
 | Format, lint, pedantic build, unit (800) at `d064150` | PASSED | — |
 | C-C.R1 (with the addendum), C-P3.5 and C-P3.6 integration groups at `d064150` (targeted, not a qualification) | **75 of 75 PASSED**, including the A-C.R1-2 case and every case that failed in the baseline | `addendum-implementation-run.log` |
-| Mac `scripts/check --integration` and Linux clean clone of `d064150` | **NOT_RUN** (owner's stop; one consolidated run to come) | — |
-| Read-only code review of `e1c56ef..d064150` (an agent) | REVIEW4_PLACEHOLDER | `docs/gates/C/review.md`, Review 4 |
+| Read-only code review of `e1c56ef..d064150` (an agent) | 1 MEDIUM (R13 checked only its own project), 1 LOW, 3 INFO; MEDIUM and LOW fixed in the second addendum (§3c) | `docs/gates/C/review.md`, Review 4 |
+| Second addendum: its cases against the code before the fix | 3 of 3 fail, each for its finding | `addendum2-prefreeze-baseline.log` |
+| Format, lint, pedantic build, unit (800) at `b9f7d47` | PASSED | — |
+| C-C.R1 (with both addenda), C-P3.5 and C-P3.6 integration groups at **`b9f7d47`** (targeted, not a qualification) | **78 of 78 PASSED** | `addendum2-implementation-run.log` |
+| Read-only check of `d064150..b9f7d47` (an agent) | no HIGH, no MEDIUM; 3 LOW (edge cases of folder identity and the older `git init` cleanup), 1 INFO; **not fixed**, correction plan for the Planner | `docs/gates/C/review.md`, Review 5 |
+| Mac `scripts/check --integration` and Linux clean clone of the tip | **NOT_RUN** (owner's stop; one consolidated run to come) | — |
 
 Every earlier frozen case passes on the Mac with the remediation, including the C-P3.5 projects,
 C-P3.6 tasks, C-P3.7 checks and C-P3.8 decisions suites whose code changed.
