@@ -58,7 +58,10 @@
 | Host check, frozen script, on `ea9b445` | 43 of 44: the process-limit probe's own defect (A-P4.2-1) | `check-runner-frozen.log` |
 | Host check with A-P4.2-1 (approved, applied), on `b6385b6` | **44 of 44**: signed results, pinned image, no network, read-only root, no socket or home, non-root, no capabilities, no host variables, tree access by profile, no `.git`, protected files, ≤ 256 processes, wall clock, output limit, cancellation, `busy`, every refusal, replay | `check-runner-b6385b6.log` |
 | `scripts/check --integration` on the Mac, `b6385b6` (tree dirty only by the untracked host check log above, outside the build) | all six steps PASSED: unit 831 of 831, integration 470 of 470, backup/restore | `check-integration-b6385b6.log` |
-| Linux clean clone of `b6385b6` | running | — |
+| Linux clean clone of `b6385b6` | format, lint, build, unit 831 of 831, integration 470 of 470 PASSED | `linux-clone-b6385b6.log` |
+
+**Status: VERIFIED** at `b6385b6` — Mac and Linux (unit 831/831, integration 470/470) and the host check
+(44/44, real containers).
 
 The audit items D1 and D2 (`docs/reviews/simple-haskell-audit-2026-10-28.md`) are fixed in this
 implementation: no signal to an ended process group; `waitFor` threads never outlive the call; every client

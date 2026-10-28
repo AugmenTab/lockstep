@@ -12,7 +12,7 @@
 | ID | Status | Contract | Record |
 |---|---|---|---|
 | P4.1 | **VERIFIED** at `bd4512b` (frozen `C-P4.1`; Mac unit 808/808, integration 446/446; Linux clean clone the same) | `C-P4.1` | `docs/gates/P4.1/` |
-| P4.2 | **IN PROGRESS** (DG-17 accepted 2026-10-28): contract drafted, tests and stubs placed, host baseline recorded | `C-P4.2` (draft) | `docs/gates/P4.2/` |
+| P4.2 | **VERIFIED** at `b6385b6` (A-P4.2-1 approved): Mac and Linux, unit 831/831, integration 470/470; host container check 44/44 | `C-P4.2` | `docs/gates/P4.2/` |
 | P4.3 | **VERIFIED** at `4ee971d` after A-P4.3-1 (approved 2026-10-28): Mac and Linux clean clone, unit 818/818, integration 454/454 | `C-P4.3` | `docs/gates/P4.3/` |
 | P4.4 | blocked behind P4.2 | — | — |
 | P4.5 | **BLOCKED — waiting for DG-17** | — | — |
@@ -20,6 +20,15 @@
 | P4.7 | **BLOCKED — waiting for DG-07** (and P4.5–P4.6) | — | — |
 | P4.8 | **BLOCKED — waiting for DG-06** (and P4.4–P4.7) | — | — |
 | P4.9–P4.17 | blocked behind the above (P4.10 also on DG-17) | — | — |
+
+## Known debt, deferred by the owner (2026-10-28)
+
+Audits found that the persistence layer (all 15 modules, Phases 1–4) runs hand-written SQL strings through
+Orville instead of Orville's typed API, and that every JSON response is built by hand instead of with Fleece
+encoders (with an escaper that corrupts characters above U+FFFF). Reports:
+`docs/reviews/simple-haskell-audit-2026-10-28.md`, `docs/reviews/fleece-audit-2026-10-28.md`. The owner's
+decision: finish Phase 4 first, **in the existing style** (no mix of patterns: Orville's typed API and
+schema registration are not set up); fix the whole layer after the post-Phase-4 dogfooding.
 
 ## Deferred human scenarios from Gate C-UX
 

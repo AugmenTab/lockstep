@@ -62,6 +62,12 @@ handling; `exitWith` only at start-up.
 | D3 | `Effects/GitSupervisor.hs` (P4.4 draft) | timeout path leaks handles and a reader thread and leaves a zombie; blobs read into memory without a cap; `ioError` used for control flow |
 | D4 | `Effects/Roles.hs` (P4.5 draft) | `invokeRole` lets IO exceptions escape after a run is submitted (an unknown outcome would be lost); `readAnswer` checks with `lstat` then reads by path (a swapped-in link bypasses the regular-file and size checks: open with `O_NOFOLLOW`, read at most 256 KiB + 1) |
 
+Status of D1–D4 (2026-10-28): **D1, D2 fixed** in the P4.2 implementation (`ea9b445`, `b6385b6`; Mac
+qualification and host check green). **D3, D4 fixed in the drafts** before their freeze: every Supervisor
+Git command now runs through the finite runner (bounded time and output, its own process group, exact
+environment), no exceptions as control flow; `invokeRole` turns any exception after submission into an
+unknown outcome; the answer file is opened with `O_NOFOLLOW`, checked on the descriptor and read capped.
+
 ## Suggested follow-ups for the owner
 
 1. Approve fixing **P1 and P2** (asynchronous exceptions swallowed) — the only items that change runtime
