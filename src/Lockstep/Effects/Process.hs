@@ -117,9 +117,7 @@ launch (Cancel cancelled) spec program = do
   started <- getMonotonicTimeNSec
   opened <- try (openFile "/dev/null" ReadMode)
   case opened of
-    Left (e :: IOException) -> do
-      finished <- getMonotonicTimeNSec
-      pure (failedLaunch (T.take 200 (T.pack (displayException e))) (millisBetween started finished))
+    Left (e :: IOException) -> failedLaunch (T.take 200 (T.pack (displayException e))) <$> since started
     Right devNull -> spawn cancelled spec program started devNull
 
 spawn :: MVar () -> RunSpec -> FilePath -> Word64 -> Handle -> IO RunResult
@@ -140,20 +138,21 @@ spawn cancelled spec program started devNull = do
   case created of
     Left (e :: IOException) -> do
       hClose devNull
-      finished <- getMonotonicTimeNSec
-      pure (failedLaunch (T.take 200 (T.pack (displayException e))) (millisBetween started finished))
+      failedLaunch (T.take 200 (T.pack (displayException e))) <$> since started
     Right (_, Just out, Just err, handle) -> do
       pid <- Process.getPid handle
       case pid of
         Nothing -> do
           -- The program was already reaped: nothing is left to supervise.
           code <- Process.waitForProcess handle
-          finished <- getMonotonicTimeNSec
-          pure (exitedEarly code (millisBetween started finished))
+          exitedEarly code <$> since started
         Just p -> supervise cancelled (runLimits spec) started p handle out err
-    Right _ -> do
-      finished <- getMonotonicTimeNSec
-      pure (failedLaunch (T.pack "no pipes") (millisBetween started finished))
+    Right _ -> failedLaunch (T.pack "no pipes") <$> since started
+
+-- | Milliseconds since a monotonic start.
+since :: Word64 -> IO Int
+since started =
+  millisBetween started <$> getMonotonicTimeNSec
 
 supervise :: MVar () -> Limits -> Word64 -> ProcessGroupID -> Process.ProcessHandle -> Handle -> Handle -> IO RunResult
 supervise cancelled limits started group handle out err = do

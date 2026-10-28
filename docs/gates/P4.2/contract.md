@@ -60,7 +60,7 @@ Frozen 2026-10-28 by the writing agent (manual), before the runners were impleme
 | `test/unit/Lockstep/Foundation/RunnerProtocolTest.hs` | `e110a50f5e843f3351989a6e8c5beaa911957e26b15c7cc4b703b24578f2225b` |
 | `test/integration/Lockstep/ProcessRunnerTest.hs` | `af9dc2bd9c5d013a9c17c86108e16bca794540e09d6642ab2a38a16ff4331ecc` |
 | `test/integration/Lockstep/HelperRunnerTest.hs` | `7049247c7ee30f0d482c1073cbdcf606549147c77c8e7314fdc476ffe06b3225` |
-| `scripts/lib/check-runner` (host check) | `20f710cc4fbc05bbd79c2de382441a61e71acd0e8aef4520fe3203f7b40779fe` |
+| `scripts/lib/check-runner` (host check) | ~~`20f710cc4fbc05bbd79c2de382441a61e71acd0e8aef4520fe3203f7b40779fe`~~ → `cc3998c29d7365fa39159dca4636bc9f0ff661f6ace466dc2e8915a16b66bb34` (A-P4.2-1, §4.1) |
 | `test/unit/Main.hs` (runner, additive) | `6220a054b67962a594e4a460570bc98494cd9a49bf94c61c19d9c2db165798d1` |
 | `test/integration/Main.hs` (runner, additive) | `0250cd91ebcd52082877187a73741f376a2b4afa1d3d5035119c23dc48782e14` |
 
@@ -82,6 +82,13 @@ Pre-freeze verification (logs in this directory):
 - Host check baseline (`prefreeze-check-runner.log`): the helper refuses `--runner` (usage), nothing ran.
 - The Simple Haskell audit of the same day (`docs/reviews/simple-haskell-audit-2026-10-28.md`) found two
   `fromJust` in `RunnerProtocolTest`; replaced before the freeze (hlint would have failed).
+
+### 4.1 Amendment A-P4.2-1 (re-freeze)
+
+Approved 2026-10-28 by the owner in the session. The process-limit probe assumed the shell survives a failed
+fork; it dies at the limit (the limit working). One line changed so the probe prints its counter each
+iteration (`amendment-request-1.md`). Digest before checked `20f710cc…79fe`; after `cc3998c2…bb34`, equal to
+the request's. No other frozen file changed.
 
 ## 5. Allowed paths
 
