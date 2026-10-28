@@ -160,8 +160,11 @@ removed after the database failure and after the exception; the attempt connects
 
 ## 3a. Verification record (after implementation)
 
+**Qualified: `36cff9b`** (code `fd5bb90`), Mac and Linux clean clone, 422 of 422 integration and 800
+of 800 unit each (rows at the end of this section). The history below is kept as written.
+
 Implementation: `e49b68e` (on `phase-3`, after the freeze commit `b83db50`), then `e1c56ef` (the
-four LOW findings of the independent review of `e49b68e`). The last fully qualified commit is
+four LOW findings of the independent review of `e49b68e`). The last fully qualified commit was
 **`e1c56ef`**; after it, `e679d97` (authorized amendments), `d064150` (migration 17, R13, R14),
 `11a035d` (second addendum frozen), `b9f7d47` (R13a, R13b, R9a), `33e0beb` (third addendum frozen)
 and `671b957` (R5-1, R5-2, R5-3) are verified only by the targeted runs below, **not qualified**.
@@ -205,7 +208,8 @@ After the Planner's final authorization (addenda, §3b and §3c), at **`d064150`
 | C-C.R1 groups with the proposed A-C.R1-4 diffs (trial; then the three frozen files restored with `git checkout` and their digests re-checked) | **40 of 40 PASSED** | `trial-with-proposed-a-c.r1-4.log` |
 | A-C.R1-4 applied (final Planner authorization) | original digests checked; each `.diff` applied with `patch` to its intended test path; each result equals the authorized digest (§4); no production code changed (code stays `fd5bb90`) | — |
 | Final focused read-only review of the R6 change (an agent, Review 7) | **no HIGH, no MEDIUM**; 1 LOW, 4 INFO recorded, not remediated (stopping rule); nothing calling for disabling new-folder creation | `docs/gates/C/review.md`, Review 7 |
-| Mac `scripts/check --integration` and Linux clean clone of the tip | **NOT_RUN** (not authorized; one consolidated run to come, after A-C.R1-4 is decided) | — |
+| **Consolidated qualification** (owner released the hold, 2026-10-27): Mac `scripts/check --integration` at **`36cff9b`** (code `fd5bb90`; the only untracked file was this run's own log) | format, lint, build, guard PASSED; unit **800 of 800**; integration **422 of 422**; backup/restore PASSED (dump + digest, restore round trip, corrupted dump refused) | `check-integration-36cff9b.log` |
+| Linux clean clone of **`36cff9b`** (fresh `git clone` in the dev container) | format, lint, build PASSED; unit **800 of 800**; integration **422 of 422**; case-sensitive filesystem; kernel boundary and purity scan clean | `linux-clone-36cff9b.log` |
 
 Every earlier frozen case passes on the Mac with the remediation, including the C-P3.5 projects,
 C-P3.6 tasks, C-P3.7 checks and C-P3.8 decisions suites whose code changed.

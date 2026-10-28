@@ -3,11 +3,11 @@
 - For: the owner and the Planner. Prepared 2026-10-27 by the writing agent (Implementer, manual),
   revised after the Planner's Review 6 disposition (`.local/plans/phase-03_update5.md`). The
   Implementer cannot accept Gate C; this packet recommends.
-- **Final candidate commit: `fd5bb90`** on `phase-3` (P3.1–P3.10 + the C-C.R1 remediation and its
-  four addenda). Full record: `gate-c-report.md`; remediation: `docs/gates/C-R1/contract.md`.
-- **Status: NOT ACCEPTED. Phase 3 remediation is complete; the branch is at a clean,
-  ready-to-qualify commit.** A-C.R1-4 is authorized and applied; no Planner decision is outstanding.
-  The consolidated qualification **waits for the owner to release the hold and has not run**.
+- **Qualified candidate: `36cff9b`** on `phase-3` (production code `fd5bb90`: P3.1–P3.10 + the
+  C-C.R1 remediation and its four addenda; A-C.R1-4 applied). Full record: `gate-c-report.md`;
+  remediation: `docs/gates/C-R1/contract.md`.
+- **Status: NOT ACCEPTED. Machine qualification PASSED on Mac and on a Linux clean clone
+  (2026-10-27).** No Planner decision is outstanding. Open: C8, C9 and the owner's Gate C decision.
   Nothing installed, no legacy page retired, Phase 4 not started.
 
 ## 0. What the Planner's Review 6 disposition asked, and where it stands
@@ -30,8 +30,8 @@
 | Targeted integration at `fd5bb90` (C-C.R1 all addenda, C-P3.5, C-P3.6, C-P3.7) | **101 of 104**; the 3 are exactly A-C.R1-4's cases, failing only because the folder is now kept |
 | Same C-C.R1 groups with the A-C.R1-4 diffs (trial; the applied files are byte-identical to it) | 40 of 40 |
 | Frozen tests | every digest as recorded (C-C.R1 §4); the three A-C.R1-4 files at their authorized digests |
-| Mac `scripts/check --integration` of the candidate | **NOT_RUN** (not authorized) |
-| Linux clean clone of the candidate | **NOT_RUN** (not authorized) |
+| Mac `scripts/check --integration` of `36cff9b` | **PASSED**: format, lint, build, unit 800/800, guard, integration **422/422**, backup/restore (`docs/gates/C-R1/check-integration-36cff9b.log`) |
+| Linux clean clone of `36cff9b` | **PASSED**: format, lint, build, unit 800/800, integration **422/422**; case-sensitive; kernel boundary and purity scan clean (`docs/gates/C-R1/linux-clone-36cff9b.log`) |
 | Last full qualification, `e1c56ef` | Mac and Linux each 402 of 403; the 1 was a frozen fixture since repaired (A-C.R1-2) |
 | Independent read-only reviews (agents, not humans) | first review and Reviews 2–6: every HIGH/MEDIUM/LOW fixed under Planner authorization; Review 7 (final): no HIGH, no MEDIUM |
 
@@ -47,15 +47,13 @@
 | **C8** Deferred Gate B walkthrough | — | the owner's browser walkthrough deferred from Gate B (`docs/gates/B/decision-packet.md`) | **NOT_RUN** |
 | **C9** Nontechnical usability | journey automated only (not evidence) | at least 3 people new to Lockstep, journeys J1–J8, no help (`docs/gates/P3.10/usability-protocol.md`) | **NOT_RUN** |
 
-"Automated PASSED" is from the last full qualification and the targeted runs since; the candidate's
-own full run is pending. The dogfood ran on the installed build `b963527`, not on the candidate
+"Automated PASSED" is from the qualification of `36cff9b` (Mac and Linux, 422 of 422). The dogfood ran on the installed build `b963527`, not on the candidate
 (which adds migrations 16 and 17 and has not been installed).
 
 ## 3. Decisions needed, in order
 
 1. ~~Planner — A-C.R1-4~~: **done** (final authorization; applied at the authorized digests).
-2. **Owner — consolidated qualification**: release the hold for exactly one Mac `scripts/check
-   --integration` and one Linux clean clone on the tip of `phase-3` (code `fd5bb90`).
+2. ~~Owner — consolidated qualification~~: **done**, both PASSED at `36cff9b`.
 3. **C8**: the owner's browser walkthrough deferred from Gate B (about 20 minutes).
 4. **C9**: the usability protocol with at least 3 first-time participants; PASSED only if every one
    completes J1–J8 unaided, or the owner accepts named exceptions in writing.
@@ -85,8 +83,8 @@ own full run is pending. The dogfood ran on the installed build `b963527`, not o
 
 ## 5. Recommended disposition
 
-1. Release the hold for the consolidated qualification on the tip. If it is green,
-   **accept the C-UX engineering and machine evidence (C1–C7)** and end Phase 3 remediation there:
+1. The qualification is green: **accept the C-UX engineering and machine evidence (C1–C7)** at
+   `36cff9b` and end Phase 3 remediation there:
    Review 7 found nothing at MEDIUM or above, and no further remediation round is proposed.
 2. **Do not accept Gate C as a whole yet**: C9 is a gate requirement (PRD FR-UX-10: an automated run
    is not evidence that a person succeeded), and C8 is the walkthrough Gate B was deferred into.
@@ -97,7 +95,7 @@ own full run is pending. The dogfood ran on the installed build `b963527`, not o
 | Decision | |
 |---|---|
 | A-C.R1-4 authorized (date) | 2026-10-27 (Planner, final); applied |
-| Consolidated qualification: go-ahead given (date) | |
+| Consolidated qualification: go-ahead given (date) | 2026-10-27 (owner); PASSED on Mac and Linux at `36cff9b` |
 | C8 result | |
 | C9 result, or named exception | |
 | Gate C: accepted / accepted with exceptions / not accepted | |

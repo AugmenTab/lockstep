@@ -1,10 +1,9 @@
 # Gate C (C-UX) — status and decision packet
 
-- Status: **NOT ACCEPTED. All authorized remediation, including Review 6's three MEDIUM corrections
-  (published folders never removed), is implemented at the final candidate `fd5bb90`; it is verified
-  by targeted runs only. The frozen-test amendment A-C.R1-4 is authorized and applied; no Planner
-  decision is outstanding. The one consolidated Mac qualification and Linux clean clone wait for
-  the owner to release the hold.** The concise
+- Status: **NOT ACCEPTED. The candidate `36cff9b` (code `fd5bb90`) is QUALIFIED: Mac
+  `scripts/check --integration` and a Linux clean clone, each unit 800 of 800 and integration 422 of
+  422, backup/restore PASSED on the Mac (2026-10-27, after the owner released the hold). All
+  remediation and amendments are done; no Planner decision is outstanding. C8 and C9 remain.** The concise
   decision packet is `decision-packet.md`. The Implementer cannot accept Gate C (Phase 3 handoff
   P3.11). C8 and C9 are **NOT_RUN**. Phase 4 is not started and will not be without the owner's
   authorization.
@@ -111,7 +110,7 @@ Not started without authorization: the consolidated qualification, cookie-page r
 | `e1c56ef` on the Mac and a Linux clean clone | **Qualified**: 402 of 403 each (the 1 being the fixture A-C.R1-2 has since repaired) |
 | A-C.R1-1, -2, -3 in the frozen tests | **Applied** at the authorized digests (checked before and after) |
 | Migration 17, R13, R14 (`d064150`) and R13a, R13b, R9a (`b9f7d47`) | **Verified by targeted runs only**: format, lint, pedantic build, unit 800 of 800; integration groups C-C.R1 (with both addenda), C-P3.5, C-P3.6: 78 of 78 at `b9f7d47` (`docs/gates/C-R1/addendum2-implementation-run.log`); every amended or new case failed before for its finding (`addendum-prefreeze-baseline.log`, `addendum2-prefreeze-baseline.log`) |
-| The tip across the whole suite (Mac and Linux) | **NOT_RUN**: not qualified, not to be called verified |
+| The tip across the whole suite (Mac and Linux) | **QUALIFIED at `36cff9b`** (code `fd5bb90`): Mac format, lint, build, unit 800/800, guard, integration 422/422, backup/restore PASSED (`docs/gates/C-R1/check-integration-36cff9b.log`); Linux clean clone format, lint, build, unit 800/800, integration 422/422, case-sensitive, kernel boundary and purity scan clean (`docs/gates/C-R1/linux-clone-36cff9b.log`) |
 | R14 under a real asynchronous exception during the unlock | Not testable deterministically; code review only |
 | Read-only code review of `e1c56ef..d064150` (Review 4) | 1 MEDIUM, 1 LOW, 3 INFO; MEDIUM and LOW fixed in `b9f7d47` (`review.md`) |
 | Read-only check of `d064150..b9f7d47` (Review 5) | no HIGH, no MEDIUM; 3 LOW, **fixed in `671b957`** under the Planner's final authorization (C-C.R1 §3d); 5 frozen cases, failing before, passing after; targeted 99 of 99 |
@@ -124,8 +123,8 @@ Not started without authorization: the consolidated qualification, cookie-page r
 Next required actions, in order:
 
 1. ~~Planner: A-C.R1-4~~ — **done** (authorized and applied; no Planner decision outstanding).
-2. **Owner**: release the hold on the consolidated qualification (`decision-packet.md` §3).
-3. Implementer: **one** Mac `scripts/check --integration` and **one** Linux clean clone
+2. ~~Owner: release the hold~~ — **done** (2026-10-27).
+3. ~~Implementer: qualification~~ — **done**, both green at `36cff9b` (above). Kept as written: **one** Mac `scripts/check --integration` and **one** Linux clean clone
    (`.local/linux-clone-run-cr1.sh <commit>`), both on the tip of `phase-3`; record both here and in
    C-C.R1 §3a. No intermediate full runs.
 4. The Gate C decision by the owner (C8 and C9 still open; Phase 4, cookie-page retirement and
