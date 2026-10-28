@@ -132,8 +132,8 @@ left after a failure).
 Implementation: `e49b68e` (on `phase-3`, after the freeze commit `b83db50`), then `e1c56ef` (the
 four LOW findings of the independent review of `e49b68e`). The last fully qualified commit is
 **`e1c56ef`**; after it, `e679d97` (authorized amendments), `d064150` (migration 17, R13, R14),
-`11a035d` (second addendum frozen) and `b9f7d47` (R13a, R13b, R9a) are verified only by the targeted
-runs below, **not qualified**.
+`11a035d` (second addendum frozen), `b9f7d47` (R13a, R13b, R9a), `33e0beb` (third addendum frozen)
+and `671b957` (R5-1, R5-2, R5-3) are verified only by the targeted runs below, **not qualified**.
 
 | Check | Result | Evidence |
 |---|---|---|
@@ -164,6 +164,10 @@ After the Planner's final authorization (addenda, §3b and §3c), at **`d064150`
 | Format, lint, pedantic build, unit (800) at `b9f7d47` | PASSED | — |
 | C-C.R1 (with both addenda), C-P3.5 and C-P3.6 integration groups at **`b9f7d47`** (targeted, not a qualification) | **78 of 78 PASSED** | `addendum2-implementation-run.log` |
 | Read-only check of `d064150..b9f7d47` (an agent) | no HIGH, no MEDIUM; 3 LOW (edge cases of folder identity and the older `git init` cleanup), 1 INFO; **not fixed**, correction plan for the Planner | `docs/gates/C/review.md`, Review 5 |
+| Third addendum (Review 5, §3d): its cases against `b9f7d47` plus the hook | 5 of 5 fail, each for its finding | `addendum3-prefreeze-baseline.log` |
+| Format, lint, pedantic build, unit (800) at `671b957` | PASSED | — |
+| C-C.R1 (with all three addenda), C-P3.5, C-P3.6 and C-P3.7 integration groups at **`671b957`** (targeted, not a qualification) | **99 of 99 PASSED** | `addendum3-implementation-run.log` |
+| Independent read-only review of `b9f7d47..671b957` (an agent, limited to R5-1–R5-3) | **3 MEDIUM** (a made folder replaced while waiting can be deleted; the `origin` fallback observation is registered without its identity being compared; the cleanup does not take the registration lock), LOW/INFO recorded; **escalated to the Planner, not fixed** (stopping rule) | `docs/gates/C/review.md`, Review 6 |
 | Mac `scripts/check --integration` and Linux clean clone of the tip | **NOT_RUN** (owner's stop; one consolidated run to come) | — |
 
 Every earlier frozen case passes on the Mac with the remediation, including the C-P3.5 projects,
