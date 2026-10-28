@@ -49,4 +49,7 @@
 
 ## Decision
 
-*(for the owner)*
+**APPROVED** 2026-10-28 by the owner (`.local/plans/phase-04_update1.md`, sha256 `4cb620d3…d1f7`: "Apply
+exactly the single import-order correction … No additional permission request is required"). Applied by the
+writing agent; digest after verified `7e9892b31c2ac908f2fe1fc8e3b0f40628bdb9b3ebf5dcd100606fe114bb6b1e`.
+Re-frozen in C-P4.3 §4.1.

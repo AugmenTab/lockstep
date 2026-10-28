@@ -34,8 +34,8 @@ storage: one ADR per gate under the chosen `docs/adr/` (DG-01b decides the repo)
 | DG-03 | Stable ownership key for repo aliases/worktrees/remotes | Human owner | P1.7 | Engineer registration, scheduler claims | P2.1 | **ACCEPTED** 2026-10-18 by the owner: D-3.1a, D-3.2a amended, D-3.3d (new), D-3.4, D-3.5a, D-3.6, D-3.7. See `docs/gates/P2.1/dg-03-decision-request.md` (Human decision) |
 | DG-04 | Event, claim, outbox, replay and reconciliation protocol | Human owner | P1.7, P2.2 | Provider/Git execution, safe recovery | P2.5 | **ACCEPTED** 2026-10-18 by the owner with binding safety requirements 1–8 (stable effect identity, real class-B idempotency, authoritative class-C negatives, fencing keeps late evidence, no automatic class-D retry, human attestation distinguished, finite effect-specific budgets, duplicate-effect testing). See `docs/gates/P2.5/dg-04-decision-request.md` (Human decision) |
 | DG-05 | Profile schema, precedence, exceptions, scheduling order | Human owner | P2.2 | Effective Profile binding/admission | P2.3–P2.4 | **ACCEPTED** 2026-10-18 by the owner: D-5.1a–D-5.11 as recommended, with clarifications 1–4 (execution prerequisites vs later gates; unprovable strengthening refused; queued ≠ reserved; non-behavioural classification cannot evade mandatory tests). See `docs/gates/P2.3/dg-05-decision-request.md` (Human decision) |
-| DG-06 | Test-candidate baseline/RED policy; source-grounded acceptance | Human owner | P3.3–P3.6 | Frozen-test implementation | P3.7 | **EVIDENCE-PREPARED** 2026-10-27 (now P4.8): `docs/gates/C-EXEC/design-gates-decision-request.md` |
-| DG-07 | Semantic challenger independence, budget, disposition, escalation | Human owner | P3.4–P3.5 | Freeze and acceptance in Bug Profile | P3.6 | **EVIDENCE-PREPARED** 2026-10-27 (now P4.7/P4.12): same request |
+| DG-06 | Test-candidate baseline/RED policy; source-grounded acceptance | Human owner | P3.3–P3.6 | Frozen-test implementation | P3.7 | **ACCEPTED WITH CLARIFICATION** 2026-10-28 by the owner: D-6.1–D-6.6 (`.local/plans/phase-04_update1.md`; request `docs/gates/C-EXEC/design-gates-decision-request.md`) |
+| DG-07 | Semantic challenger independence, budget, disposition, escalation | Human owner | P3.4–P3.5 | Freeze and acceptance in Bug Profile | P3.6 | **ACCEPTED WITH CLARIFICATION** 2026-10-28 by the owner: D-7.1–D-7.4 (same) |
 | DG-08 | Plan import/creation freeze and local Phase signoff | Human owner | P3.5, P4.3 | Plan-driven engine parity | P4.4 | OPEN |
 | DG-09 | Git branch/PR granularity, protected merge, status mapping | Human owner | P5.5 | External push / PR | P6.1 | OPEN — PRD §8 proposes PR-per-Ticket first |
 | DG-10 | Shortcut field ownership, priority, blocker, Done mapping | Human owner | P6.9, P4.1 | External tracker mutation | P7.1 | OPEN |
@@ -156,6 +156,48 @@ Phase 4 authorization, 2026-10-27 (the owner's instruction in the session, "Read
 - UX-C8 and UX-C9: NOT_RUN — DEFERRED BY OWNER TO PHASE 4; to be reported before Gate C-EXEC.
 
 DG-17 (Phase 4 live coding confinement; PRD v0.3 §8): **EVIDENCE-PREPARED** 2026-10-27, same request.
+
+Design gates DG-06, DG-07, DG-17, Bug Profile O-1 and amendment A-P4.3-1, 2026-10-28 (the owner's
+instruction in the session, "Read @.local/plans/phase-04_update1.md and implement"; package
+`.local/plans/phase-04_update1.md`, sha256
+`4cb620d366b3758411cd1b876b7090454e02899e689ee93b3ac5819be2a6f1d7`, the Planner's consolidated disposition
+adopted and transmitted by the owner; recorded by the writing agent):
+
+- **DG-17 ACCEPTED** with D-17.1–D-17.9 and binding clarifications: one isolated container per role launched
+  by the authenticated host helper; pinned images, non-root, read-only root filesystem, dropped capabilities,
+  bounded processes/resources, no privileged Docker access; `run-role` by explicit allowlist (an agent cannot
+  choose image, mounts, Docker options, executable or network); a Git-free snapshot for the Implementer (no
+  canonical repository, `.git` or Supervisor credentials in the container); the Supervisor checks changed
+  paths, protected-test integrity, file types and exact revision before accepting; execution only in the
+  projects folder. Scripted roles and verification `--network none`; the live path only through a restricted
+  provider-egress proxy with no other route; no home, SSH, keychain, Docker socket, Git, database or operator
+  credentials in the runner; live credentials per invocation, never logged or persisted; Claude Code the
+  first live provider, adapter interface provider-neutral; repository instructions are untrusted material.
+  Limits: Implementer 20 min, read-only roles and verification 10 min, stdout 8 MiB, stderr 2 MiB, 256
+  processes, 4 GiB, 2 CPUs; at most two Implementer attempts per Work Unit under typed retry conditions;
+  uncertain invocations never replayed automatically. Baseline and final verification in the same pinned
+  image and environment, argv commands; a missing toolchain is `verification-environment-missing`.
+  **Live execution stays separately gated**: no paid provider call, credential provisioning or P4.17 live
+  smoke without its own owner authorization.
+- **DG-06 ACCEPTED WITH CLARIFICATION**: D-6.1–D-6.6; each test declared RED or GREEN-REGRESSION; a RED must
+  match its declared signature and test identity (compilation, setup, timeout or process failure is not RED);
+  exact regular candidate paths, protected tests and allowed implementation paths disjoint; source-grounded
+  criteria; two pre-freeze correction rounds (at most three candidates); no frozen-test change without an
+  authorized amendment; missing reproduction blocks except by the evidence-backed human exception. A
+  defective GREEN fixture found before freeze may be corrected with evidence; a genuine pre-existing GREEN
+  failure blocks; neither is relabelled RED.
+- **DG-07 ACCEPTED WITH CLARIFICATION**: D-7.1–D-7.4; a separate read-only challenger invocation without the
+  Planner's or Implementer's transcripts; same-family models allowed, independence stated as process/context
+  independence. Dispositions `CONFIRMED`, `DISPROVED`, `NEEDS_HUMAN`, `INCONCLUSIVE` with their consequences
+  and finite budgets. `CONFIRMED` needs both an observed surviving mutant or failing counterexample **and** a
+  source-grounded demonstration that it violates the cited requirement; otherwise `INCONCLUSIVE` or
+  `NEEDS_HUMAN`. Challenger patches and tests run only in disposable scratch snapshots.
+- **O-1 ACCEPTED**: `lockstep-bug-fix` v1 as built in P4.1 for the Phase 4 slice; it may only strengthen or
+  preserve the universal invariants; later changes need a new Profile version.
+- **A-P4.3-1 APPROVED** (final Planner approval): apply exactly the import-order correction and requalify.
+- Continuation: P4.3 requalification, then P4.2 onward in dependency order, one writing agent, model-free
+  adapters and disposable local repositories. Still separately authorized: live provider calls, installation,
+  remote publishing, Gate C-EXEC acceptance, Phase 5. UX-C8/UX-C9 stay NOT_RUN — DEFERRED BY OWNER.
 
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.

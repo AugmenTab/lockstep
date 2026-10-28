@@ -74,7 +74,7 @@ Frozen 2026-10-28 by the writing agent (manual), before the operations were impl
 |---|---|
 | `test/unit/Lockstep/Kernel/ConversationTest.hs` | `9f3ddfb9b7c8ad6729784ef9734fa2e8414872b42aabd901a82042918e5c6004` |
 | `test/integration/Lockstep/ConversationTest.hs` | `21ca2b30111a143207b51c3a9dc9954d95cc40e6335c682cfa13b76e4c9fe9cb` |
-| `test/unit/Main.hs` (runner, additive) | `ee38476e022283dbd2a60338cf8726b9504688450fdbd49488174e771dda8fcd` |
+| `test/unit/Main.hs` (runner, additive) | ~~`ee38476e022283dbd2a60338cf8726b9504688450fdbd49488174e771dda8fcd`~~ → `7e9892b31c2ac908f2fe1fc8e3b0f40628bdb9b3ebf5dcd100606fe114bb6b1e` (A-P4.3-1, §4.1) |
 | `test/integration/Main.hs` (runner, additive) | `d6a4bea8d6e1b4b5217594125af3c1cf1f3eb5b9d681b035e8d4f55429547c3e` |
 
 Earlier frozen tests are untouched; the runners only gain lines (one each).
@@ -93,6 +93,13 @@ Pre-freeze verification:
   Because each fails at its first call, every later assertion was checked against H1–H6 by reading. The rest of
   the suite was qualified at `bd4512b` (446 of 446) and is re-run in full after implementation; P4.3 adds only
   new modules, migration 19 and runner lines.
+
+### 4.1 Amendment A-P4.3-1 (re-freeze)
+
+Approved 2026-10-28 by the owner's adoption of `.local/plans/phase-04_update1.md` (sha256 `4cb620d3…d1f7`,
+"A-P4.3-1 — FINAL PLANNER APPROVAL"). Applied exactly as `amendment-request-1.md`: one import line moved.
+Digest before checked `ee38476e…dda8fcd`; digest after `7e9892b3…bb6b1e`, equal to the request's. No other
+frozen file changed.
 
 ## 5. Allowed paths
 
