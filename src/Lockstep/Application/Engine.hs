@@ -415,7 +415,7 @@ advanceRow runtime engine row =
                 Right input -> report input
         Halted stage code -> do
           opened <- ensureRequest runtime row stage code
-          case either (const Nothing) resumeOf opened >>= const Nothing of
+          case either (const Nothing) resumeOf opened of
             Nothing -> idle (T.pack "halted")
             Just (request, choice, input) -> do
               let
@@ -455,7 +455,6 @@ decideCompletion :: DatabaseRuntime -> T.Text -> Sender -> T.Text -> IO (Either 
 decideCompletion runtime raw sender choice =
   whenReady runtime $
     case sender of
-      _ | T.null T.empty -> refuse "stage-not-built"
       SenderAgent _ -> refuse "agent-assertion"
       SenderSupervisor -> refuse "not-authorized"
       SenderPlanner _ -> refuse "not-authorized"
