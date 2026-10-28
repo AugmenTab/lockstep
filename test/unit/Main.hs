@@ -58,6 +58,7 @@ import Lockstep.Kernel.SchedulerTest qualified as SchedulerTest
 import Lockstep.Kernel.TaskTest qualified as TaskTest
 import Lockstep.Kernel.TicketTest qualified as TicketTest
 import Lockstep.Kernel.TraceTest qualified as TraceTest
+import Lockstep.Kernel.TransactionTest qualified as KernelTransactionTest
 import Lockstep.Kernel.TransitionTest qualified as TransitionTest
 import Lockstep.Kernel.WorkOrderTest qualified as WorkOrderTest
 import Lockstep.Kernel.WorkUnitLifecycleTest qualified as WorkUnitLifecycleTest
@@ -145,4 +146,5 @@ main =
       , RunnerProtocolTest.tests
       , GitBasisTest.tests
       , KernelRolesTest.tests
+      , KernelTransactionTest.tests
       ]

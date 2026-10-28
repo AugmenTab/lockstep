@@ -1,0 +1,34 @@
+lockstep-0.2.0.0: unregistering (local file changes: test/integration/Lockstep/EngineTest.hs)
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[21 of 76] Compiling Lockstep.EngineTest [Source file changed]
+[77 of 77] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-integration/lockstep-integration [Objects changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-6ggF0AiJnRUCIB81Gsi4xx
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-integration, args: -p C-P4.6)
+
+lockstep-integration
+  C-P4.6 the coding transaction: start, basis, discovery, reproduction (real Git, processes, PostgreSQL)
+    an admitted bug starts one transaction at the basis; not admitted and a busy Engineer are refused: OK (0.31s)
+    the basis is the clean HEAD and the work branch is made at it; the person's checkout is untouched: OK (0.27s)
+    a dirty repository halts at the basis with one decision request to a person:                       OK (0.24s)
+    discovery: the Planner's answer is recorded as data, with its invocation:                          OK (0.28s)
+    a citation outside the source halts at discovery:                                                  OK (0.38s)
+    reproduction: the bug's own command fails with its signature at the basis:                         OK (0.27s)
+    a command that passes, or none at all, is reproduction-missing; only then is accepting it offered: OK (0.39s)
+    a role that crashes, or no coding agent at all, halts with its reason:                             OK (0.35s)
+    an invocation cut short is never run again: after a restart it is uncertain and halts:             OK (1.00s)
+    records and invocations cannot be changed afterwards:                                              OK (0.30s)
+
+All 10 tests passed (3.79s)
+
+
+
+lockstep> Test suite lockstep-integration passed
+Completed 2 action(s).
