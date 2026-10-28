@@ -16,6 +16,7 @@ module Lockstep.Application.Projects
   , ProjectFaults (..)
   , noProjectFaults
   , connectProjectWith
+  , connectProjectAround
   , listProjects
   , findProject
   , offeredFolders
@@ -176,7 +177,7 @@ createProject runtime folders request =
           Right (Right (row, True)) ->
             case choice of
               DecideLater -> pure (Right (Right (viewOf row)))
-              _ -> connectLocked noProjectFaults runtime folders (Store.rowId row) (Store.rowRevision row) choice
+              _ -> connectLocked noHooks runtime folders (Store.rowId row) (Store.rowRevision row) choice
 
 -- | The SHA-256 of a canonical request text, as 64 lowercase hex.
 sha256Text :: T.Text -> T.Text
@@ -203,18 +204,34 @@ noProjectFaults =
   ProjectFaults pure
 
 connectProjectWith :: ProjectFaults -> DatabaseRuntime -> ProjectFolders -> T.Text -> Int64 -> FolderChoice -> IO (Either NotReadyReason (Either T.Text ProjectView))
-connectProjectWith faults runtime folders rawId expected choice =
+connectProjectWith =
+  connectProjectAround (const (pure ()))
+
+{- | Test-only (C-C.R1 §3c): also runs a hook once the attempt has its folder
+and has observed it, right before its transaction, to let another request act
+in that window. The service never calls it.
+-}
+connectProjectAround :: (FilePath -> IO ()) -> ProjectFaults -> DatabaseRuntime -> ProjectFolders -> T.Text -> Int64 -> FolderChoice -> IO (Either NotReadyReason (Either T.Text ProjectView))
+connectProjectAround afterFolder faults runtime folders rawId expected choice =
   whenReady runtime $
     case parseUuid rawId of
       Left _ -> pure (Right (Left (T.pack "unknown-project")))
-      Right parsed -> connectLocked faults runtime folders (uuidText parsed) expected choice
+      Right parsed -> connectLocked (Hooks afterFolder faults) runtime folders (uuidText parsed) expected choice
+
+-- | The test-only hooks of one connection attempt; the service uses 'noHooks'.
+data Hooks
+  = Hooks (FilePath -> IO ()) ProjectFaults
+
+noHooks :: Hooks
+noHooks =
+  Hooks (const (pure ())) noProjectFaults
 
 {- | C-C.R1 R5: one connection attempt at a time per project, under the session
 lock for the project; the project is read again under it, so a stale or
 already-connected request is answered before any side effect.
 -}
-connectLocked :: ProjectFaults -> DatabaseRuntime -> ProjectFolders -> T.Text -> Int64 -> FolderChoice -> IO (Either NotReadyReason (Either T.Text ProjectView))
-connectLocked faults runtime folders pid expected choice = do
+connectLocked :: Hooks -> DatabaseRuntime -> ProjectFolders -> T.Text -> Int64 -> FolderChoice -> IO (Either NotReadyReason (Either T.Text ProjectView))
+connectLocked hooks runtime folders pid expected choice = do
   locked <-
     withSessionLock runtime ProjectConnectLock pid $ \_ -> do
       found <- withDatabase runtime (Store.findProjectById pid)
@@ -225,7 +242,7 @@ connectLocked faults runtime folders pid expected choice = do
           | projectSetup view == Connected -> pure (Right (Left (T.pack "already-connected")))
           | projectRevision view /= expected -> pure (Right (Left (T.pack "stale-revision")))
           | choice == DecideLater -> pure (Right (Right view))
-          | otherwise -> attempt faults runtime folders view choice
+          | otherwise -> attempt hooks runtime folders view choice
   pure $
     case locked of
       Right result -> result
@@ -238,8 +255,8 @@ Engineer, registers the repository and records the attempt, so a failure
 leaves none of them. A folder this attempt made is removed unless the project
 ends connected.
 -}
-attempt :: ProjectFaults -> DatabaseRuntime -> ProjectFolders -> ProjectView -> FolderChoice -> IO (Either NotReadyReason (Either T.Text ProjectView))
-attempt faults runtime folders view choice = do
+attempt :: Hooks -> DatabaseRuntime -> ProjectFolders -> ProjectView -> FolderChoice -> IO (Either NotReadyReason (Either T.Text ProjectView))
+attempt (Hooks afterFolder faults) runtime folders view choice = do
   let
     slug = either (const (T.pack "project")) projectSlug (mkProjectName (projectName view))
   folder <- chooseFolder runtime folders slug choice
@@ -250,6 +267,7 @@ attempt faults runtime folders view choice = do
       ( do
           first <- observeRegistration path Nothing
           fallback <- observeRegistration path (Just (T.pack "origin"))
+          afterFolder path
           settle (if made then Just path else Nothing) (connectIn view slug path first fallback)
       )
         `onException` when made (removeUnrecorded path)

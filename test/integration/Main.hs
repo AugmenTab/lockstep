@@ -23,6 +23,7 @@ import Lockstep.FirstUseJourneyTest qualified as FirstUseJourneyTest
 import Lockstep.FolderHelperTest qualified as FolderHelperTest
 import Lockstep.GateCRemediationAddendumTest qualified as GateCRemediationAddendumTest
 import Lockstep.GateCRemediationBrowserTest qualified as GateCRemediationBrowserTest
+import Lockstep.GateCRemediationFolderRaceTest qualified as GateCRemediationFolderRaceTest
 import Lockstep.GateCRemediationFolderTest qualified as GateCRemediationFolderTest
 import Lockstep.GateCRemediationPageTest qualified as GateCRemediationPageTest
 import Lockstep.GateCRemediationTest qualified as GateCRemediationTest
@@ -117,4 +118,5 @@ main =
       , GateCRemediationFolderTest.tests
       , GateCRemediationBrowserTest.tests
       , GateCRemediationAddendumTest.tests
+      , GateCRemediationFolderRaceTest.tests
       ]

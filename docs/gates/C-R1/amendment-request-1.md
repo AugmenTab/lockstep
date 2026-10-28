@@ -1,9 +1,9 @@
 # Amendment request A-C.R1-1 — a creation key reused with different content (for the Planner)
 
-- Status: **APPROVED IN PRINCIPLE** (Planner, 2026-10-27, `.local/plans/phase-03_update3.md`:
-  "replay keys must be bound to the original request identity and content, with conflicting reuse
-  refused"). **Not authorized for editing; not applied.** Nothing below is in the code or the
-  frozen tests. Final authorization packet: "For final authorization" at the end.
+- Status: **APPROVED AND APPLIED.** Final authorization by the Planner, 2026-10-27
+  (`.local/plans/phase-03_update4.md`); applied in `e679d97` (tests, contract text) and `d064150`
+  (migration 17 and the replay rule). Original digests checked before, authorized digests after.
+  The history below is kept as it was written.
 - Raised 2026-10-27 by the writing agent (Implementer, manual) under C-C.R1 §5.
 - Authority asked for: the Planner disposition of 2026-10-27, item 9 ("A key reused with different
   input must conflict, not return another project's resource"), and its remediation discipline

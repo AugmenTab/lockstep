@@ -1,0 +1,34 @@
+lockstep> test (suite: lockstep-integration, args: -p "second addendum")
+
+lockstep-integration
+  Gate C remediation second addendum (C-C.R1 §3c; real PostgreSQL)
+    another project connects the folder an attempt made; the attempt fails, and the folder stays with the connected project:   FAIL (0.20s)
+      test/integration/Lockstep/GateCRemediationFolderRaceTest.hs:116:
+      the folder another project is connected to was removed
+      Use -p '/second addendum/&&/another project connects the folder an attempt made; the attempt fails, and the folder stays with the connected project/' to rerun this test only.
+    an attempt waits with a folder another attempt made and then removed; it is not recorded as connected to a missing folder: FAIL (0.18s)
+      test/integration/Lockstep/GateCRemediationFolderRaceTest.hs:138:
+      recorded as connected to a missing folder: Right (Right (Just "/tmp/lockstep-cr1-race-bbb718e425d28548/projects/garden"))
+      Use -p '/second addendum/&&/an attempt waits with a folder another attempt made and then removed; it is not recorded as connected to a missing folder/' to rerun this test only.
+    a task's dependencies are part of its creation digest one by one, so joined text is not the same request:                  FAIL (0.17s)
+      test/integration/Lockstep/GateCRemediationFolderRaceTest.hs:153:
+      expected: Left "key-conflict"
+       but got: Right "d845167d-1eb4-4cb4-a8fd-4ce841d3be83"
+      Use -p '/second addendum/&&/a task'\''s dependencies are part of its creation digest one by one, so joined text is not the same request/' to rerun this test only.
+
+3 out of 3 tests failed (0.55s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       
