@@ -30,11 +30,11 @@ import Lockstep.Foundation.OperatorTokenTest qualified as OperatorTokenTest
 import Lockstep.Foundation.SessionProtocolTest qualified as SessionProtocolTest
 import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
 import Lockstep.Kernel.ActivityTest qualified as ActivityTest
+import Lockstep.Kernel.ConversationTest qualified as ConversationTest
 import Lockstep.Kernel.DecisionTest qualified as DecisionTest
 import Lockstep.Kernel.DeliveryTest qualified as DeliveryTest
 import Lockstep.Kernel.EffectTest qualified as EffectTest
 import Lockstep.Kernel.EffectViewTest qualified as EffectViewTest
-import Lockstep.Kernel.ConversationTest qualified as ConversationTest
 import Lockstep.Kernel.EventCodecTest qualified as EventCodecTest
 import Lockstep.Kernel.ExecutionTest qualified as KernelExecutionTest
 import Lockstep.Kernel.IdentityTest qualified as IdentityTest
