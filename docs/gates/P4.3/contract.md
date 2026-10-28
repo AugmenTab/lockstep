@@ -55,7 +55,16 @@
 
 ## 3a. Verification record (after implementation)
 
-*(empty until implemented)*
+| Check | Result | Evidence |
+|---|---|---|
+| C-P4.3 integration group, targeted | 8 of 8 at the first implementation run | `.local/p43-run1.log` (not committed) |
+| `scripts/check --integration` on `0fcb2b9`, clean tree | **FAILED at step 1 (format)**: the frozen unit runner's new import is out of fourmolu's order; steps 2–6 NOT_RUN | `check-integration-0fcb2b9.log` |
+| The same with proposed amendment A-P4.3-1 applied temporarily | all six steps PASSED: unit 818 of 818, integration 454 of 454, backup/restore; Kernel boundary and purity scan clean (25 files) | `trial-with-a-p4.3-1.log` |
+| Frozen files | restored after the trial; `test/unit/Main.hs` back at its frozen digest; the others never touched | §4 |
+| Linux clean clone | **NOT_RUN**: waits for the owner's decision on A-P4.3-1 (without it the format step fails by construction) | — |
+
+**Status: implemented; qualification blocked on A-P4.3-1** (`amendment-request-1.md`), a one-line import
+move in a frozen runner. The writing agent did not apply it.
 
 ## 4. Freeze record
 

@@ -13,7 +13,7 @@
 |---|---|---|---|
 | P4.1 | **VERIFIED** at `bd4512b` (frozen `C-P4.1`; Mac unit 808/808, integration 446/446; Linux clean clone the same) | `C-P4.1` | `docs/gates/P4.1/` |
 | P4.2 | **BLOCKED — waiting for DG-17** (owner) | — | `design-gates-decision-request.md` |
-| P4.3 | in progress | `C-P4.3` | `docs/gates/P4.3/` |
+| P4.3 | **IMPLEMENTED, qualification blocked on A-P4.3-1** (owner): frozen runner import order fails the format step; with the amendment trialled, unit 818/818 and integration 454/454 on the Mac; frozen bytes restored | `C-P4.3` | `docs/gates/P4.3/` |
 | P4.4 | blocked behind P4.2 | — | — |
 | P4.5 | **BLOCKED — waiting for DG-17** | — | — |
 | P4.6 | blocked behind P4.5 | — | — |
@@ -33,5 +33,14 @@ Neither is run or represented by automation. Their protocols are unchanged (`doc
 ## Open owner decisions
 
 1. DG-06, DG-07, DG-17 — `design-gates-decision-request.md` (recommended options and the minimum
-   decision for each).
+   decision for each). **Every remaining sub-phase waits on these**: P4.2, P4.5, P4.10 on DG-17; P4.7 on
+   DG-07; P4.8 on DG-06; P4.4, P4.6, P4.9 and P4.11–P4.17 follow from them.
 2. O-1 there: the built-in Bug Profile content (`lockstep-bug-fix` v1), built in P4.1.
+3. A-P4.3-1 — `docs/gates/P4.3/amendment-request-1.md`: move one import line in the frozen unit runner
+   (fourmolu order); digests before and after given; trialled green; not applied.
+
+## Where it stopped (2026-10-28)
+
+P4.1 verified (Mac and Linux, `bd4512b`). P4.3 implemented on `phase-4`; its qualification waits for A-P4.3-1.
+No further sub-phase can be frozen without DG-06/07/17. Nothing was installed, pushed or published; no
+provider was invoked (the guard's sentinel log is empty in every run). Gate C-EXEC is not claimed.
