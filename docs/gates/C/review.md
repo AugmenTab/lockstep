@@ -157,3 +157,29 @@ All three need an operator-made folder alias or a second near-simultaneous attem
 folder; none affects a single person using the pages in order. The Planner decides whether they are
 fixed before the consolidated qualification (one more small addendum, frozen first) or recorded as
 Gate C exceptions.
+
+**Outcome (2026-10-27):** the Planner authorized all three as one bounded addendum, with one more
+read-only review and a stopping rule. Fixed in `671b957` (C-C.R1 §3d R5-1, R5-2, R5-3), frozen first
+(`GateCRemediationIdentityTest.hs`, 5 of 5 failing before).
+
+## Review 6 — the Review 5 corrections (`b9f7d47..671b957`)
+
+- Reviewer: a fresh **read-only** reviewer agent, limited to R5-1–R5-3 and their safety properties,
+  told the Planner's stopping rule. **Not a human review.** Result: **3 MEDIUM**, LOW/INFO recorded.
+- The writing agent checked each MEDIUM against the code: all three are real. Under the Planner's
+  rule ("escalate genuine HIGH/MEDIUM regressions rather than silently accepting them"; no recursive
+  remediation) they are **escalated, not fixed**. The candidate `671b957` is not to be qualified as
+  final until the Planner decides.
+
+| # | Sev. | Finding (checked) | Proposed correction (not applied) |
+|---|---|---|---|
+| 1 | **MEDIUM — data loss** | A folder this attempt made and published (`made`) is replaced at the same path by someone else's repository while the attempt waits. R5-2 correctly records `folder-not-offered`, but the cleanup then removes the path: the project is not connected, the path is not recorded, and the *new* identity is not registered, so `removeDirectoryRecursive` deletes the other person's repository. The frozen R5-2 case uses an existing folder (`made` false), so it does not cover this | `makeProjectFolder` returns the identity of the `.git` it moved in; the attempt removes the folder only while `gitIdentity path` still equals that identity (and the R13/R5-1 checks hold); otherwise keep it. New frozen case: a made folder replaced while the attempt waits is kept |
+| 2 | **MEDIUM — invariant (R5-2)** | When the first observation is refused (`authoritative-remote-ambiguous`), `observedIdentity first` is Nothing, so the identity check reduces to "something is there"; `registerIn` then registers the `origin` fallback observation without comparing its identity. A replaced folder with several remotes can be connected from a stale observation | Compare the current identity with the identity of the observation actually registered, inside `registerIn`, for the fallback as for the first; differ → `folder-not-offered`. New frozen case with a two-remote folder replaced while waiting |
+| 3 | **MEDIUM — race (R5-1)** | `removeUnrecorded` takes only the projects lock; the CLI's `lockstep repository register` takes only the registration lock, so an uncommitted registration of the made folder is not seen and the folder is removed under it | Take `lockRepositories` after `lockProjects` in `removeUnrecorded` (the existing order, so no deadlock). New frozen case: a registration holding its lock while the attempt cleans up |
+| 4 | LOW/INFO (recorded) | An empty `.git` someone creates in the just-claimed destination is replaced by the rename; a symbolic link swapped in for the destination redirects `.git`; an asynchronous exception can leave an unrecorded published folder, an empty claimed folder, or a `.lockstep-new-*` directory (none offered, no data lost); recursive removal runs under the projects lock (slow, no deadlock) | Recorded for later work (Planner's stopping rule) |
+
+Checked clean by the reviewer: identity format and source (lstat of `<folder>/.git` equals the
+registered `physical_id`, same `physicalKey` text, independent of spelling); R5-2 on the non-fallback
+path; the safe parts of R5-3 (init only in the unoffered `mkdtemp` directory, no-overwrite `mkdir`,
+empty-only removal of a claimed destination, workspace removed on every path, links never followed);
+no new lock and the projects → repositories order kept.

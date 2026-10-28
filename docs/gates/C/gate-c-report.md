@@ -1,8 +1,9 @@
 # Gate C (C-UX) — status and decision packet
 
-- Status: **NOT ACCEPTED. All authorized remediation is implemented at `b9f7d47`; it is verified by
-  targeted runs only and waits for one consolidated Mac qualification and Linux clean clone, which
-  the owner has asked not to start yet.** The Implementer cannot accept Gate C (Phase 3 handoff
+- Status: **NOT ACCEPTED. All authorized remediation, including Review 5's three filesystem fixes,
+  is implemented at `671b957`; it is verified by targeted runs only and waits for one consolidated
+  Mac qualification and Linux clean clone, which the owner has asked not to start yet.** The concise
+  decision packet is `decision-packet.md`. The Implementer cannot accept Gate C (Phase 3 handoff
   P3.11). C8 and C9 are **NOT_RUN**. Phase 4 is not started and will not be without the owner's
   authorization.
 - Revision 3, 2026-10-27, updated after the Planner's final authorization of the same day
@@ -11,9 +12,10 @@
 - Branch `phase-3` (from `v2` at `8e71039`). Last fully qualified commit: **`e1c56ef`** (the P3.10
   code + the C-C.R1 remediation `e49b68e` + its review fixes). Since then, **not qualified**:
   `e679d97` (the authorized amendments A-C.R1-1, -2, -3 and the frozen addendum suite),
-  `d064150` (migration 17, R13, R14), `11a035d` (second addendum frozen, from Review 4) and
-  `b9f7d47` (R13a, R13b, R9a). **Next qualification: one Mac `scripts/check --integration` and one
-  Linux clean clone of the tip of `phase-3`** (`b9f7d47`, or a later documents-only commit).
+  `d064150` (migration 17, R13, R14), `11a035d` (second addendum frozen, from Review 4),
+  `b9f7d47` (R13a, R13b, R9a), `33e0beb` (third addendum frozen, from Review 5) and `671b957`
+  (R5-1, R5-2, R5-3). **Next qualification: one Mac `scripts/check --integration` and one Linux clean
+  clone of the tip of `phase-3`** (`671b957`, or a later documents-only commit).
 - Authority: Phase 3 handoff P3.11; PRD v0.3 FR-UX-01…10, NFR-15…18; Plan v0.3 §4 P3.11; the
   Planner disposition of 2026-10-27.
 
@@ -108,15 +110,17 @@ Not started without authorization: the consolidated qualification, cookie-page r
 | The tip across the whole suite (Mac and Linux) | **NOT_RUN**: not qualified, not to be called verified |
 | R14 under a real asynchronous exception during the unlock | Not testable deterministically; code review only |
 | Read-only code review of `e1c56ef..d064150` (Review 4) | 1 MEDIUM, 1 LOW, 3 INFO; MEDIUM and LOW fixed in `b9f7d47` (`review.md`) |
-| Read-only check of `d064150..b9f7d47` (Review 5) | no HIGH, no MEDIUM; 3 LOW edge cases **not fixed** (folder identity by path text; a re-made folder at the same path; the older `git init` cleanup); correction plan in `review.md` for the Planner |
+| Read-only check of `d064150..b9f7d47` (Review 5) | no HIGH, no MEDIUM; 3 LOW, **fixed in `671b957`** under the Planner's final authorization (C-C.R1 §3d); 5 frozen cases, failing before, passing after; targeted 99 of 99 |
+| Independent read-only review of `b9f7d47..671b957` (Review 6) | **3 MEDIUM, escalated to the Planner, not fixed** (`review.md`, Review 6: one data-loss path in the folder cleanup, one identity bypass on the `origin` fallback, one race with the CLI registration); correction plan ready |
 | The remediation on the owner's installation | **Not installed, not dogfooded** (it adds migrations 16 and 17) |
 | Gate C | **Not accepted**. C8, C9 NOT_RUN |
 
 Next required actions, in order:
 
-1. **Planner**: Review 5's three LOW findings: fix before the qualification (one small addendum,
-   frozen first) or record as Gate C exceptions. **Owner**: say when the consolidated
-   qualification may start.
+1. **Planner**: Review 6's three MEDIUM findings (escalated): authorize the correction plan in
+   `review.md` (one small addendum, frozen first), or accept them as named exceptions. The
+   qualification should run on the commit that follows that decision, not on `671b957`.
+2. **Owner**: say when the consolidated qualification may start (`decision-packet.md` §3).
 2. Implementer: **one** Mac `scripts/check --integration` and **one** Linux clean clone
    (`.local/linux-clone-run-cr1.sh <commit>`), both on the tip of `phase-3`; record both here and in
    C-C.R1 §3a. No intermediate full runs.
