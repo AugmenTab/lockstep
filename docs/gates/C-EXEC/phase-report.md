@@ -19,9 +19,9 @@
 | P4.6 | **VERIFIED** at `cbd7394` (Mac and Linux, unit 854/854, integration 500/500) | `C-P4.6` | `docs/gates/P4.6/` |
 | P4.7–P4.9 | **VERIFIED** at checkpoint `30facae` (frozen `be020cc`): Mac and Linux clean clone, unit 862/862, integration 518/518 | `C-P4.7-9` | `docs/gates/P4.7-9/` |
 | P4.10–P4.14 | **VERIFIED** at checkpoint `30facae` (frozen `5fa1b15`): Mac and Linux clean clone, unit 862/862, integration 518/518 | `C-P4.10-14` | `docs/gates/P4.10-14/` |
-| P4.15 | **IMPLEMENTED** (frozen `104fd2b`; P4.15 group 7/7; every C-P4 group 103/103); full qualification at the next checkpoint | `C-P4.15` | `docs/gates/P4.15/` |
-| P4.16 | **IMPLEMENTED** (frozen `1b86ee4`; P4.16 group 6/6; every C-P4 group 109/109); full qualification at the next checkpoint | `C-P4.16` | `docs/gates/P4.16/` |
-| P4.17 | not started | — | — |
+| P4.15 | **VERIFIED** at checkpoint `d59aceb` (frozen `104fd2b`): Mac and Linux clean clone, unit 862/862, integration 531/531 | `C-P4.15` | `docs/gates/P4.15/` |
+| P4.16 | **VERIFIED** at checkpoint `d59aceb` (frozen `1b86ee4`): Mac and Linux clean clone, unit 862/862, integration 531/531 | `C-P4.16` | `docs/gates/P4.16/` |
+| P4.17 | in progress (decision packet drafted: `decision-packet.md`) | `C-P4.17` | `docs/gates/P4.17/` |
 
 The first full check at `0b8dbad` failed one test of 518: a start-up race in the folder helper (C-P3.5), which
 gave the pane its copy after placing the list the frozen test waits on. Fixed in the helper at `30facae` (the
@@ -52,5 +52,6 @@ accepted with clarification; O-1 accepted; A-P4.3-1 approved (applied). A-P4.2-1
 
 ## Where it stands (2026-10-28)
 
-P4.1–P4.14 verified (Mac and Linux). P4.15 and P4.16 implemented; P4.17 next. Nothing was installed, pushed or published; no
+P4.1–P4.16 verified (Mac and Linux). P4.17 in progress; an independent read-only review of the Phase 4 code
+was requested by the owner and is running. Nothing was installed, pushed or published; no
 provider was invoked (the guard's sentinel log is empty in every run). Gate C-EXEC is not claimed.
