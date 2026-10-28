@@ -34,8 +34,8 @@ storage: one ADR per gate under the chosen `docs/adr/` (DG-01b decides the repo)
 | DG-03 | Stable ownership key for repo aliases/worktrees/remotes | Human owner | P1.7 | Engineer registration, scheduler claims | P2.1 | **ACCEPTED** 2026-10-18 by the owner: D-3.1a, D-3.2a amended, D-3.3d (new), D-3.4, D-3.5a, D-3.6, D-3.7. See `docs/gates/P2.1/dg-03-decision-request.md` (Human decision) |
 | DG-04 | Event, claim, outbox, replay and reconciliation protocol | Human owner | P1.7, P2.2 | Provider/Git execution, safe recovery | P2.5 | **ACCEPTED** 2026-10-18 by the owner with binding safety requirements 1–8 (stable effect identity, real class-B idempotency, authoritative class-C negatives, fencing keeps late evidence, no automatic class-D retry, human attestation distinguished, finite effect-specific budgets, duplicate-effect testing). See `docs/gates/P2.5/dg-04-decision-request.md` (Human decision) |
 | DG-05 | Profile schema, precedence, exceptions, scheduling order | Human owner | P2.2 | Effective Profile binding/admission | P2.3–P2.4 | **ACCEPTED** 2026-10-18 by the owner: D-5.1a–D-5.11 as recommended, with clarifications 1–4 (execution prerequisites vs later gates; unprovable strengthening refused; queued ≠ reserved; non-behavioural classification cannot evade mandatory tests). See `docs/gates/P2.3/dg-05-decision-request.md` (Human decision) |
-| DG-06 | Test-candidate baseline/RED policy; source-grounded acceptance | Human owner | P3.3–P3.6 | Frozen-test implementation | P3.7 | OPEN — Python regression lessons feed it (P0.3) |
-| DG-07 | Semantic challenger independence, budget, disposition, escalation | Human owner | P3.4–P3.5 | Freeze and acceptance in Bug Profile | P3.6 | OPEN |
+| DG-06 | Test-candidate baseline/RED policy; source-grounded acceptance | Human owner | P3.3–P3.6 | Frozen-test implementation | P3.7 | **EVIDENCE-PREPARED** 2026-10-27 (now P4.8): `docs/gates/C-EXEC/design-gates-decision-request.md` |
+| DG-07 | Semantic challenger independence, budget, disposition, escalation | Human owner | P3.4–P3.5 | Freeze and acceptance in Bug Profile | P3.6 | **EVIDENCE-PREPARED** 2026-10-27 (now P4.7/P4.12): same request |
 | DG-08 | Plan import/creation freeze and local Phase signoff | Human owner | P3.5, P4.3 | Plan-driven engine parity | P4.4 | OPEN |
 | DG-09 | Git branch/PR granularity, protected merge, status mapping | Human owner | P5.5 | External push / PR | P6.1 | OPEN — PRD §8 proposes PR-per-Ticket first |
 | DG-10 | Shortcut field ownership, priority, blocker, Done mapping | Human owner | P6.9, P4.1 | External tracker mutation | P7.1 | OPEN |
@@ -138,6 +138,24 @@ owner's instruction):
   instruction to begin.
 - Unchanged: the cookie-page retirement (deferred, needs its own authorization) and installing the
   candidate on the owner's Mac (separate authorization).
+
+Phase 4 authorization, 2026-10-27 (the owner's instruction in the session, "Read
+@.local/plans/phase-04.md and implement"; handoff `.local/plans/phase-04.md`, sha256
+`24db39d9666dd72aa89dc0c0111651ec486fcd12cb7191334d21d247687f5698`; recorded by the writing agent):
+
+- **Phase 4 / Gate C-EXEC authorized**, P4.1–P4.17, unattended within the handoff's §8 boundaries; this
+  is the further owner instruction the Gate C-UX record required. Branch `phase-4` from `77a96ce`
+  (production code `fd5bb90`, unchanged since the qualified `36cff9b`; the two later commits are
+  documents only).
+- Still not authorized by it: live/paid provider calls without a separately consented, bounded trial;
+  installing on the owner's Mac; the N-player Pong repository as a target; any push, PR or remote
+  publication; parallel writers; self-acceptance of Gate C-EXEC; Phase 5.
+- **DG-06, DG-07 and DG-17 are not decided by the handoff** (it lists them as dependencies). The
+  writing agent prepared `docs/gates/C-EXEC/design-gates-decision-request.md` (status
+  `EVIDENCE-PREPARED`); P4.2 onward that depends on them waits for the owner. P4.1 and P4.3 proceed.
+- UX-C8 and UX-C9: NOT_RUN — DEFERRED BY OWNER TO PHASE 4; to be reported before Gate C-EXEC.
+
+DG-17 (Phase 4 live coding confinement; PRD v0.3 §8): **EVIDENCE-PREPARED** 2026-10-27, same request.
 
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.
