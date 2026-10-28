@@ -319,6 +319,15 @@ tests =
               immutable lg "DELETE FROM lockstep_decision_attempts"
               immutable lg "TRUNCATE lockstep_decision_attempts"
               advisoryHeld lg 7301 >>= (@?= [0])
+        , testCase "a marker left by another answer with the same key is a key conflict, and nothing runs" $
+            withLedger $ \lg -> do
+              wo <- stoppedWork lg "Print the menu" "the printer jammed"
+              sql lg ("INSERT INTO lockstep_decision_attempts (idempotency_key, payload_digest, subject) VALUES ('test-remedy-key-marked', '" <> L.replicate 64 'a' <> "', '" <> T.unpack (woText wo) <> "')")
+              k <- decisionKey "marked"
+              applyDecision (lgRuntime lg) k (PutBackInLine wo 4) >>= (@?= Left "key-conflict") . outcomeOf
+              subject lg wo >>= (@?= ["halted 4"])
+              count lg "lockstep_decision_receipts" >>= (@?= 0)
+              count lg "lockstep_decision_attempts" >>= (@?= 1)
         ]
     , testCase "expected values outside the stored range are refused before any receipt (R3)" $
         withLedger $ \lg -> do

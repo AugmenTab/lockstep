@@ -26,7 +26,7 @@
 
 | # | Decision |
 |---|---|
-| R1 | **Decision lock** (finding 1, option B). `applyDecision` opens one dedicated database connection (its own pool of one, outside the service pool), takes `pg_advisory_lock(7301, hashtext(<key>))` with `lock_timeout = 5s`, and keeps that connection pinned until the end. Under the lock, in order: (1) a receipt with this key: same payload digest → that receipt, replayed; other digest → `key-conflict`; (2) an attempt marker with this key and no receipt → `decision-outcome-uncertain` (nothing applied, nothing recorded); (3) one attempt marker row is committed; (4) the operation runs (its own transaction, as before, on the service pool); (5) in one transaction on the lock connection: the lock is proved still held (`pg_locks`, this backend, `advisory`, classid 7301, granted) and the receipt is inserted; a key conflict found there is compared by digest again. The lock is released by `pg_advisory_unlock` and by closing the connection, whatever happens. A lock not granted within 5 s → `decision-busy` (nothing applied, nothing recorded). Any failure of the lock connection or of step 5 returns "unavailable" without a receipt; the marker stays, so the same key can never be replayed into a guessed outcome. Receipts stay insert-only (M4). |
+| R1 | **Decision lock** (finding 1, option B). `applyDecision` opens one dedicated database connection (its own pool of one, outside the service pool), takes `pg_advisory_lock(7301, hashtext(<key>))` with `lock_timeout = 5s`, and keeps that connection pinned until the end. Under the lock, in order: (1) a receipt with this key: same payload digest → that receipt, replayed; other digest → `key-conflict`; (2) an attempt marker with this key and no receipt: same payload digest → `decision-outcome-uncertain`, other digest → `key-conflict` (either way nothing applied, nothing recorded; amendment A-C.R1-3); (3) one attempt marker row is committed; (4) the operation runs (its own transaction, as before, on the service pool); (5) in one transaction on the lock connection: the lock is proved still held (`pg_locks`, this backend, `advisory`, classid 7301, granted) and the receipt is inserted; a key conflict found there is compared by digest again. The lock is released by `pg_advisory_unlock` and by closing the connection, whatever happens. A lock not granted within 5 s → `decision-busy` (nothing applied, nothing recorded). Any failure of the lock connection or of step 5 returns "unavailable" without a receipt; the marker stays, so the same key can never be replayed into a guessed outcome. Receipts stay insert-only (M4). |
 | R2 | **Migration 16** `lockstep_decision_attempts`: `id`, `idempotency_key` unique (C-P1.5 rule), `payload_digest` (64 hex), `subject` uuid, `started_at`; UPDATE, DELETE and TRUNCATE refused by trigger. `lockstep_decision_receipts` gains `ledger_basis text`, NULL for receipts written before migration 16 and for refusals (`CHECK (ledger_basis IS NULL OR outcome = 'applied')`). No existing row changes. |
 | R3 | **Expected values in range** (finding 5). `applyDecision` refuses an expected revision or generation outside 0…2³¹−1 with `revision-out-of-range` before any lock, operation or receipt. `decideTask` refuses a Ticket revision outside 0…2³¹−1 the same way. The forms parse `expected`, `ticket_revision` (0…2³¹−1) and the project and task `revision` fields (0…2⁶³−1) as plain decimal digits only; anything else answers "Lockstep could not read this form. Try again." and reaches no operation. |
 | R4 | **Receipt freshness** (finding 6). An applied receipt stores the subject's ledger basis the operation produced: `order:<revision>` for stopped work (the Work Order revision after the event), `intent:<state>:<generation>` for an unknown outcome (the intent the operation returned). `DecisionReceipt` gains `receiptCurrent`: the stored basis equals the subject's basis in the current projection. A closed decision's page shows the Done page only for a current receipt; otherwise it says the decision is no longer waiting and was decided or changed elsewhere, with the earlier answer only under *Technical details*. A replayed receipt that is no longer current says so too. A receipt without a basis is never current. |
@@ -34,7 +34,7 @@
 | R6 | **Folders checked once, and again before mounting** (findings 3, 4; host-user threat model unchanged). `scripts/control-helper`: `folder_refusal` runs once, in the helper's own shell, and sets both the refusal and the canonical path that is written. `scripts/service`: a listed path is mounted only if it is not a symbolic link, is a directory, and its canonical path (`cd -P`, `pwd -P`) is exactly the listed path; otherwise it is skipped like a missing folder. |
 | R7 | **Task decisions under the task lock** (finding 7). `decideTask` runs in one transaction: the task lock (`lockTasks`), the task row, the C-P2.2 Ticket decision inside that transaction (`decideTicketIn`, the same rules and refusal rows as `decideTicket`), and the view. A stale Ticket revision is `stale-revision`; any other refusal `not-allowed-now`, as before. C-P3.6 K2's wording is kept. |
 | R8 | **Attribute escaping** (finding 8). `Fragment.attr` escapes `"` itself as well (`&quot;`), so no attribute value depends on Brigid's escaping. Proved by a task titled `" autofocus onfocus=alert(1) x="` through the real service and headless Chromium. |
-| R9 | **Creation key bound to its project** (finding 9, first part). A task creation key already used in another project is refused `key-conflict` and returns nothing of the other project. A key reused in the same project still returns its task (C-P3.6 K2, frozen `TasksTest`). Refusing the same key with *different content* contradicts frozen C-P3.5 and C-P3.6 tests and is **not** done here: §5. |
+| R9 | **Creation key bound to its project and content** (finding 9). A task creation key already used in another project is refused `key-conflict` and returns nothing of the other project. Since amendment A-C.R1-1 (§5): **migration 17** adds `creation_digest` (64 hex, NULL for earlier rows) to `lockstep_projects` and `lockstep_project_tasks`; it is the SHA-256 of a canonical request text (a project: name, outcome, folder choice; a task: project, title, acceptance, priority, sorted dependencies). The same key replays only when the digest is the same; other content is `key-conflict` and creates nothing. A row without a digest replays only when the request is shown equal to what is stored (a project: the same name and outcome, and *decide later* with no folder or the same existing folder; a task: never edited, and the same title, acceptance, priority and dependencies); anything else, including a new folder, fails closed as `key-conflict`. Words for projects: "This form was already used for another project. Nothing was changed. Open New project again." |
 | R10 | **No sentinel** (finding 10). `chooseChecksExpecting` takes `ExpectNothing` or `ExpectProfile id`. The checks form keeps `expected` and adds `expected_set` (`no` when nothing is chosen, `yes` otherwise); with `expected_set` the value of `expected` is taken literally, so a Profile called `none` works. A form without `expected_set` (and the C-P3.7 `chooseChecks` text API) reads `none` as "nothing chosen" only: when a Profile called `none` is the current choice, such a request is refused `checks-changed` (it cannot be told apart, so it fails closed). No Profile ID is restricted. |
 | R11 | **Words.** `decision-busy`: "Someone else is answering this right now. Nothing was changed. Try again in a moment."; `decision-outcome-uncertain`: "Lockstep cannot tell whether this answer was recorded. Nothing more was done. Here is how it stands now."; `revision-out-of-range`: the form-error sentence. Projects: `project-busy` "This project is being set up right now. Nothing was changed. Try again in a moment.". Tasks: `key-conflict` "This form was already used for another project. Nothing was changed. Open New task again.". |
 | R12 | **Launcher PATH conflict** (dogfood finding 1, product). `lockstep setup-path` and a terminal `./lockstep` launch detect when `lockstep` on `PATH` resolves to another program than Lockstep's link, name that program, say how to run Lockstep (`<checkout>/lockstep`, or `./lockstep` in the checkout), and mention an active virtual environment when one is the cause. Nothing outside `~/.local/bin/lockstep` is created, changed or removed; exit codes are unchanged. |
@@ -43,7 +43,7 @@
 
 | File | Kind | Covers |
 |---|---|---|
-| `test/integration/Lockstep/GateCRemediationTest.hs` | integration: real PostgreSQL, Git, in-process; two service pools for real concurrency | R1: two concurrent requests with one key and different content → one applied and one `key-conflict`, one receipt, outcome `applied`; with the same content → one applied, one replayed; a key whose lock is held elsewhere → `decision-busy` after the bound, nothing recorded; the lock connection killed while the operation waits → no receipt, the ledger change stands, the same key then `decision-outcome-uncertain` and nothing more; attempt markers immutable. R3: −1 and 2³¹ refused before any receipt. R4: current right after, not current once the work changed elsewhere. R5: two concurrent connects of one project → one Engineer, one registration, one folder; a failure at the Engineer, the registration or the project write → no Engineer, no registration, no new folder, project unchanged. R7: a task decision waits for the task lock; a stale Ticket revision after a title edit is `stale-revision`. R9: a key from another project is `key-conflict`. R10: a Profile called `none`. |
+| `test/integration/Lockstep/GateCRemediationTest.hs` | integration: real PostgreSQL, Git, in-process; two service pools for real concurrency | R1: two concurrent requests with one key and different content → one applied and one `key-conflict`, one receipt, outcome `applied`; with the same content → one applied, one replayed; a key whose lock is held elsewhere → `decision-busy` after the bound, nothing recorded; the lock connection killed while the operation waits → no receipt, the ledger change stands, the same key then `decision-outcome-uncertain` and nothing more; attempt markers immutable; a marker left by another answer with the same key is `key-conflict` (A-C.R1-3). R3: −1 and 2³¹ refused before any receipt. R4: current right after, not current once the work changed elsewhere. R5: two concurrent connects of one project → one Engineer, one registration, one folder; a failure at the Engineer, the registration or the project write → no Engineer, no registration, no new folder, project unchanged. R7: a task decision waits for the task lock; a stale Ticket revision after a title edit is `stale-revision`. R9: a key from another project is `key-conflict`. R10: a Profile called `none`. |
 | `test/integration/Lockstep/GateCRemediationPageTest.hs` | integration: real service over HTTP | R3: out-of-range and non-decimal `expected`, `ticket_revision` and `revision` answer the form error and record nothing; R4: a closed decision changed elsewhere shows no Done page; R8: the hostile title escaped in the raw page; R10: `expected_set` on the checks page |
 | `test/integration/Lockstep/GateCRemediationFolderTest.hs` | integration: real `scripts/service` with the docker stub (C-P3.5 support), real launcher | R6: a listed symbolic link and a listed path under a symbolic-link parent are not mounted; R12: a `lockstep` earlier on `PATH` is named, the link is still made, the other program is untouched |
 | `test/integration/Lockstep/GateCRemediationBrowserTest.hs` | integration: headless Chromium (frozen `test/browser/app_driver.py`), real service | R8: the task page with the hostile title has no `onfocus` or `autofocus` attribute, and the title field holds the exact text |
@@ -52,6 +52,32 @@ Not covered by a deterministic test (recorded, not hidden): the helper's check-t
 R6 (a symbolic link re-targeted between the check and the write needs a local race on the owner's
 own home folder; the single in-shell check removes the second resolution, and the mount-time check
 of R6 is tested).
+
+## 3b. Addendum (2026-10-27): migration 17 and the Review 3 corrections
+
+Authority: the Planner's final authorization (`.local/plans/phase-03_update4.md`): A-C.R1-1's
+production change (R9), and Review 3 findings 1, 3 and 4.
+
+| # | Decision |
+|---|---|
+| R13 | **A connected project's folder is never removed** (Review 3 findings 3, 4). Before removing a folder the attempt made, on the normal failure path and in the exception handler alike, the project is read again from the database; the folder is kept when the project is connected, or records that folder, or its state cannot be read. A folder the attempt did not make is never removed (as before). |
+| R14 | **Only synchronous unlock failures are ignored** (Review 3 finding 1). The best-effort `pg_advisory_unlock` after the action ignores synchronous exceptions only; asynchronous ones propagate (the one-connection pool is still destroyed). |
+| R15 | **Test fault hook.** `connectProjectWith :: ProjectFaults -> …` runs `faultAfterCommit` once on what the attempt's transaction returned; `connectProject` is `connectProjectWith noProjectFaults`, and nothing in the service, the pages or the CLI can reach another hook. It stands for an interruption after the commit (the hook throws) or a COMMIT whose answer was lost (the hook replaces the result with a database failure); a real lost COMMIT cannot be forced reproducibly in a test. |
+
+| File | Kind | Covers |
+|---|---|---|
+| `test/integration/Lockstep/GateCRemediationAddendumTest.hs` | integration: real PostgreSQL, Git, in-process | R13: an interruption after the commit, and a lost COMMIT answer, leave the connected project and its new folder; nothing else in the projects folder is touched; a really failed attempt still removes the folder it made. R9 (migration 17): rows without a creation digest replay only when the request is shown equal; a project's other name or a new folder, a task's other title, or any task after an edit is `key-conflict` |
+
+Not covered by a test: R14 (an asynchronous exception arriving exactly during the unlock cannot be
+placed deterministically); it is checked by reading the code.
+
+Pre-freeze baseline (`addendum-prefreeze-baseline.log`, only the amended and new cases, against the
+code with the hook and without R9's second half or R13): 6 of 9 fail, each for its finding (A-C.R1-1:
+other content returns the first project or task; R13: the connected project's folder is removed in
+both cases; migration 17: the column does not exist). The 3 that pass are expected to: the A-C.R1-3
+marker case (the code has compared marker digests since `e1c56ef`), the A-C.R1-2 page case (its
+fixture is repaired), and "a really failed attempt still removes the folder it made" (R13 must not
+keep orphans).
 
 ## 3a. Verification record (after implementation)
 
@@ -122,11 +148,12 @@ Frozen 2026-10-27 by the writing agent (manual), before any of the fixes was imp
 
 | File | SHA-256 |
 |---|---|
-| `test/integration/Lockstep/GateCRemediationTest.hs` | `8e7beb24a0ef48b86eec4a8368d2f180cf2be105ed63c074a45c88f55e01a9c8` |
-| `test/integration/Lockstep/GateCRemediationPageTest.hs` | `4015a2835ae35a6ec3dc018efb31aa0d12e78fc7244203b1cd62a1676c4bd41d` |
+| `test/integration/Lockstep/GateCRemediationTest.hs` | `97b255e2f65d0d7abfbd4a73842baf6b95ea81a902f2e675975b35b4510605fe` (amendment A-C.R1-3; was `8e7beb24a0ef48b86eec4a8368d2f180cf2be105ed63c074a45c88f55e01a9c8`) |
+| `test/integration/Lockstep/GateCRemediationPageTest.hs` | `ad05170cefeba7fd9ddf702a3392bd5b6a962c3a3f5c91a233fdbb449bd6806e` (amendment A-C.R1-2; was `4015a2835ae35a6ec3dc018efb31aa0d12e78fc7244203b1cd62a1676c4bd41d`) |
 | `test/integration/Lockstep/GateCRemediationFolderTest.hs` | `6497ba92949811893e5e61cdfacba234653a2b4518ebdfc2e84fef141b92e18f` |
 | `test/integration/Lockstep/GateCRemediationBrowserTest.hs` | `d95ecee895ef0a1f3ea72effb153799643e6e6f85fcdc054f3f322c45ea652a9` |
-| `test/integration/Main.hs` (runner, additive) | `fd71561c3342b6c788aeeebf4dea9f882b8546f487a0d67068555d1c34f51982` |
+| `test/integration/Main.hs` (runner, additive) | `0f7613e809e43c18ebea2c6c33c90b6cc8d0d9cf0eb54bf3205d67a6ff036193` (addendum, one import and one group; was `fd71561c3342b6c788aeeebf4dea9f882b8546f487a0d67068555d1c34f51982`) |
+| `test/integration/Lockstep/GateCRemediationAddendumTest.hs` (addendum, §3b) | `16235a713b695f91f196a42379ad08c5aff5ecb54cbafc52ea0c3dd4493451ec` |
 
 No earlier frozen file is changed; the runner only gains four lines of imports and four groups.
 
@@ -163,6 +190,9 @@ Finding 9 asks that "a key reused with different input must conflict". Two froze
 opposite for the same project, so this part is **not** implemented: `docs/gates/C-R1/amendment-request-1.md`
 holds the exact diffs, provenance and the code change it would authorize.
 
-Status 2026-10-27 (later): A-C.R1-1 and A-C.R1-2 are **approved in principle** by the Planner, not
-yet authorized for editing; A-C.R1-3 (R1 step (2) and one new frozen case) is requested. No frozen
-file has changed (digests re-checked).
+Status 2026-10-27 (final): A-C.R1-1, A-C.R1-2 and A-C.R1-3 were given **final authorization** by
+the Planner (`.local/plans/phase-03_update4.md`) and applied: each original digest was checked
+before the edit, exactly the authorized hunks were applied to the intended test paths (not the
+`.local` copies the patch headers name), and each result matches the authorized digest (§4;
+C-P3.5 §4, C-P3.6 §4). R1 step (2), R9 and the §3 row were amended as authorized. R9's second half is
+implemented with migration 17 (§3b).

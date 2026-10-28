@@ -21,6 +21,7 @@ import Lockstep.ExecutorTest qualified as ExecutorTest
 import Lockstep.FaultPlanTest qualified as FaultPlanTest
 import Lockstep.FirstUseJourneyTest qualified as FirstUseJourneyTest
 import Lockstep.FolderHelperTest qualified as FolderHelperTest
+import Lockstep.GateCRemediationAddendumTest qualified as GateCRemediationAddendumTest
 import Lockstep.GateCRemediationBrowserTest qualified as GateCRemediationBrowserTest
 import Lockstep.GateCRemediationFolderTest qualified as GateCRemediationFolderTest
 import Lockstep.GateCRemediationPageTest qualified as GateCRemediationPageTest
@@ -115,4 +116,5 @@ main =
       , GateCRemediationPageTest.tests
       , GateCRemediationFolderTest.tests
       , GateCRemediationBrowserTest.tests
+      , GateCRemediationAddendumTest.tests
       ]

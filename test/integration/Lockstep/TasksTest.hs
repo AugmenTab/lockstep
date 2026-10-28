@@ -141,13 +141,14 @@ tests =
           fmap (fmap taskId) badDep @?= Right (Left "unknown-dependency")
           count sc "lockstep_tickets" >>= (@?= 0)
           count sc "lockstep_project_tasks" >>= (@?= 0)
-    , testCase "a repeated creation key returns the first task and creates nothing" $
+    , testCase "a repeated creation key returns the first task and creates nothing; other content is a key conflict" $
         withScenario $ \sc -> do
           p <- project sc "Kitchen"
           first <- made sc "same" p "Buy bread" Normal []
           again <- made sc "same" p "Buy bread" Normal []
-          other <- made sc "same" p "Something else" Low []
-          (taskId again, taskId other) @?= (taskId first, taskId first)
+          taskId again @?= taskId first
+          other <- new sc "same" p "Something else" Low []
+          fmap taskId other @?= Left "key-conflict"
           count sc "lockstep_tickets" >>= (@?= 1)
     , testCase "an edit changes the task, a new title is a revision event, and a stale edit changes nothing" $
         withScenario $ \sc -> do
