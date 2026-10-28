@@ -23,6 +23,7 @@ module Lockstep.Application.Ledger
   , showTicket
   , NewWorkOrder (..)
   , createWorkOrder
+  , createWorkOrderIn
   , decideWorkOrder
   , WorkOrderView (..)
   , showWorkOrder
@@ -568,55 +569,61 @@ levelName level =
 createWorkOrder :: DatabaseRuntime -> NewWorkOrder -> IO (Either LedgerFailure WorkOrderId)
 createWorkOrder runtime request = do
   u <- newUuid
-  transaction runtime $ \_ -> do
-    loaded <- loadTicket (tid (newTicket request))
-    case loaded of
-      Left failure -> pure (Left failure)
-      Right (_, _, ticketState, content)
-        | ticketState /= Ready && ticketState /= InProgress ->
-            pure (refused (T.pack "ticket-not-ready") "a work order needs a ready or in-progress ticket")
-        | otherwise -> do
-            owner <- Profiles.engineerRepository (newEngineer request)
-            case owner of
-              Nothing -> pure (refused (T.pack "unknown-engineer") "there is no Engineer with this name")
-              Just (Profiles.EngineerRepository _ Nothing) -> pure (refused (T.pack "engineer-has-no-repository") "the Engineer owns no repository")
-              Just (Profiles.EngineerRepository _ (Just repositoryId)) -> do
-                defaultId <- Profiles.repositoryDefault repositoryId
-                defaultRow <- maybe (pure Nothing) (`Profiles.findProfile` Nothing) defaultId
-                catalogRows <- Profiles.latestProfiles
-                dependencies <- traverse (Store.findWorkOrder . wid) (newDependencies request)
-                now <- Store.databaseNow
-                case decideCreation u defaultRow catalogRows dependencies of
-                  Left failure -> pure (Left failure)
-                  Right (effective, binding, sources) -> do
-                    let
-                      text = uuidText u
-                      state = workOrderStateName Pending
-                    Store.insertSubject text (T.pack "work-order") state
-                    Store.insertWorkOrder
-                      Store.WorkOrderRow
-                        { Store.workOrderRowId = text
-                        , Store.workOrderRowKind = workOrderKindName (newKind request)
-                        , Store.workOrderRowTicket = tid (newTicket request)
-                        , Store.workOrderRowTicketRevision = int32 content
-                        , Store.workOrderRowRepository = repositoryId
-                        , Store.workOrderRowPriority = int32 (newPriority request)
-                        , Store.workOrderRowAdmittedAt = now
-                        , Store.workOrderRowClasses = joinNames (newClasses request)
-                        , Store.workOrderRowPathClasses = joinNames (newPathClasses request)
-                        , Store.workOrderRowNonBehavioural = newNonBehavioural request
-                        , Store.workOrderRowApprover = operatorApprover
-                        , Store.workOrderRowEffectiveDigest = contentDigestText (effectiveDigest effective)
-                        , Store.workOrderRowBindingDigest = contentDigestText (bindingDigest binding)
-                        }
-                    _ <- Store.insertEvent text (Store.EventRow 1 (principalName Human) createCommand state)
-                    traverse_
-                      (\(position, (level, ref)) -> Store.insertSource text position (Store.SourceRow level (profileIdText (refId ref)) (int32 (refVersion ref)) (contentDigestText (refDigest ref))))
-                      (L.zip [1 ..] sources)
-                    traverse_ (Store.insertDependency text . wid) (L.nub (newDependencies request))
-                    pure (Right (WorkOrderId u))
+  transaction runtime $ \_ -> createWorkOrderIn u request
+
+{- | The body of 'createWorkOrder' inside the caller's transaction, with the
+new Work Order's id (C-P4.1 X6). Every refusal comes before any write.
+-}
+createWorkOrderIn :: Uuid -> NewWorkOrder -> O.Orville (Either LedgerFailure WorkOrderId)
+createWorkOrderIn u request = do
+  loaded <- loadTicket (tid (newTicket request))
+  case loaded of
+    Left failure -> pure (Left failure)
+    Right (_, _, ticketState, content)
+      | ticketState /= Ready && ticketState /= InProgress ->
+          pure (refused (T.pack "ticket-not-ready") "a work order needs a ready or in-progress ticket")
+      | otherwise -> do
+          owner <- Profiles.engineerRepository (newEngineer request)
+          case owner of
+            Nothing -> pure (refused (T.pack "unknown-engineer") "there is no Engineer with this name")
+            Just (Profiles.EngineerRepository _ Nothing) -> pure (refused (T.pack "engineer-has-no-repository") "the Engineer owns no repository")
+            Just (Profiles.EngineerRepository _ (Just repositoryId)) -> do
+              defaultId <- Profiles.repositoryDefault repositoryId
+              defaultRow <- maybe (pure Nothing) (`Profiles.findProfile` Nothing) defaultId
+              catalogRows <- Profiles.latestProfiles
+              dependencies <- traverse (Store.findWorkOrder . wid) (newDependencies request)
+              now <- Store.databaseNow
+              case decideCreation defaultRow catalogRows dependencies of
+                Left failure -> pure (Left failure)
+                Right (effective, binding, sources) -> do
+                  let
+                    text = uuidText u
+                    state = workOrderStateName Pending
+                  Store.insertSubject text (T.pack "work-order") state
+                  Store.insertWorkOrder
+                    Store.WorkOrderRow
+                      { Store.workOrderRowId = text
+                      , Store.workOrderRowKind = workOrderKindName (newKind request)
+                      , Store.workOrderRowTicket = tid (newTicket request)
+                      , Store.workOrderRowTicketRevision = int32 content
+                      , Store.workOrderRowRepository = repositoryId
+                      , Store.workOrderRowPriority = int32 (newPriority request)
+                      , Store.workOrderRowAdmittedAt = now
+                      , Store.workOrderRowClasses = joinNames (newClasses request)
+                      , Store.workOrderRowPathClasses = joinNames (newPathClasses request)
+                      , Store.workOrderRowNonBehavioural = newNonBehavioural request
+                      , Store.workOrderRowApprover = operatorApprover
+                      , Store.workOrderRowEffectiveDigest = contentDigestText (effectiveDigest effective)
+                      , Store.workOrderRowBindingDigest = contentDigestText (bindingDigest binding)
+                      }
+                  _ <- Store.insertEvent text (Store.EventRow 1 (principalName Human) createCommand state)
+                  traverse_
+                    (\(position, (level, ref)) -> Store.insertSource text position (Store.SourceRow level (profileIdText (refId ref)) (int32 (refVersion ref)) (contentDigestText (refDigest ref))))
+                    (L.zip [1 ..] sources)
+                  traverse_ (Store.insertDependency text . wid) (L.nub (newDependencies request))
+                  pure (Right (WorkOrderId u))
  where
-  decideCreation u defaultRow catalogRows dependencies = do
+  decideCreation defaultRow catalogRows dependencies = do
     row <- maybe (refused (T.pack "repository-default-profile-unset") "the repository has no default profile; see repository set-profile") Right defaultRow
     defaultDefinition <- kernelProfileRefusal (loadStoredDefinition row)
     catalog <- kernelProfileRefusal (traverse loadStoredDefinition catalogRows)

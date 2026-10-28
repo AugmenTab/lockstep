@@ -11,6 +11,8 @@ module Lockstep.Persistence.Execution
   , findAdmissionByTask
   , findAdmissionByKey
   , insertAdmission
+  , projectRepository
+  , workOrderEffectiveDigest
   ) where
 
 import Data.Text qualified as T
@@ -164,6 +166,20 @@ findAdmissionByTask task =
 findAdmissionByKey :: O.MonadOrville m => T.Text -> m (Maybe AdmissionRow)
 findAdmissionByKey key =
   headMay <$> selectAdmissions (sql "idempotency_key = " <> text key)
+
+-- | The repository a project was connected to (C-P3.5 J1), if any.
+projectRepository :: O.MonadOrville m => T.Text -> m (Maybe T.Text)
+projectRepository project =
+  singleText (sql "SELECT repository_id::text AS v FROM lockstep_projects WHERE repository_id IS NOT NULL AND id = " <> uuid project)
+
+-- | The effective Profile digest a Work Order was created with (C-P2.5).
+workOrderEffectiveDigest :: O.MonadOrville m => T.Text -> m (Maybe T.Text)
+workOrderEffectiveDigest workOrder =
+  singleText (sql "SELECT effective_digest AS v FROM lockstep_work_orders WHERE id = " <> uuid workOrder)
+
+singleText :: O.MonadOrville m => RawSql.RawSql -> m (Maybe T.Text)
+singleText query =
+  headMay <$> O.executeAndDecode O.SelectQuery query (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.unboundedTextField "v")))
 
 insertAdmission :: O.MonadOrville m => AdmissionRow -> m ()
 insertAdmission row =
