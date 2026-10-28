@@ -27,6 +27,7 @@ import Lockstep.GateCRemediationFolderRaceTest qualified as GateCRemediationFold
 import Lockstep.GateCRemediationFolderTest qualified as GateCRemediationFolderTest
 import Lockstep.GateCRemediationIdentityTest qualified as GateCRemediationIdentityTest
 import Lockstep.GateCRemediationPageTest qualified as GateCRemediationPageTest
+import Lockstep.GateCRemediationRetainTest qualified as GateCRemediationRetainTest
 import Lockstep.GateCRemediationTest qualified as GateCRemediationTest
 import Lockstep.HandoverTest qualified as HandoverTest
 import Lockstep.InstallBrowserTest qualified as InstallBrowserTest
@@ -121,4 +122,5 @@ main =
       , GateCRemediationAddendumTest.tests
       , GateCRemediationFolderRaceTest.tests
       , GateCRemediationIdentityTest.tests
+      , GateCRemediationRetainTest.tests
       ]

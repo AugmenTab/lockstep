@@ -127,6 +127,33 @@ folder is connected; the folder is offered while being initialized; the destinat
 own folder from the start, so a folder made there meanwhile collides with it; the attempt's folder is
 left after a failure).
 
+## 3e. Fourth addendum (2026-10-27): Review 6, published folders are never removed
+
+Authority: the Planner's final engineering authorization for Review 6's three MEDIUM findings
+(`.local/plans/phase-03_update5.md`): remove destructive rollback of published project folders;
+compare the identity of the observation actually registered; serialize ownership checks with the
+command-line registration; one addendum frozen first; one read-only review; no qualification.
+
+**Superseded by this addendum** (the safer rule wins; the frozen cases that assert the old rule are
+amendment request A-C.R1-4, `amendment-request-4.md`, not applied): R5's "a folder this attempt made
+is removed when the attempt does not end connected", §1 item 2's "no … new folder behind", the
+removal halves of R13, R13a and R5-1, and the §3/§3b/§3c cases that assert the removal.
+
+| # | Decision |
+|---|---|
+| R6-1 | **A published folder is never removed.** Three kinds of filesystem state, three rules. (a) *Private staging* — the `.lockstep-new-XXXXXX` workspace `mkdtemp` made for one attempt, never offered: removed automatically on every path (recursively only while it can still hold the attempt's own `.git`, i.e. before publication; after a publication it is empty and removed with `rmdir`); a destination the attempt claimed with `mkdir` and that is still empty is removed with `rmdir` only, which never removes anything inside it. (b) *A published folder* — `<projects folder>/<name>` once the new `.git` has been moved into it — is **never removed** by Lockstep, whatever happens after: a refusal, a database failure, an uncertain commit, an exception, a replacement by someone else's repository, or a registration by another program. Nothing compares identities before a removal, because no removal happens. (c) *Database state* — the Engineer, the repository registration and the project — is never recorded as connected unless the attempt's one transaction commits it (R5, R13b, R5-2 unchanged). A kept folder that no project is connected to is offered like any other project folder, so *Try again* with "In this folder" connects it; the project page says so when setup did not finish. |
+| R6-2 | **The registered observation's identity is checked.** Inside the attempt's transaction: (i) before the Engineer, the folder's current identity must equal the identity of the observation that can be registered — the first observation if it succeeded, else the `origin` fallback if it succeeded; with neither, the folder must still be a project folder with a readable identity; (ii) inside the registration path, right before an observation is registered (the first one or the `origin` fallback), the current identity is read again and must equal that observation's. Any mismatch, a missing folder or an unreadable identity is recorded as failed `folder-not-offered`; nothing is registered and nothing is connected. |
+| R6-3 | **Ownership checks serialized with the command-line registration.** With R6-1 no attempt removes a folder, so no check outside the registration lock decides anything about a repository's ownership: the only ownership check is C-P2.1's, inside `registerObservedIn` under the registration lock, which the command-line `lockstep repository register` and a project's attempt both take; an attempt takes it after the projects lock (projects → repositories, the only order used). No repository data is removed to resolve a registration conflict: the later registration is refused, as C-P2.1 says. |
+
+| File | Kind | Covers |
+|---|---|---|
+| `test/integration/Lockstep/GateCRemediationRetainTest.hs` | integration: real PostgreSQL, Git, in-process, the R15a hook, a second runtime for the command line | R6-1: a made folder replaced by someone else's repository while the attempt waits is kept, with its file, commit and remotes intact; a failed attempt (database failure) keeps its published folder, records nothing, and the folder can then be connected as an existing folder; an exception after publication keeps the folder. R6-2: a folder with two remotes (first observation refused as ambiguous) replaced while waiting is not connected from the stale `origin` observation, and nothing is registered. R6-3: a command-line registration of the made folder, uncommitted (holding the registration lock) while the attempt fails, ends registered and the folder stays |
+
+Pre-freeze baseline (`addendum4-prefreeze-baseline.log`, only these cases, against `671b957`):
+**5 of 5 fail**, each for its finding (the replacement's file is gone; the published folder is
+removed after the database failure and after the exception; the attempt connects from the stale
+`origin` observation; the registered folder is removed under the uncommitted registration).
+
 ## 3a. Verification record (after implementation)
 
 Implementation: `e49b68e` (on `phase-3`, after the freeze commit `b83db50`), then `e1c56ef` (the
@@ -223,7 +250,8 @@ Frozen 2026-10-27 by the writing agent (manual), before any of the fixes was imp
 | `test/integration/Lockstep/GateCRemediationPageTest.hs` | `ad05170cefeba7fd9ddf702a3392bd5b6a962c3a3f5c91a233fdbb449bd6806e` (amendment A-C.R1-2; was `4015a2835ae35a6ec3dc018efb31aa0d12e78fc7244203b1cd62a1676c4bd41d`) |
 | `test/integration/Lockstep/GateCRemediationFolderTest.hs` | `6497ba92949811893e5e61cdfacba234653a2b4518ebdfc2e84fef141b92e18f` |
 | `test/integration/Lockstep/GateCRemediationBrowserTest.hs` | `d95ecee895ef0a1f3ea72effb153799643e6e6f85fcdc054f3f322c45ea652a9` |
-| `test/integration/Main.hs` (runner, additive) | `dfdb6c343a1c0f858eb15d2f106e16e8dae39877b8920b0d37acef7322f4e0db` (third addendum; before it `c3450061…8999` for the second, `0f7613e8…6193` for the first; originally `fd71561c3342b6c788aeeebf4dea9f882b8546f487a0d67068555d1c34f51982`) |
+| `test/integration/Main.hs` (runner, additive) | `a06703efd75b28ad0048ce79b81b965565e9fc03fbf0fc0691c455e546dd2853` (fourth addendum; before it `dfdb6c34…0db` for the third, `c3450061…8999` for the second, `0f7613e8…6193` for the first; originally `fd71561c3342b6c788aeeebf4dea9f882b8546f487a0d67068555d1c34f51982`) |
+| `test/integration/Lockstep/GateCRemediationRetainTest.hs` (fourth addendum, §3e) | `bb8ff08a753d26eca31491b56fe991a9c316821fbafb5bc6ffd1073bdb9c6e6f` |
 | `test/integration/Lockstep/GateCRemediationIdentityTest.hs` (third addendum, §3d) | `4dcd8569425233ad070cb9cc3b02b4a27f3c76fa872b4d8b2cef9540f25a314f` |
 | `test/integration/Lockstep/GateCRemediationAddendumTest.hs` (addendum, §3b) | `16235a713b695f91f196a42379ad08c5aff5ecb54cbafc52ea0c3dd4493451ec` |
 | `test/integration/Lockstep/GateCRemediationFolderRaceTest.hs` (second addendum, §3c) | `b5872215d9ff11c12a03eac615386ee9bfdf3aee0736e8f1450a3cf87e6029bb` |
