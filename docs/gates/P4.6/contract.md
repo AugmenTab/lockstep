@@ -45,6 +45,14 @@
 | `test/unit/Lockstep/Kernel/TransactionTest.hs` | unit | T1 every stage in order and Done; principals; reproduction halt and its human exception; baseline classes and corrections; pre-freeze findings; attempts; role and Supervisor failures; closed; names |
 | `test/integration/Lockstep/EngineTest.hs` | integration: real PostgreSQL, Git, processes; scripted Planner on the direct runner; a Python repository with a real bug | E1 start, same again, refusals; E5 basis and branch, the person's checkout untouched; a dirty repository halts with one request (retry, stop); E6 the answer recorded with its invocation (runner, adapter, argv, outcome); a citation outside the source halts; E7 reproduced (exit 1, signature) and not reproduced (passing command, no command) with accept-non-reproduction offered; a crashing role and no coding agent; E4 a run cut short, a restart: uncertain, halted, not run again; T3 records and invocations immutable |
 
+## 3a. Verification record (after implementation)
+
+| Check | Result | Evidence |
+|---|---|---|
+| C-P4.6 integration group, targeted | 10 of 10 at the first implementation run | `.local/p46-run1.log` (not committed) |
+| `scripts/check --integration` on the Mac, `cbd7394`, clean tree (the P4.4–P4.6 checkpoint) | all six steps PASSED: unit 854 of 854, integration 500 of 500, backup/restore | `check-integration-cbd7394.log` |
+| Linux clean clone of `cbd7394` | running | — |
+
 ## 4. Freeze record
 
 Frozen 2026-10-28 by the writing agent (manual), before the engine was implemented.
