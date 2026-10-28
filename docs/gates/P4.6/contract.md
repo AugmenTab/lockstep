@@ -51,7 +51,10 @@
 |---|---|---|
 | C-P4.6 integration group, targeted | 10 of 10 at the first implementation run | `.local/p46-run1.log` (not committed) |
 | `scripts/check --integration` on the Mac, `cbd7394`, clean tree (the P4.4–P4.6 checkpoint) | all six steps PASSED: unit 854 of 854, integration 500 of 500, backup/restore | `check-integration-cbd7394.log` |
-| Linux clean clone of `cbd7394` | running | — |
+| Linux clean clone of `cbd7394` | format, lint, build, unit 854 of 854, integration 500 of 500 PASSED | `linux-clone-cbd7394.log` |
+
+**Status: VERIFIED** at `cbd7394` — Mac and Linux (unit 854/854, integration 500/500). The same checkpoint
+verifies C-P4.4 and C-P4.5.
 
 ## 4. Freeze record
 
