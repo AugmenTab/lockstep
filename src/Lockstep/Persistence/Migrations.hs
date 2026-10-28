@@ -529,4 +529,48 @@ CREATE TRIGGER lockstep_bug_admissions_immutable BEFORE UPDATE OR DELETE ON lock
 CREATE TRIGGER lockstep_bug_admissions_no_truncate BEFORE TRUNCATE ON lockstep_bug_admissions FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
 |]
       )
+    ,
+      ( [Interpolate.i|human requests and their conversations|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_human_requests (
+  id uuid PRIMARY KEY,
+  idempotency_key text NOT NULL UNIQUE CHECK (idempotency_key ~ '^[A-Za-z0-9_-]{16,64}$'),
+  payload_digest text NOT NULL CHECK (payload_digest ~ '^[0-9a-f]{64}$'),
+  work_order_id uuid NOT NULL REFERENCES lockstep_work_orders (id),
+  engineer_name text NOT NULL,
+  contract_digest text CHECK (contract_digest IS NULL OR contract_digest ~ '^[0-9a-f]{64}$'),
+  kind text NOT NULL CHECK (kind IN ('clarification', 'decision')),
+  choices text NOT NULL,
+  question text NOT NULL CHECK (char_length(question) BETWEEN 1 AND 4000),
+  evidence text NOT NULL CHECK (char_length(evidence) BETWEEN 1 AND 4000),
+  requested_authority text NOT NULL CHECK (char_length(requested_authority) BETWEEN 1 AND 4000),
+  revision integer NOT NULL CHECK (revision >= 1),
+  state text NOT NULL CHECK (state IN ('open', 'answered', 'withdrawn')),
+  answer text,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((state = 'answered') = (answer IS NOT NULL)),
+  CHECK ((kind = 'clarification') = (choices = ''))
+);
+CREATE TABLE lockstep_conversation_messages (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  request_id uuid NOT NULL REFERENCES lockstep_human_requests (id),
+  sequence integer NOT NULL CHECK (sequence >= 1),
+  idempotency_key text NOT NULL UNIQUE CHECK (idempotency_key ~ '^[A-Za-z0-9_-]{16,64}$'),
+  payload_digest text NOT NULL CHECK (payload_digest ~ '^[0-9a-f]{64}$'),
+  kind text NOT NULL CHECK (kind IN ('opened', 'human', 'planner', 'decision', 'revision', 'withdrawal')),
+  principal text NOT NULL,
+  sender_evidence text NOT NULL,
+  channel text NOT NULL CHECK (channel IN ('application', 'cli', 'engine')),
+  request_revision integer NOT NULL CHECK (request_revision >= 1),
+  body text NOT NULL,
+  choice text,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (request_id, sequence),
+  CHECK ((kind = 'decision') = (choice IS NOT NULL))
+);
+CREATE TRIGGER lockstep_conversation_messages_immutable BEFORE UPDATE OR DELETE ON lockstep_conversation_messages FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_conversation_messages_no_truncate BEFORE TRUNCATE ON lockstep_conversation_messages FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+|]
+      )
     ]

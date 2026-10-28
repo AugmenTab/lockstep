@@ -13,6 +13,7 @@ import Lockstep.CommandCenterTest qualified as CommandCenterTest
 import Lockstep.ControlBrowserTest qualified as ControlBrowserTest
 import Lockstep.ControlHelperTest qualified as ControlHelperTest
 import Lockstep.ControlPaneTest qualified as ControlPaneTest
+import Lockstep.ConversationTest qualified as ConversationTest
 import Lockstep.DecisionsBrowserTest qualified as DecisionsBrowserTest
 import Lockstep.DecisionsPageTest qualified as DecisionsPageTest
 import Lockstep.DecisionsTest qualified as DecisionsTest
@@ -129,4 +130,5 @@ main =
       , ExecutionTest.tests
       , ExecutionPageTest.tests
       , ExecutionBrowserTest.tests
+      , ConversationTest.tests
       ]

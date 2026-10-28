@@ -1,0 +1,67 @@
+lockstep-0.2.0.0: unregistering (components added: test:lockstep-integration)
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[17 of 71] Compiling Lockstep.ConversationTest [Source file changed]
+[72 of 72] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-integration/lockstep-integration [Objects changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-6ggF0AiJnRUCIB81Gsi4xx
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-integration, args: -p C-P4.3)
+
+lockstep-integration
+  human requests and their conversations (C-P4.3; real PostgreSQL)
+    open, a person's question, the Planner's answer through the Supervisor, a person's decision: four ordered messages:               FAIL (0.21s)
+      test/integration/Lockstep/ConversationTest.hs:114:
+      open refused: not-implemented
+      Use -p '/C-P4.3/&&/open, a person'\''s question, the Planner'\''s answer through the Supervisor, a person'\''s decision: four ordered messages/' to rerun this test only.
+    a replay returns the stored record and writes nothing; other content under the same key is key-conflict:                          FAIL (0.19s)
+      test/integration/Lockstep/ConversationTest.hs:114:
+      open refused: not-implemented
+      Use -p '/C-P4.3/&&/a replay returns the stored record and writes nothing; other content under the same key is key-conflict/' to rerun this test only.
+    after a revision, anything written against the old revision is stale:                                                             FAIL (0.18s)
+      test/integration/Lockstep/ConversationTest.hs:114:
+      open refused: not-implemented
+      Use -p '/C-P4.3/&&/after a revision, anything written against the old revision is stale/' to rerun this test only.
+    identity: an agent, the Planner or the Supervisor deciding, a person speaking as the Planner are refused, and nothing is written: FAIL (0.17s)
+      test/integration/Lockstep/ConversationTest.hs:114:
+      open refused: not-implemented
+      Use -p '/C-P4.3/&&/identity: an agent, the Planner or the Supervisor deciding, a person speaking as the Planner are refused, and nothing is written/' to rerun this test only.
+    a clarification request is never decided; a decision is answered once; a withdrawn request takes nothing more:                    FAIL (0.18s)
+      test/integration/Lockstep/ConversationTest.hs:114:
+      open refused: not-implemented
+      Use -p '/C-P4.3/&&/a clarification request is never decided; a decision is answered once; a withdrawn request takes nothing more/' to rerun this test only.
+    restart: a new runtime over the same database shows the same conversation, and a replay after it writes nothing:                  FAIL (0.20s)
+      test/integration/Lockstep/ConversationTest.hs:114:
+      open refused: not-implemented
+      Use -p '/C-P4.3/&&/restart: a new runtime over the same database shows the same conversation, and a replay after it writes nothing/' to rerun this test only.
+    nothing is applied: the Work Order, the events and every effect and decision table are unchanged:                                 FAIL (0.33s)
+      test/integration/Lockstep/ConversationTest.hs:114:
+      open refused: not-implemented
+      Use -p '/C-P4.3/&&/nothing is applied: the Work Order, the events and every effect and decision table are unchanged/' to rerun this test only.
+    unknown requests and Work Orders and a malformed Contract digest are refused; messages are immutable:                             FAIL (0.19s)
+      test/integration/Lockstep/ConversationTest.hs:114:
+      open refused: not-implemented
+      Use -p '/C-P4.3/&&/unknown requests and Work Orders and a malformed Contract digest are refused; messages are immutable/' to rerun this test only.
+
+8 out of 8 tests failed (1.65s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+Completed 2 action(s).
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       
