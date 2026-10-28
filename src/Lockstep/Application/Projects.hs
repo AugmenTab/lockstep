@@ -25,7 +25,7 @@ module Lockstep.Application.Projects
 import Control.Exception (onException)
 import Control.Monad (filterM)
 import Data.List qualified as L
-import Data.Maybe (fromMaybe, isNothing)
+import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
@@ -37,8 +37,8 @@ import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
 import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason, Readiness (..), SessionLock (..), checkReadiness, withDatabase, withSessionLock)
 import Lockstep.Application.Identity (newEngineerId, newUuid)
 import Lockstep.Application.Profiles (sha256Hasher)
-import Lockstep.Application.Repositories (Observed, Refused (..), RepositoryRecord (..), addEngineerIn, observeRegistration, registerObservedIn)
-import Lockstep.Effects.ProjectFolders (childFolders, isProjectFolder, makeProjectFolder, removeProjectFolder)
+import Lockstep.Application.Repositories (Observed, Refused (..), RepositoryRecord (..), activePhysicalKeys, addEngineerIn, observeRegistration, observedIdentity, physicalKey, registerObservedIn)
+import Lockstep.Effects.ProjectFolders (childFolders, gitIdentity, isProjectFolder, makeProjectFolder, removeProjectFolder)
 import Lockstep.Foundation.FolderProtocol (validFolderPath)
 import Lockstep.Kernel.Identity (parseUuid, uuidText)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
@@ -295,18 +295,23 @@ attempt (Hooks afterFolder faults) runtime folders view choice = do
   -- the commit, a COMMIT whose answer was lost), and another project may have connected
   -- the folder meanwhile, so the database decides, under the projects lock: the folder
   -- this attempt made is removed only when this project is not connected and does not
-  -- record it, and no project is connected to it; when that cannot be read, it is kept.
+  -- record it, no project is connected to it, and no active repository registration has
+  -- its physical identity, whatever path spelling was used (C-C.R1 R5-1); when any of
+  -- that cannot be read, it is kept.
   removeUnrecorded path = do
     _ <-
       withDatabase runtime . O.withTransaction $ do
         Store.lockProjects
         own <- Store.findProjectById (projectId view)
         connected <- Store.connectedFolders
-        case own of
-          Just row
+        registered <- activePhysicalKeys
+        identity <- liftIO (gitIdentity path)
+        case (own, identity) of
+          (Just row, Just physical)
             | Store.rowSetup row /= setupStateCode Connected
             , Store.rowFolder row /= Just (T.pack path)
-            , T.pack path `L.notElem` connected ->
+            , T.pack path `L.notElem` connected
+            , physicalKey physical `L.notElem` registered ->
                 liftIO (removeProjectFolder path)
           _ -> pure ()
     pure ()
@@ -314,10 +319,15 @@ attempt (Hooks afterFolder faults) runtime folders view choice = do
 -- | The Engineer, the registration and the recorded attempt, inside the attempt's transaction.
 connectIn :: ProjectView -> T.Text -> FilePath -> Observed -> Observed -> O.Orville (Either T.Text ProjectView)
 connectIn view slug path first fallback = do
-  -- C-C.R1 R13b: under the projects lock, the folder must still be there; another
-  -- attempt that made it may have removed it since it was chosen and observed.
+  -- C-C.R1 R13b, R5-2: under the projects lock, the folder must still be there and be the
+  -- one that was observed (the same physical Git directory, not merely the same path):
+  -- another attempt may have removed it, or something else replaced it, meanwhile.
   present <- liftIO (isProjectFolder path)
-  if not present
+  current <- liftIO (gitIdentity path)
+  let
+    observed = observedIdentity first
+    replaced = isNothing current || (isJust observed && current /= observed)
+  if not present || replaced
     then recordIn view SetupFailed (Just (T.pack "folder-not-offered")) Nothing (projectEngineer view) Nothing
     else do
       engineer <- ensureEngineerIn view slug
