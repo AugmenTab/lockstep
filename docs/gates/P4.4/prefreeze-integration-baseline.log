@@ -1,0 +1,92 @@
+lockstep-0.2.0.0: unregistering (components added: test:lockstep-integration)
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+[2 of 2] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep/lockstep [Library changed]
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[ 1 of 74] Compiling Lockstep.GitSupervisorTest [Source file changed]
+[75 of 75] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-integration/lockstep-integration [Objects changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-6ggF0AiJnRUCIB81Gsi4xx
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-integration, args: -p C-P4.4)
+
+lockstep-integration
+  C-P4.4 the Supervisor's Git boundary (real Git)
+    a clean repository's HEAD is the basis:                                                              FAIL (0.03s)
+      test/integration/Lockstep/GitSupervisorTest.hs:111:
+      unexpected: "not-implemented"
+      Use -p '/C-P4.4/&&/a clean repository'\''s HEAD is the basis/' to rerun this test only.
+    a changed, staged or untracked file makes it dirty; an ignored one does not:                         FAIL
+      test/integration/Lockstep/GitSupervisorTest.hs:140:
+      expected: "accepted"
+       but got: "not-implemented"
+      Use -p '/C-P4.4/&&/a changed, staged or untracked file makes it dirty; an ignored one does not/' to rerun this test only.
+    a missing folder, a plain folder and an unborn HEAD are refused:                                     FAIL
+      test/integration/Lockstep/GitSupervisorTest.hs:156:
+      expected: "repository-missing"
+       but got: "not-implemented"
+      Use -p '/C-P4.4/&&/a missing folder, a plain folder and an unborn HEAD are refused/' to rerun this test only.
+    the work branch is created once; elsewhere is branch-exists; a bad name is refused:                  FAIL
+      test/integration/Lockstep/GitSupervisorTest.hs:111:
+      unexpected: "not-implemented"
+      Use -p '/C-P4.4/&&/the work branch is created once; elsewhere is branch-exists; a bad name is refused/' to rerun this test only.
+    a snapshot is the commit's exact tree: modes and links, no .git, no submodule, not the working tree: FAIL (0.03s)
+      test/integration/Lockstep/GitSupervisorTest.hs:111:
+      unexpected: "not-implemented"
+      Use -p '/C-P4.4/&&/a snapshot is the commit'\''s exact tree: modes and links, no .git, no submodule, not the working tree/' to rerun this test only.
+    a snapshot needs an empty, real directory:                                                           FAIL
+      test/integration/Lockstep/GitSupervisorTest.hs:226:
+      expected: "snapshot-destination-invalid"
+       but got: "not-implemented"
+      Use -p '/C-P4.4/&&/a snapshot needs an empty, real directory/' to rerun this test only.
+    changes in a snapshot: added, changed, made executable and removed files, in path order:             FAIL
+      test/integration/Lockstep/GitSupervisorTest.hs:111:
+      unexpected: "not-implemented"
+      Use -p '/C-P4.4/&&/changes in a snapshot: added, changed, made executable and removed files, in path order/' to rerun this test only.
+    a new or changed link, a .git, a pipe or a link made a file is refused:                              FAIL
+      test/integration/Lockstep/GitSupervisorTest.hs:111:
+      unexpected: "not-implemented"
+      Use -p '/C-P4.4/&&/a new or changed link, a .git, a pipe or a link made a file is refused/' to rerun this test only.
+    the Supervisor's commit: its identity, parent and tree; the person's index and files untouched:      FAIL
+      test/integration/Lockstep/GitSupervisorTest.hs:111:
+      unexpected: "not-implemented"
+      Use -p '/C-P4.4/&&/the Supervisor'\''s commit: its identity, parent and tree; the person'\''s index and files untouched/' to rerun this test only.
+    the same parent, changes, message and time give the same commit:                                     FAIL
+      test/integration/Lockstep/GitSupervisorTest.hs:111:
+      unexpected: "not-implemented"
+      Use -p '/C-P4.4/&&/the same parent, changes, message and time give the same commit/' to rerun this test only.
+    an invalid change set is refused before anything is written:                                         FAIL
+      test/integration/Lockstep/GitSupervisorTest.hs:339:
+      expected: "change-path-invalid"
+       but got: "not-implemented"
+      Use -p '/C-P4.4/&&/an invalid change set is refused before anything is written/' to rerun this test only.
+    the branch moves only from the expected commit, never while checked out:                             FAIL
+      test/integration/Lockstep/GitSupervisorTest.hs:111:
+      unexpected: "not-implemented"
+      Use -p '/C-P4.4/&&/the branch moves only from the expected commit, never while checked out/' to rerun this test only.
+    a repository's configured file-system monitor never runs:                                            FAIL
+      test/integration/Lockstep/GitSupervisorTest.hs:111:
+      unexpected: "not-implemented"
+      Use -p '/C-P4.4/&&/a repository'\''s configured file-system monitor never runs/' to rerun this test only.
+
+13 out of 13 tests failed (0.12s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+Completed 2 action(s).
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

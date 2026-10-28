@@ -33,6 +33,7 @@ import Lockstep.GateCRemediationIdentityTest qualified as GateCRemediationIdenti
 import Lockstep.GateCRemediationPageTest qualified as GateCRemediationPageTest
 import Lockstep.GateCRemediationRetainTest qualified as GateCRemediationRetainTest
 import Lockstep.GateCRemediationTest qualified as GateCRemediationTest
+import Lockstep.GitSupervisorTest qualified as GitSupervisorTest
 import Lockstep.HandoverTest qualified as HandoverTest
 import Lockstep.HelperRunnerTest qualified as HelperRunnerTest
 import Lockstep.InstallBrowserTest qualified as InstallBrowserTest
@@ -135,4 +136,5 @@ main =
       , ConversationTest.tests
       , ProcessRunnerTest.tests
       , HelperRunnerTest.tests
+      , GitSupervisorTest.tests
       ]
