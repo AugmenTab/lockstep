@@ -1,0 +1,46 @@
+lockstep> test (suite: lockstep-integration, args: -p "fourth addendum")
+
+lockstep-integration
+  Gate C remediation fourth addendum (C-C.R1 §3e; real PostgreSQL)
+    Review 6 #1: a made folder replaced by someone else's repository while the attempt waits is kept intact:                                 FAIL
+      Exception: /tmp/lockstep-cr1-retain-dc65c712791564fd/projects/garden/notes.txt: openFile: does not exist (No such file or directory)
+      HasCallStack backtrace:
+        collectBacktraces, called at libraries/ghc-internal/src/GHC/Internal/Exception.hs:169:13 in ghc-internal:GHC.Internal.Exception
+        toExceptionWithBacktrace, called at libraries/ghc-internal/src/GHC/Internal/IO.hs:260:11 in ghc-internal:GHC.Internal.IO
+        throwIO, called at ./Control/Concurrent/Async.hs:110:7 in tasty-1.5.3-7clNd4478q2L7Y34nuWmO:Control.Concurrent.Async
+      
+      
+      Use -p '/fourth addendum/&&/Review 6 #1: a made folder replaced by someone else'\''s repository while the attempt waits is kept intact/' to rerun this test only.
+    Review 6 #1: a failed attempt keeps the folder it published; it is not connected, and it can be chosen as an existing folder:            FAIL (0.31s)
+      test/integration/Lockstep/GateCRemediationRetainTest.hs:177:
+      the published folder was removed
+      Use -p '/fourth addendum/&&/Review 6 #1: a failed attempt keeps the folder it published; it is not connected, and it can be chosen as an existing folder/' to rerun this test only.
+    Review 6 #1: an attempt interrupted after publishing keeps the folder:                                                                   FAIL (0.16s)
+      test/integration/Lockstep/GateCRemediationRetainTest.hs:188:
+      the published folder was removed
+      Use -p '/fourth addendum/&&/Review 6 #1: an attempt interrupted after publishing keeps the folder/' to rerun this test only.
+    Review 6 #2: a two-remote folder replaced while waiting is not connected from its stale origin observation:                              FAIL (0.17s)
+      test/integration/Lockstep/GateCRemediationRetainTest.hs:147:
+      the attempt connected: Right (Right (Just "/tmp/lockstep-cr1-retain-e794271bc4cac389/projects/site"))
+      Use -p '/fourth addendum/&&/Review 6 #2: a two-remote folder replaced while waiting is not connected from its stale origin observation/' to rerun this test only.
+    Review 6 #3: a command-line registration of the made folder, uncommitted while the attempt fails, keeps the folder and its registration: FAIL (3.21s)
+      test/integration/Lockstep/GateCRemediationRetainTest.hs:230:
+      the registered folder was removed
+      Use -p '/fourth addendum/&&/Review 6 #3: a command-line registration of the made folder, uncommitted while the attempt fails, keeps the folder and its registration/' to rerun this test only.
+
+5 out of 5 tests failed (4.13s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       
