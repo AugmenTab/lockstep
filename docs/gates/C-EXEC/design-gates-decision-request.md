@@ -257,4 +257,12 @@ Accept or amend D-7.1 to D-7.4.
 
 ## Human decision
 
-*(empty — for the owner)*
+2026-10-28: the owner adopted the Planner's consolidated disposition, `.local/plans/phase-04_update1.md`
+(sha256 `4cb620d366b3758411cd1b876b7090454e02899e689ee93b3ac5819be2a6f1d7`), by instructing "Read
+@.local/plans/phase-04_update1.md and implement". **DG-17 ACCEPTED** (D-17.1–D-17.9 with binding
+clarifications; live execution separately gated), **DG-06 ACCEPTED WITH CLARIFICATION** (a defective GREEN
+fixture may be corrected before freeze with evidence; never relabelled RED), **DG-07 ACCEPTED WITH
+CLARIFICATION** (`CONFIRMED` needs an observed surviving mutant or failing counterexample **and** a
+source-grounded demonstration of the violated requirement; scratch snapshots only), **O-1 ACCEPTED**.
+Recorded in `DECISION_REGISTER.md`; the package text there governs where it differs from the recommendations
+above (D-7.2: a surviving mutant alone is not `CONFIRMED`).
