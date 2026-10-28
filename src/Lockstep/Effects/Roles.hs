@@ -31,7 +31,7 @@ module Lockstep.Effects.Roles
   , decodeAnswer
   ) where
 
-import Control.Exception (IOException, try)
+import Control.Exception (IOException, finally, try)
 import Crypto.Random (getRandomBytes)
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import Data.ByteString qualified as BS
@@ -45,8 +45,9 @@ import Fleece.Core ((#+))
 import Fleece.Core qualified as FC
 import Flipstone.Prelude
 import System.Directory (createDirectory, getPermissions, listDirectory, setOwnerWritable, setPermissions)
-import System.IO (FilePath)
-import System.Posix.Files (getSymbolicLinkStatus, isDirectory, isRegularFile)
+import System.IO (FilePath, hClose)
+import System.Posix.Files (getFdStatus, getSymbolicLinkStatus, isDirectory, isRegularFile, isSymbolicLink)
+import System.Posix.IO (OpenFileFlags (nofollow, nonBlock), OpenMode (ReadOnly), closeFd, defaultFileFlags, fdToHandle, openFd)
 import Text.Show (Show)
 
 import Lockstep.Effects.HelperRunner (HelperFailure (..), PreparedRun (..), RunnerChannel, prepareRun, submitRun)
@@ -69,8 +70,9 @@ import Lockstep.Kernel.Roles
   , Role (..)
   , RoleAnswer (..)
   , Verdict (..)
+  , checkAnswer
   )
-import Lockstep.Kernel.Runner (Limits, RunSpec (..), runnerEnvironment)
+import Lockstep.Kernel.Runner (Limits, RoleKind (..), RunOutcome (..), RunSpec (..), roleLimits, runnerEnvironment)
 
 -- Runners -------------------------------------------------------------------------
 
@@ -258,19 +260,95 @@ roleOutcomeCode outcome =
 {- | A5: runs the role once in the prepared workspace (its tree already
 written), with the context document as @context.json@ in its input.
 -}
-
--- Pre-freeze stub (C-P4.5 §4): the final types; no role is ever run.
 invokeRole :: Runner -> Adapter -> Role -> Workspace -> T.Text -> [T.Text] -> IO RoleOutcome
-invokeRole _ _ _ _ _ _ =
-  pure (RoleFailed (T.pack "not-implemented") Nothing)
+invokeRole runner adapter role workspace context protected = do
+  prepared <- prepareRole adapter workspace context
+  case prepared of
+    Left code -> pure (RoleFailed code Nothing)
+    Right argv -> runPrepared runner role workspace argv protected
 
+{- | The first half of 'invokeRole': writes the context and the adapter's
+input and names the program, so a caller can record exactly what will run
+before it runs. A failure here is a known failure: nothing ran.
+-}
 prepareRole :: Adapter -> Workspace -> T.Text -> IO (Either T.Text [T.Text])
-prepareRole _ _ _ =
-  pure (Left (T.pack "not-implemented"))
+prepareRole adapter workspace context = do
+  prepared <-
+    try $ do
+      BS.writeFile (workspaceInput workspace <> "/context.json") (TE.encodeUtf8 context)
+      adapterPrepare adapter workspace
+  pure $ case prepared of
+    Left (_ :: IOException) -> Left (T.pack "workspace-unwritable")
+    Right argv -> Right argv
 
+-- | The second half of 'invokeRole': the run and its typed ending.
 runPrepared :: Runner -> Role -> Workspace -> [T.Text] -> [T.Text] -> IO RoleOutcome
-runPrepared _ _ _ _ _ =
-  pure (RoleFailed (T.pack "not-implemented") Nothing)
+runPrepared runner role workspace argv protected = do
+  let
+    profile = if role == Implementer then ProfileWrite else ProfileReadOnly
+    limits = roleLimits (kindOf role)
+  -- After this point the run may have happened: an exception is an unknown outcome, never lost.
+  attempted <- try (runnerRun runner workspace profile limits argv protected)
+  let
+    ran =
+      case attempted of
+        Left (_ :: IOException) -> Left (RunnerUncertain (T.pack "runner-exception"))
+        Right r -> r
+  case ran of
+    Left (RunnerUncertain code) -> pure (RoleUncertain code)
+    Left (RunnerRefused code) -> pure (RoleFailed (T.pack "runner-refused " <> code) Nothing)
+    Right result ->
+      case resultOutcome result of
+        Exited 0 -> do
+          answer <- readAnswer (workspaceOutput workspace <> "/result.json")
+          pure $ case answer >>= decodeAnswer >>= checkAnswerCode role of
+            Left code -> RoleFailed code (Just result)
+            Right a -> RoleAnswered a result
+        Exited 75 -> pure (RoleFailed (T.pack "provider-refused") (Just result))
+        Exited _ -> pure (RoleFailed (T.pack "role-crashed") (Just result))
+        TimedOut -> pure (RoleFailed (T.pack "role-timed-out") (Just result))
+        OutputLimit _ -> pure (RoleFailed (T.pack "role-output-limit") (Just result))
+        OutputHeld _ -> pure (RoleFailed (T.pack "role-output-held") (Just result))
+        Cancelled -> pure (RoleFailed (T.pack "role-cancelled") (Just result))
+        LaunchFailed _ -> pure (RoleFailed (T.pack "role-launch-failed") (Just result))
+ where
+  checkAnswerCode r a =
+    either (\c -> Left (T.pack "answer-invalid " <> c)) Right (checkAnswer r a)
+
+kindOf :: Role -> RoleKind
+kindOf r =
+  case r of
+    Planner -> RolePlanner
+    Challenger -> RoleChallenger
+    Implementer -> RoleImplementer
+    Reviewer -> RoleReviewer
+
+{- | The answer file: a regular file of at most 256 KiB, opened without
+following a link and checked on the open descriptor, so a file swapped after a
+check cannot be read instead.
+-}
+readAnswer :: FilePath -> IO (Either T.Text BS.ByteString)
+readAnswer path = do
+  opened <- try (openFd path ReadOnly defaultFileFlags {nofollow = True, nonBlock = True})
+  case opened of
+    Left (_ :: IOException) -> do
+      -- Missing, or a link (which nofollow refuses): tell the two apart for the record.
+      link <- try (getSymbolicLinkStatus path)
+      pure $ case link of
+        Right s | isSymbolicLink s -> Left (T.pack "output-not-a-file")
+        Right _ -> Left (T.pack "output-unreadable")
+        Left (_ :: IOException) -> Left (T.pack "output-missing")
+    Right fd -> do
+      read' <-
+        try $ do
+          status <- getFdStatus fd
+          if not (isRegularFile status)
+            then closeFd fd >> pure (Left (T.pack "output-not-a-file"))
+            else do
+              h <- fdToHandle fd
+              bytes <- BS.hGet h 262145 `finally` hClose h
+              pure (if BS.length bytes > 262144 then Left (T.pack "output-too-large") else Right bytes)
+      pure (either (\(_ :: IOException) -> Left (T.pack "output-unreadable")) id read')
 
 -- Answer documents (A1) ----------------------------------------------------------------
 
