@@ -50,6 +50,13 @@
 |---|---|---|
 | Claude Code CLI adapter (`Lockstep.Effects.Provider.Live`) | NOT_BUILT | needs the owner's separate live authorization (DG-17); the guard (`check-guard` (c)) already reserves the module; the A5 interface takes it unchanged |
 
+## 3a. Verification record (after implementation)
+
+| Check | Result | Evidence |
+|---|---|---|
+| C-P4.5 integration group, targeted | 7 of 7 at the first implementation run; build, format, lint clean | `.local/p45-run1.log` (not committed) |
+| `scripts/check --integration` (Mac) and Linux clean clone | at the P4.6 checkpoint | — |
+
 ## 4. Freeze record
 
 Frozen 2026-10-28 by the writing agent (manual), before role invocation was implemented.
