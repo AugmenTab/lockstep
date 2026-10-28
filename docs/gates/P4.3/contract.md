@@ -61,10 +61,11 @@
 | `scripts/check --integration` on `0fcb2b9`, clean tree | **FAILED at step 1 (format)**: the frozen unit runner's new import is out of fourmolu's order; steps 2–6 NOT_RUN | `check-integration-0fcb2b9.log` |
 | The same with proposed amendment A-P4.3-1 applied temporarily | all six steps PASSED: unit 818 of 818, integration 454 of 454, backup/restore; Kernel boundary and purity scan clean (25 files) | `trial-with-a-p4.3-1.log` |
 | Frozen files | restored after the trial; `test/unit/Main.hs` back at its frozen digest; the others never touched | §4 |
-| Linux clean clone | **NOT_RUN**: waits for the owner's decision on A-P4.3-1 (without it the format step fails by construction) | — |
+| Linux clean clone | (before A-P4.3-1) NOT_RUN: the format step fails by construction | — |
+| After A-P4.3-1 (approved 2026-10-28, §4.1): `scripts/check --integration` on the Mac, revision `30e1060` (code identical to `4ee971d`; the tree was dirty only by an untracked P4.2 draft outside the build) | all six steps PASSED: unit 818 of 818, integration 454 of 454, backup/restore | `check-integration-4ee971d.log` |
+| Linux clean clone of `30e1060` | format, lint, build, unit 818 of 818, integration 454 of 454 PASSED | `linux-clone-30e1060.log` |
 
-**Status: implemented; qualification blocked on A-P4.3-1** (`amendment-request-1.md`), a one-line import
-move in a frozen runner. The writing agent did not apply it.
+**Status: VERIFIED** at `4ee971d` (amended runner) — Mac and Linux, unit 818/818, integration 454/454.
 
 ## 4. Freeze record
 

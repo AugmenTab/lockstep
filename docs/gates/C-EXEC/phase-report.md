@@ -12,8 +12,8 @@
 | ID | Status | Contract | Record |
 |---|---|---|---|
 | P4.1 | **VERIFIED** at `bd4512b` (frozen `C-P4.1`; Mac unit 808/808, integration 446/446; Linux clean clone the same) | `C-P4.1` | `docs/gates/P4.1/` |
-| P4.2 | **BLOCKED — waiting for DG-17** (owner) | — | `design-gates-decision-request.md` |
-| P4.3 | **IMPLEMENTED, qualification blocked on A-P4.3-1** (owner): frozen runner import order fails the format step; with the amendment trialled, unit 818/818 and integration 454/454 on the Mac; frozen bytes restored | `C-P4.3` | `docs/gates/P4.3/` |
+| P4.2 | **IN PROGRESS** (DG-17 accepted 2026-10-28): contract drafted, tests and stubs placed, host baseline recorded | `C-P4.2` (draft) | `docs/gates/P4.2/` |
+| P4.3 | **VERIFIED** at `4ee971d` after A-P4.3-1 (approved 2026-10-28): Mac and Linux clean clone, unit 818/818, integration 454/454 | `C-P4.3` | `docs/gates/P4.3/` |
 | P4.4 | blocked behind P4.2 | — | — |
 | P4.5 | **BLOCKED — waiting for DG-17** | — | — |
 | P4.6 | blocked behind P4.5 | — | — |
