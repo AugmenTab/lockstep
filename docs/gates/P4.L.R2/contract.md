@@ -74,17 +74,48 @@ history — is refused before it reaches a model, and ends the run.
 
 **Remaining limitation (stated plainly, not claimed prevented):** a process inside the role's container can read the
 CLI's own memory (`ptrace_scope` 0 in the Docker VM; same user). Such a process could copy the run's conversation —
-the tool calls the upstream issued — and send the next request of **that same conversation** in the CLI's place. The
-proxy would admit it once; the CLI's own next request then no longer answers the latest tool calls and is refused, so
-the run stops `conversation-refused` and nothing it produced is accepted (a stopped run halts for a person; the
-Supervisor commits nothing). A second conversation alongside the first is never admitted. Reaching even this needs the
-model to write and run a memory-scraping program inside its own run.
+the tool calls the upstream issued — and send requests of **that same conversation** in the CLI's place, while the CLI
+waits for the tool call that started it. A second conversation alongside the first is never admitted.
+
+*Correction (writer, before the owner's decision was acted on):* this section first said the proxy "would admit it
+once". That was not established. The rule admits every request that answers the latest tool calls, so an
+impersonator inside one tool call can continue the conversation for **as many requests as the run's own allowances
+permit** (requests, output tokens, budget, wall clock), not one. And if the impersonator ends on a final answer (no
+tool calls), the CLI's own next request answered no outstanding call and was admitted: the CLI resumed undetected
+(`check-live-impersonation` baseline, §9). The second gap is closed by R2-H2b below; the first is reported to the
+owner as a **blocking discrepancy** with their condition 1.
 
 Smallest correction, for the owner's decision (not built here): run the CLI and its tools as different users in the
 container (a small wrapper and image change), so no tool process can read the CLI's memory. It touches the provider
 image and the helper's run command, not the Supervisor or the engine.
 
-## 7. Allowed paths
+## 9. Addendum — the owner's H2 decision and its adversarial regression (2026-10-29)
+
+The owner (in the session) accepted the H2 limitation **only for the initial, attended, disposable-repository smoke**,
+on conditions: (1) a second independent conversation is refused, and impersonating the next request causes the real
+CLI's subsequent request to be refused and the invocation to stop with no accepted result; (2) impersonated requests
+use the run's own durable budget, request allowance and reservations; (3) a stopped invocation cannot produce an
+accepted implementation, review or Supervisor commit, and its workspace changes stay untrusted; (4) the residual risk
+documented accurately; (5) a future confinement-hardening item recorded (process-memory isolation between the CLI and
+the processes running repository code: ptrace restrictions, `process_vm_readv`, `/proc/<pid>/mem`, privilege
+separation; disabling `ptrace` alone is not assumed sufficient); (6) no extension to arbitrary or untrusted
+repositories, unattended runs or production use. "If the described one-request bound or fail-closed outcome cannot be
+demonstrated, report the discrepancy as a blocking finding."
+
+| # | Decision |
+|---|---|
+| R2-H2b | **A conversation that has ended admits nothing more.** After a complete answer with no tool calls (the turn's end), any further request of the run is `conversation-refused`. The CLI in print mode exits after its final answer; a request after it is not the CLI's. (A CLI that continues after a final answer for another reason — a `max_tokens` stop — then stops the run: fail-closed.) |
+
+Verification (frozen with this addendum):
+
+| File | sha256 | Covers |
+|---|---|---|
+| `scripts/lib/check-live-impersonation` | `1cb2d83c6c5edb3d85bde8ff75c515465b952b02037aacb7f69d83dacee52c23` | The real helper (offline mode), the real CLI, the agent stand-in; an impersonator in the Implementer's Bash call continuing the run's conversation 1 time (a tool call left open) and 2 times (ending on a final answer): the CLI's own next request refused and the run `provider-stopped conversation-refused`; no answer written; the impersonated requests reserved and settled in the run's own ledger and counted in its own request allowance; nothing else sent; and the owner's one-request bound as an explicit expectation |
+
+Baseline against the implementation before R2-H2b (`.local/p4lr2-impersonation-baseline.log`): impersonating once —
+all hold; impersonating twice, ending on a final answer — **the CLI resumed undetected** (5 requests sent, an answer
+written) and **two impersonated requests were admitted** (the bound). One test fault fixed before the freeze (a
+missing `]`).
 
 Changed: `scripts/runner/provider/egress-proxy`, `scripts/control-helper`, the files of §3, `docs/gates/P4.L.R2/**`,
 `docs/gates/P4.L/**` (the smoke proposal's configuration steps), `docs/gates/C-EXEC/**`, `docs/reviews/**`,
