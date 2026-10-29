@@ -28,12 +28,12 @@ module Lockstep.Application.Engine
   , projectStarted
   ) where
 
-import Control.Exception (IOException, try)
-import Control.Monad ((>=>))
+import Control.Exception (IOException, onException, try)
+import Control.Monad (unless, (>=>))
 import Crypto.Hash (SHA256 (SHA256), hashWith)
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import Data.ByteString qualified as BS
-import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List qualified as L
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
@@ -434,7 +434,9 @@ advanceRow runtime engine row =
             Right Nothing -> do
               -- C-P4.R1 R-K1: every workspace made for the stage, removed once it has ended
               -- (a stage cut short by an exception keeps them: they may still be in use).
+              -- C-P4.R2 R2-K: so does a stage in which any run's outcome is not known.
               made <- newIORef []
+              unknown <- newIORef False
               let
                 runner = engineRunner engine
                 tracked =
@@ -445,10 +447,17 @@ advanceRow runtime engine row =
                               prepared <- runnerPrepare runner
                               traverse_ (\w -> modifyIORef' made (w :)) prepared
                               pure prepared
+                          , runnerRun = \w p l a pr -> do
+                              ran <- runnerRun runner w p l a pr `onException` writeIORef unknown True
+                              case ran of
+                                Left (RunnerUncertain _) -> writeIORef unknown True
+                                _ -> pure ()
+                              pure ran
                           }
                     }
               result <- runStage runtime tracked row stage
-              readIORef made >>= traverse_ (runnerRelease runner)
+              keep <- readIORef unknown
+              unless keep (readIORef made >>= traverse_ (runnerRelease runner))
               case result of
                 Left code -> pure (Left code)
                 Right input -> report input
@@ -822,9 +831,13 @@ invokeRecorded runtime engine row role stage commit extras protected context = d
                 started <-
                   db runtime . O.withTransaction $ do
                     locked <- Store.lockTransaction (Store.txRowId row)
+                    -- C-P4.R2 R2-I: under the lock, this role has not run at this stage and revision.
+                    already <- Store.transactionInvocations (Store.txRowId row)
+                    let
+                      ranHere i = Store.invocationRowWhat i == roleName role && Store.invocationRowStage i == stageName stage && Store.invocationRowRevision i == Just (Store.txRowRevision row)
                     case locked of
                       Just current
-                        | Store.txRowRevision current == Store.txRowRevision row -> do
+                        | Store.txRowRevision current == Store.txRowRevision row && not (L.any ranHere already) -> do
                             Store.insertInvocation (invocationRow row invocation stage (roleName role) (runnerName (engineRunner engine)) (adapterName adapter) argv)
                             pure (Right ())
                       _ -> pure (Left (T.pack "stale-step"))

@@ -304,6 +304,10 @@ The service log says which it is:
   branch `lockstep/<work order>` made; it moves one step every 2 s and acts on your answers and your Done.
 - `Engine worker: off (…)` — no channel: nothing is started and the pages keep saying nothing runs yet.
 
+**Filters.** Lockstep never runs a content filter your repository configures (for example Git LFS) when it
+looks at your folder: it compares raw bytes. A file such a filter would have cleaned therefore counts as a
+change, and the fix stops at *looking at the project's files* until the folder is clean that way.
+
 **What it cannot do yet.** No coding helper is built into this version (the live Claude adapter needs the
 owner's separate authorization). So a bug stops at its first role step, *finding the cause*, with "No coding
 helper is set up for Lockstep."; **Try this step again** stops there again, **Stop fixing this bug** ends it.
@@ -315,7 +319,9 @@ real-provider trial (`docs/gates/P4.17/real-provider-smoke-proposal.md`); until 
 the integration suite (`ServeWorkerTest`, `EndToEndTest`) and the helper's container runner by
 `scripts/lib/check-runner` and `scripts/lib/check-runner-paths`.
 
-**Stopping and restarts.** On shutdown the service stops the worker within 8 s: a role still running is
+**Stopping and restarts.** As the service starts to shut down it asks the worker to stop; after the web
+server has closed (at most 3 s) it waits at most 4 s more, then stops the worker's thread (2 s at most), all
+inside `scripts/service`'s 10 s (C-P4.R2 R2-W): a role still running is
 killed with its container, its run stays unfinished, and after the restart it is marked *not known* and the
 bug waits for you — Lockstep never runs it again by itself (C-P4.R1). A database failure in the middle of a
 step leaves nothing half-recorded; the step is taken again, or waits for you, after the database is back.

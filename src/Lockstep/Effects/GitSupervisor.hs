@@ -38,7 +38,7 @@ module Lockstep.Effects.GitSupervisor
   , commitTime
   ) where
 
-import Control.Exception (IOException, finally, try)
+import Control.Exception (IOException, finally, onException, try)
 import Crypto.Hash (Context, SHA1 (SHA1), hashFinalize, hashInit, hashUpdate, hashWith)
 import Crypto.Random (getRandomBytes)
 import Data.Bits ((.&.))
@@ -58,10 +58,12 @@ import System.Directory
   ( createDirectory
   , createDirectoryIfMissing
   , doesDirectoryExist
+  , doesFileExist
   , getTemporaryDirectory
   , listDirectory
   , pathIsSymbolicLink
   , removeDirectoryRecursive
+  , removeFile
   )
 import System.Environment (lookupEnv)
 import System.IO (FilePath, IOMode (ReadMode), hClose, withBinaryFile)
@@ -76,7 +78,7 @@ import System.Posix.Files
   , readSymbolicLink
   , setFdMode
   )
-import System.Posix.IO (OpenFileFlags (creat, exclusive, nofollow), OpenMode (WriteOnly), defaultFileFlags, fdToHandle, openFd)
+import System.Posix.IO (OpenFileFlags (creat, exclusive, nofollow), OpenMode (WriteOnly), closeFd, defaultFileFlags, fdToHandle, openFd)
 import Text.Show (Show, show)
 
 import Lockstep.Effects.Process (RunResult (..), newCancel, runDirect)
@@ -87,6 +89,7 @@ import Lockstep.Kernel.GitBasis
   , checkChanges
   , isCommitId
   , parseTreeMode
+  , pathsFoldTogether
   , supervisorEmail
   , supervisorName
   , treeModeText
@@ -207,8 +210,13 @@ filtersOff repo = do
   listed <- git [] repo ["config", "--list", "--name-only", "-z"]
   pure $ do
     bytes <- listed
+    -- C-P4.R2 R2-G: a filter key that is not exact UTF-8 could not be named back exactly.
+    keys <-
+      either
+        (const (Left (T.pack "repository-filter-unsupported")))
+        Right
+        (traverse TE.decodeUtf8' [k | k <- BS.split 0 bytes, BS8.pack "filter." `BS.isPrefixOf` k])
     let
-      keys = fmap (TE.decodeUtf8With lenientDecode) (L.filter (not . BS.null) (BS.split 0 bytes))
       drivers =
         L.nub
           [ d
@@ -354,7 +362,13 @@ writeSnapshotWithin limits repo commit dest = do
         Left code -> pure (Left code)
         Right (entries, _)
           | L.length entries > limitFiles limits -> pure (Left (T.pack "snapshot-too-many-files"))
-          | otherwise -> fmap (const entries) <$> writeAll 0 entries
+          | otherwise -> do
+              -- C-P4.R2 R2-C: on a disk that folds letter case, a tree with folded names is refused
+              -- before anything is written.
+              folds <- foldsCase dest
+              if folds && pathsFoldTogether (fmap entryPath entries)
+                then pure (Left (T.pack "tree-path-collision"))
+                else fmap (const entries) <$> writeAll 0 entries
  where
   writeAll written entries =
     case entries of
@@ -364,6 +378,21 @@ writeSnapshotWithin limits repo commit dest = do
         case one of
           Left code -> pure (Left code)
           Right n -> writeAll (written + n) rest
+
+{- | Whether the (empty) directory's disk folds letter case: a probe file and
+its upper-case name. A probe that cannot be made is taken as folding.
+-}
+foldsCase :: FilePath -> IO Bool
+foldsCase dir = do
+  let
+    lower = dir <> "/.lockstep-case-probe"
+  probed <-
+    try $ do
+      BS.writeFile lower BS.empty
+      found <- doesFileExist (dir <> "/.LOCKSTEP-CASE-PROBE")
+      removeFile lower
+      pure found
+  pure (either (\(_ :: IOException) -> True) id probed)
 
 emptyDirectory :: FilePath -> IO Bool
 emptyDirectory dir = do
@@ -407,8 +436,7 @@ writeEntry repo dest room entry = do
                         let
                           bits = if mode == ModeExecutable then 0o755 else 0o644
                         fd <- openFd target WriteOnly defaultFileFlags {creat = Just bits, exclusive = True, nofollow = True}
-                        setFdMode fd bits
-                        h <- fdToHandle fd
+                        h <- (setFdMode fd bits >> fdToHandle fd) `onException` closeFd fd
                         BS.hPut h bytes `finally` hClose h
                   pure $ case written of
                     Right () -> Right (toInteger (BS.length bytes))

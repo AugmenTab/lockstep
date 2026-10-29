@@ -18,6 +18,7 @@ module Lockstep.Effects.HelperRunner
   , helperFailureCode
   , submitRun
   , requestCancel
+  , sendCancel
   , interpretResult
   ) where
 
@@ -139,6 +140,13 @@ submitRun channel prepared profile argv protected waitSeconds =
                   out <- readOrEmpty (dir <> "/stdout")
                   err <- readOrEmpty (dir <> "/stderr")
                   pure (interpretResult r out err)
+
+{- | C-P4.R2 R2-W: asks the helper to stop the run and does not wait for its
+answer (for a caller that is itself being stopped).
+-}
+sendCancel :: RunnerChannel -> T.Text -> IO ()
+sendCancel channel name =
+  void (send channel CancelOp name Nothing)
 
 -- | Asks the helper to stop the run; its own result then reports @cancelled@.
 requestCancel :: RunnerChannel -> T.Text -> IO (Either HelperFailure ())

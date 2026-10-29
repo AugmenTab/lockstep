@@ -11,6 +11,7 @@ module Lockstep.Kernel.GitBasis
   , Change (..)
   , treePathValid
   , protectedPathValid
+  , pathsFoldTogether
   , isCommitId
   , workBranch
   , supervisorName
@@ -21,6 +22,7 @@ module Lockstep.Kernel.GitBasis
 import Data.ByteString qualified as BS
 import Data.Char qualified as Char
 import Data.List qualified as L
+import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (Show)
@@ -88,10 +90,29 @@ nothing else is safe to pass).
 -}
 protectedPathValid :: T.Text -> Bool
 protectedPathValid path =
-  treePathValid path && T.all allowed path
+  treePathValid path
+    && T.all allowed path
+    -- C-P4.R2 R2-P: within the host's limits (the characters are ASCII, so these are bytes).
+    && T.length path <= 1024
+    && L.all ((<= 255) . T.length) (T.splitOn (T.pack "/") path)
  where
   allowed c =
     Char.isAsciiUpper c || Char.isAsciiLower c || Char.isDigit c || c `L.elem` ("._+@-/" :: String)
+
+{- | C-P4.R2 R2-C: two of these paths, or the directories on their way, are
+different spellings of one name ignoring letter case — one file or directory
+on a case-insensitive disk.
+-}
+pathsFoldTogether :: [T.Text] -> Bool
+pathsFoldTogether paths =
+  L.any ((> 1) . L.length . L.nub) (Map.elems spellings)
+ where
+  spellings = Map.fromListWith (<>) [(T.toLower p, [p]) | p <- L.concatMap prefixes paths]
+  prefixes p =
+    let
+      segments = T.splitOn (T.pack "/") p
+    in
+      [T.intercalate (T.pack "/") (L.take n segments) | n <- [1 .. L.length segments]]
 
 -- | Forty lower-case hex characters.
 isCommitId :: T.Text -> Bool

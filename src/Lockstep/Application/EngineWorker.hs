@@ -19,6 +19,7 @@ module Lockstep.Application.EngineWorker
   , startEngineWorker
   , stopEngineWorker
   , stopEngineWorkerWithin
+  , requestEngineStop
   , engineOnce
   ) where
 
@@ -122,6 +123,15 @@ stopEngineWorkerWithin seconds worker = do
   case finished of
     Just () -> pure True
     Nothing -> do
+      -- C-P4.R2 R2-W: the stopped thread's clean-up is bounded too.
       killThread (workerThread worker)
-      readMVar (workerDone worker)
+      _ <- timeout 2000000 (readMVar (workerDone worker))
       pure False
+
+{- | C-P4.R2 R2-W: asks the worker to stop after the transaction it is
+advancing, without waiting (the service calls it as soon as it starts to shut
+down).
+-}
+requestEngineStop :: EngineWorker -> IO ()
+requestEngineStop worker =
+  void (tryPutMVar (workerStop worker) ())
