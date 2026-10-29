@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+# A stand-in for the provider's Messages API (contract C-P4.L §3; test only).
+# It is never a model: it answers by a fixed rule so that the real Claude Code
+# CLI, the real egress proxy and the real helper can be qualified without any
+# provider contact. HTTPS with a certificate made by the check.
+#
+#   live-standin [--cert FILE --key FILE] --log FILE --mode MODE --answer FILE
+#                --expect-key KEY [--port 8443]
+#
+# Without a certificate it speaks plain HTTP (to look at what the CLI sends).
+#
+# For each POST /v1/messages it appends one JSON line to LOG: the path, the
+# model, max_tokens, the tool names, the beta features, whether x-api-key was
+# exactly the expected (synthetic) key, and the names of the headers received.
+# MODE decides the reply:
+#   answer     the first turn asks for the Write tool to put ANSWER's text in
+#              /output/result.json; a turn after a tool result ends the work
+#   loop       asks for the Write tool again and again (never ends by itself)
+#   no-usage   like answer, but the event stream carries no usage
+#   redirect   307 to another host
+#   unauthorized   401
+#   agent      asks for a tool named Task (an agent) on the first turn
+#   slow       answers only after 30 s
+import argparse
+import http.server
+import json
+import ssl
+import sys
+import time
+
+
+def sse(events):
+    out = b""
+    for event in events:
+        out += b"event: " + event["type"].encode() + b"\ndata: " + json.dumps(event).encode() + b"\n\n"
+    return out
+
+
+def turn(model, blocks, stop, usage):
+    events = [{"type": "message_start", "message": {
+        "id": "msg_standin", "type": "message", "role": "assistant", "model": model, "content": [],
+        "stop_reason": None, "stop_sequence": None,
+        "usage": {"input_tokens": usage, "output_tokens": 1, "cache_creation_input_tokens": 0,
+                  "cache_read_input_tokens": 0}}}]
+    for i, block in enumerate(blocks):
+        if block["type"] == "text":
+            events.append({"type": "content_block_start", "index": i, "content_block": {"type": "text", "text": ""}})
+            events.append({"type": "content_block_delta", "index": i, "delta": {"type": "text_delta", "text": block["text"]}})
+        else:
+            events.append({"type": "content_block_start", "index": i, "content_block": {
+                "type": "tool_use", "id": block["id"], "name": block["name"], "input": {}}})
+            events.append({"type": "content_block_delta", "index": i, "delta": {
+                "type": "input_json_delta", "partial_json": json.dumps(block["input"])}})
+        events.append({"type": "content_block_stop", "index": i})
+    events.append({"type": "message_delta", "delta": {"stop_reason": stop, "stop_sequence": None},
+                   "usage": {"output_tokens": 40}})
+    events.append({"type": "message_stop"})
+    return events
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--cert")
+    p.add_argument("--key")
+    p.add_argument("--log", required=True)
+    p.add_argument("--mode", required=True)
+    p.add_argument("--answer", required=True)
+    p.add_argument("--expect-key", required=True)
+    p.add_argument("--port", type=int, default=8443)
+    a = p.parse_args()
+    with open(a.answer, encoding="utf-8") as f:
+        answer = f.read()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("content-length", "0")))
+            try:
+                request = json.loads(body)
+            except ValueError:
+                request = {}
+            messages = request.get("messages", [])
+            last = messages[-1] if messages else {}
+            after_tool = isinstance(last.get("content"), list) and any(
+                isinstance(b, dict) and b.get("type") == "tool_result" for b in last["content"])
+            with open(a.log, "a", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "path": self.path, "model": request.get("model"), "max_tokens": request.get("max_tokens"),
+                    "tools": sorted(t.get("name", "?") for t in request.get("tools", []) if isinstance(t, dict)),
+                    "betas": self.headers.get("anthropic-beta", ""),
+                    "key_ok": self.headers.get("x-api-key") == a.expect_key,
+                    "headers": sorted(k.lower() for k in self.headers.keys()),
+                    "stream": request.get("stream", False), "after_tool": after_tool,
+                    "tool_defs": [{"name": t.get("name"), "type": t.get("type"), "input_schema": t.get("input_schema")}
+                                  for t in request.get("tools", []) if isinstance(t, dict)],
+                    "top_keys": sorted(request.keys()),
+                    "output_config": request.get("output_config"), "thinking": request.get("thinking"),
+                    "context_management": request.get("context_management"),
+                }) + "\n")
+            model = request.get("model", "?")
+            if a.mode == "slow":
+                time.sleep(30)
+            if a.mode == "redirect":
+                self.send_response(307)
+                self.send_header("location", "http://elsewhere.invalid:8080/v1/messages")
+                self.send_header("content-length", "0")
+                self.end_headers()
+                return
+            if a.mode == "unauthorized":
+                payload = b'{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'
+                self.send_response(401)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            # The pinned CLI's file tool: Edit with an empty old_string makes a new file.
+            write = {"type": "tool_use", "id": "toolu_standin_%d" % len(messages), "name": "Edit",
+                     "input": {"file_path": "/output/result.json", "old_string": "", "new_string": answer}}
+            if a.mode == "agent" and not after_tool:
+                blocks, stop = [{"type": "tool_use", "id": "toolu_agent", "name": "Task",
+                                 "input": {"description": "x", "prompt": "write code", "subagent_type": "general-purpose"}}], "tool_use"
+            elif after_tool and a.mode != "loop":
+                blocks, stop = [{"type": "text", "text": "The answer is in /output/result.json."}], "end_turn"
+            else:
+                blocks, stop = [write], "tool_use"
+            events = turn(model, blocks, stop, 100)
+            if a.mode == "no-usage":
+                for e in events:
+                    e.pop("usage", None)
+                    if isinstance(e.get("message"), dict):
+                        e["message"].pop("usage", None)
+            if request.get("stream"):
+                payload = sse(events)
+                self.send_response(200)
+                self.send_header("content-type", "text/event-stream")
+            else:
+                content = [{"type": b["type"], **({"text": b["text"]} if b["type"] == "text" else
+                            {"id": b["id"], "name": b["name"], "input": b["input"]})} for b in blocks]
+                message = {"id": "msg_standin", "type": "message", "role": "assistant", "model": model,
+                           "content": content, "stop_reason": stop, "stop_sequence": None}
+                if a.mode != "no-usage":
+                    message["usage"] = {"input_tokens": 100, "output_tokens": 40,
+                                        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+                payload = json.dumps(message).encode()
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_GET(self):
+            with open(a.log, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"path": self.path, "method": "GET"}) + "\n")
+            self.send_response(404)
+            self.send_header("content-length", "0")
+            self.end_headers()
+
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", a.port), Handler)
+    if a.cert:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(a.cert, a.key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+    print("standin ready", flush=True)
+    server.serve_forever()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

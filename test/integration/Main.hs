@@ -56,6 +56,7 @@ import Lockstep.LedgerTraceTest qualified as LedgerTraceTest
 import Lockstep.LifecycleBrowserTest qualified as LifecycleBrowserTest
 import Lockstep.LifecycleHelperTest qualified as LifecycleHelperTest
 import Lockstep.LifecyclePaneTest qualified as LifecyclePaneTest
+import Lockstep.LiveAdapterTest qualified as LiveAdapterTest
 import Lockstep.MigrationDbTest qualified as MigrationDbTest
 import Lockstep.OperatorCommandTest qualified as OperatorCommandTest
 import Lockstep.OperatorLedgerTest qualified as OperatorLedgerTest
@@ -165,4 +166,5 @@ main =
       , EngineAttemptPageTest.tests
       , EngineRecoveryTwoTest.tests
       , EngineOwnershipTest.tests
+      , LiveAdapterTest.tests
       ]

@@ -62,6 +62,8 @@ library
       Lockstep.Effects.HelperRunner
       Lockstep.Effects.Process
       Lockstep.Effects.ProjectFolders
+      Lockstep.Effects.Provider.Claude
+      Lockstep.Effects.Provider.Live
       Lockstep.Effects.Reconciler
       Lockstep.Effects.Roles
       Lockstep.Effects.Scripted
@@ -269,6 +271,7 @@ test-suite lockstep-integration
       Lockstep.LifecycleBrowserTest
       Lockstep.LifecycleHelperTest
       Lockstep.LifecyclePaneTest
+      Lockstep.LiveAdapterTest
       Lockstep.MigrationDbTest
       Lockstep.OperatorCommandTest
       Lockstep.OperatorLedgerTest
@@ -362,6 +365,7 @@ test-suite lockstep-unit
       Lockstep.Application.NoopCommandTest
       Lockstep.Application.ProfileDocumentTest
       Lockstep.Application.ReadinessTest
+      Lockstep.Effects.ClaudeAdapterTest
       Lockstep.Effects.ExecutorTest
       Lockstep.Effects.ReconcilerTest
       Lockstep.Foundation.CliControlTest

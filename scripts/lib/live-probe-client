@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+# Probes run inside a live role's container by scripts/lib/check-live-runner
+# (contract C-P4.L §3; test only): what the container can reach, and what the
+# egress proxy lets through. One line per probe, "NAME RESULT".
+#
+#   live-probe-client MODEL EFFORT PROBE...
+#
+# PROBE: network (interfaces, outside connections, names, the proxy's other
+# ports), refusals (every request the proxy must refuse), valid (one allowed
+# request, its Host header naming another host), slow (one allowed request,
+# whose answer never comes before the proxy is gone).
+import http.client
+import json
+import os
+import socket
+import sys
+
+PROXY = ("lockstep-egress", 8080)
+
+
+def connect(name, host, port):
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            print(name, "connected", flush=True)
+    except OSError:
+        print(name, "failed", flush=True)
+
+
+def resolve(name, host):
+    try:
+        socket.getaddrinfo(host, 443)
+        print(name, "resolved", flush=True)
+    except OSError:
+        print(name, "failed", flush=True)
+
+
+def post(name, body, path="/v1/messages?beta=true", headers=None, method="POST"):
+    data = json.dumps(body).encode() if body is not None else b""
+    h = {"content-type": "application/json", "content-length": str(len(data)), "x-api-key": "lockstep-placeholder"}
+    h.update(headers or {})
+    try:
+        c = http.client.HTTPConnection(PROXY[0], PROXY[1], timeout=20)
+        c.putrequest(method, path, skip_host="host" in h, skip_accept_encoding=True)
+        for k, v in h.items():
+            c.putheader(k, v)
+        c.endheaders()
+        if data:
+            c.send(data)
+        r = c.getresponse()
+        text = r.read(65536)
+        code = "-"
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict) and isinstance(parsed.get("error"), dict):
+                code = parsed["error"].get("message", "-")
+        except ValueError:
+            pass
+        print(name, r.status, code, flush=True)
+    except OSError as e:
+        print(name, "error", type(e).__name__, flush=True)
+
+
+def main():
+    model, effort = sys.argv[1], sys.argv[2]
+    base = {"model": model, "max_tokens": 100, "stream": False, "output_config": {"effort": effort},
+            "messages": [{"role": "user", "content": "hello"}]}
+    for probe in sys.argv[3:]:
+        if probe == "network":
+            print("interfaces", ",".join(sorted(os.listdir("/sys/class/net"))), flush=True)
+            connect("outside-address", "1.1.1.1", 443)
+            connect("upstream-by-name", "standin", 8443)
+            resolve("outside-name", "example.com")
+            resolve("host-name", "host.docker.internal")
+            connect("proxy-other-port", PROXY[0], 22)
+            connect("proxy-upstream-port", PROXY[0], 443)
+        elif probe == "refusals":
+            post("get", None, path="/", method="GET")
+            post("other-path", base, path="/v1/complete")
+            post("absolute-url", base, path="http://elsewhere.invalid/v1/messages")
+            post("connect", None, path="elsewhere.invalid:443", method="CONNECT")
+            post("model", dict(base, model="claude-opus-5-5" if model != "claude-opus-5-5" else "claude-haiku-5-5"))
+            post("effort", dict(base, output_config={"effort": "max" if effort != "max" else "low"}))
+            post("max-tokens", dict(base, max_tokens=10000000))
+            post("agent-tool", dict(base, tools=[{"name": "Task", "input_schema": {"type": "object"}}]))
+            post("server-tool", dict(base, tools=[{"type": "web_search_20250305", "name": "web_search"}]))
+            post("mcp", dict(base, mcp_servers=[{"type": "url", "url": "https://elsewhere.invalid", "name": "x"}]))
+            post("image", dict(base, messages=[{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}}]}]))
+            post("beta", base, headers={"anthropic-beta": "context-1m-2025-08-07"})
+        elif probe == "valid":
+            post("valid-other-host", base, headers={"host": "elsewhere.invalid"})
+        elif probe == "slow":
+            post("slow", base)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
