@@ -302,6 +302,8 @@ lastMay =
 data SessionLock
   = DecisionKeyLock
   | ProjectConnectLock
+  | -- | C-P4.R3 R3-O: the engine advancing a coding transaction, for the whole step
+    TransactionStepLock
   deriving (Eq, Show)
 
 lockNamespace :: SessionLock -> Int32
@@ -309,6 +311,7 @@ lockNamespace lock =
   case lock of
     DecisionKeyLock -> 7301
     ProjectConnectLock -> 7302
+    TransactionStepLock -> 7303
 
 -- | How long a request waits for a lock another request holds.
 lockWaitSeconds :: Int

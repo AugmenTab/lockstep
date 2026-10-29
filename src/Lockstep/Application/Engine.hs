@@ -48,7 +48,7 @@ import Text.Show (Show, show)
 
 import Lockstep.Application.Command (IdempotencyKey, mkIdempotencyKey)
 import Lockstep.Application.Conversation (NewHumanRequest (..), Sender (..), StoredRequest (..), openRequest, requestByKey, senderChannel, senderEvidence)
-import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), checkReadiness, withDatabase)
+import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason, Readiness (..), SessionLock (..), checkReadiness, withDatabase, withSessionLock)
 import Lockstep.Application.EngineCandidate (baselineJson, candidateJson, findingJson, frozenContract, recordedCandidate, testFiles, unchangedAtBasis)
 import Lockstep.Application.Identity (newUuid)
 import Lockstep.Application.Repositories (ownershipHolds)
@@ -406,7 +406,12 @@ applyLocked row principal input records change =
 request to a person (opened again if it is missing) and, once a person has
 answered that request, their answer applied (C-P4.15 H1). Refused:
 @unknown-transaction@, @transaction-unreadable@, @stale-step@ (another advance
-changed it first).
+changed it first), @busy@ (C-P4.R3 R3-O: another engine is advancing it now).
+
+The whole step runs under the transaction's session lock, held on a connection
+of its own: a run another engine has started is never mistaken for one left
+unfinished. An engine that goes away loses its connection and so the lock;
+the run it left is then settled as before (E4).
 -}
 advance :: DatabaseRuntime -> Engine -> T.Text -> IO (Either NotReadyReason (Either T.Text StepReport))
 advance runtime engine raw =
@@ -414,11 +419,18 @@ advance runtime engine raw =
     case canonicalId raw of
       Nothing -> pure (Right (Left (T.pack "unknown-transaction")))
       Just txId -> do
+        -- The step is relative to the row read here: if another engine moves it while this one
+        -- waits for the lock, the step is stale (settleUnfinished checks the revision).
         loaded <- withDatabase runtime (Store.findTransaction txId)
         case loaded of
           Left reason -> pure (Left reason)
           Right Nothing -> pure (Right (Left (T.pack "unknown-transaction")))
-          Right (Just row) -> Right <$> advanceRow runtime engine row
+          Right (Just row) -> do
+            owned <- withSessionLock runtime TransactionStepLock txId (const (advanceRow runtime engine row))
+            pure $ case owned of
+              Right stepped -> Right stepped
+              Left LockBusy -> Right (Left (T.pack "busy"))
+              Left (LockUnavailable reason) -> Left reason
 
 advanceRow :: DatabaseRuntime -> Engine -> Store.TransactionRow -> IO (Either T.Text StepReport)
 advanceRow runtime engine row =
