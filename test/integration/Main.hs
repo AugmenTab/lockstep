@@ -24,6 +24,7 @@ import Lockstep.EngineCandidateTest qualified as EngineCandidateTest
 import Lockstep.EngineHelperPathTest qualified as EngineHelperPathTest
 import Lockstep.EngineHumanTest qualified as EngineHumanTest
 import Lockstep.EngineImplementTest qualified as EngineImplementTest
+import Lockstep.EngineOwnershipTest qualified as EngineOwnershipTest
 import Lockstep.EnginePageTest qualified as EnginePageTest
 import Lockstep.EngineRecoveryTest qualified as EngineRecoveryTest
 import Lockstep.EngineRecoveryTwoTest qualified as EngineRecoveryTwoTest
@@ -163,4 +164,5 @@ main =
       , SnapshotBoundsTest.tests
       , EngineAttemptPageTest.tests
       , EngineRecoveryTwoTest.tests
+      , EngineOwnershipTest.tests
       ]
