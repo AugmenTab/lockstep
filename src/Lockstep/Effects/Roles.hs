@@ -29,9 +29,10 @@ module Lockstep.Effects.Roles
   , prepareRole
   , runPrepared
   , decodeAnswer
+  , readAnswer
   ) where
 
-import Control.Exception (IOException, finally, try)
+import Control.Exception (IOException, finally, onException, try)
 import Crypto.Random (getRandomBytes)
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import Data.ByteString qualified as BS
@@ -44,15 +45,15 @@ import Fleece.Aeson qualified as FA
 import Fleece.Core ((#+))
 import Fleece.Core qualified as FC
 import Flipstone.Prelude
-import System.Directory (createDirectory, getPermissions, listDirectory, setOwnerWritable, setPermissions)
+import System.Directory (createDirectory, getPermissions, listDirectory, removePathForcibly, setOwnerSearchable, setOwnerWritable, setPermissions)
 import System.IO (FilePath, hClose)
 import System.Posix.Files (getFdStatus, getSymbolicLinkStatus, isDirectory, isRegularFile, isSymbolicLink)
 import System.Posix.IO (OpenFileFlags (nofollow, nonBlock), OpenMode (ReadOnly), closeFd, defaultFileFlags, fdToHandle, openFd)
 import Text.Show (Show)
 
-import Lockstep.Effects.HelperRunner (HelperFailure (..), PreparedRun (..), RunnerChannel, prepareRun, submitRun)
+import Lockstep.Effects.HelperRunner (HelperFailure (..), PreparedRun (..), RunnerChannel, prepareRun, requestCancel, runnerDirectory, submitRun)
 import Lockstep.Effects.Process (Cancel, RunResult (..), runDirect)
-import Lockstep.Foundation.RunnerProtocol (RunProfile (..))
+import Lockstep.Foundation.RunnerProtocol (RunProfile (..), isRunName)
 import Lockstep.Kernel.Roles
   ( Candidate (..)
   , CandidateTest (..)
@@ -107,7 +108,7 @@ data Runner
   , runnerPrepare :: IO (Either T.Text Workspace)
   , runnerRun :: Workspace -> RunProfile -> Limits -> [T.Text] -> [T.Text] -> IO (Either RunnerFailure RunResult)
   , runnerRelease :: Workspace -> IO ()
-  -- ^ C-P4.R1 R-K1: removes a finished workspace of this runner (stage-not-built: nothing).
+  -- ^ C-P4.R1 R-K1: removes a finished workspace, only one of this runner's own.
   }
 
 {- | The direct runner (C-P4.2 R2) on workspaces under a root directory. It is
@@ -121,7 +122,7 @@ directRunner cancel root =
       { runnerName = T.pack "direct"
       , runnerPrepare = prepare
       , runnerRun = run
-      , runnerRelease = const (pure ())
+      , runnerRelease = releaseUnder root
       }
  where
   prepare = do
@@ -158,6 +159,40 @@ nextWorkspace root = do
       , workspaceName = name
       }
 
+{- | C-P4.R1 R-K1: removes a workspace only when it is this runner's own: a
+directory (not a link) directly under the root, named by 32 hexadecimal
+characters, whose tree is the workspace's. Its contents are made writable
+first (a read-only role's tree is read-only); links inside are removed, never
+followed. Anything else is left alone.
+-}
+releaseUnder :: FilePath -> Workspace -> IO ()
+releaseUnder root workspace = do
+  let
+    dir = root <> "/" <> T.unpack (workspaceName workspace)
+  status <- try (getSymbolicLinkStatus dir)
+  case status of
+    Right s
+      | isRunName (workspaceName workspace) && workspaceTree workspace == dir <> "/tree" && isDirectory s ->
+          void (try (writableTree dir >> removePathForcibly dir) :: IO (Either IOException ()))
+    Right _ -> pure ()
+    Left (_ :: IOException) -> pure ()
+
+writableTree :: FilePath -> IO ()
+writableTree dir = do
+  _ <- try (getPermissions dir >>= setPermissions dir . setOwnerWritable True . setOwnerSearchable True) :: IO (Either IOException ())
+  names <- fromRight [] <$> (try (listDirectory dir) :: IO (Either IOException [FilePath]))
+  traverse_
+    ( \n -> do
+        let
+          path = dir <> "/" <> n
+        status <- try (getSymbolicLinkStatus path)
+        case status of
+          Right s | isDirectory s -> writableTree path
+          Right _ -> pure ()
+          Left (_ :: IOException) -> pure ()
+    )
+    names
+
 readOnlyFile :: FilePath -> IO ()
 readOnlyFile path = do
   _ <- try (getPermissions path >>= setPermissions path . setOwnerWritable False) :: IO (Either IOException ())
@@ -184,7 +219,7 @@ helperRunner channel =
     { runnerName = T.pack "container"
     , runnerPrepare = prepare
     , runnerRun = run
-    , runnerRelease = const (pure ())
+    , runnerRelease = releaseUnder (runnerDirectory channel <> "/work")
     }
  where
   prepare = do
@@ -204,7 +239,8 @@ helperRunner channel =
     let
       prepared = PreparedRun (workspaceName workspace) (workspaceTree workspace) (workspaceInput workspace) (workspaceOutput workspace)
       waitSeconds = if profile == ProfileWrite then 1260 else 660
-    result <- submitRun channel prepared profile argv protected waitSeconds
+    -- C-P4.R1 R-W2: a run whose caller is stopped is cancelled through the helper, not left running.
+    result <- submitRun channel prepared profile argv protected waitSeconds `onException` requestCancel channel (workspaceName workspace)
     pure $ case result of
       Right r -> Right r
       Left HelperNoResult -> Left (RunnerUncertain (T.pack "helper-no-result"))

@@ -287,10 +287,38 @@ A project with a folder is *organized*, not *executable*. On the project's page,
   refused and nothing changes.
 
 Then, on a task that is **Ready to work on**, **Ask Lockstep to fix this bug** creates one engineering
-work order classed `bug` for the project's Engineer, at the task's priority, with no plan reference. It
-waits in line; **nothing runs it yet** (running work arrives with the later Phase 4 steps, which need the
-owner's DG-17 decision). Both records are immutable (`lockstep_execution_enablements`,
-`lockstep_bug_admissions`, migration 18).
+work order classed `bug` for the project's Engineer, at the task's priority, with no plan reference. Both
+records are immutable (`lockstep_execution_enablements`, `lockstep_bug_admissions`, migration 18).
+
+### The engine: who moves a handed-over bug (Phase 4, C-P4.15, C-P4.17 Q5)
+
+The engine worker runs **inside the service** (`lockstep serve`), and only when the service has the host
+helper's **runner channel**: the helper started with `--runner` makes `.local/control/runner` (its own key,
+requests, results, run folders) and exports it to every service start it performs; `scripts/service` then
+mounts it and sets `LOCKSTEP_RUNNER_DIR`. Every role and every check then runs in a fresh container launched
+by the helper (DG-17: pinned image, no network, read-only root, your user id, dropped capabilities, limits).
+The service log says which it is:
+
+- `Engine worker: on (roles run in the host helper's container; no coding helper is built in)` — each
+  handed-over bug is started (one at a time per Engineer), its basis taken (the folder must be clean) and its
+  branch `lockstep/<work order>` made; it moves one step every 2 s and acts on your answers and your Done.
+- `Engine worker: off (…)` — no channel: nothing is started and the pages keep saying nothing runs yet.
+
+**What it cannot do yet.** No coding helper is built into this version (the live Claude adapter needs the
+owner's separate authorization). So a bug stops at its first role step, *finding the cause*, with "No coding
+helper is set up for Lockstep."; **Try this step again** stops there again, **Stop fixing this bug** ends it.
+Nothing is ever pushed; only the work branch moves, and only by compare-and-swap.
+
+**Turning it on** (not done for you): the `lockstep` launcher starts the helper without `--runner`. Starting
+the operator's helper with `--runner` is an installation change the owner authorizes together with the first
+real-provider trial (`docs/gates/P4.17/real-provider-smoke-proposal.md`); until then the engine is exercised by
+the integration suite (`ServeWorkerTest`, `EndToEndTest`) and the helper's container runner by
+`scripts/lib/check-runner` and `scripts/lib/check-runner-paths`.
+
+**Stopping and restarts.** On shutdown the service stops the worker within 8 s: a role still running is
+killed with its container, its run stays unfinished, and after the restart it is marked *not known* and the
+bug waits for you — Lockstep never runs it again by itself (C-P4.R1). A database failure in the middle of a
+step leaves nothing half-recorded; the step is taken again, or waits for you, after the database is back.
 
 ## 7. Troubleshooting
 

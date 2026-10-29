@@ -29,7 +29,6 @@ import Crypto.Random (getRandomBytes)
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
-import Data.Char qualified as Char
 import Data.List qualified as L
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
@@ -53,6 +52,7 @@ import Lockstep.Foundation.RunnerProtocol
   , isRunName
   , resultField
   )
+import Lockstep.Kernel.GitBasis (protectedPathValid)
 import Lockstep.Kernel.Runner (RoleKind (RoleCommand), RunOutcome (..), RunSpec (..), Stream (..), checkSpec, roleLimits)
 
 data RunnerChannel
@@ -247,13 +247,10 @@ interpretResult result out err =
           Nothing -> Left (HelperResultInvalid (T.pack "limits"))
     | otherwise = Left (HelperResultInvalid (T.pack "outcome"))
 
+-- | C-P4.R1 R-P1: the Kernel's one rule for protected paths.
 validProtected :: T.Text -> Bool
-validProtected path =
-  not (T.null path)
-    && T.length path <= 4096
-    && T.all (\c -> Char.isAsciiUpper c || Char.isAsciiLower c || Char.isDigit c || c `L.elem` ("._+@-/" :: String)) path
-    && not (T.isPrefixOf (T.pack "/") path)
-    && L.all (\s -> not (T.null s) && s /= T.pack "." && s /= T.pack "..") (T.splitOn (T.pack "/") path)
+validProtected =
+  protectedPathValid
 
 readOrEmpty :: FilePath -> IO BS.ByteString
 readOrEmpty path =

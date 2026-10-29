@@ -21,7 +21,8 @@
 | P4.10–P4.14 | **VERIFIED** at checkpoint `30facae` (frozen `5fa1b15`): Mac and Linux clean clone, unit 862/862, integration 518/518 | `C-P4.10-14` | `docs/gates/P4.10-14/` |
 | P4.15 | **VERIFIED** at checkpoint `d59aceb` (frozen `104fd2b`): Mac and Linux clean clone, unit 862/862, integration 531/531 | `C-P4.15` | `docs/gates/P4.15/` |
 | P4.16 | **VERIFIED** at checkpoint `d59aceb` (frozen `1b86ee4`): Mac and Linux clean clone, unit 862/862, integration 531/531 | `C-P4.16` | `docs/gates/P4.16/` |
-| P4.17 | in progress (decision packet drafted: `decision-packet.md`) | `C-P4.17` | `docs/gates/P4.17/` |
+| P4.R1 | **IMPLEMENTED** (frozen `8f4361c`): the review's M1–M5 fixed, L6–L11 fixed or reproduced and fixed (`docs/gates/P4.R1/dispositions.md`); targeted 22 of 22, stress 17 MB residency for a 384 MiB tree, host `check-runner-paths` 7 of 7; full qualification pending | `C-P4.R1` | `docs/gates/P4.R1/` |
+| P4.17 | **IMPLEMENTED** (frozen `8f4361c`): the end-to-end browser journey; `lockstep serve` runs the engine worker with the helper's runner channel (Q5); 3 of 3; full qualification pending. Real-provider smoke **PROPOSED, NOT RUN** (`docs/gates/P4.17/real-provider-smoke-proposal.md`) | `C-P4.17` | `docs/gates/P4.17/` |
 
 The first full check at `0b8dbad` failed one test of 518: a start-up race in the folder helper (C-P3.5), which
 gave the pane its copy after placing the list the frozen test waits on. Fixed in the helper at `30facae` (the
@@ -49,9 +50,13 @@ Neither is run or represented by automation. Their protocols are unchanged (`doc
 
 Decided in `.local/plans/phase-04_update1.md` (sha256 `4cb620d3…a6f1d7`): DG-17 accepted; DG-06 and DG-07
 accepted with clarification; O-1 accepted; A-P4.3-1 approved (applied). A-P4.2-1 approved (applied).
+`.local/plans/phase-04_update2.md` (sha256 `c3b2a6fd…6278b8`): remediate M1–M5 and disposition L6–L11, then
+P4.17, a supported production arrangement for the worker, and a smoke proposal (register entry "Phase 4
+recovery and completion").
 
 ## Where it stands (2026-10-28)
 
-P4.1–P4.16 verified (Mac and Linux). P4.17 in progress; an independent read-only review of the Phase 4 code
-was requested by the owner and is running. Nothing was installed, pushed or published; no
-provider was invoked (the guard's sentinel log is empty in every run). Gate C-EXEC is not claimed.
+P4.1–P4.16 verified (Mac and Linux). The independent read-only review's findings are remediated (C-P4.R1) and
+P4.17 implemented, both frozen at `8f4361c`; their full Mac and Linux qualification and a second independent
+review follow. Nothing was installed, pushed or published; no provider was invoked (the guard's sentinel log
+is empty in every run). Gate C-EXEC is not claimed.

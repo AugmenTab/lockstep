@@ -13,6 +13,7 @@ module Lockstep.Persistence.Transactions
   , findTransaction
   , lockTransaction
   , findTransactionByWorkOrder
+  , lockEngineer
   , busyTransactions
   , runningTransactions
   , activeTransactions
@@ -88,6 +89,12 @@ data InvocationRow
   , invocationRowStderrDigest :: Maybe T.Text
   , invocationRowStdoutTail :: Maybe T.Text
   , invocationRowStderrTail :: Maybe T.Text
+  , invocationRowRevision :: Maybe Int32
+  -- ^ C-P4.R1 R-I1: the transaction revision it ran at.
+  , invocationRowAnswer :: Maybe T.Text
+  -- ^ C-P4.R1 R-I1: a role's answer document, kept when it answered.
+  , invocationRowAnswerDigest :: Maybe T.Text
+  -- ^ Its sha256 (the table keeps both or neither).
   }
   deriving (Eq)
 
@@ -103,6 +110,9 @@ data Finish
   , finishStderrDigest :: Maybe T.Text
   , finishStdoutTail :: Maybe T.Text
   , finishStderrTail :: Maybe T.Text
+  , finishAnswer :: Maybe T.Text
+  -- ^ The answer document, written with the outcome.
+  , finishAnswerDigest :: Maybe T.Text
   }
   deriving (Eq)
 
@@ -213,6 +223,14 @@ findTransactionByWorkOrder :: O.MonadOrville m => T.Text -> m (Maybe Transaction
 findTransactionByWorkOrder workOrder =
   headMay <$> selectTransactions (sql "WHERE work_order_id = " <> uuid workOrder)
 
+{- | C-P4.R1 R-O1: holds the Engineer's start lock until the database
+transaction ends, so two starts for one Engineer check and insert one after
+the other (the partial unique index refuses a second writer in any case).
+-}
+lockEngineer :: O.MonadOrville m => T.Text -> m ()
+lockEngineer engineer =
+  O.executeVoid O.SelectQuery (sql "SELECT pg_advisory_xact_lock(hashtextextended(" <> text engineer <> sql ", 7371))")
+
 -- | The Engineer's transactions that still hold its one writer: running or halted.
 busyTransactions :: O.MonadOrville m => T.Text -> m [TransactionRow]
 busyTransactions engineer =
@@ -317,12 +335,15 @@ invocationMarshaller =
       <*> O.marshallField invocationRowStderrDigest (O.nullableField (O.unboundedTextField "stderr_digest"))
       <*> O.marshallField invocationRowStdoutTail (O.nullableField (O.unboundedTextField "stdout_tail"))
       <*> O.marshallField invocationRowStderrTail (O.nullableField (O.unboundedTextField "stderr_tail"))
+      <*> O.marshallField invocationRowRevision (O.nullableField (O.integerField "tx_revision"))
+      <*> O.marshallField invocationRowAnswer (O.nullableField (O.unboundedTextField "answer"))
+      <*> O.marshallField invocationRowAnswerDigest (O.nullableField (O.unboundedTextField "answer_digest"))
 
 selectInvocations :: O.MonadOrville m => RawSql.RawSql -> m [InvocationRow]
 selectInvocations rest =
   O.executeAndDecode
     O.SelectQuery
-    ( sql "SELECT id::text AS id, transaction_id::text AS transaction_id, stage, what, runner, adapter, argv, outcome, exit_code, millis, stdout_bytes, stderr_bytes, stdout_digest, stderr_digest, stdout_tail, stderr_tail FROM lockstep_invocations "
+    ( sql "SELECT id::text AS id, transaction_id::text AS transaction_id, stage, what, runner, adapter, argv, outcome, exit_code, millis, stdout_bytes, stderr_bytes, stdout_digest, stderr_digest, stdout_tail, stderr_tail, tx_revision, answer, answer_digest FROM lockstep_invocations "
         <> rest
     )
     invocationMarshaller
@@ -331,7 +352,7 @@ selectInvocations rest =
 insertInvocation :: O.MonadOrville m => InvocationRow -> m ()
 insertInvocation row =
   O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_invocations (id, transaction_id, stage, what, runner, adapter, argv) VALUES ("
+    sql "INSERT INTO lockstep_invocations (id, transaction_id, stage, what, runner, adapter, argv, tx_revision) VALUES ("
       <> commaSeparated
         [ uuid (invocationRowId row)
         , uuid (invocationRowTransaction row)
@@ -340,6 +361,7 @@ insertInvocation row =
         , text (invocationRowRunner row)
         , text (invocationRowAdapter row)
         , text (invocationRowArgv row)
+        , maybeInt (invocationRowRevision row)
         ]
       <> sql ")"
 
@@ -365,6 +387,10 @@ finishInvocation invocationId f =
       <> maybeText (finishStdoutTail f)
       <> sql ", stderr_tail = "
       <> maybeText (finishStderrTail f)
+      <> sql ", answer = "
+      <> maybeText (finishAnswer f)
+      <> sql ", answer_digest = "
+      <> maybeText (finishAnswerDigest f)
       <> sql " WHERE id = "
       <> uuid invocationId
 

@@ -143,10 +143,12 @@ refusalCode refusal =
 withDatabase :: DatabaseRuntime -> O.Orville a -> IO (Either NotReadyReason a)
 withDatabase runtime action = do
   result <- try (O.runOrville (runtimePool runtime) action)
-  pure $
-    case result of
-      Right value -> Right value
-      Left err -> Left (classifyException err)
+  case result of
+    Right value -> pure (Right value)
+    -- C-P4.R1 R-U2: a stopped thread or a timeout is never a database failure.
+    Left err
+      | Just (_ :: SomeAsyncException) <- fromException err -> throwIO err
+      | otherwise -> pure (Left (classifyException err))
 
 classifyException :: SomeException -> NotReadyReason
 classifyException err =
