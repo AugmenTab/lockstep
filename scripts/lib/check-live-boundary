@@ -1,0 +1,431 @@
+#!/usr/bin/env bash
+# Verification of the live execution boundary's last three properties on the
+# host (contract C-P4.L.R2): H1 a terminal refusal ends the run's provider
+# admission; H2 one conversation per run (no second agent through the proxy);
+# H3 test overrides never with the production credential path. Needs Docker and
+# the provider image (scripts/provider-image). The real proxy (run directly, as
+# the helper starts it) with a recording stand-in upstream; the real helper with
+# the real Claude Code CLI and an agent stand-in upstream. Synthetic keys only;
+# every upstream is a local stand-in on an internal network; no run is ever
+# submitted in production mode. Results: .local/evidence/live-boundary-<stamp>/
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+root=$PWD
+
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+work=$root/.local/evidence/live-boundary-$stamp
+mkdir -p "$work/upstream" "$work/agent" "$work/ledger" "$work/ledger2"
+chmod 700 "$work/ledger" "$work/ledger2"
+results=$work/results.txt
+: > "$results"
+failures=0
+net=lockstep-boundary-$stamp
+extnet=lockstep-boundary-ext-$stamp
+recorder=lockstep-boundary-rec-$stamp
+agent=lockstep-boundary-agent-$stamp
+proxy_prefix=lockstep-boundary-egress-$stamp-
+instance=p4lb
+image=lockstep-provider:claude-2.1.312
+model=claude-sonnet-5-5
+effort=medium
+state=$root/.local/live-boundary-$stamp
+
+record() { # STATUS DESCRIPTION
+  printf '%s %s\n' "$1" "$2" | tee -a "$results"
+  if [ "$1" != PASS ]; then failures=$((failures + 1)); fi
+}
+expect() { # DESCRIPTION CONDITION...
+  local description=$1
+  shift
+  if "$@"; then record PASS "$description"; else record FAIL "$description"; fi
+}
+
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  echo "NOT_RUN: the image $image is missing; run scripts/provider-image first" >&2
+  exit 2
+fi
+helper_pid=""
+stop_helper() {
+  if [ -n "$helper_pid" ]; then
+    kill "$helper_pid" 2>/dev/null || true
+    wait "$helper_pid" 2>/dev/null || true
+    helper_pid=""
+  fi
+}
+cleanup() {
+  stop_helper
+  docker ps -aq --filter "name=^$proxy_prefix" | while read -r c; do docker rm -f "$c" >/dev/null 2>&1 || true; done
+  docker ps -aq --filter "name=^lockstep-run-$instance-" | while read -r c; do docker rm -f "$c" >/dev/null 2>&1 || true; done
+  docker ps -aq --filter "name=^lockstep-egress-$instance-" | while read -r c; do docker rm -f "$c" >/dev/null 2>&1 || true; done
+  docker network ls -q --filter "name=^lockstep-live-$instance-" | while read -r n; do docker network rm "$n" >/dev/null 2>&1 || true; done
+  docker rm -f "$recorder" "$agent" >/dev/null 2>&1 || true
+  docker network rm "$net" "$extnet" >/dev/null 2>&1 || true
+  [ -f "$state/helper/helper.log" ] && cp "$state/helper/helper.log" "$work/helper.log"
+  rm -rf "$state" "$work/credential" "$work/standin.key"
+}
+trap cleanup EXIT
+
+umask 077
+secret=sk-ant-test-$(head -c 20 /dev/urandom | od -An -tx1 | tr -d ' \n')
+printf '%s\n' "$secret" > "$work/credential"
+chmod 600 "$work/credential"
+write_config() { # FILE INVOCATION-REQUESTS
+  cat > "$1" <<EOF
+lockstep-provider 1
+provider claude-code
+model $model
+effort $effort
+pricing synthetic-test-1
+price-input 3000000
+price-output 15000000
+price-cache-write-5m 3750000
+price-cache-write-1h 6000000
+price-cache-read 300000
+long-context-tokens 200000
+long-context-input-percent 200
+long-context-output-percent 150
+budget-micro-usd 50000000
+token-limit 100000000
+invocation-limit 1000
+request-max-tokens 16000
+invocation-output-tokens 60000
+invocation-requests $2
+EOF
+  chmod 600 "$1"
+}
+write_config "$work/config" 50
+write_config "$work/config-one" 1
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$work/standin.key" -out "$work/standin.pem" -days 2 \
+  -subj /CN=standin -addext subjectAltName=DNS:standin,DNS:recorder >/dev/null 2>&1
+chmod 644 "$work/standin.pem" "$work/standin.key"
+chmod 777 "$work/upstream" "$work/agent"
+docker network create --internal "$net" >/dev/null
+docker network create "$extnet" >/dev/null
+docker run -d --name "$recorder" --network "$net" --network-alias recorder --read-only --user "$(id -u):$(id -g)" \
+  --cap-drop ALL \
+  --mount "type=bind,source=$root/scripts/lib/live-upstream-record,target=/opt/upstream,readonly" \
+  --mount "type=bind,source=$work/standin.pem,target=/etc/standin.pem,readonly" \
+  --mount "type=bind,source=$work/standin.key,target=/etc/standin.key,readonly" \
+  --mount "type=bind,source=$work/upstream,target=/log" \
+  "$image" python3 /opt/upstream --cert /etc/standin.pem --key /etc/standin.key --log /log/bodies.jsonl >/dev/null
+sleep 1.5
+new_id() { head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+
+# ---------------------------------------------------------------- the proxy, directly
+
+# start_proxy CONFIG LEDGER RUN: the proxy as the helper starts it, the recorder its upstream
+start_proxy() {
+  local config=$1 ledger=$2 run=$3 n=0
+  rm -f "$ledger/runs/$run.ready"
+  docker run -d --name "$proxy_prefix$run" --network "$net" --network-alias lockstep-egress --read-only \
+    --tmpfs /tmp:rw,nosuid,nodev,size=16777216 --cap-drop ALL --security-opt no-new-privileges \
+    --user "$(id -u):$(id -g)" --log-driver none \
+    --mount "type=bind,source=$config,target=/etc/lockstep/provider,readonly" \
+    --mount "type=bind,source=$work/credential,target=/run/lockstep/credential,readonly" \
+    --mount "type=bind,source=$work/standin.pem,target=/etc/lockstep/ca.pem,readonly" \
+    --mount "type=bind,source=$ledger,target=/ledger" \
+    "$image" python3 /opt/lockstep/egress-proxy serve --config /etc/lockstep/provider \
+    --credential /run/lockstep/credential --ledger /ledger --run "$run" --role write \
+    --upstream recorder:8443 --ca /etc/lockstep/ca.pem >/dev/null
+  while [ ! -f "$ledger/runs/$run.ready" ] && [ $n -lt 80 ]; do sleep 0.1; n=$((n + 1)); done
+  [ -f "$ledger/runs/$run.ready" ]
+}
+stop_proxy() { docker rm -f "$proxy_prefix$1" >/dev/null 2>&1 || true; }
+# probe TOOL PROBE...: sets out ("NAME STATUS CODE" lines); TOOL is live-proxy-probe or live-conversation-probe
+probe() {
+  local tool=$1
+  shift
+  out=$(docker run --rm --network "$net" --read-only --user "$(id -u):$(id -g)" --cap-drop ALL \
+    --mount "type=bind,source=$root/scripts/lib/$tool,target=/opt/probe,readonly" \
+    "$image" python3 /opt/probe "$model" "$effort" "$@")
+}
+line_of() { printf '%s\n' "$out" | sed -n "s/^$1 //p" | head -n 1; }
+bodies() { [ -f "$work/upstream/bodies.jsonl" ] && wc -l < "$work/upstream/bodies.jsonl" | tr -d ' ' || echo 0; }
+stop_of() { sed -n 's/^stop //p' "$2/runs/$1" | head -n 1; }
+count_of() { grep -c "^$1 $2 " "$3/ledger" || true; }
+
+# H1: after a terminal refusal nothing more is admitted; the stop and the ledger stay as they were
+h1_case() { # TOOL PROBE CODE
+  local tool=$1 cause=$2 code=$3 run before
+  run=$(new_id)
+  start_proxy "$work/config" "$work/ledger" "$run" || { record FAIL "H1 $cause: the proxy did not start"; return; }
+  probe live-proxy-probe valid
+  expect "H1 $cause: a valid request first is answered (200)" test "$(line_of valid)" = "200 -"
+  before=$(bodies)
+  probe "$tool" "$cause"
+  expect "H1 $cause: refused ($code)" test "$(line_of "$cause")" = "403 $code"
+  probe live-proxy-probe valid
+  expect "H1 $cause: a valid request afterwards is refused: run-stopped" test "$(line_of valid)" = "403 run-stopped"
+  expect "H1 $cause: nothing more reached the upstream" test "$(bodies)" = "$before"
+  expect "H1 $cause: the stop is the first refusal ($code)" test "$(stop_of "$run" "$work/ledger")" = "$code"
+  expect "H1 $cause: the ledger holds one reservation, settled" \
+    test "$(count_of reserve "$run" "$work/ledger") $(count_of settle "$run" "$work/ledger")" = "1 1"
+  stop_proxy "$run"
+}
+h1_case live-conversation-probe malformed body-refused
+h1_case live-proxy-probe duplicate-model body-refused
+h1_case live-proxy-probe price-field field-refused
+h1_case live-proxy-probe no-effort effort-refused
+
+# H1: an exhausted limit (one request a run)
+run=$(new_id)
+start_proxy "$work/config-one" "$work/ledger" "$run"
+probe live-proxy-probe valid
+expect "H1 limit: the one request allowed is answered" test "$(line_of valid)" = "200 -"
+before=$(bodies)
+probe live-proxy-probe valid
+expect "H1 limit: the next is refused: requests-exhausted" test "$(line_of valid)" = "403 requests-exhausted"
+probe live-proxy-probe valid
+expect "H1 limit: and the next: run-stopped" test "$(line_of valid)" = "403 run-stopped"
+expect "H1 limit: nothing more reached the upstream" test "$(bodies)" = "$before"
+expect "H1 limit: the stop stays requests-exhausted" test "$(stop_of "$run" "$work/ledger")" = requests-exhausted
+stop_proxy "$run"
+
+# H2 at the proxy: one conversation a run
+run=$(new_id)
+start_proxy "$work/config" "$work/ledger" "$run"
+probe live-conversation-probe opening
+expect "H2 proxy: a run's opening request is answered" test "$(line_of opening)" = "200 -"
+before=$(bodies)
+probe live-conversation-probe opening-other
+expect "H2 proxy: a second conversation's opening is refused: conversation-refused" test "$(line_of opening-other)" = "403 conversation-refused"
+probe live-conversation-probe opening
+expect "H2 proxy: the opening sent again after its answer is refused" test "$(line_of opening)" = "403 run-stopped"
+expect "H2 proxy: neither reached the upstream" test "$(bodies)" = "$before"
+expect "H2 proxy: the run stopped: conversation-refused" test "$(stop_of "$run" "$work/ledger")" = conversation-refused
+stop_proxy "$run"
+run=$(new_id)
+start_proxy "$work/config" "$work/ledger" "$run"
+before=$(bodies)
+probe live-conversation-probe forged
+expect "H2 proxy: history answering a tool call never issued is refused" test "$(line_of forged)" = "403 conversation-refused"
+expect "H2 proxy: it reached nothing" test "$(bodies)" = "$before"
+stop_proxy "$run"
+run=$(new_id)
+start_proxy "$work/config" "$work/ledger" "$run"
+probe live-proxy-probe valid
+expect "H1 control: a fresh run still answers a valid request (200)" test "$(line_of valid)" = "200 -"
+stop_proxy "$run"
+
+# H1: an unreadable ledger (a ledger of its own)
+run=$(new_id)
+start_proxy "$work/config" "$work/ledger2" "$run"
+probe live-proxy-probe valid
+before=$(bodies)
+printf 'not a ledger line\n' >> "$work/ledger2/ledger"
+probe live-proxy-probe valid
+expect "H1 ledger: an unreadable ledger refuses: ledger-unreadable" test "$(line_of valid)" = "403 ledger-unreadable"
+probe live-proxy-probe valid
+expect "H1 ledger: the next request: run-stopped" test "$(line_of valid)" = "403 run-stopped"
+expect "H1 ledger: nothing more reached the upstream" test "$(bodies)" = "$before"
+expect "H1 ledger: the stop stays ledger-unreadable" test "$(stop_of "$run" "$work/ledger2")" = ledger-unreadable
+stop_proxy "$run"
+
+# ---------------------------------------------------------------- the helper's modes (H3)
+
+mkdir -p "$state/helper" "$state/pane" "$state/provider"
+chmod 700 "$state" "$state/helper" "$state/pane" "$state/provider"
+head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$state/helper/channel.key"
+cp "$work/config" "$state/provider/config"
+chmod 600 "$state/provider/config"
+# start_helper [VAR=VALUE...]: the real helper with --runner and these variables
+start_helper() {
+  env "$@" "$root/scripts/control-helper" --state "$state" --instance "$instance" --runner \
+    < /dev/null >> "$work/helper.out" 2>&1 &
+  helper_pid=$!
+  for _ in $(seq 1 150); do
+    grep -q "started (pid $helper_pid" "$state/helper/helper.log" 2>/dev/null && break
+    sleep 0.1
+  done
+  key=$(head -c 64 "$state/runner/channel.key")
+  ipad=""
+  opad=""
+  local i=0 b
+  while [ $i -lt 64 ]; do
+    if [ $i -lt 32 ]; then b=$((16#${key:$((i * 2)):2})); else b=0; fi
+    ipad="$ipad$(printf '\\x%02x' $((b ^ 0x36)))"
+    opad="$opad$(printf '\\x%02x' $((b ^ 0x5c)))"
+    i=$((i + 1))
+  done
+}
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256() { sha256sum | cut -d ' ' -f 1; }
+else
+  sha256() { shasum -a 256 | cut -d ' ' -f 1; }
+fi
+hex_escapes() {
+  local hex=$1 o="" j=0
+  while [ $j -lt ${#hex} ]; do o="$o\\x${hex:$j:2}"; j=$((j + 2)); done
+  printf '%s' "$o"
+}
+hmac() {
+  local inner
+  inner=$({ printf "$ipad"; cat; } | sha256)
+  { printf "$opad"; printf "$(hex_escapes "$inner")"; } | sha256
+}
+live_on() { [ -s "$state/runner/provider" ]; }
+# A run is submitted to a refused configuration only while live runs are off: a helper that took such a
+# configuration as production would send the synthetic key to the real provider, which this check never does.
+refused_run() { # LABEL
+  local before
+  before=$(agent_lines)
+  if live_on; then
+    record FAIL "H3 $1: live runs are on; no run submitted (it could reach the real provider)"
+    return
+  fi
+  submit run-live-write "$(new_id)"
+  expect "H3 $1: a live run is refused: provider-not-configured" result_is "refused provider-not-configured"
+  expect "H3 $1: nothing reached the upstream" test "$(agent_lines)" = "$before"
+}
+said() { tail -n 20 "$state/helper/helper.log" | grep -q -- "$1"; }
+set_offline() { # UPSTREAM CA NETWORK
+  printf 'lockstep-offline-test 1\nupstream %s\nca %s\negress-network %s\n' "$1" "$2" "$3" > "$state/provider/offline-test"
+  chmod 600 "$state/provider/offline-test"
+}
+# submit OP RUN [ARGV...]: a run with the CLI's argument vector (or the given one); waits; sets res
+submit() {
+  local op=$1 run=$2 id dir session line body tmp n=0
+  shift 2
+  local -a argv=("$@")
+  id=$(new_id)
+  dir=$state/runner/work/$run
+  mkdir -p "$dir/tree" "$dir/input" "$dir/output"
+  printf 'def add(a, b):\n    return a - b\n' > "$dir/tree/calc.py"
+  printf '{"role":"implementer","answer":{"file":"result.json","kind":"implementation"}}\n' > "$dir/input/context.json"
+  printf 'Fix add.\n' > "$dir/input/role.md"
+  if [ ${#argv[@]} = 0 ]; then
+    session="${run:0:8}-${run:8:4}-${run:12:4}-${run:16:4}-${run:20:12}"
+    while IFS= read -r line; do
+      line=${line//\{MODEL\}/$model}
+      line=${line//\{EFFORT\}/$effort}
+      line=${line//\{SESSION\}/$session}
+      line=${line//\{INPUT\}//input}
+      argv+=("$line")
+    done < "$root/test/fixtures/live/claude-argv"
+  fi
+  : > "$dir/argv"
+  for a in "${argv[@]}"; do printf '%s\0' "$a" >> "$dir/argv"; done
+  body=$(printf 'lockstep-runner-request 1\nid %s\nissued %s\nop %s\nexpect run-%s\nargv %s\n' "$id" "$(date +%s)" "$op" "$run" "$(sha256 < "$dir/argv")")
+  tmp=$state/runner/requests/.$id
+  printf '%s\n' "$body" > "$tmp"
+  printf 'mac %s\n' "$(printf '%s\n' "$body" | hmac)" >> "$tmp"
+  mv "$tmp" "$state/runner/requests/$id.rreq"
+  res=$state/runner/results/$id.res
+  while [ ! -f "$res" ] && [ $n -lt 1500 ]; do sleep 0.1; n=$((n + 1)); done
+}
+result_is() { [ -f "$res" ] && [ "$(sed -n 's/^outcome //p' "$res") $(sed -n 's/^reason //p' "$res")" = "$1" ]; }
+agent_lines() { [ -f "$work/agent/requests.jsonl" ] && wc -l < "$work/agent/requests.jsonl" | tr -d ' ' || echo 0; }
+start_agent() { # MODE COMMAND
+  docker rm -f "$agent" >/dev/null 2>&1 || true
+  printf '%s' "$2" > "$work/agent/command"
+  printf '{"kind":"implementation","summary":"add adds"}' > "$work/agent/answer.json"
+  chmod 644 "$work/agent/command" "$work/agent/answer.json"
+  : > "$work/agent/requests.jsonl"
+  chmod 666 "$work/agent/requests.jsonl"
+  docker run -d --name "$agent" --network "$net" --network-alias standin --read-only --user "$(id -u):$(id -g)" \
+    --cap-drop ALL \
+    --mount "type=bind,source=$root/scripts/lib/live-standin-agent,target=/opt/standin,readonly" \
+    --mount "type=bind,source=$work/standin.pem,target=/etc/standin.pem,readonly" \
+    --mount "type=bind,source=$work/standin.key,target=/etc/standin.key,readonly" \
+    --mount "type=bind,source=$work/agent,target=/log" \
+    "$image" python3 /opt/standin --cert /etc/standin.pem --key /etc/standin.key --log /log/requests.jsonl \
+    --mode "$1" --command /log/command --answer /log/answer.json --marker "/input/role.md" >/dev/null
+  sleep 1.5
+}
+start_agent implement ":"
+
+# H3-1 production mode, the authorized endpoint: accepted (no run is ever submitted in it)
+cp "$work/credential" "$state/provider/credential"
+start_helper
+expect "H3 production mode with no override: live runs on" live_on
+stop_helper
+
+# H3-2..4 production mode with a test override from the environment: refused, nothing sent
+for overrides in "LOCKSTEP_RUNNER_TEST_UPSTREAM=standin:8443" "LOCKSTEP_RUNNER_TEST_UPSTREAM_CA=$work/standin.pem" \
+  "LOCKSTEP_RUNNER_TEST_UPSTREAM=standin:8443 LOCKSTEP_RUNNER_TEST_UPSTREAM_CA=$work/standin.pem"; do
+  # shellcheck disable=SC2086 # each word is one VAR=VALUE; the egress network is always the internal one
+  start_helper $overrides LOCKSTEP_RUNNER_TEST_EGRESS_NETWORK=$net
+  expect "H3 production mode with $overrides: live runs off" test ! -s "$state/runner/provider"
+  expect "H3 the helper says why: test-override-refused" said test-override-refused
+  refused_run "production with $overrides"
+  stop_helper
+done
+
+# H3-6 explicit offline mode with the production credential path present: refused
+set_offline standin:8443 "$work/standin.pem" "$net"
+start_helper
+expect "H3 offline mode with the production credential present: live runs off" test ! -s "$state/runner/provider"
+expect "H3 the helper says why: offline-test-with-credential" said offline-test-with-credential
+refused_run "offline mode with the production credential"
+stop_helper
+rm -f "$state/provider/credential"
+
+# H3-7 explicit offline mode whose egress network can reach out: refused
+cp "$work/credential" "$state/provider/offline-credential"
+set_offline standin:8443 "$work/standin.pem" "$extnet"
+start_helper
+expect "H3 offline mode on a network that is not internal: live runs off" test ! -s "$state/runner/provider"
+expect "H3 the helper says why: offline-network-not-internal" said offline-network-not-internal
+refused_run "offline mode on a network that can reach out"
+stop_helper
+
+# H3-8 explicit offline mode with a test override from the environment as well: refused
+set_offline standin:8443 "$work/standin.pem" "$net"
+start_helper "LOCKSTEP_RUNNER_TEST_UPSTREAM=standin:8443" "LOCKSTEP_RUNNER_TEST_EGRESS_NETWORK=$net"
+expect "H3 offline mode with an environment override too: live runs off" test ! -s "$state/runner/provider"
+refused_run "offline mode with an environment override"
+stop_helper
+
+# H3-5 explicit offline mode, a synthetic key, the local upstream: accepted, and a run reaches the stand-in
+start_helper
+expect "H3 explicit offline mode with a synthetic key: live runs on" live_on
+expect "H3 the helper names the offline mode" said "live runs on (OFFLINE TEST"
+
+# ---------------------------------------------------------------- one writing agent (H2), through the CLI
+
+if ! said "live runs on (OFFLINE TEST"; then
+  # Nothing below runs unless the helper itself says it is in offline mode.
+  record FAIL "H2: the helper is not in offline mode; no run submitted"
+  stop_helper
+  echo "check-live-boundary: $failures failure(s); results in $results"
+  exit 1
+fi
+calc_of() { tr '\n' '|' < "$state/runner/work/$1/tree/calc.py"; }
+no_second() { [ -z "$(grep '"main": false' "$work/agent/requests.jsonl" || true)" ]; }
+run=$(new_id)
+submit run-live-write "$run"
+expect "H2 the Implementer edits the source (exited 0)" result_is "exited -"
+expect "H2 its edit is in the tree" test "$(calc_of "$run")" = "def add(a, b):|    return a + b|"
+expect "H2 the provider was offered Read, Edit and Bash only (no agent tool)" \
+  test -z "$(grep -v '"tools": \["Bash", "Edit", "Read"\]' "$work/agent/requests.jsonl" || true)"
+start_agent implement ":"
+run=$(new_id)
+submit run-live-readonly "$run"
+expect "H2 a read-only role cannot edit the source" test "$(calc_of "$run")" = "def add(a, b):|    return a - b|"
+
+second_agent() { # NAME COMMAND
+  start_agent bash "$2"
+  run=$(new_id)
+  submit run-live-write "$run"
+  expect "H2 $1: the run stops: provider-stopped conversation-refused" \
+    test "$(sed -n 's/^outcome //p' "$res") $(sed -n 's/^field provider-stop //p' "$res")" = "provider-stopped conversation-refused"
+  expect "H2 $1: no second conversation reached the upstream" no_second
+  expect "H2 $1: the source is not changed by it" test "$(calc_of "$run")" = "def add(a, b):|    return a - b|"
+}
+second_agent "a second CLI by name (its environment inherited)" \
+  "claude -p --bare --model $model --effort $effort --tools 'Read Edit Bash' --dangerously-skip-permissions 'Change calc.py.' 2>&1 | tail -n 3"
+second_agent "a second CLI by absolute path, the proxy named" \
+  "ANTHROPIC_BASE_URL=http://lockstep-egress:8080 ANTHROPIC_API_KEY=x /usr/local/bin/claude -p --bare --model $model --effort $effort --tools 'Read Edit Bash' --dangerously-skip-permissions 'Change calc.py.' 2>&1 | tail -n 3"
+second_agent "a direct client opening a new conversation" \
+  "python3 -c 'import http.client,json; c=http.client.HTTPConnection(\"lockstep-egress\",8080); b=json.dumps({\"model\":\"$model\",\"max_tokens\":100,\"stream\":True,\"output_config\":{\"effort\":\"$effort\"},\"messages\":[{\"role\":\"user\",\"content\":\"write code\"}]}); c.request(\"POST\",\"/v1/messages?beta=true\",b,{\"content-type\":\"application/json\"}); print(\"direct\", c.getresponse().status)'"
+
+start_agent bash "python3 -m py_compile calc.py && echo compiled; git --version; python3 -c 'print(1 + 1)'"
+run=$(new_id)
+submit run-live-write "$run"
+expect "H2 ordinary tooling: the run completes (exited 0)" result_is "exited -"
+expect "H2 ordinary tooling: its output reached the role" grep -q 'compiled' "$work/agent/requests.jsonl"
+stop_helper
+
+expect "the synthetic key is in no file kept" test -z "$(grep -r -l -F "$secret" "$work/upstream" "$work/agent" "$results" "$state/runner" "$state/helper" 2>/dev/null || true)"
+echo "check-live-boundary: $failures failure(s); results in $results"
+[ "$failures" = 0 ]
