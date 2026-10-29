@@ -134,6 +134,16 @@ closing it needs the process-memory isolation of the owner's hardening item 5.
 | `check-live-proxy` (amended A-P4.L.R1-1) | **21/21** | `.local/evidence/live-proxy-20261029t202625z/results.txt` |
 | `check-live-runner` (amended A-P4.L-1) | **84/84** | `.local/evidence/live-20261029t202647z/results.txt` |
 
+After the R2-H1 correction (§11), the final proxy:
+
+| Check | Result | Evidence |
+|---|---|---|
+| `check-live-concurrency` (§11) | **17/17** | `.local/evidence/live-concurrency-20261029t204313z/results.txt` |
+| `check-live-boundary` | **83/83** | `.local/evidence/live-boundary-20261029t204352z/results.txt` |
+| `check-live-impersonation` | **12/13** — the one-request bound (blocking, reported) | `.local/evidence/live-impersonation-20261029t204455z/results.txt` |
+| `check-live-proxy` (amended) | **21/21** | `.local/evidence/live-proxy-20261029t204513z/results.txt` |
+| `check-live-runner` (amended) | **84/84** | `.local/evidence/live-20261029t204530z/results.txt` |
+
 ## 11. Addendum — the narrow independent review (R2-H1) and its correction
 
 The review `docs/reviews/phase-4-live-hardening-review-2026-10-29.md` (independent, read-only, `f5b86a6..da7d70a`):

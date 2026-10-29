@@ -516,6 +516,8 @@ class Proxy:
         self.issued = set()
         self.latest = set()
         self.ended = False
+        # R2-H1a: a request of the conversation is in flight (admitted, not yet settled).
+        self.in_flight = False
 
     def note_stop(self, code):
         if self.summary["stop"] == "-" and code in STOPPING:
@@ -577,6 +579,7 @@ class Proxy:
             except OSError:
                 raise Refusal("ledger-unwritable")
             self.requests = number
+            self.in_flight = True
             self.output_open += max_tokens
             self.summary["requests"] = self.requests
             self.write_summary()
@@ -589,6 +592,10 @@ class Proxy:
         conversation whose latest answer ended the turn (no tool calls) admits nothing more (R2-H2b):
         the CLI exits after its final answer."""
         if self.ended:
+            raise Refusal("conversation-refused")
+        # R2-H1a/b: one request of the conversation at a time, so each answer's tool calls are answered
+        # by one request; they are free again only if that request ends without a complete answer.
+        if self.in_flight:
             raise Refusal("conversation-refused")
         if conversation["opening"]:
             if self.opening_answered:
@@ -604,18 +611,24 @@ class Proxy:
         if not self.latest <= conversation["answered"]:
             raise Refusal("conversation-refused")
 
-    def answered(self, conversation, tool_ids):
-        """A complete answer, its usage known: its tool calls are the conversation's latest."""
-        with self.lock:
-            if conversation["opening"]:
-                self.opening_answered = True
-            self.issued |= set(tool_ids)
-            self.latest = set(tool_ids)
-            if not tool_ids:
-                self.ended = True
+    def move_conversation(self, conversation, tool_ids):
+        """A complete answer, its usage known: its tool calls are the conversation's latest. Called with
+        the lock held, in the same step that settles the request and ends its time in flight (R2-H1)."""
+        if conversation["opening"]:
+            self.opening_answered = True
+        self.issued |= set(tool_ids)
+        self.latest = set(tool_ids)
+        if not tool_ids:
+            self.ended = True
 
-    def settle(self, number, reserve, reserve_tokens, max_tokens, prompt_tokens, usage, status):
+    def settle(self, number, reserve, reserve_tokens, max_tokens, prompt_tokens, usage, status,
+               conversation=None, tool_ids=()):
         with self.ledger.lock, self.lock:
+            # Only a complete answer, its usage known, moves the conversation on (H2); any ending ends
+            # the request's time in flight, so a request that failed may be retried.
+            if conversation is not None and usage is not None and 200 <= status < 300:
+                self.move_conversation(conversation, tool_ids)
+            self.in_flight = False
             self.output_open -= max_tokens
             self.statuses[str(status)] = self.statuses.get(str(status), 0) + 1
             if usage is None:
@@ -706,6 +719,7 @@ def handler_for(proxy):
             usage = None
             status = 502
             tool_ids = []
+            held = None
             try:
                 connection = http.client.HTTPSConnection(proxy.host, proxy.port, timeout=600, context=proxy.context)
                 connection.request("POST", "/v1/messages" + ("?beta=true" if path.endswith("?beta=true") else ""), body, headers)
@@ -731,6 +745,9 @@ def handler_for(proxy):
                 self.close_connection = True
                 stream = StreamUsage() if kind.startswith("text/event-stream") else None
                 whole = b""
+                # R2-H1c: each chunk is passed on when the next arrives; the last is held back until the
+                # request is settled and the conversation has moved on, so the client can never send its
+                # next request before the proxy expects it.
                 while True:
                     chunk = response.read1(65536)
                     if not chunk:
@@ -739,8 +756,10 @@ def handler_for(proxy):
                         stream.feed(chunk)
                     elif len(whole) <= MAX_BODY:
                         whole += chunk
-                    self.wfile.write(chunk)
-                    self.wfile.flush()
+                    if held is not None:
+                        self.wfile.write(held)
+                        self.wfile.flush()
+                    held = chunk
                 connection.close()
                 if 200 <= status < 300:
                     if stream is not None:
@@ -757,11 +776,16 @@ def handler_for(proxy):
                             usage = None
             except (OSError, http.client.HTTPException, ssl.SSLError):
                 usage = None
+                held = None
                 status = 502 if status in (0, 502) else status
-            proxy.settle(number, reserve, reserve_tokens, max_tokens, prompt_tokens, usage, status)
-            # Only a complete answer, its usage known, moves the conversation on (H2).
-            if usage is not None and 200 <= status < 300:
-                proxy.answered(conversation, tool_ids)
+            proxy.settle(number, reserve, reserve_tokens, max_tokens, prompt_tokens, usage, status,
+                         conversation, tool_ids)
+            if held is not None:
+                try:
+                    self.wfile.write(held)
+                    self.wfile.flush()
+                except OSError:
+                    pass
 
     return Handler
 
