@@ -239,6 +239,7 @@ test-suite lockstep-integration
       Lockstep.EngineImplementTest
       Lockstep.EnginePageTest
       Lockstep.EngineRecoveryTest
+      Lockstep.EngineRecoveryTwoTest
       Lockstep.EngineTest
       Lockstep.ExecutionBrowserTest
       Lockstep.ExecutionPageTest
