@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# The proxy's one-conversation rule under concurrency (contract C-P4.L.R2 §11:
+# the narrow review's R2-H1). Needs Docker and the provider image. The real
+# proxy, run directly as the helper starts it, with a stand-in upstream that asks
+# for a new tool call in every answer (scripts/lib/live-upstream-tools) on an
+# internal network; requests from scripts/lib/live-continuation-probe. Synthetic
+# key; no provider contacted. Results: .local/evidence/live-concurrency-<stamp>/
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+root=$PWD
+
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+work=$root/.local/evidence/live-concurrency-$stamp
+mkdir -p "$work/upstream" "$work/ledger"
+chmod 700 "$work/ledger"
+results=$work/results.txt
+: > "$results"
+failures=0
+net=lockstep-conc-$stamp
+upstream=lockstep-conc-up-$stamp
+proxy_prefix=lockstep-conc-egress-$stamp-
+image=lockstep-provider:claude-2.1.312
+model=claude-sonnet-5-5
+effort=medium
+
+record() { # STATUS DESCRIPTION
+  printf '%s %s\n' "$1" "$2" | tee -a "$results"
+  if [ "$1" != PASS ]; then failures=$((failures + 1)); fi
+}
+expect() { # DESCRIPTION CONDITION...
+  local description=$1
+  shift
+  if "$@"; then record PASS "$description"; else record FAIL "$description"; fi
+}
+
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  echo "NOT_RUN: the image $image is missing; run scripts/provider-image first" >&2
+  exit 2
+fi
+cleanup() {
+  docker ps -aq --filter "name=^$proxy_prefix" | while read -r c; do docker rm -f "$c" >/dev/null 2>&1 || true; done
+  docker rm -f "$upstream" >/dev/null 2>&1 || true
+  docker network rm "$net" >/dev/null 2>&1 || true
+  rm -f "$work/credential" "$work/standin.key"
+}
+trap cleanup EXIT
+
+umask 077
+printf 'sk-ant-test-%s\n' "$(head -c 20 /dev/urandom | od -An -tx1 | tr -d ' \n')" > "$work/credential"
+chmod 600 "$work/credential"
+cat > "$work/config" <<EOF
+lockstep-provider 1
+provider claude-code
+model $model
+effort $effort
+pricing synthetic-test-1
+price-input 3000000
+price-output 15000000
+price-cache-write-5m 3750000
+price-cache-write-1h 6000000
+price-cache-read 300000
+long-context-tokens 200000
+long-context-input-percent 200
+long-context-output-percent 150
+budget-micro-usd 50000000
+token-limit 100000000
+invocation-limit 1000
+request-max-tokens 16000
+invocation-output-tokens 600000
+invocation-requests 50
+EOF
+chmod 600 "$work/config"
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$work/standin.key" -out "$work/standin.pem" -days 2 \
+  -subj /CN=upstream -addext subjectAltName=DNS:upstream >/dev/null 2>&1
+chmod 644 "$work/standin.pem" "$work/standin.key"
+chmod 777 "$work/upstream"
+docker network create --internal "$net" >/dev/null
+
+start_upstream() { # [OPTIONS...]
+  docker rm -f "$upstream" >/dev/null 2>&1 || true
+  : > "$work/upstream/requests.log"
+  chmod 666 "$work/upstream/requests.log"
+  docker run -d --name "$upstream" --network "$net" --network-alias upstream --read-only --user "$(id -u):$(id -g)" \
+    --cap-drop ALL \
+    --mount "type=bind,source=$root/scripts/lib/live-upstream-tools,target=/opt/upstream,readonly" \
+    --mount "type=bind,source=$work/standin.pem,target=/etc/standin.pem,readonly" \
+    --mount "type=bind,source=$work/standin.key,target=/etc/standin.key,readonly" \
+    --mount "type=bind,source=$work/upstream,target=/log" \
+    "$image" python3 /opt/upstream --cert /etc/standin.pem --key /etc/standin.key --log /log/requests.log "$@" >/dev/null
+  sleep 1.5
+}
+start_proxy() { # RUN: the run's proxy, alone on the network (the previous case's is removed)
+  local run=$1 n=0
+  docker ps -aq --filter "name=^$proxy_prefix" | while read -r c; do docker rm -f "$c" >/dev/null 2>&1 || true; done
+  docker run -d --name "$proxy_prefix$run" --network "$net" --network-alias lockstep-egress --read-only \
+    --tmpfs /tmp:rw,nosuid,nodev,size=16777216 --cap-drop ALL --security-opt no-new-privileges \
+    --user "$(id -u):$(id -g)" --log-driver none \
+    --mount "type=bind,source=$work/config,target=/etc/lockstep/provider,readonly" \
+    --mount "type=bind,source=$work/credential,target=/run/lockstep/credential,readonly" \
+    --mount "type=bind,source=$work/standin.pem,target=/etc/lockstep/ca.pem,readonly" \
+    --mount "type=bind,source=$work/ledger,target=/ledger" \
+    "$image" python3 /opt/lockstep/egress-proxy serve --config /etc/lockstep/provider \
+    --credential /run/lockstep/credential --ledger /ledger --run "$run" --role write \
+    --upstream upstream:8443 --ca /etc/lockstep/ca.pem >/dev/null
+  while [ ! -f "$work/ledger/runs/$run.ready" ] && [ $n -lt 80 ]; do sleep 0.1; n=$((n + 1)); done
+  [ -f "$work/ledger/runs/$run.ready" ]
+}
+probe() { # ACTION [ARGS...]: sets out
+  out=$(docker run --rm --network "$net" --read-only --user "$(id -u):$(id -g)" --cap-drop ALL \
+    --mount "type=bind,source=$root/scripts/lib/live-continuation-probe,target=/opt/probe,readonly" \
+    "$image" python3 /opt/probe "$model" "$effort" "$@")
+}
+field() { printf '%s\n' "$out" | cut -d ' ' -f "$1"; }
+upstream_requests() { wc -l < "$work/upstream/requests.log" | tr -d ' '; }
+stop_of() { sed -n 's/^stop //p' "$work/ledger/runs/$1" | head -n 1; }
+new_id() { head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+
+# C1 the run's own conversation, answered fast, request after request
+start_upstream
+run=$(new_id)
+start_proxy "$run"
+probe opening
+expect "C1 the opening is answered with a tool call" test "$(field 2)" = 200 -a "$(field 3)" != -
+probe chain "$(field 3)" 10
+expect "C1 ten continuations, each sent as soon as the last answer arrived, are all admitted" \
+  test "$(printf '%s\n' "$out" | cut -d ' ' -f 2-11)" = "200 200 200 200 200 200 200 200 200 200"
+expect "C1 the run is not stopped" test "$(stop_of "$run")" = -
+
+# C2 two continuations answering the same tool call at once (a second agent riding the first's turn)
+start_upstream --delay 2
+run=$(new_id)
+start_proxy "$run"
+probe opening
+first=$(field 3)
+probe pair "$first"
+expect "C2 two continuations at once: one admitted, the other refused" test "$(field 2) $(field 3)" = "200 403"
+expect "C2 the run stops: conversation-refused" test "$(stop_of "$run")" = conversation-refused
+expect "C2 only the opening and one continuation reached the upstream" test "$(upstream_requests)" = 2
+
+# C3 two identical openings at once (a replayed opening alongside the real one)
+start_upstream --delay 2
+run=$(new_id)
+start_proxy "$run"
+probe open-pair
+expect "C3 two openings at once: one admitted, the other refused" test "$(field 2) $(field 3)" = "200 403"
+expect "C3 the run stops: conversation-refused" test "$(stop_of "$run")" = conversation-refused
+expect "C3 only one opening reached the upstream" test "$(upstream_requests)" = 1
+
+# C4 a tool call already answered is not answered again
+start_upstream
+run=$(new_id)
+start_proxy "$run"
+probe opening
+first=$(field 3)
+probe again "$first"
+expect "C4 the first answer to a tool call is admitted" test "$(field 2)" = 200
+probe again "$first"
+expect "C4 a second answer to the same tool call is refused" test "$(field 2)" = 403
+expect "C4 only two requests reached the upstream" test "$(upstream_requests)" = 2
+
+# C5 after a real opening, a continuation naming a tool call the upstream never issued
+start_upstream
+run=$(new_id)
+start_proxy "$run"
+probe opening
+probe forged
+expect "C5 a tool call never issued is refused" test "$(field 2)" = 403
+expect "C5 the run stops: conversation-refused" test "$(stop_of "$run")" = conversation-refused
+
+# C6 the opening retried after the provider's overload error (a legitimate retry)
+start_upstream --fail-first
+run=$(new_id)
+start_proxy "$run"
+probe opening
+expect "C6 the provider's overload answer is passed back (529)" test "$(field 2)" = 529
+probe opening
+expect "C6 the opening retried unchanged is admitted" test "$(field 2)" = 200
+expect "C6 the run is not stopped" test "$(stop_of "$run")" = -
+
+echo "check-live-concurrency: $failures failure(s); results in $results"
+[ "$failures" = 0 ]
