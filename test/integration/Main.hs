@@ -18,10 +18,14 @@ import Lockstep.DecisionsBrowserTest qualified as DecisionsBrowserTest
 import Lockstep.DecisionsPageTest qualified as DecisionsPageTest
 import Lockstep.DecisionsTest qualified as DecisionsTest
 import Lockstep.DispatcherTest qualified as DispatcherTest
+import Lockstep.EndToEndTest qualified as EndToEndTest
+import Lockstep.EngineAttemptPageTest qualified as EngineAttemptPageTest
 import Lockstep.EngineCandidateTest qualified as EngineCandidateTest
+import Lockstep.EngineHelperPathTest qualified as EngineHelperPathTest
 import Lockstep.EngineHumanTest qualified as EngineHumanTest
 import Lockstep.EngineImplementTest qualified as EngineImplementTest
 import Lockstep.EnginePageTest qualified as EnginePageTest
+import Lockstep.EngineRecoveryTest qualified as EngineRecoveryTest
 import Lockstep.EngineTest qualified as EngineTest
 import Lockstep.ExecutionBrowserTest qualified as ExecutionBrowserTest
 import Lockstep.ExecutionPageTest qualified as ExecutionPageTest
@@ -70,7 +74,9 @@ import Lockstep.RemediationTest qualified as RemediationTest
 import Lockstep.RemediationThirdReviewTest qualified as RemediationThirdReviewTest
 import Lockstep.RepositoryOwnershipTest qualified as RepositoryOwnershipTest
 import Lockstep.RolesTest qualified as RolesTest
+import Lockstep.ServeWorkerTest qualified as ServeWorkerTest
 import Lockstep.ServiceDbTest qualified as ServiceDbTest
+import Lockstep.SnapshotBoundsTest qualified as SnapshotBoundsTest
 import Lockstep.TasksBrowserTest qualified as TasksBrowserTest
 import Lockstep.TasksPageTest qualified as TasksPageTest
 import Lockstep.TasksTest qualified as TasksTest
@@ -149,4 +155,10 @@ main =
       , EngineImplementTest.tests
       , EngineHumanTest.tests
       , EnginePageTest.tests
+      , EndToEndTest.tests
+      , ServeWorkerTest.tests
+      , EngineRecoveryTest.tests
+      , EngineHelperPathTest.tests
+      , SnapshotBoundsTest.tests
+      , EngineAttemptPageTest.tests
       ]

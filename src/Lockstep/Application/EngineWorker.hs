@@ -14,6 +14,7 @@ module Lockstep.Application.EngineWorker
   ( EngineWorker
   , startEngineWorker
   , stopEngineWorker
+  , stopEngineWorkerWithin
   , engineOnce
   ) where
 
@@ -81,3 +82,8 @@ stopEngineWorker :: EngineWorker -> IO ()
 stopEngineWorker worker = do
   _ <- tryPutMVar (workerStop worker) ()
   readMVar (workerDone worker)
+
+-- | C-P4.R1 R-W2 (stage-not-built: the old stop); True when the worker had stopped in time.
+stopEngineWorkerWithin :: Int -> EngineWorker -> IO Bool
+stopEngineWorkerWithin _ worker =
+  True <$ stopEngineWorker worker

@@ -23,6 +23,10 @@ module Lockstep.Effects.GitSupervisor
   , treeEntries
   , writeSnapshot
   , snapshotChanges
+  , SnapshotLimits (..)
+  , defaultSnapshotLimits
+  , writeSnapshotWithin
+  , snapshotChangesWithin
   , CommitMeta (..)
   , commitChanges
   , advanceBranch
@@ -429,6 +433,30 @@ snapshotChanges entries dest = do
             let
               mode = if fileMode status .&. 0o100 /= 0 then ModeExecutable else ModeFile
             pure (Right [(relText, Right (mode, bytes))])
+
+-- | C-P4.R1 R-S2: the aggregate limits of a snapshot and its comparison.
+data SnapshotLimits
+  = SnapshotLimits
+  { limitFiles :: Int
+  , limitBytes :: Integer
+  , limitChangedFiles :: Int
+  , limitChangedBytes :: Integer
+  }
+  deriving (Eq, Show)
+
+defaultSnapshotLimits :: SnapshotLimits
+defaultSnapshotLimits =
+  SnapshotLimits {limitFiles = 100000, limitBytes = 2147483648, limitChangedFiles = 1000, limitChangedBytes = 67108864}
+
+-- | Stage-not-built: the limits are not applied yet.
+writeSnapshotWithin :: SnapshotLimits -> FilePath -> T.Text -> FilePath -> IO (Either T.Text [TreeEntry])
+writeSnapshotWithin _ =
+  writeSnapshot
+
+-- | Stage-not-built: the limits are not applied yet.
+snapshotChangesWithin :: SnapshotLimits -> [TreeEntry] -> FilePath -> IO (Either T.Text [Change])
+snapshotChangesWithin _ =
+  snapshotChanges
 
 -- Commits -----------------------------------------------------------------------
 

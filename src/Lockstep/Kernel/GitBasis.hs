@@ -10,6 +10,7 @@ module Lockstep.Kernel.GitBasis
   , TreeEntry (..)
   , Change (..)
   , treePathValid
+  , protectedPathValid
   , isCommitId
   , workBranch
   , supervisorName
@@ -78,6 +79,11 @@ treePathValid path =
       && s /= T.pack "."
       && s /= T.pack ".."
       && T.toLower s /= T.pack ".git"
+
+-- | C-P4.R1 R-P1 (stage-not-built: today's rule).
+protectedPathValid :: T.Text -> Bool
+protectedPathValid =
+  treePathValid
 
 -- | Forty lower-case hex characters.
 isCommitId :: T.Text -> Bool
