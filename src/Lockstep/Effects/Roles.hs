@@ -21,6 +21,8 @@ module Lockstep.Effects.Roles
   , RunnerFailure (..)
   , directRunner
   , helperRunner
+  , liveRunner
+  , liveProfile
   , Adapter (..)
   , scriptedAdapter
   , RoleOutcome (..)
@@ -229,9 +231,28 @@ readOnlyTree dir = do
 
 -- | The container runner (C-P4.2 R3, R4) through the host helper's channel.
 helperRunner :: RunnerChannel -> Runner
-helperRunner channel =
+helperRunner =
+  containerRunner (T.pack "container") id
+
+{- | C-P4.L L2: the container runner for a live provider's roles. A role runs
+with the helper's live profile (the provider image and the run's own network
+to the egress proxy, nothing else); every command, verification included,
+still runs with no network. It is the same container runner on the record
+(the invocation's adapter and argument vector say the role ran live).
+-}
+liveRunner :: RunnerChannel -> Runner
+liveRunner =
+  containerRunner (T.pack "container") liveProfile
+
+-- | The live profile for a role's profile; any other profile is unchanged.
+liveProfile :: RunProfile -> RunProfile
+liveProfile profile =
+  profile
+
+containerRunner :: T.Text -> (RunProfile -> RunProfile) -> RunnerChannel -> Runner
+containerRunner name choose channel =
   Runner
-    { runnerName = T.pack "container"
+    { runnerName = name
     , runnerPrepare = prepare
     , runnerRun = run
     , runnerRelease = releaseUnder (runnerDirectory channel <> "/work")
@@ -250,10 +271,17 @@ helperRunner channel =
             , workspaceView = View (T.pack "/work/tree") (T.pack "/input") (T.pack "/output")
             , workspaceName = preparedName p
             }
-  run workspace profile _ argv protected = do
+  run workspace requested _ argv protected = do
     let
+      profile = choose requested
       prepared = PreparedRun (workspaceName workspace) (workspaceTree workspace) (workspaceInput workspace) (workspaceOutput workspace)
-      waitSeconds = if profile == ProfileWrite then 1260 else 660
+      -- The helper's wall clock, and for a live run its admission, proxy and clean-up.
+      waitSeconds =
+        case profile of
+          ProfileWrite -> 1260
+          ProfileLiveWrite -> 1320
+          ProfileLiveReadOnly -> 720
+          _ -> 660
     -- C-P4.R1 R-W2, C-P4.R2 R2-W: a run whose caller is stopped is cancelled through the helper, not left
     -- running; the cancel is sent, never waited for.
     result <- submitRun channel prepared profile argv protected waitSeconds `onException` sendCancel channel (workspaceName workspace)
@@ -367,6 +395,8 @@ runPrepared runner role workspace argv protected = do
         OutputHeld _ -> pure (RoleFailed (T.pack "role-output-held") (Just result))
         Cancelled -> pure (RoleFailed (T.pack "role-cancelled") (Just result))
         LaunchFailed _ -> pure (RoleFailed (T.pack "role-launch-failed") (Just result))
+        -- C-P4.L L3: whatever the role wrote, a run the egress boundary stopped is not an answer.
+        ProviderStopped _ -> pure (RoleFailed (T.pack "not-implemented") (Just result))
  where
   checkAnswerCode r a =
     either (\c -> Left (T.pack "answer-invalid " <> c)) Right (checkAnswer r a)

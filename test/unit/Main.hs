@@ -9,6 +9,7 @@ import Lockstep.Application.CommandTest qualified as CommandTest
 import Lockstep.Application.NoopCommandTest qualified as NoopCommandTest
 import Lockstep.Application.ProfileDocumentTest qualified as ProfileDocumentTest
 import Lockstep.Application.ReadinessTest qualified as ReadinessTest
+import Lockstep.Effects.ClaudeAdapterTest qualified as ClaudeAdapterTest
 import Lockstep.Effects.ExecutorTest qualified as ExecutorTest
 import Lockstep.Effects.ReconcilerTest qualified as ReconcilerTest
 import Lockstep.Foundation.CliControlTest qualified as CliControlTest
@@ -149,4 +150,5 @@ main =
       , KernelRolesTest.tests
       , KernelTransactionTest.tests
       , KernelCandidateTest.tests
+      , ClaudeAdapterTest.tests
       ]

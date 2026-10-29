@@ -39,11 +39,16 @@ import Lockstep.Foundation.ControlProtocol
   , signBody
   )
 
--- | What a run may do to its tree (the helper's fixed table).
+{- | What a run may do to its tree (the helper's fixed table). The live
+profiles (C-P4.L L2) are the same mounts with the provider image and the run's
+own network to the egress proxy; every other profile has no network.
+-}
 data RunProfile
   = ProfileReadOnly
   | ProfileWrite
   | ProfileVerify
+  | ProfileLiveReadOnly
+  | ProfileLiveWrite
   deriving (Eq, Show)
 
 data RunnerOp
@@ -58,6 +63,8 @@ runnerOpName op =
       RunOp ProfileReadOnly -> "run-readonly"
       RunOp ProfileWrite -> "run-write"
       RunOp ProfileVerify -> "run-verify"
+      RunOp ProfileLiveReadOnly -> "run-live-readonly"
+      RunOp ProfileLiveWrite -> "run-live-write"
       CancelOp -> "cancel-run"
 
 data RunnerRequest
