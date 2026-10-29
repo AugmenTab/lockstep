@@ -30,6 +30,7 @@ import Crypto.Random (getRandomBytes)
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
+import Data.Char qualified as Char
 import Data.List qualified as L
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
@@ -247,6 +248,13 @@ interpretResult result out err =
     | o == T.pack "timed-out" = Right TimedOut
     | o == T.pack "cancelled" = Right Cancelled
     | o == T.pack "launch-failed" = Right (LaunchFailed (T.pack "container"))
+    -- C-P4.L L3: the code the helper's egress boundary gave, a short lower-case word.
+    | o == T.pack "provider-stopped" =
+        case resultField (T.pack "provider-stop") result of
+          Just code
+            | not (T.null code) && T.length code <= 40 && T.all (\c -> Char.isAsciiLower c || c == '-') code ->
+                Right (ProviderStopped code)
+          _ -> Left (HelperResultInvalid (T.pack "provider-stop"))
     | o == T.pack "output-limit" = do
         outBytes <- number "stdout-bytes"
         case limits of

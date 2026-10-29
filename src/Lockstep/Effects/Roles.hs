@@ -247,7 +247,10 @@ liveRunner =
 -- | The live profile for a role's profile; any other profile is unchanged.
 liveProfile :: RunProfile -> RunProfile
 liveProfile profile =
-  profile
+  case profile of
+    ProfileReadOnly -> ProfileLiveReadOnly
+    ProfileWrite -> ProfileLiveWrite
+    other -> other
 
 containerRunner :: T.Text -> (RunProfile -> RunProfile) -> RunnerChannel -> Runner
 containerRunner name choose channel =
@@ -396,7 +399,7 @@ runPrepared runner role workspace argv protected = do
         Cancelled -> pure (RoleFailed (T.pack "role-cancelled") (Just result))
         LaunchFailed _ -> pure (RoleFailed (T.pack "role-launch-failed") (Just result))
         -- C-P4.L L3: whatever the role wrote, a run the egress boundary stopped is not an answer.
-        ProviderStopped _ -> pure (RoleFailed (T.pack "not-implemented") (Just result))
+        ProviderStopped code -> pure (RoleFailed (T.pack "provider-stopped " <> code) (Just result))
  where
   checkAnswerCode r a =
     either (\c -> Left (T.pack "answer-invalid " <> c)) Right (checkAnswer r a)

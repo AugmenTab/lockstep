@@ -88,6 +88,10 @@ with the changed helper.
   table's check (the live runner is `container` on the record); a provider file of two lines read as one.
   Test-side corrections before the freeze: credential changes are written in place and given 3 s to reach the
   container (the Mac's file sharing showed a renamed file or a mode change late; each case failed closed).
+- After the freeze (writer's slip, recorded): the two frozen test modules were committed without running `hlint`,
+  which then gave six style hints in them (`Redundant <$>` ×4 in `Lockstep.LiveAdapterTest`; `Avoid lambda`, `Eta
+  reduce` in `Lockstep.Effects.ClaudeAdapterTest`). The frozen files are unchanged; `.hlint.yaml` ignores exactly
+  those three hint names within exactly those two modules. No check's meaning changes.
 
 ## 6. Allowed paths
 

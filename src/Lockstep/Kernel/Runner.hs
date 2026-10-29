@@ -174,10 +174,11 @@ data RunOutcome
   | OutputHeld Stream
   | Cancelled
   | LaunchFailed T.Text
-  | ProviderStopped T.Text
-  -- ^ C-P4.L L3: a live run the helper's egress boundary stopped or could not
-  -- account for (the budget, a limit, a refused request, unknown usage, the proxy
-  -- gone); what it printed is not trusted
+  | {- | C-P4.L L3: a live run the helper's egress boundary stopped or could not
+    account for (the budget, a limit, a refused request, unknown usage, the proxy
+    gone); what it printed is not trusted
+    -}
+    ProviderStopped T.Text
   deriving (Eq, Show)
 
 {- | @output-held@: the program ended but something outside its process group

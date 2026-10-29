@@ -100,6 +100,8 @@ import Lockstep.Application.Repositories
   )
 import Lockstep.Application.Sandbox (sandboxAdapters, sandboxApplications, sandboxReconcilers, sandboxRequest)
 import Lockstep.Effects.HelperRunner (openRunnerChannel)
+import Lockstep.Effects.Provider.Claude (ProviderConfig (..), readProviderFile)
+import Lockstep.Effects.Provider.Live (liveRoles)
 import Lockstep.Effects.Roles (helperRunner)
 import Lockstep.Foundation.Cli
   ( BackupPolicy
@@ -271,11 +273,17 @@ serve serveConfig = do
 
 {- | C-P4.17 Q5: the engine worker, when the host helper's runner channel is
 there (@LOCKSTEP_RUNNER_DIR@, which @scripts/service@ passes when the helper
-was started with @--runner@). Every role runs in the helper's container. No
-coding helper is built into this binary (the live adapter is separately
-authorized), so a fix stops for a person at its first role step; the worker
-still takes each handed-over bug to that point, and acts on the person's
-answers and Done. Without a channel there is no worker: nothing is started.
+was started with @--runner@). Every role runs in the helper's container.
+Without a live provider a fix stops for a person at its first role step; the
+worker still takes each handed-over bug to that point, and acts on the
+person's answers and Done. Without a channel there is no worker: nothing is
+started.
+
+C-P4.L L1: when the helper has a live provider configured, its channel holds
+the provider line; then every role runs the Claude Code CLI with that model
+and effort, in the helper's live container. A provider line that cannot be
+used turns the worker off with its reason; it is never replaced by another
+model, effort or provider.
 -}
 engineWorker :: DatabaseRuntime -> (String -> IO ()) -> IO (Maybe EngineWorker)
 engineWorker runtime logLine = do
@@ -291,8 +299,19 @@ engineWorker runtime logLine = do
           logLine ("Engine worker: off (" <> T.unpack code <> ")")
           pure Nothing
         Right c -> do
-          logLine "Engine worker: on (roles run in the host helper's container; no coding helper is built in)"
-          Just <$> startEngineWorker runtime (Engine (helperRunner c) (\_ _ -> Nothing)) 2000 logLine
+          provider <- readProviderFile (d <> "/provider")
+          case provider of
+            Nothing -> do
+              logLine "Engine worker: on (roles run in the host helper's container; no live provider is configured)"
+              Just <$> startEngineWorker runtime (Engine (helperRunner c) (\_ _ -> Nothing)) 2000 logLine
+            Just (Left code) -> do
+              logLine ("Engine worker: off (" <> T.unpack code <> ")")
+              pure Nothing
+            Just (Right config) -> do
+              let
+                (runner, adapter) = liveRoles c config
+              logLine ("Engine worker: on (live provider claude-code, model " <> T.unpack (providerModel config) <> ", effort " <> T.unpack (providerEffort config) <> ")")
+              Just <$> startEngineWorker runtime (Engine runner adapter) 2000 logLine
 
 dbMigrate :: BackupPolicy -> DatabaseRuntime -> IO ()
 dbMigrate policy runtime = do
