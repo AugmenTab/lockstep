@@ -25,6 +25,12 @@
 - ignore: {name: Use void}
 - ignore: {name: Use join}
 
+# C-P4.L: style hints in two test modules frozen before lint was run on them (the
+# tests' content is unchanged; recorded in docs/gates/P4.L/contract.md §5).
+- ignore: {name: Redundant <$>, within: [Lockstep.LiveAdapterTest]}
+- ignore: {name: Avoid lambda, within: [Lockstep.Effects.ClaudeAdapterTest]}
+- ignore: {name: Eta reduce, within: [Lockstep.Effects.ClaudeAdapterTest]}
+
 - warn: {lhs: a ++ b, rhs: a <> b}
 
 - warn:
