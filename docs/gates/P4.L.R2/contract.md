@@ -134,10 +134,59 @@ closing it needs the process-memory isolation of the owner's hardening item 5.
 | `check-live-proxy` (amended A-P4.L.R1-1) | **21/21** | `.local/evidence/live-proxy-20261029t202625z/results.txt` |
 | `check-live-runner` (amended A-P4.L-1) | **84/84** | `.local/evidence/live-20261029t202647z/results.txt` |
 
+## 11. Addendum — the narrow independent review (R2-H1) and its correction
+
+The review `docs/reviews/phase-4-live-hardening-review-2026-10-29.md` (independent, read-only, `f5b86a6..da7d70a`):
+**one HIGH, no MEDIUM, five LOW, three INFO.**
+
+**R2-H1 (HIGH), confirmed by the writer and by a regression:** the conversation rule kept only the latest answer's
+tool calls and nothing about requests in flight, so two requests answering the same tool calls (or two identical
+openings) sent at the same time were both admitted; whichever answer finished last set the state. A process that can
+read the CLI's memory could therefore run a second conversation turn alongside the CLI's own, each turn, undetected.
+This contradicted §6 ("a second conversation alongside the first is never admitted") and the §9 statement that the
+owner's condition 1 held.
+
+| # | Decision |
+|---|---|
+| R2-H1a | **One conversation request in flight a run.** A request of the run's conversation is admitted only when no other is in flight; a second one at the same time is `conversation-refused` (the run stops). |
+| R2-H1b | **Each answer's tool calls are answered once.** Admitting a request that answers the latest tool calls (or the opening) uses them up; another request answering them is refused. They are released only if the request ends without a complete answer (a provider error or a broken stream), so the CLI's retry is admitted. |
+| R2-H1c | **The state moves before the answer is delivered** (the review's R2-L2): the proxy holds back the answer's last bytes until it has settled the request and recorded the new tool calls, so the CLI's immediate next request is never refused for arriving early. |
+
+Verification (frozen with this addendum, commit `38bcf53`):
+
+| File | sha256 |
+|---|---|
+| `scripts/lib/check-live-concurrency` | `ac19ff3d7aec9ecf761d8c0d1d1fbe14b7fed7905c88378c8f01d3d5cb48b666` |
+| `scripts/lib/live-continuation-probe` | `0d31d7abbb9c41ccc4002d5327c8789f907be4f5451bccf57f240c66403b8f20` |
+| `scripts/lib/live-upstream-tools` | `f33776fb503386dd845bbc4365096b427c74196222354d5886eb1838effe0341` |
+
+Covers: C1 ten fast continuations of the run's own conversation admitted (no false stop); C2 two continuations of the
+same tool call at once — one admitted, the other refused, the run stopped, only two requests upstream; C3 two identical
+openings at once — likewise; C4 an answered tool call answered again — refused; C5 a tool call never issued, after a
+real opening — refused (the review's R2-L5 coverage gap); C6 the opening retried after the provider's 529 — admitted.
+
+Baseline against `da7d70a` (`.local/p4lr2-concurrency-baseline.log`): **6 failures, exactly C2 and C3** (both
+concurrent requests admitted and sent); everything else held. A first baseline had one test fault, corrected before
+the freeze: each case's proxy was left running under the same network alias, so probes reached an earlier, stopped
+proxy (the check now removes it).
+
+The review's LOW and INFO items, dispositioned:
+
+| Finding | Disposition |
+|---|---|
+| R2-L1 (a refusal's stop is recorded just after the response is chosen, not under the admission lock) | **Recorded.** The request admitted in that window passes every check, including the conversation rule, which R2-H1a now serializes; it is not a second agent's. |
+| R2-L2 (the state moves after the answer reaches the client) | **Fixed** (R2-H1c), covered by C1. |
+| R2-L3 (offline mode's internal-network check only at start) | **Recorded.** Replacing the named network between runs needs control of the operator's Docker; offline mode is for the host checks only. |
+| R2-L4 (a timeout or cancellation hides the proxy's stop reason in the result) | **Recorded.** The outcome is never an answer in either case; the stop stays in the run's summary in the ledger directory. |
+| R2-L5 (coverage gaps) | **Partly fixed**: C4, C5 and concurrency covered here; the stand-in's fixed tool ids remain (they model the memory-reading impersonator, by design). |
+| INFO items | Recorded in the review; no change. |
+
+## 12. Allowed paths
+
 Changed: `scripts/runner/provider/egress-proxy`, `scripts/control-helper`, the files of §3, `docs/gates/P4.L.R2/**`,
 `docs/gates/P4.L/**` (the smoke proposal's configuration steps), `docs/gates/C-EXEC/**`, `docs/reviews/**`,
 `docs/OPERATOR_GUIDE.md`, `docs/governance/DECISION_REGISTER.md`; with authorization only, the amended checks of §5.
 
-## 8. Budget, stop, rollback
+## 13. Budget, stop, rollback
 
 At most 3 implementation attempts per failing frozen check. Rollback: revert the commits and rebuild the image.
