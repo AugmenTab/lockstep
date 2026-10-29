@@ -185,11 +185,28 @@ The review's LOW and INFO items, dispositioned:
 | Finding | Disposition |
 |---|---|
 | R2-L1 (a refusal's stop is recorded just after the response is chosen, not under the admission lock) | **Recorded.** The request admitted in that window passes every check, including the conversation rule, which R2-H1a now serializes; it is not a second agent's. |
-| R2-L2 (the state moves after the answer reaches the client) | **Fixed** (R2-H1c), covered by C1. |
+| R2-L2 (the state moves after the answer reaches the client) | **Fixed** (R2-H1c). *Corrected:* C1 also passed before the fix, so no frozen test fails without R2-H1c; the fix rests on the code and on the confirming review (below), not on C1. |
 | R2-L3 (offline mode's internal-network check only at start) | **Recorded.** Replacing the named network between runs needs control of the operator's Docker; offline mode is for the host checks only. |
 | R2-L4 (a timeout or cancellation hides the proxy's stop reason in the result) | **Recorded.** The outcome is never an answer in either case; the stop stays in the run's summary in the ledger directory. |
 | R2-L5 (coverage gaps) | **Partly fixed**: C4, C5 and concurrency covered here; the stand-in's fixed tool ids remain (they model the memory-reading impersonator, by design). |
 | INFO items | Recorded in the review; no change. |
+
+### The confirming review of the correction
+
+`docs/reviews/phase-4-live-hardening-fix-review-2026-10-29.md` (independent, read-only, `da7d70a..7018df9`):
+**R2-H1: CLOSED**; no HIGH, no MEDIUM, two LOW, four INFO.
+
+| Finding | Disposition |
+|---|---|
+| LOW-1 (an unexpected exception after admission leaves the run in flight for good) | **Recorded.** Fail-closed: every later request of the run is refused and the run stops; never a bypass. |
+| LOW-2 (an error answer's headers are sent before it is settled; a client that retries within milliseconds could be stopped) | **Recorded.** Fail-closed (a false stop of the run, which then halts for a person). |
+| INFO-1 (C1 does not test R2-H1c) | **Corrected** in the R2-L2 row above. |
+| INFO-2 – INFO-4 | Recorded; no change. The image used for the evidence was built from the working tree identical to `7018df9`. |
+
+Full Mac qualification at `7018df9`: `scripts/check --integration` all six steps PASSED — unit 870/870, integration
+571/571, the guard's sentinel log empty after the integration step (`.local/p4lr2-check-mac.log`). The Linux clean
+clone, `check-runner`, `check-runner-paths` and the stress test are held at the owner's word (2026-10-29: "don't
+start Linux right away").
 
 ## 12. Allowed paths
 
