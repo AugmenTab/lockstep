@@ -199,6 +199,21 @@ adopted and transmitted by the owner; recorded by the writing agent):
   adapters and disposable local repositories. Still separately authorized: live provider calls, installation,
   remote publishing, Gate C-EXEC acceptance, Phase 5. UX-C8/UX-C9 stay NOT_RUN — DEFERRED BY OWNER.
 
+Phase 4 recovery and completion, 2026-10-28 (the owner's instruction in the session, "Read
+@.local/plans/phase-04_update2.md and implement"; handoff `.local/plans/phase-04_update2.md`, sha256
+`c3b2a6fd0b800942dcc30f065685f27231fb9524b498778fd2bda8c5356278b8`; recorded by the writing agent):
+
+- **Authorized**: correcting the five MEDIUM findings of `docs/reviews/phase-4-review-2026-10-28.md` (M1–M5,
+  blocking for Gate C-EXEC), M2 and M3 first; a bounded disposition of L6–L11 (fix with a regression, or
+  evidence); then P4.17 under its contract, including a supported production arrangement for the engine
+  worker; full Mac and Linux qualification; an independent read-only review of the remediation and P4.17; the
+  decision packet and a bounded proposal for the first real-provider smoke.
+- **Not authorized by it**: any live or paid provider call (the smoke is proposed, not run); installation;
+  push or publication; owner acceptance of Gate C-EXEC or human Done on the owner's behalf; the Orville,
+  Fleece, Shrubbery or other architectural clean-up (deferred until after Phase 4 and the first dogfooding),
+  except a narrow fix for an immediate security, confinement, replay or data-integrity failure; new roles or a
+  state-machine redesign; Polygon Pong; Phase 5.
+
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.
 

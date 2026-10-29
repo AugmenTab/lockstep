@@ -106,6 +106,8 @@ data Runner
   { runnerName :: T.Text
   , runnerPrepare :: IO (Either T.Text Workspace)
   , runnerRun :: Workspace -> RunProfile -> Limits -> [T.Text] -> [T.Text] -> IO (Either RunnerFailure RunResult)
+  , runnerRelease :: Workspace -> IO ()
+  -- ^ C-P4.R1 R-K1: removes a finished workspace of this runner (stage-not-built: nothing).
   }
 
 {- | The direct runner (C-P4.2 R2) on workspaces under a root directory. It is
@@ -119,6 +121,7 @@ directRunner cancel root =
       { runnerName = T.pack "direct"
       , runnerPrepare = prepare
       , runnerRun = run
+      , runnerRelease = const (pure ())
       }
  where
   prepare = do
@@ -181,6 +184,7 @@ helperRunner channel =
     { runnerName = T.pack "container"
     , runnerPrepare = prepare
     , runnerRun = run
+    , runnerRelease = const (pure ())
     }
  where
   prepare = do

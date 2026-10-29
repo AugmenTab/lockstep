@@ -122,6 +122,27 @@ tests:
     when:
       - condition: false
         other-modules: Paths_lockstep
+  # C-P4.R1 R-S3: run on its own (stack test lockstep:lockstep-stress); a 96 MiB heap.
+  lockstep-stress:
+    main:        Main.hs
+    source-dirs: test/stress
+    dependencies:
+      - lockstep
+      - bytestring
+      - directory
+      - process
+      - tasty
+      - tasty-hunit
+      - temporary
+      - text
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - "\"-with-rtsopts=-M96m -T\""
+      - -fplugin-opt=Henforcer:--config=henforcer-tests.toml
+    when:
+      - condition: false
+        other-modules: Paths_lockstep
   lockstep-integration:
     main:        Main.hs
     source-dirs: test/integration
