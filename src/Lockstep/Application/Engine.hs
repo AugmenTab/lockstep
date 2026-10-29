@@ -33,7 +33,9 @@ import Control.Monad ((>=>))
 import Crypto.Hash (SHA256 (SHA256), hashWith)
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import Data.ByteString qualified as BS
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List qualified as L
+import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
@@ -53,12 +55,12 @@ import Lockstep.Application.Repositories (ownershipHolds)
 import Lockstep.Application.Tasks (TaskView (..), findTaskIn)
 import Lockstep.Effects.GitSupervisor (Basis (..), CommitMeta (..), advanceBranch, branchHead, commitChanges, commitTime, createWorkBranch, observeBasis, snapshotChanges, writeSnapshot)
 import Lockstep.Effects.Process (RunResult (..))
-import Lockstep.Effects.Roles (Adapter (..), Runner (..), RunnerFailure (..), Workspace (..), decodeAnswer, prepareRole, runPrepared)
+import Lockstep.Effects.Roles (Adapter (..), Runner (..), RunnerFailure (..), Workspace (..), decodeAnswer, prepareRole, readAnswer, runPrepared)
 import Lockstep.Effects.Roles qualified as Roles
 import Lockstep.Foundation.Json (Json (..), renderJson, string, strings)
 import Lockstep.Foundation.RunnerProtocol (RunProfile (..))
 import Lockstep.Kernel.Candidate (MutantRun (..), classifyTest, disposeFinding, quoteGrounded)
-import Lockstep.Kernel.GitBasis (Change (..), TreeEntry (..), TreeMode (..), treePathValid, workBranch)
+import Lockstep.Kernel.GitBasis (Change (..), TreeEntry (..), TreeMode (..), protectedPathValid, treePathValid, workBranch)
 import Lockstep.Kernel.Identity (parseUuid, uuidText)
 import Lockstep.Kernel.Roles
   ( Candidate (..)
@@ -75,6 +77,7 @@ import Lockstep.Kernel.Roles
   , Role (..)
   , RoleAnswer (..)
   , Verdict (..)
+  , checkAnswer
   , roleName
   , verdictName
   )
@@ -298,6 +301,8 @@ startTransaction runtime raw =
               case facts of
                 Nothing -> pure (Left (T.pack "not-admitted"))
                 Just f -> do
+                  -- C-P4.R1 R-O1: starts for one Engineer check and insert one after the other.
+                  Store.lockEngineer (Store.factEngineer f)
                   busy <- Store.busyTransactions (Store.factEngineer f)
                   if not (L.null busy)
                     then pure (Left (T.pack "engineer-busy"))
@@ -357,35 +362,43 @@ applyInput runtime txId revision principal input records change =
       Nothing -> pure (Left (T.pack "unknown-transaction"))
       Just row
         | Store.txRowRevision row /= revision -> pure (Left (T.pack "stale-step"))
-        | otherwise ->
-            case kernelOf row of
-              Nothing -> pure (Left (T.pack "transaction-unreadable"))
-              Just tx ->
-                case stepTransaction principal input tx of
-                  Left code -> pure (Left code)
-                  Right next -> do
-                    existing <- Store.transactionRecords txId
-                    let
-                      stage = lastStage row
-                      (stateName, stageText, code) = stateColumns stage (txState next)
-                      updated =
-                        (change row)
-                          { Store.txRowState = stateName
-                          , Store.txRowStage = stageText
-                          , Store.txRowHaltCode = code
-                          , Store.txRowCandidates = fromIntegral (candidatesMade (txCounters next))
-                          , Store.txRowAttempts = fromIntegral (attemptsMade (txCounters next))
-                          , Store.txRowRevision = revision + 1
-                          }
-                      halted =
-                        case txState next of
-                          Halted s c -> [(T.pack "halt", JObject [(T.pack "stage", string (stageName s)), (T.pack "code", string c)])]
-                          _ -> []
-                      inputRecord = (T.pack "input", JObject [(T.pack "input", string (txInputName input)), (T.pack "state", string stateName)])
-                      numbered = L.zip [fromIntegral (L.length existing) + 1 ..] (records <> [inputRecord] <> halted)
-                    Store.updateTransaction updated
-                    traverse_ (\(n, (kind, body)) -> appendRecord txId n kind principal stage body) numbered
-                    pure (Right updated)
+        | otherwise -> applyLocked row principal input records change
+
+{- | 'applyInput' on a row already locked at the right revision, inside the
+caller's database transaction. A refusal ('Left') writes nothing.
+-}
+applyLocked :: Store.TransactionRow -> Principal -> TxInput -> [(T.Text, Json)] -> (Store.TransactionRow -> Store.TransactionRow) -> O.Orville (Either T.Text Store.TransactionRow)
+applyLocked row principal input records change =
+  case kernelOf row of
+    Nothing -> pure (Left (T.pack "transaction-unreadable"))
+    Just tx ->
+      case stepTransaction principal input tx of
+        Left code -> pure (Left code)
+        Right next -> do
+          let
+            txId = Store.txRowId row
+          existing <- Store.transactionRecords txId
+          let
+            stage = lastStage row
+            (stateName, stageText, code) = stateColumns stage (txState next)
+            updated =
+              (change row)
+                { Store.txRowState = stateName
+                , Store.txRowStage = stageText
+                , Store.txRowHaltCode = code
+                , Store.txRowCandidates = fromIntegral (candidatesMade (txCounters next))
+                , Store.txRowAttempts = fromIntegral (attemptsMade (txCounters next))
+                , Store.txRowRevision = Store.txRowRevision row + 1
+                }
+            halted =
+              case txState next of
+                Halted s c -> [(T.pack "halt", JObject [(T.pack "stage", string (stageName s)), (T.pack "code", string c)])]
+                _ -> []
+            inputRecord = (T.pack "input", JObject [(T.pack "input", string (txInputName input)), (T.pack "state", string stateName)])
+            numbered = L.zip [fromIntegral (L.length existing) + 1 ..] (records <> [inputRecord] <> halted)
+          Store.updateTransaction updated
+          traverse_ (\(n, (kind, body)) -> appendRecord txId n kind principal stage body) numbered
+          pure (Right updated)
 
 -- Advancing ----------------------------------------------------------------------------
 
@@ -419,7 +432,23 @@ advanceRow runtime engine row =
             Left code -> pure (Left code)
             Right (Just input) -> report input
             Right Nothing -> do
-              result <- runStage runtime engine row stage
+              -- C-P4.R1 R-K1: every workspace made for the stage, removed once it has ended
+              -- (a stage cut short by an exception keeps them: they may still be in use).
+              made <- newIORef []
+              let
+                runner = engineRunner engine
+                tracked =
+                  engine
+                    { engineRunner =
+                        runner
+                          { runnerPrepare = do
+                              prepared <- runnerPrepare runner
+                              traverse_ (\w -> modifyIORef' made (w :)) prepared
+                              pure prepared
+                          }
+                    }
+              result <- runStage runtime tracked row stage
+              readIORef made >>= traverse_ (runnerRelease runner)
               case result of
                 Left code -> pure (Left code)
                 Right input -> report input
@@ -499,38 +528,42 @@ decideCompletion runtime raw sender choice =
 
 {- | E4: invocations found started but not finished. A role's is finished as
 @uncertain@ and the transaction halts (never run again by itself); a
-command's is finished as @interrupted@ and the stage runs again.
+command's is finished as @interrupted@ and the stage runs again. C-P4.R1
+R-U1: all of it in one database transaction under the row lock, so either
+every part is written or none (the invocation stays unfinished, nothing runs).
 -}
 settleUnfinished :: DatabaseRuntime -> Store.TransactionRow -> Stage -> IO (Either T.Text (Maybe TxInput))
-settleUnfinished runtime row _ = do
-  unfinished <- db runtime (Right <$> Store.unfinishedInvocations (Store.txRowId row))
-  case unfinished of
-    Left code -> pure (Left code)
-    Right [] -> pure (Right Nothing)
-    Right invocations -> do
-      let
-        isRole i = Store.invocationRowWhat i `L.elem` fmap roleName [Planner, Challenger, Implementer, Reviewer]
-        roles = L.filter isRole invocations
-      finished <-
-        db runtime . O.withTransaction $ do
-          traverse_
-            (\i -> Store.finishInvocation (Store.invocationRowId i) (emptyFinish (T.pack (if isRole i then "uncertain" else "interrupted"))))
-            invocations
-          pure (Right ())
-      case finished of
-        Left code -> pure (Left code)
-        Right ()
-          | L.null roles -> pure (Right Nothing)
-          | otherwise -> do
-              let
-                input = RoleUncertain (T.pack "unfinished-invocation")
-                body = JObject [(T.pack "invocations", strings (fmap Store.invocationRowId roles))]
-              applied <- applyInput runtime (Store.txRowId row) (Store.txRowRevision row) Supervisor input [(T.pack "uncertain", body)] id
-              pure (Just input <$ applied)
+settleUnfinished runtime row _ =
+  db runtime . O.withTransaction $ do
+    locked <- Store.lockTransaction (Store.txRowId row)
+    case locked of
+      Nothing -> pure (Left (T.pack "unknown-transaction"))
+      Just current
+        | Store.txRowRevision current /= Store.txRowRevision row -> pure (Left (T.pack "stale-step"))
+        | otherwise -> do
+            invocations <- Store.unfinishedInvocations (Store.txRowId row)
+            let
+              isRole i = Store.invocationRowWhat i `L.elem` fmap roleName [Planner, Challenger, Implementer, Reviewer]
+              roles = L.filter isRole invocations
+              finishAll =
+                traverse_
+                  (\i -> Store.finishInvocation (Store.invocationRowId i) (emptyFinish (T.pack (if isRole i then "uncertain" else "interrupted"))))
+                  invocations
+              input = RoleUncertain (T.pack "unfinished-invocation")
+              body = JObject [(T.pack "invocations", strings (fmap Store.invocationRowId roles))]
+            case () of
+              _
+                | L.null invocations -> pure (Right Nothing)
+                | L.null roles -> Right Nothing <$ finishAll
+                | otherwise -> do
+                    applied <- applyLocked current Supervisor input [(T.pack "uncertain", body)] id
+                    case applied of
+                      Left code -> pure (Left code)
+                      Right _ -> Right (Just input) <$ finishAll
 
 emptyFinish :: T.Text -> Store.Finish
 emptyFinish outcome =
-  Store.Finish outcome Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+  Store.Finish outcome Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
 
 finishOf :: T.Text -> RunResult -> Store.Finish
 finishOf outcome r =
@@ -547,6 +580,8 @@ finishOf outcome r =
     , Store.finishStderrDigest = Just (sha256Hex (resultStderr r))
     , Store.finishStdoutTail = Just (tailOf (resultStdout r))
     , Store.finishStderrTail = Just (tailOf (resultStderr r))
+    , Store.finishAnswer = Nothing
+    , Store.finishAnswerDigest = Nothing
     }
 
 -- | The stage's work: its input and records, applied.
@@ -732,70 +767,127 @@ recordedDiscovery body =
 {- | A role run, recorded before and finished after. Right Left: the role
 ended without an answer (its input); Right Right: the answer, the snapshot's
 entries, the workspace and the invocation id.
+
+C-P4.R1 R-I1–R-I3: the invocation carries the transaction revision it ran
+at, and a role's answer is kept with its outcome, in the same statement. If
+this role already ran for this stage at this revision (the stage was cut
+short after it answered), nothing runs: its kept answer is used for the
+Planner, the challenger or the Reviewer; any other ending decides the input
+from what was recorded, and the Implementer's answer (its change was a
+workspace, not an answer) halts @answer-not-recoverable@.
 -}
 invokeRecorded :: DatabaseRuntime -> Engine -> Store.TransactionRow -> Role -> Stage -> T.Text -> [ExtraFile] -> [T.Text] -> T.Text -> IO (Either T.Text (Either TxInput (RoleAnswer, [TreeEntry], Workspace, T.Text)))
 invokeRecorded runtime engine row role stage commit extras protected context = do
-  ordinal <- db runtime (Right . L.length . L.filter ((== roleName role) . Store.invocationRowWhat) <$> Store.transactionInvocations (Store.txRowId row))
-  case ordinal of
+  earlier <- db runtime (Right . L.filter ((== roleName role) . Store.invocationRowWhat) <$> Store.transactionInvocations (Store.txRowId row))
+  case earlier of
     Left code -> pure (Left code)
-    Right n ->
-      case engineAdapter engine role n of
-        Nothing -> pure (Right (Left (RoleFailed (T.pack "no-coding-agent"))))
-        Just adapter -> do
-          ws <- workspaceAt engine row commit extras
-          case ws of
-            Left code -> pure (Right (Left (SupervisorFailed code)))
-            Right (workspace, entries) -> do
-              prepared <- prepareRole adapter workspace context
-              case prepared of
-                Left code -> pure (Right (Left (SupervisorFailed code)))
-                Right argv -> do
-                  u <- newUuid
-                  let
-                    invocation = uuidText u
-                  started <-
-                    db runtime . O.withTransaction $ do
-                      locked <- Store.lockTransaction (Store.txRowId row)
-                      case locked of
-                        Just current
-                          | Store.txRowRevision current == Store.txRowRevision row -> do
-                              Store.insertInvocation
-                                Store.InvocationRow
-                                  { Store.invocationRowId = invocation
-                                  , Store.invocationRowTransaction = Store.txRowId row
-                                  , Store.invocationRowStage = stageName stage
-                                  , Store.invocationRowWhat = roleName role
-                                  , Store.invocationRowRunner = runnerName (engineRunner engine)
-                                  , Store.invocationRowAdapter = adapterName adapter
-                                  , Store.invocationRowArgv = renderJson (strings argv)
-                                  , Store.invocationRowOutcome = Nothing
-                                  , Store.invocationRowExit = Nothing
-                                  , Store.invocationRowMillis = Nothing
-                                  , Store.invocationRowStdoutBytes = Nothing
-                                  , Store.invocationRowStderrBytes = Nothing
-                                  , Store.invocationRowStdoutDigest = Nothing
-                                  , Store.invocationRowStderrDigest = Nothing
-                                  , Store.invocationRowStdoutTail = Nothing
-                                  , Store.invocationRowStderrTail = Nothing
-                                  }
-                              pure (Right ())
-                        _ -> pure (Left (T.pack "stale-step"))
-                  case started of
-                    Left code -> pure (Left code)
-                    Right () -> do
-                      outcome <- runPrepared (engineRunner engine) role workspace argv protected
-                      let
-                        (code, evidence, input) =
-                          case outcome of
-                            Roles.RoleAnswered _ r -> (T.pack "answered", Just r, Nothing)
-                            Roles.RoleFailed c r -> (c, r, Just (RoleFailed c))
-                            Roles.RoleUncertain c -> (T.pack "uncertain " <> c, Nothing, Just (RoleUncertain c))
-                      finished <- db runtime (Right <$> Store.finishInvocation invocation (maybe (emptyFinish code) (finishOf code) evidence))
-                      pure $ case (finished, outcome, input) of
-                        (Left c, _, _) -> Left c
-                        (_, Roles.RoleAnswered a _, _) -> Right (Right (a, entries, workspace, invocation))
-                        (_, _, Just i) -> Right (Left i)
-                        (_, _, Nothing) -> Right (Left (RoleFailed code))
+    Right invocations ->
+      case L.reverse [i | i <- invocations, Store.invocationRowStage i == stageName stage, Store.invocationRowRevision i == Just (Store.txRowRevision row)] of
+        i : _ -> recovered i
+        [] -> fresh (L.length invocations)
+ where
+  uncertain code =
+    pure (Right (Left (RoleUncertain (T.pack code))))
+  recovered i =
+    case (T.unpack <$> Store.invocationRowOutcome i, Store.invocationRowAnswer i, Store.invocationRowAnswerDigest i) of
+      (Just "answered", Just answer, Just digest)
+        | role /= Implementer
+        , sha256Hex (TE.encodeUtf8 answer) == digest
+        , Right a <- decodeAnswer (TE.encodeUtf8 answer) >>= checkAnswer role -> do
+            ws <- workspaceAt engine row commit extras
+            pure $ case ws of
+              Left code -> Right (Left (SupervisorFailed code))
+              Right (workspace, entries) -> Right (Right (a, entries, workspace, Store.invocationRowId i))
+      (Just "answered", _, _) -> uncertain "answer-not-recoverable"
+      (Just "uncertain", _, _) -> uncertain "unfinished-invocation"
+      (Just o, _, _)
+        | Just c <- T.stripPrefix (T.pack "uncertain ") (T.pack o) -> pure (Right (Left (RoleUncertain c)))
+        | otherwise -> pure (Right (Left (RoleFailed (T.pack o))))
+      (Nothing, _, _) -> uncertain "unfinished-invocation"
+  fresh n =
+    case engineAdapter engine role n of
+      Nothing -> pure (Right (Left (RoleFailed (T.pack "no-coding-agent"))))
+      Just adapter -> do
+        ws <- workspaceAt engine row commit extras
+        case ws of
+          Left code -> pure (Right (Left (SupervisorFailed code)))
+          Right (workspace, entries) -> do
+            prepared <- prepareRole adapter workspace context
+            case prepared of
+              Left code -> pure (Right (Left (SupervisorFailed code)))
+              Right argv -> do
+                u <- newUuid
+                let
+                  invocation = uuidText u
+                started <-
+                  db runtime . O.withTransaction $ do
+                    locked <- Store.lockTransaction (Store.txRowId row)
+                    case locked of
+                      Just current
+                        | Store.txRowRevision current == Store.txRowRevision row -> do
+                            Store.insertInvocation (invocationRow row invocation stage (roleName role) (runnerName (engineRunner engine)) (adapterName adapter) argv)
+                            pure (Right ())
+                      _ -> pure (Left (T.pack "stale-step"))
+                case started of
+                  Left code -> pure (Left code)
+                  Right () -> do
+                    outcome <- runPrepared (engineRunner engine) role workspace argv protected
+                    ended <- keepAnswer workspace outcome
+                    let
+                      (code, evidence, kept) =
+                        case ended of
+                          Right (_, r, document) -> (T.pack "answered", Just r, Just document)
+                          Left (c, r, _) -> (c, r, Nothing)
+                      finish =
+                        (maybe (emptyFinish code) (finishOf code) evidence)
+                          { Store.finishAnswer = kept
+                          , Store.finishAnswerDigest = sha256Hex . TE.encodeUtf8 <$> kept
+                          }
+                    finished <- db runtime (Right <$> Store.finishInvocation invocation finish)
+                    pure $ case (finished, ended) of
+                      (Left c, _) -> Left c
+                      (_, Right (a, _, _)) -> Right (Right (a, entries, workspace, invocation))
+                      (_, Left (_, _, input)) -> Right (Left input)
+  -- How the run ended, for the record: the answer with its document as it reads
+  -- back now (kept only if it is exactly the checked answer), or the code, the
+  -- evidence and the stage's input.
+  keepAnswer workspace outcome =
+    case outcome of
+      Roles.RoleAnswered a r -> do
+        again <- readAnswer (workspaceOutput workspace <> "/result.json")
+        pure $ case again of
+          Right bytes
+            | (decodeAnswer bytes >>= checkAnswer role) == Right a
+            , Right document <- TE.decodeUtf8' bytes ->
+                Right (a, r, document)
+          _ -> Left (T.pack "uncertain answer-unstable", Just r, RoleUncertain (T.pack "answer-unstable"))
+      Roles.RoleFailed c r -> pure (Left (c, r, RoleFailed c))
+      Roles.RoleUncertain c -> pure (Left (T.pack "uncertain " <> c, Nothing, RoleUncertain c))
+
+-- | An invocation as recorded before it runs, at the transaction's revision.
+invocationRow :: Store.TransactionRow -> T.Text -> Stage -> T.Text -> T.Text -> T.Text -> [T.Text] -> Store.InvocationRow
+invocationRow row invocation stage what runner adapter argv =
+  Store.InvocationRow
+    { Store.invocationRowId = invocation
+    , Store.invocationRowTransaction = Store.txRowId row
+    , Store.invocationRowStage = stageName stage
+    , Store.invocationRowWhat = what
+    , Store.invocationRowRunner = runner
+    , Store.invocationRowAdapter = adapter
+    , Store.invocationRowArgv = renderJson (strings argv)
+    , Store.invocationRowOutcome = Nothing
+    , Store.invocationRowExit = Nothing
+    , Store.invocationRowMillis = Nothing
+    , Store.invocationRowStdoutBytes = Nothing
+    , Store.invocationRowStderrBytes = Nothing
+    , Store.invocationRowStdoutDigest = Nothing
+    , Store.invocationRowStderrDigest = Nothing
+    , Store.invocationRowStdoutTail = Nothing
+    , Store.invocationRowStderrTail = Nothing
+    , Store.invocationRowRevision = Just (Store.txRowRevision row)
+    , Store.invocationRowAnswer = Nothing
+    , Store.invocationRowAnswerDigest = Nothing
+    }
 
 -- Reproduction (E7) --------------------------------------------------------------------
 
@@ -829,25 +921,7 @@ reproductionStage runtime engine row = do
           invocation = uuidText u
         started <-
           db runtime $ do
-            Store.insertInvocation
-              Store.InvocationRow
-                { Store.invocationRowId = invocation
-                , Store.invocationRowTransaction = Store.txRowId row
-                , Store.invocationRowStage = stageName StageReproduction
-                , Store.invocationRowWhat = T.pack "reproduction"
-                , Store.invocationRowRunner = runnerName (engineRunner engine)
-                , Store.invocationRowAdapter = T.pack "supervisor"
-                , Store.invocationRowArgv = renderJson (strings (checkArgv check))
-                , Store.invocationRowOutcome = Nothing
-                , Store.invocationRowExit = Nothing
-                , Store.invocationRowMillis = Nothing
-                , Store.invocationRowStdoutBytes = Nothing
-                , Store.invocationRowStderrBytes = Nothing
-                , Store.invocationRowStdoutDigest = Nothing
-                , Store.invocationRowStderrDigest = Nothing
-                , Store.invocationRowStdoutTail = Nothing
-                , Store.invocationRowStderrTail = Nothing
-                }
+            Store.insertInvocation (invocationRow row invocation StageReproduction (T.pack "reproduction") (runnerName (engineRunner engine)) (T.pack "supervisor") (checkArgv check))
             pure (Right ())
         case started of
           Left code -> pure (Left code)
@@ -899,25 +973,7 @@ runCommand runtime engine row stage what workspace argv = do
     invocation = uuidText u
   started <-
     db runtime $ do
-      Store.insertInvocation
-        Store.InvocationRow
-          { Store.invocationRowId = invocation
-          , Store.invocationRowTransaction = Store.txRowId row
-          , Store.invocationRowStage = stageName stage
-          , Store.invocationRowWhat = what
-          , Store.invocationRowRunner = runnerName (engineRunner engine)
-          , Store.invocationRowAdapter = T.pack "supervisor"
-          , Store.invocationRowArgv = renderJson (strings argv)
-          , Store.invocationRowOutcome = Nothing
-          , Store.invocationRowExit = Nothing
-          , Store.invocationRowMillis = Nothing
-          , Store.invocationRowStdoutBytes = Nothing
-          , Store.invocationRowStderrBytes = Nothing
-          , Store.invocationRowStdoutDigest = Nothing
-          , Store.invocationRowStderrDigest = Nothing
-          , Store.invocationRowStdoutTail = Nothing
-          , Store.invocationRowStderrTail = Nothing
-          }
+      Store.insertInvocation (invocationRow row invocation stage what (runnerName (engineRunner engine)) (T.pack "supervisor") argv)
       pure (Right ())
   case started of
     Left code -> pure (Left code)
@@ -1008,11 +1064,13 @@ candidateStage runtime engine row =
     let
       record = (T.pack "candidate", candidateJson c)
       rejected code = settle runtime row (CandidateRejected code) [record, (T.pack "candidate-rejected", JObject [(T.pack "code", string code)])] id
+      paths = fmap testPath (candidateTests c)
     case () of
       _
         | not (L.all (quoteGrounded [title, acceptance] . criterionTicketQuote) (candidateCriteria c)) -> rejected (T.pack "criterion-not-grounded")
         | not cited -> rejected (T.pack "citation-outside-source")
-        | L.or unusable -> rejected (T.pack "test-path-unusable")
+        | not (L.all protectedPathValid paths) -> rejected (T.pack "test-path-unsupported")
+        | L.or unusable || L.any (foldsOnto entries paths) paths -> rejected (T.pack "test-path-unusable")
         | otherwise -> baseline basis c entries [record]
   baseline basis c entries records = do
     runs <- traverse (baselineRun basis c) (candidateTests c)
@@ -1045,6 +1103,22 @@ candidateStage runtime engine row =
           let
             cls = classifyTest (testExpectation t) (testPath t) (testSignature t) (resultOutcome r) (decodeLenient (resultStdout r)) (decodeLenient (resultStderr r))
           Right (cls, r, baselineJson t cls (outcomeName (resultOutcome r)) (tailOf (resultStdout r)) (tailOf (resultStderr r)))
+
+{- | C-P4.R1 R-C2: a test path that, ignoring letter case, is (or passes
+through) another spelling of a path of the basis or of another test — on a
+case-insensitive disk the two would be one file.
+-}
+foldsOnto :: [TreeEntry] -> [T.Text] -> T.Text -> Bool
+foldsOnto entries tests path =
+  L.any clash (prefixes path)
+ where
+  spellings = Map.fromListWith (<>) [(T.toLower q, [q]) | q <- L.concatMap prefixes (fmap entryPath entries <> tests)]
+  clash p = maybe False (L.any (/= p)) (Map.lookup (T.toLower p) spellings)
+  prefixes p =
+    let
+      segments = T.splitOn (T.pack "/") p
+    in
+      [T.intercalate (T.pack "/") (L.take n segments) | n <- [1 .. L.length segments]]
 
 -- | A test path that the basis already has as a link or a directory.
 unusablePath :: FilePath -> [TreeEntry] -> T.Text -> IO Bool
@@ -1135,7 +1209,10 @@ challengeStage runtime engine row =
 {- | S3: the Supervisor commits exactly the candidate tests on the work branch
 on top of the basis (its identity, the basis's time plus one second, so a
 retry makes the same commit), moves the branch from the basis by
-compare-and-swap, and records the Contract and its digest.
+compare-and-swap, and records the Contract and its digest. C-P4.R1 R-F1: the
+commit is made first; a branch already at exactly that commit is an earlier
+move whose step was not recorded, and the step is recorded; any other commit
+is @branch-moved@.
 -}
 freezeStage :: DatabaseRuntime -> Store.TransactionRow -> IO (Either T.Text TxInput)
 freezeStage runtime row = do
@@ -1144,42 +1221,47 @@ freezeStage runtime row = do
     folder = T.unpack (Store.txRowFolder row)
     candidate = either (const Nothing) (latestRecord (T.pack "candidate") >=> recordedCandidate) records
   case (Store.txRowBasis row, Store.txRowBranch row, candidate) of
-    (Just basis, Just branch, Just c) -> do
-      head' <- branchHead folder branch
-      time <- commitTime folder basis
-      case (head', time) of
-        (Right (Just h), Right t) | h == basis -> do
-          let
-            changes = [Change (testPath x) (Just (ModeFile, TE.encodeUtf8 (testContent x))) | x <- candidateTests c]
-            message =
-              T.pack "Lockstep: frozen tests\n\nLockstep-Work-Order: "
-                <> Store.txRowWorkOrder row
-                <> T.pack "\nLockstep-Transaction: "
-                <> Store.txRowId row
-                <> T.pack "\n"
-          committed <- commitChanges folder basis changes (CommitMeta message (t + 1))
-          case committed of
-            Left code -> settle runtime row (SupervisorFailed code) [] id
-            Right freeze -> do
-              moved <- advanceBranch folder branch basis freeze
-              case moved of
+    (Just basis, Just branch, Just c)
+      | not (L.all (protectedPathValid . testPath) (candidateTests c)) -> settle runtime row (SupervisorFailed (T.pack "test-path-unsupported")) [] id
+      | otherwise -> do
+          head' <- branchHead folder branch
+          time <- commitTime folder basis
+          case (head', time) of
+            (Left code, _) -> settle runtime row (SupervisorFailed code) [] id
+            (Right Nothing, _) -> settle runtime row (SupervisorFailed (T.pack "branch-missing")) [] id
+            (_, Left code) -> settle runtime row (SupervisorFailed code) [] id
+            (Right (Just h), Right t) -> do
+              let
+                changes = [Change (testPath x) (Just (ModeFile, TE.encodeUtf8 (testContent x))) | x <- candidateTests c]
+                message =
+                  T.pack "Lockstep: frozen tests\n\nLockstep-Work-Order: "
+                    <> Store.txRowWorkOrder row
+                    <> T.pack "\nLockstep-Transaction: "
+                    <> Store.txRowId row
+                    <> T.pack "\n"
+              committed <- commitChanges folder basis changes (CommitMeta message (t + 1))
+              case committed of
                 Left code -> settle runtime row (SupervisorFailed code) [] id
-                Right () -> do
-                  let
-                    contract = frozenContract basis freeze c
-                    digest = sha256Hex (TE.encodeUtf8 (renderJson contract))
-                  settle
-                    runtime
-                    row
-                    TestsFrozen
-                    [(T.pack "contract", contract), (T.pack "freeze", JObject [(T.pack "commit", string freeze), (T.pack "branch", string branch), (T.pack "contract_digest", string digest)])]
-                    (\r -> r {Store.txRowFreeze = Just freeze, Store.txRowContract = Just digest})
-        (Right (Just h), _) | h /= basis -> settle runtime row (SupervisorFailed (T.pack "branch-moved")) [] id
-        (Right Nothing, _) -> settle runtime row (SupervisorFailed (T.pack "branch-missing")) [] id
-        (Left code, _) -> settle runtime row (SupervisorFailed code) [] id
-        (_, Left code) -> settle runtime row (SupervisorFailed code) [] id
-        _ -> settle runtime row (SupervisorFailed (T.pack "branch-moved")) [] id
+                Right freeze
+                  | h == basis -> do
+                      moved <- advanceBranch folder branch basis freeze
+                      case moved of
+                        Left code -> settle runtime row (SupervisorFailed code) [] id
+                        Right () -> frozen basis branch freeze c
+                  | h == freeze -> frozen basis branch freeze c
+                  | otherwise -> settle runtime row (SupervisorFailed (T.pack "branch-moved")) [] id
     _ -> settle runtime row (SupervisorFailed (T.pack "candidate-missing")) [] id
+ where
+  frozen basis branch freeze c = do
+    let
+      contract = frozenContract basis freeze c
+      digest = sha256Hex (TE.encodeUtf8 (renderJson contract))
+    settle
+      runtime
+      row
+      TestsFrozen
+      [(T.pack "contract", contract), (T.pack "freeze", JObject [(T.pack "commit", string freeze), (T.pack "branch", string branch), (T.pack "contract_digest", string digest)])]
+      (\r -> r {Store.txRowFreeze = Just freeze, Store.txRowContract = Just digest})
 
 -- The implementer (C-P4.10-14 I1) ---------------------------------------------------------
 

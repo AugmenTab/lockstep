@@ -146,6 +146,7 @@ transactionSection :: Admission -> TransactionView -> Maybe StoredRequest -> T.T
 transactionSection a tx request key =
   [heading "fixing" "Fixing it"]
     <> standingNow
+    <> earlier
     <> [E.h3 [] [E.text "What the fix must do"]]
     <> criteria
     <> [E.h3 [] [E.text "How it is checked"]]
@@ -236,11 +237,18 @@ transactionSection a tx request key =
             )
         , E.p [cls "ls-muted"] [E.text (if L.null ts then "" else "Once fixed in place, these tests cannot be changed by the helper that changes the code.")]
         ]
+  -- C-P4.R1 R-A1: what follows is the latest attempt's; a commit is "committed" only once accepted.
+  earlier =
+    [ E.p [cls "ls-muted", attr "id" "fix-earlier"] [E.text "Earlier attempts at this change were not accepted. What follows is the latest attempt."]
+    | evidenceAttempts ev > 1
+    ]
   results =
     case evidencePassed ev of
-      Nothing -> [E.p [cls "ls-muted", attr "id" "fix-not-run"] [E.text "The checks have not run yet."]]
+      Nothing
+        | evidenceAttempts ev > 0 -> [E.p [cls "ls-muted", attr "id" "fix-not-run"] [E.text "The checks have not run on the latest change yet."]]
+        | otherwise -> [E.p [cls "ls-muted", attr "id" "fix-not-run"] [E.text "The checks have not run yet."]]
       Just (_, passed) ->
-        [ E.p [attr "id" "fix-result"] [E.text (if passed then "Every check passed on the committed change." else "Not every check passed on the latest change.")]
+        [ E.p [attr "id" "fix-result"] [E.text (resultWords passed)]
         , E.ul
             [attr "id" "fix-runs"]
             [ E.li [] [E.code [] [E.text (T.unwords (checkCommand r))], E.text (": " <> outcomeWords (checkOutcome r) (checkExit r))]
@@ -252,6 +260,10 @@ transactionSection a tx request key =
                 : [E.p [] [E.code [] [E.text (T.unwords (checkCommand r) <> "\n" <> checkStdout r <> checkStderr r)]] | r <- evidenceRuns ev]
             )
         ]
+  resultWords passed
+    | not passed = "Not every check passed on the latest change."
+    | state `L.elem` ["accepted", "done"] = "Every check passed on the committed change."
+    | otherwise = "Every check passed on the latest change."
   findings =
     case evidenceFindings ev of
       []

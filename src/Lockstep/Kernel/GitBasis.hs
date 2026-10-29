@@ -80,10 +80,18 @@ treePathValid path =
       && s /= T.pack ".."
       && T.toLower s /= T.pack ".git"
 
--- | C-P4.R1 R-P1 (stage-not-built: today's rule).
+{- | C-P4.R1 R-P1: a path a protected test may have, the one rule for the
+Planner's candidate, the freeze and the container runner's channel: a valid
+tree path made only of ASCII letters, digits and @. _ + \@ - /@ (the helper
+mounts each protected file by its path in a comma-separated option, so
+nothing else is safe to pass).
+-}
 protectedPathValid :: T.Text -> Bool
-protectedPathValid =
-  treePathValid
+protectedPathValid path =
+  treePathValid path && T.all allowed path
+ where
+  allowed c =
+    Char.isAsciiUpper c || Char.isAsciiLower c || Char.isDigit c || c `L.elem` ("._+@-/" :: String)
 
 -- | Forty lower-case hex characters.
 isCommitId :: T.Text -> Bool

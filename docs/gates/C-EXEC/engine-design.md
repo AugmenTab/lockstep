@@ -80,6 +80,13 @@ amendment, not done silently here.
   after; a `started` one found later is `uncertain` → halted with a human request (`retry` or `stop`).
   Supervisor Git steps are deterministic (same commit for the same inputs, compare-and-swap refs) and
   commands run in fresh snapshots, so both may simply run again after a crash.
+- **A finished role is never run again either (C-P4.R1)**: each invocation records the transaction revision
+  it ran at, and a role's checked answer is kept with its outcome in the same statement. A stage cut short
+  after its role answered finds that invocation at the same revision and uses the kept answer (Planner,
+  challenger, Reviewer) or decides from the recorded ending; the Implementer's change was a workspace, so it
+  halts `answer-not-recoverable` and only a person's retry (a new revision) runs it again. Marking a cut-short
+  run uncertain and halting are one database transaction. The freeze recognises its own deterministic commit
+  already on the branch.
 - **Baseline (DG-06 D-6.1)** per candidate test at basis + candidate tests: RED needs a failing exit, not
   126/127, its signature **and** its identity (the test file's stem) in the output → `red-confirmed`;
   passing → `red-unexpectedly-passed`; failing otherwise → `red-wrong-reason`; GREEN passing →

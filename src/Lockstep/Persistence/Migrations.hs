@@ -650,4 +650,26 @@ CREATE TRIGGER lockstep_invocations_no_delete BEFORE DELETE ON lockstep_invocati
 CREATE TRIGGER lockstep_invocations_no_truncate BEFORE TRUNCATE ON lockstep_invocations FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
 |]
       )
+    ,
+      ( [Interpolate.i|C-P4.R1: a role's answer kept with its invocation; one writer per Engineer|]
+      , [Interpolate.i|
+ALTER TABLE lockstep_invocations
+  ADD COLUMN tx_revision integer CHECK (tx_revision IS NULL OR tx_revision >= 1),
+  ADD COLUMN answer text CHECK (answer IS NULL OR octet_length(answer) <= 262144),
+  ADD COLUMN answer_digest text CHECK (answer_digest IS NULL OR answer_digest ~ '^[0-9a-f]{64}$'),
+  ADD CONSTRAINT lockstep_invocations_answer_with_digest CHECK ((answer IS NULL) = (answer_digest IS NULL));
+CREATE OR REPLACE FUNCTION lockstep_invocation_finish_once() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.finished_at IS NOT NULL
+     OR NEW.id <> OLD.id OR NEW.transaction_id <> OLD.transaction_id OR NEW.stage <> OLD.stage
+     OR NEW.what <> OLD.what OR NEW.runner <> OLD.runner OR NEW.adapter <> OLD.adapter
+     OR NEW.argv <> OLD.argv OR NEW.started_at <> OLD.started_at
+     OR NEW.tx_revision IS DISTINCT FROM OLD.tx_revision THEN
+    RAISE EXCEPTION 'lockstep: an invocation is finished exactly once and never changed';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE UNIQUE INDEX lockstep_transactions_one_writer ON lockstep_transactions (engineer_name) WHERE state IN ('running', 'halted');
+|]
+      )
     ]

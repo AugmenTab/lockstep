@@ -74,6 +74,10 @@ data Evidence
   -- ^ Role runs whose outcome is not known (cut short) or still running.
   , evidenceUnreadable :: [Int]
   -- ^ Records that did not read back (their sequence numbers).
+  , evidenceAttempts :: Int
+  {- ^ C-P4.R1 R-A1: how many changes the Implementer made; the runs, the
+  findings after the change and the review are those of the latest one.
+  -}
   }
 
 -- Documents -----------------------------------------------------------------------------
@@ -136,40 +140,46 @@ transactionEvidence view =
     { evidenceCriteria = maybe [] candidateCriteria candidate
     , evidenceTests = maybe [] candidateTests candidate
     , evidenceCommands = maybe [] candidateVerification candidate
-    , evidenceRuns = [CheckRun c o x s e | Right (DocRun c o x s e) <- runs]
-    , evidencePassed = (\(DocSummary c p) -> (c, p)) <$> lastRight summaries
+    , evidenceRuns = [CheckRun c o x s e | Right (DocRun c o x s e) <- fmap snd runs]
+    , evidencePassed = (\(DocSummary c p) -> (c, p)) <$> lastRight (current summaries)
     , evidenceFindings =
-        [ FindingView w r c m d
-        | (w, kind) <- [(T.pack "before", T.pack "finding"), (T.pack "after", T.pack "post-finding")]
-        , Right (DocFinding r c m d) <- fmap (decodeWith (FA.decode findingSchema)) (ofKind kind)
-        ]
-    , evidenceReview = (\(DocReview c v rs) -> ReviewView c v rs) <$> lastRight reviews
+        [FindingView (T.pack "before") r c m d | Right (DocFinding r c m d) <- fmap snd (decodedKind (FA.decode findingSchema) (T.pack "finding"))]
+          <> [FindingView (T.pack "after") r c m d | Right (DocFinding r c m d) <- current (decodedKind (FA.decode findingSchema) (T.pack "post-finding"))]
+    , evidenceReview = (\(DocReview c v rs) -> ReviewView c v rs) <$> lastRight (current reviews)
     , evidenceUncertain = L.filter unsettled (viewInvocations view)
     , evidenceUnreadable =
         L.sort
-          ( lefts runs
-              <> lefts summaries
-              <> lefts reviews
+          ( lefts (fmap snd runs)
+              <> lefts (fmap snd summaries)
+              <> lefts (fmap snd reviews)
               <> [n | k <- [T.pack "finding", T.pack "post-finding"], Left n <- fmap (decodeWith (FA.decode findingSchema)) (ofKind k)]
               <> [recordSequence r | r <- ofKind (T.pack "candidate"), isNothing (recordedCandidate (recordBody r))]
           )
+    , evidenceAttempts = L.length (ofKind (T.pack "implementation"))
     }
  where
   records = viewRecords view
   ofKind kind = L.filter ((== kind) . recordKind) records
+  -- Each decoded record of a kind with its sequence number.
+  decodedKind :: (LBS.ByteString -> Either String a) -> T.Text -> [(Int, Either Int a)]
+  decodedKind decoder kind = [(recordSequence r, decodeWith decoder r) | r <- ofKind kind]
   candidate = lastJust (fmap (recordedCandidate . recordBody) (ofKind (T.pack "candidate")))
-  summaries = fmap (decodeWith (FA.decode summarySchema)) (ofKind (T.pack "verification-summary"))
-  reviews = fmap (decodeWith (FA.decode reviewSchema)) (ofKind (T.pack "review"))
-  -- The runs of the latest verification: those after the summary before it.
+  summaries = decodedKind (FA.decode summarySchema) (T.pack "verification-summary")
+  reviews = decodedKind (FA.decode reviewSchema) (T.pack "review")
+  -- The latest attempt begins with the latest implementation record.
+  attemptFrom = maybe 0 recordSequence (headOf (L.reverse (ofKind (T.pack "implementation"))))
+  current :: [(Int, b)] -> [b]
+  current decoded = [d | (n, d) <- decoded, n > attemptFrom]
+  -- The runs of the latest verification of this attempt: those after the summary before it.
   latestRuns =
-    case L.reverse (ofKind (T.pack "verification-summary")) of
+    case L.reverse [r | r <- ofKind (T.pack "verification-summary"), recordSequence r > attemptFrom] of
       [] -> []
-      lastSummary : earlier ->
+      lastSummary : _ ->
         let
-          from = maybe 0 recordSequence (headOf earlier)
+          from = maybe attemptFrom recordSequence (headOf (L.reverse [r | r <- ofKind (T.pack "verification-summary"), recordSequence r < recordSequence lastSummary]))
         in
-          [r | r <- ofKind (T.pack "verification"), recordSequence r > from, recordSequence r < recordSequence lastSummary]
-  runs = fmap (decodeWith (FA.decode runSchema)) latestRuns
+          [r | r <- ofKind (T.pack "verification"), recordSequence r > max from attemptFrom, recordSequence r < recordSequence lastSummary]
+  runs = [(recordSequence r, decodeWith (FA.decode runSchema) r) | r <- latestRuns]
   unsettled i =
     invocationWhat i `L.elem` fmap T.pack ["planner", "challenger", "implementer", "reviewer"]
       && maybe True (T.isPrefixOf (T.pack "uncertain")) (invocationOutcome i)

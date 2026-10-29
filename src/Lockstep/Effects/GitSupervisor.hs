@@ -3,15 +3,19 @@ Only the Supervisor touches the canonical repository, and only through Git's
 plumbing with a private index: the person's working tree, index and checked
 out branch are never changed. Every command runs with options that switch off
 repository-configured programs (file-system monitor, hooks, credential
-helpers, remote protocols), a fixed locale and a time limit.
+helpers, remote protocols, line-ending conversion), a fixed locale and a time
+limit; 'observeBasis' also switches off every content filter the
+repository's configuration names (C-P4.R1 R-G1), the one command that reads
+the person's working tree.
 
 * 'observeBasis': the repository is clean and @HEAD@ is a commit.
 * 'createWorkBranch', 'advanceBranch': the Work Order's branch, created only
   if absent, moved only from the expected commit (compare-and-swap).
 * 'writeSnapshot': the exact tree of a commit written into an empty directory,
-  without @.git@.
+  without @.git@, never through a link, within aggregate limits.
 * 'snapshotChanges': what changed in such a directory, refusing anything but
-  regular files.
+  regular files, read in chunks and within aggregate limits (C-P4.R1 R-S1,
+  R-S2).
 * 'commitChanges': a commit by the Supervisor's identity on top of a parent,
   deterministic for the same parent, changes, message and time.
 -}
@@ -35,7 +39,7 @@ module Lockstep.Effects.GitSupervisor
   ) where
 
 import Control.Exception (IOException, finally, try)
-import Crypto.Hash (SHA1 (SHA1), hashWith)
+import Crypto.Hash (Context, SHA1 (SHA1), hashFinalize, hashInit, hashUpdate, hashWith)
 import Crypto.Random (getRandomBytes)
 import Data.Bits ((.&.))
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
@@ -43,7 +47,9 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.Char qualified as Char
 import Data.List qualified as L
+import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
+import Data.Set qualified as Set
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Text.Encoding.Error (lenientDecode)
@@ -58,7 +64,7 @@ import System.Directory
   , removeDirectoryRecursive
   )
 import System.Environment (lookupEnv)
-import System.IO (FilePath)
+import System.IO (FilePath, IOMode (ReadMode), hClose, withBinaryFile)
 import System.Posix.Files
   ( createSymbolicLink
   , fileMode
@@ -68,8 +74,9 @@ import System.Posix.Files
   , isRegularFile
   , isSymbolicLink
   , readSymbolicLink
-  , setFileMode
+  , setFdMode
   )
+import System.Posix.IO (OpenFileFlags (creat, exclusive, nofollow), OpenMode (WriteOnly), defaultFileFlags, fdToHandle, openFd)
 import Text.Show (Show, show)
 
 import Lockstep.Effects.Process (RunResult (..), newCancel, runDirect)
@@ -176,7 +183,8 @@ observeBasis repo = do
       inside <- gitText repo ["rev-parse", "--is-inside-work-tree"]
       case inside of
         Right t | t == T.pack "true" -> do
-          status <- git [] repo ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"]
+          neutral <- filtersOff repo
+          status <- either (pure . Left) (\off -> git [] repo (off <> ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"])) neutral
           case status of
             Left code -> pure (Left code)
             Right bytes
@@ -188,6 +196,32 @@ observeBasis repo = do
                     (Right c, Right t') | isCommitId c && isCommitId t' -> Right (Basis c t')
                     _ -> Left (T.pack "no-commit")
         _ -> pure (Left (T.pack "not-a-repository"))
+
+{- | C-P4.R1 R-G1: options that switch off every content filter driver named
+in the repository's configuration (any scope), so @git status@ compares the
+raw bytes and runs no configured program. A driver name Git could not take
+back in an option is refused (@repository-filter-unsupported@).
+-}
+filtersOff :: FilePath -> IO (Either T.Text [String])
+filtersOff repo = do
+  listed <- git [] repo ["config", "--list", "--name-only", "-z"]
+  pure $ do
+    bytes <- listed
+    let
+      keys = fmap (TE.decodeUtf8With lenientDecode) (L.filter (not . BS.null) (BS.split 0 bytes))
+      drivers =
+        L.nub
+          [ d
+          | k <- keys
+          , Just rest <- [T.stripPrefix (T.pack "filter.") k]
+          , let
+              d = T.dropWhileEnd (/= '.') rest
+          , not (T.null d)
+          ]
+      names = fmap (T.dropEnd 1) drivers
+    if L.any (\n -> T.null n || T.any (\c -> c == '=' || Char.isControl c) n) names
+      then Left (T.pack "repository-filter-unsupported")
+      else Right (L.concat [["-c", "filter." <> T.unpack n <> "." <> o] | n <- names, o <- ["clean=", "smudge=", "process=", "required=false"]])
 
 -- | The committer time of a commit, in seconds since the epoch (@commit-invalid@ otherwise).
 commitTime :: FilePath -> T.Text -> IO (Either T.Text Integer)
@@ -298,10 +332,19 @@ treeEntries repo commit
 
 {- | G4: writes the commit's tree into an empty directory
 (@snapshot-destination-invalid@ otherwise), without @.git@ and without
-submodules; returns the entries written.
+submodules, within the default limits; returns the entries written.
 -}
 writeSnapshot :: FilePath -> T.Text -> FilePath -> IO (Either T.Text [TreeEntry])
-writeSnapshot repo commit dest = do
+writeSnapshot =
+  writeSnapshotWithin defaultSnapshotLimits
+
+{- | 'writeSnapshot' within these limits (C-P4.R1 R-S2): more entries than
+'limitFiles' is @snapshot-too-many-files@ before anything is written; an entry
+that would take the bytes written past 'limitBytes' is @snapshot-too-large@
+and is not written.
+-}
+writeSnapshotWithin :: SnapshotLimits -> FilePath -> T.Text -> FilePath -> IO (Either T.Text [TreeEntry])
+writeSnapshotWithin limits repo commit dest = do
   usable <- emptyDirectory dest
   if not usable
     then pure (Left (T.pack "snapshot-destination-invalid"))
@@ -309,16 +352,18 @@ writeSnapshot repo commit dest = do
       listed <- treeEntries repo commit
       case listed of
         Left code -> pure (Left code)
-        Right (entries, _) -> fmap (const entries) <$> writeAll entries
+        Right (entries, _)
+          | L.length entries > limitFiles limits -> pure (Left (T.pack "snapshot-too-many-files"))
+          | otherwise -> fmap (const entries) <$> writeAll 0 entries
  where
-  writeAll entries =
+  writeAll written entries =
     case entries of
       [] -> pure (Right ())
       entry : rest -> do
-        one <- writeEntry repo dest entry
+        one <- writeEntry repo dest (limitBytes limits - written) entry
         case one of
           Left code -> pure (Left code)
-          Right () -> writeAll rest
+          Right n -> writeAll (written + n) rest
 
 emptyDirectory :: FilePath -> IO Bool
 emptyDirectory dir = do
@@ -327,33 +372,47 @@ emptyDirectory dir = do
     if isDirectory status then L.null <$> listDirectory dir else pure False
   pure (fromRight False (listed :: Either IOException Bool))
 
--- | One entry: its blob from Git, then the file or link, never through a link on the way.
-writeEntry :: FilePath -> FilePath -> TreeEntry -> IO (Either T.Text ())
-writeEntry repo dest entry = do
+{- | One entry: its blob from Git, then the file or link, never through a link
+on the way and never onto anything already there (C-P4.R1 R-C1: on a
+case-insensitive disk two names that differ only in letter case are one
+file, @tree-path-collision@). A file is created exclusively, without following
+a link. Its size, or @snapshot-too-large@ when it is over what may still be
+written.
+-}
+writeEntry :: FilePath -> FilePath -> Integer -> TreeEntry -> IO (Either T.Text Integer)
+writeEntry repo dest room entry = do
   content <- git [] repo ["cat-file", "blob", T.unpack (entryBlob entry)]
   case content of
     Left code -> pure (Left code)
     Right bytes
       | BS.length bytes > 16777216 -> pure (Left (T.pack "file-too-large"))
+      | toInteger (BS.length bytes) > room -> pure (Left (T.pack "snapshot-too-large"))
       | otherwise -> do
           let
             relative = T.unpack (entryPath entry)
             target = dest <> "/" <> relative
             parent = L.reverse (L.dropWhile (/= '/') (L.reverse target))
           safe <- safeParents dest relative
-          if not safe
-            then pure (Left (T.pack "tree-path-invalid"))
-            else do
-              written <- try $ do
-                createDirectoryIfMissing True parent
-                case entryMode entry of
-                  ModeSymlink -> createSymbolicLink (T.unpack (TE.decodeUtf8With lenientDecode bytes)) target
-                  mode -> do
-                    BS.writeFile target bytes
-                    setFileMode target (if mode == ModeExecutable then 0o755 else 0o644)
-              pure $ case written of
-                Right () -> Right ()
-                Left (e :: IOException) -> Left (T.pack "snapshot-failed: " <> T.take 200 (T.pack (show e)))
+          present <- either (\(_ :: IOException) -> False) (const True) <$> try (getSymbolicLinkStatus target)
+          case () of
+            _
+              | not safe -> pure (Left (T.pack "tree-path-invalid"))
+              | present -> pure (Left (T.pack "tree-path-collision"))
+              | otherwise -> do
+                  written <- try $ do
+                    createDirectoryIfMissing True parent
+                    case entryMode entry of
+                      ModeSymlink -> createSymbolicLink (T.unpack (TE.decodeUtf8With lenientDecode bytes)) target
+                      mode -> do
+                        let
+                          bits = if mode == ModeExecutable then 0o755 else 0o644
+                        fd <- openFd target WriteOnly defaultFileFlags {creat = Just bits, exclusive = True, nofollow = True}
+                        setFdMode fd bits
+                        h <- fdToHandle fd
+                        BS.hPut h bytes `finally` hClose h
+                  pure $ case written of
+                    Right () -> Right (toInteger (BS.length bytes))
+                    Left (e :: IOException) -> Left (T.pack "snapshot-failed: " <> T.take 200 (T.pack (show e)))
 
 -- | No existing segment on the way to a path may be a symbolic link.
 safeParents :: FilePath -> FilePath -> IO Bool
@@ -381,58 +440,109 @@ changed symbolic link, or anything but a file, directory or the original
 links), @path-invalid@, @file-too-large@ (over 16 MiB).
 -}
 snapshotChanges :: [TreeEntry] -> FilePath -> IO (Either T.Text [Change])
-snapshotChanges entries dest = do
-  walked <- try (walk "") :: IO (Either IOException (Either T.Text [(T.Text, Either T.Text (TreeMode, BS.ByteString))]))
+snapshotChanges =
+  snapshotChangesWithin defaultSnapshotLimits
+
+-- | What the walk has seen so far.
+data Walked
+  = Walked
+  { walkedCount :: Int
+  , walkedPaths :: Set.Set T.Text
+  , walkedChanges :: [Change]
+  , walkedBytes :: Integer
+  }
+
+{- | 'snapshotChanges' within these limits (C-P4.R1 R-S1, R-S2): a file is
+compared with its entry by its blob id, read in chunks; only a changed file's
+bytes are kept. @snapshot-too-many-files@ past 'limitFiles' files and links;
+@changes-too-many@ past 'limitChangedFiles' changed or removed paths;
+@changes-too-large@ past 'limitChangedBytes' bytes of changed files.
+-}
+snapshotChangesWithin :: SnapshotLimits -> [TreeEntry] -> FilePath -> IO (Either T.Text [Change])
+snapshotChangesWithin limits entries dest = do
+  walked <- try (walk "" (Walked 0 Set.empty [] 0)) :: IO (Either IOException (Either T.Text Walked))
   pure $ case walked of
     Left e -> Left (T.pack "snapshot-unreadable: " <> T.take 200 (T.pack (show e)))
     Right (Left code) -> Left code
-    Right (Right found) -> do
+    Right (Right w) -> do
       let
-        foundPaths = fmap fst found
-        removed = [Change (entryPath e) Nothing | e <- entries, entryPath e `L.notElem` foundPaths]
-      changed <- fmap L.concat (traverse compareFound found)
-      Right (L.sortOn changePath (changed <> removed))
+        removed = [Change (entryPath e) Nothing | e <- entries, not (Set.member (entryPath e) (walkedPaths w))]
+        changes = walkedChanges w <> removed
+      if L.length changes > limitChangedFiles limits
+        then Left (T.pack "changes-too-many")
+        else Right (L.sortOn changePath changes)
  where
-  original path =
-    L.find ((== path) . entryPath) entries
-  compareFound (path, item) =
-    case item of
-      Left target ->
-        case original path of
-          Just e | entryMode e == ModeSymlink && entryBlob e == blobId (TE.encodeUtf8 target) -> Right []
-          _ -> Left (T.pack "special-file")
-      Right (mode, bytes) ->
-        case original path of
-          Just e | entryMode e == mode && entryBlob e == blobId bytes -> Right []
-          Just e | entryMode e == ModeSymlink -> Left (T.pack "special-file")
-          _ -> Right [Change path (Just (mode, bytes))]
-  walk relative = do
+  original =
+    Map.fromList [(entryPath e, e) | e <- entries]
+  walk relative w = do
     let
       here = if L.null relative then dest else dest <> "/" <> relative
     names <- L.sort <$> listDirectory here
-    fmap L.concat . sequenceA <$> traverse (visit relative) names
+    visitAll relative names w
+  visitAll relative names w =
+    case names of
+      [] -> pure (Right w)
+      name : rest -> do
+        one <- visit relative name w
+        case one of
+          Left code -> pure (Left code)
+          Right w' -> visitAll relative rest w'
   -- One directory entry, without following a link.
-  visit relative name = do
+  visit relative name w = do
     let
       rel = if L.null relative then name else relative <> "/" <> name
       path = dest <> "/" <> rel
       relText = T.pack rel
+      seen = w {walkedCount = walkedCount w + 1, walkedPaths = Set.insert relText (walkedPaths w)}
     status <- getSymbolicLinkStatus path
     case () of
       _
         | T.toLower (T.pack name) == T.pack ".git" -> pure (Left (T.pack "git-directory"))
         | not (treePathValid relText) -> pure (Left (T.pack "path-invalid"))
-        | isDirectory status -> walk rel
+        | isDirectory status -> walk rel w
+        | walkedCount w >= limitFiles limits -> pure (Left (T.pack "snapshot-too-many-files"))
         | isSymbolicLink status -> do
             target <- readSymbolicLink path
-            pure (Right [(relText, Left (T.pack target))])
+            pure $ case Map.lookup relText original of
+              Just e | entryMode e == ModeSymlink && entryBlob e == blobId (TE.encodeUtf8 (T.pack target)) -> Right seen
+              _ -> Left (T.pack "special-file")
         | not (isRegularFile status) -> pure (Left (T.pack "special-file"))
         | fileSize status > 16777216 -> pure (Left (T.pack "file-too-large"))
         | otherwise -> do
-            bytes <- BS.readFile path
             let
               mode = if fileMode status .&. 0o100 /= 0 then ModeExecutable else ModeFile
-            pure (Right [(relText, Right (mode, bytes))])
+            case Map.lookup relText original of
+              Just e | entryMode e == ModeSymlink -> pure (Left (T.pack "special-file"))
+              Just e
+                | entryMode e == mode -> do
+                    same <- (== entryBlob e) <$> fileBlobId path (toInteger (fileSize status))
+                    if same then pure (Right seen) else changed seen relText mode path
+              _ -> changed seen relText mode path
+  changed w relText mode path
+    | L.length (walkedChanges w) >= limitChangedFiles limits = pure (Left (T.pack "changes-too-many"))
+    | otherwise = do
+        bytes <- withBinaryFile path ReadMode (`BS.hGet` 16777217)
+        let
+          total = walkedBytes w + toInteger (BS.length bytes)
+        pure $ case () of
+          _
+            | BS.length bytes > 16777216 -> Left (T.pack "file-too-large")
+            | total > limitChangedBytes limits -> Left (T.pack "changes-too-large")
+            | otherwise -> Right w {walkedChanges = Change relText (Just (mode, bytes)) : walkedChanges w, walkedBytes = total}
+
+-- | Git's blob id of a file of this size, read in 64 KiB chunks (a file whose size changed gets another id).
+fileBlobId :: FilePath -> Integer -> IO T.Text
+fileBlobId path size =
+  withBinaryFile path ReadMode $ \h ->
+    let
+      start = hashUpdate (hashInit :: Context SHA1) (BS8.pack ("blob " <> show size) <> BS.singleton 0)
+      loop context = do
+        chunk <- BS.hGetSome h 65536
+        if BS.null chunk
+          then pure (TE.decodeLatin1 (convertToBase Base16 (hashFinalize context)))
+          else loop (hashUpdate context chunk)
+    in
+      loop start
 
 -- | C-P4.R1 R-S2: the aggregate limits of a snapshot and its comparison.
 data SnapshotLimits
@@ -444,19 +554,10 @@ data SnapshotLimits
   }
   deriving (Eq, Show)
 
+-- | 100 000 files, 2 GiB written, 1 000 changed paths, 64 MiB of changed bytes.
 defaultSnapshotLimits :: SnapshotLimits
 defaultSnapshotLimits =
   SnapshotLimits {limitFiles = 100000, limitBytes = 2147483648, limitChangedFiles = 1000, limitChangedBytes = 67108864}
-
--- | Stage-not-built: the limits are not applied yet.
-writeSnapshotWithin :: SnapshotLimits -> FilePath -> T.Text -> FilePath -> IO (Either T.Text [TreeEntry])
-writeSnapshotWithin _ =
-  writeSnapshot
-
--- | Stage-not-built: the limits are not applied yet.
-snapshotChangesWithin :: SnapshotLimits -> [TreeEntry] -> FilePath -> IO (Either T.Text [Change])
-snapshotChangesWithin _ =
-  snapshotChanges
 
 -- Commits -----------------------------------------------------------------------
 

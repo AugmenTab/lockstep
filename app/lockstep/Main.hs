@@ -50,6 +50,8 @@ import Lockstep.Application.Database
   , schemaStatus
   )
 import Lockstep.Application.Dispatcher (Job (..), findJob, findJobForReceipt, jobStateCode, requestStop, startDispatcher, stopDispatcher)
+import Lockstep.Application.Engine (Engine (..))
+import Lockstep.Application.EngineWorker (EngineWorker, startEngineWorker, stopEngineWorkerWithin)
 import Lockstep.Application.Executor (Executor (..), RunOutcome (..), executeOnce, noExecutorFaults)
 import Lockstep.Application.Ledger
   ( LedgerFailure (..)
@@ -97,6 +99,8 @@ import Lockstep.Application.Repositories
   , registerRepository
   )
 import Lockstep.Application.Sandbox (sandboxAdapters, sandboxApplications, sandboxReconcilers, sandboxRequest)
+import Lockstep.Effects.HelperRunner (openRunnerChannel)
+import Lockstep.Effects.Roles (helperRunner)
 import Lockstep.Foundation.Cli
   ( BackupPolicy
   , Command (..)
@@ -241,6 +245,10 @@ serve serveConfig = do
         Just <$> startDispatcher runtime logLine
       _ ->
         pure Nothing
+  worker <-
+    case (readiness, mbRuntime) of
+      (Ready _, Just runtime) -> engineWorker runtime logLine
+      _ -> pure Nothing
   let
     address =
       bindHostAddress (serveHost serveConfig)
@@ -256,7 +264,33 @@ serve serveConfig = do
         . Warp.setBeforeMainLoop (logLine ("Listening on " <> address))
         $ serverSettingsWith (traverse_ requestStop dispatcher) serveConfig
   Warp.runSettings settings (applicationWith serveConfig mbRuntime appLogger)
-    `finally` (traverse_ stopDispatcher dispatcher >> traverse_ closeDatabase mbRuntime >> finishLogger)
+    -- The worker's bound (8 s) fits inside scripts/service's 10 s stop.
+    `finally` (traverse_ (stopEngineWorkerWithin 8) worker >> traverse_ stopDispatcher dispatcher >> traverse_ closeDatabase mbRuntime >> finishLogger)
+
+{- | C-P4.17 Q5: the engine worker, when the host helper's runner channel is
+there (@LOCKSTEP_RUNNER_DIR@, which @scripts/service@ passes when the helper
+was started with @--runner@). Every role runs in the helper's container. No
+coding helper is built into this binary (the live adapter is separately
+authorized), so a fix stops for a person at its first role step; the worker
+still takes each handed-over bug to that point, and acts on the person's
+answers and Done. Without a channel there is no worker: nothing is started.
+-}
+engineWorker :: DatabaseRuntime -> (String -> IO ()) -> IO (Maybe EngineWorker)
+engineWorker runtime logLine = do
+  dir <- lookupEnv "LOCKSTEP_RUNNER_DIR"
+  case dir of
+    Nothing -> do
+      logLine "Engine worker: off (no runner channel; start the host helper with --runner)"
+      pure Nothing
+    Just d -> do
+      channel <- openRunnerChannel d
+      case channel of
+        Left code -> do
+          logLine ("Engine worker: off (" <> T.unpack code <> ")")
+          pure Nothing
+        Right c -> do
+          logLine "Engine worker: on (roles run in the host helper's container; no coding helper is built in)"
+          Just <$> startEngineWorker runtime (Engine (helperRunner c) (\_ _ -> Nothing)) 2000 logLine
 
 dbMigrate :: BackupPolicy -> DatabaseRuntime -> IO ()
 dbMigrate policy runtime = do
