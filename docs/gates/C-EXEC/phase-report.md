@@ -24,6 +24,9 @@
 | P4.R1 | **VERIFIED** at checkpoint `54966a4` (frozen `8f4361c`, implemented `b77bc81`): the review's M1–M5 fixed, L6–L11 fixed or reproduced and fixed (`docs/gates/P4.R1/dispositions.md`) | `C-P4.R1` | `docs/gates/P4.R1/` |
 | P4.17 | **VERIFIED** at checkpoint `54966a4` (frozen `8f4361c`, implemented `b77bc81`): the end-to-end browser journey; `lockstep serve` runs the engine worker with the helper's runner channel (Q5). Real-provider smoke **PROPOSED, NOT RUN** (`docs/gates/P4.17/real-provider-smoke-proposal.md`) | `C-P4.17` | `docs/gates/P4.17/` |
 | P4.R2 | **VERIFIED** at `54966a4` (frozen `1c52bb6`): the second review's MEDIUM and LOW 2–6. Checkpoint `54966a4`: Mac and Linux clean clone, unit 862/862, integration 562/562; host `check-runner` 0 failures, `check-runner-paths` 7/7; stress 17 MB | `C-P4.R2` | `docs/gates/P4.R2/` |
+| P4.R3 | **VERIFIED** at checkpoint `d13ac33` (frozen `70ef870`, implemented `b0b922d`): the final P4.R2 review's MEDIUM (a stage belongs to the engine running it) | `C-P4.R3` | `docs/gates/P4.R3/` |
+| P4.L | **VERIFIED offline** at `d13ac33` (frozen `a6b69e2`, implemented `c7a6d54`): the live Claude Code adapter, restricted egress, invocation-scoped credentials, the budget; unit 8/8, engine 7/7, host `check-live-runner` 84/84 against a stand-in upstream. **No provider contacted, nothing installed.** | `C-P4.L` | `docs/gates/P4.L/` |
+| P4.L.R1 | **VERIFIED offline** at `d13ac33` (frozen `8d0790c`): the live-integration review's two MEDIUM and five LOW; `check-live-proxy` 20/20 | `C-P4.L.R1` | `docs/gates/P4.L.R1/` |
 
 The first full check at `0b8dbad` failed one test of 518: a start-up race in the folder helper (C-P3.5), which
 gave the pane its copy after placing the list the frozen test waits on. Fixed in the helper at `30facae` (the
@@ -55,9 +58,15 @@ accepted with clarification; O-1 accepted; A-P4.3-1 approved (applied). A-P4.2-1
 P4.17, a supported production arrangement for the worker, and a smoke proposal (register entry "Phase 4
 recovery and completion").
 
-## Where it stands (2026-10-28)
+## Where it stands (2026-10-29)
 
-P4.1–P4.17, P4.R1 and P4.R2 verified (Mac and Linux) at `54966a4`; two independent read-only reviews, their
-findings remediated or dispositioned. The decision packet (`decision-packet.md`) is ready for the owner.
-Nothing was installed, pushed or published; no provider was invoked (the guard's sentinel log is empty in
-every run). Gate C-EXEC is not claimed; Phase 5 is not started.
+P4.1–P4.17, P4.R1–P4.R3, P4.L and P4.L.R1 verified at `d13ac33` (Mac and Linux; the live path offline on the real
+Docker host); four independent read-only reviews, every confirmed MEDIUM corrected with a regression check. The
+revised decision packet (`decision-packet.md`) and the revised smoke proposal (`docs/gates/P4.L/`) are ready for the
+owner. Nothing was installed, pushed or published; no real credential exists; no provider was invoked (the guard's
+sentinel log is empty in every run; the live checks used a local stand-in); the operator's engine is not enabled;
+no real coding transaction has run. Gate C-EXEC is not claimed; Phase 5 is not started.
+
+`.local/plans/phase-04_update3.md` (sha256 `97c86589…2da6a12`): the final P4.R2 review, the offline live-provider
+integration (B1–B3), the budget report, the revised smoke proposal (register entry "Phase 4 live-provider
+integration, offline").
