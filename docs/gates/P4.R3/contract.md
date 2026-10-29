@@ -50,6 +50,11 @@ R2-I (the check under the row lock) stays as a second line. Nothing is migrated.
   next stage instead of `stale-step`); the step now reads the row first and the lock-held check of its revision
   refuses it, as before.
 
+## 4a. Verification record
+
+Checkpoint `d13ac33`: Mac `scripts/check --integration` and Linux clean clone, unit 870/870, integration 571/571
+(R3-O, R3-R and the frozen R2-I included). **Status: VERIFIED** at `d13ac33`.
+
 ## 5. Allowed paths
 
 Changed: `src/Lockstep/Application/{Engine,Database}.hs`, the test files, `lockstep.cabal`,

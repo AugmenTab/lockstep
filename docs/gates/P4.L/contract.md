@@ -94,6 +94,14 @@ with the changed helper.
   reduce` in `Lockstep.Effects.ClaudeAdapterTest`). The frozen files are unchanged; `.hlint.yaml` ignores exactly
   those three hint names within exactly those two modules. No check's meaning changes.
 
+## 5a. Verification record
+
+Checkpoint `d13ac33` (with C-P4.L.R1): Mac `scripts/check --integration` and Linux clean clone, unit 870/870
+(ClaudeAdapterTest 8/8), integration 571/571 (LiveAdapterTest 7/7); the guard's construction gate holds
+(`Provider.Live` imported by `Main` only) and its sentinel log is empty; host `check-live-runner` 84/84
+(`.local/evidence/live-20261029t171956z/`), the frozen `check-runner` 0 failures and `check-runner-paths` 7/7 with
+the changed helper. **Status: VERIFIED offline** at `d13ac33`. Live use: not run (owner-gated).
+
 ## 6. Allowed paths
 
 New: `src/Lockstep/Effects/Provider/{Claude,Live}.hs`, `scripts/runner/provider/{Dockerfile,egress-proxy}`,

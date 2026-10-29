@@ -214,6 +214,22 @@ Phase 4 recovery and completion, 2026-10-28 (the owner's instruction in the sess
   except a narrow fix for an immediate security, confinement, replay or data-integrity failure; new roles or a
   state-machine redesign; Polygon Pong; Phase 5.
 
+Phase 4 live-provider integration, offline, 2026-10-29 (the owner's instruction in the session, "Read
+@.local/plans/phase-04_update3.md and implement"; handoff `.local/plans/phase-04_update3.md`, sha256
+`97c865895f4bac1c80c9551f7616e26641b96279385c80bfe74c3dc342da6a12`; recorded by the writing agent):
+
+- **Authorized**: a final independent read-only review of P4.R2; the live Claude Code adapter, restricted provider
+  egress and invocation-scoped credentials, implemented and tested offline only; an enforceable budget design and a
+  report of what is and is not enforceable; a revised, executable smoke proposal; an independent review of the new
+  integration; a final decision packet. New JSON in Fleece and new persistence through Orville's typed API, if any
+  (none was needed).
+- **Not authorized by it**: live model or API calls or spending; creating or loading real credentials; installing or
+  upgrading the operator's installation; starting the operator's helper with `--runner`; running the smoke; push or
+  publication; accepting Gate C-EXEC or human Done; Phase 5 or a new dogfood project (Polygon Pong withdrawn; the
+  owner's PRD to come separately).
+- Done under it (contracts `C-P4.R3`, `C-P4.L`, `C-P4.L.R1`): see `docs/gates/C-EXEC/decision-packet.md`. Installed:
+  no. Real credentials: none. Live provider calls: none. Production engine enabled: no. Real coding transaction: none.
+
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.
 

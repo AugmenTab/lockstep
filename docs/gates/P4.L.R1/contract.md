@@ -69,6 +69,12 @@ R1-L3, and every earlier proxy and helper behaviour).
   R-P1 against the committed helper; fixed; `bash -n` clean; R-P1/R-P2 3 of 3. After the fix: `check-live-runner`
   **84 of 84** (`.local/evidence/live-20261029t171956z/results.txt`), `check-live-proxy` 20 of 20.
 
+## 4a. Verification record
+
+Checkpoint `d13ac33`: `check-live-proxy` 20/20 (`.local/evidence/live-proxy-20261029t171931z/`), the frozen
+`check-live-runner` 84/84, and the full Mac and Linux runs (unit 870/870, integration 571/571). **Status: VERIFIED
+offline** at `d13ac33`. Not independently reviewed again.
+
 ## 5. Dispositions of the rest
 
 | Finding | Disposition |
