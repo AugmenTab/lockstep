@@ -146,7 +146,9 @@ expect "a request without the configured effort is refused: effort-refused" test
 expect "a body nested too deep is refused: body-refused" test "$(line_of deep)" = "403 body-refused"
 expect "none of them reached the upstream" test "$(bodies)" = "$before"
 probe valid
-expect "the proxy still answers afterwards" test "$(line_of valid)" = "200 -"
+# A-P4.L.R1-1 (C-P4.L.R2 H1): a refusal ends the run's admission; the proxy answers, admits nothing.
+expect "after the run's first refusal a valid request is refused: run-stopped" test "$(line_of valid)" = "403 run-stopped"
+expect "and it does not reach the upstream" test "$(bodies)" = "$before"
 expect "the run's first refusal is its stop: body-refused" test "$(summary_stop "$run1")" = body-refused
 stop_proxy "$run1"
 
