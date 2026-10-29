@@ -299,25 +299,41 @@ mounts it and sets `LOCKSTEP_RUNNER_DIR`. Every role and every check then runs i
 by the helper (DG-17: pinned image, no network, read-only root, your user id, dropped capabilities, limits).
 The service log says which it is:
 
-- `Engine worker: on (roles run in the host helper's container; no coding helper is built in)` — each
+- `Engine worker: on (roles run in the host helper's container; no live provider is configured)` — each
   handed-over bug is started (one at a time per Engineer), its basis taken (the folder must be clean) and its
   branch `lockstep/<work order>` made; it moves one step every 2 s and acts on your answers and your Done.
-- `Engine worker: off (…)` — no channel: nothing is started and the pages keep saying nothing runs yet.
+- `Engine worker: on (live provider claude-code, model M, effort E)` — the same, and every role runs the
+  Claude Code CLI live (below).
+- `Engine worker: off (…)` — no channel (nothing is started and the pages keep saying nothing runs yet), or a
+  provider line the service cannot use (`provider-model-unsupported`, `provider-effort-unsupported`,
+  `provider-file-invalid`): it never falls back to another model or effort.
+
+**A live provider (C-P4.L; separately authorized, not set up for you).** With an owner-made
+`.local/control/provider/` (0700) holding `config` (provider, model, effort, the pricing basis and the limits) and
+`credential` (0600, the API key), a helper started with `--runner` and the image `scripts/provider-image` builds,
+the helper tells the service the model and effort (`runner/provider`, nothing secret) and runs each role as a
+*live run*: the pinned Claude Code CLI in its container on a network of its own, whose only other member is the
+run's egress proxy. The proxy alone holds the key, sends only Messages API requests and only to
+`api.anthropic.com`, refuses any other model, effort, tool, beta feature, image or path, and reserves each
+request's largest possible charge in the ledger (`provider/ledger/ledger`) before sending it: the budget, the token
+limit and the run limits are hard caps (`docs/gates/P4.L/budget-report.md`). A run the proxy stops, or whose
+proxy goes away, halts the bug for you (`provider-stopped <reason>`); nothing is run again by itself. Checks and
+commands keep running with no network. The helper's log says `live runs on: …` or why they are off. Verified
+offline only (`scripts/lib/check-live-runner`, against a local stand-in; no provider contacted).
 
 **Filters.** Lockstep never runs a content filter your repository configures (for example Git LFS) when it
 looks at your folder: it compares raw bytes. A file such a filter would have cleaned therefore counts as a
 change, and the fix stops at *looking at the project's files* until the folder is clean that way.
 
-**What it cannot do yet.** No coding helper is built into this version (the live Claude adapter needs the
-owner's separate authorization). So a bug stops at its first role step, *finding the cause*, with "No coding
-helper is set up for Lockstep."; **Try this step again** stops there again, **Stop fixing this bug** ends it.
-Nothing is ever pushed; only the work branch moves, and only by compare-and-swap.
+**Without a live provider** a bug stops at its first role step, *finding the cause*, with "No coding helper is
+set up for Lockstep."; **Try this step again** stops there again, **Stop fixing this bug** ends it. Nothing is
+ever pushed; only the work branch moves, and only by compare-and-swap.
 
-**Turning it on** (not done for you): the `lockstep` launcher starts the helper without `--runner`. Starting
-the operator's helper with `--runner` is an installation change the owner authorizes together with the first
-real-provider trial (`docs/gates/P4.17/real-provider-smoke-proposal.md`); until then the engine is exercised by
-the integration suite (`ServeWorkerTest`, `EndToEndTest`) and the helper's container runner by
-`scripts/lib/check-runner` and `scripts/lib/check-runner-paths`.
+**Turning it on** (not done for you): the `lockstep` launcher starts the helper without `--runner`, and no
+provider is configured. Both, with the image and the credential, are steps the owner authorizes with the first
+real-provider smoke (`docs/gates/P4.L/real-provider-smoke-proposal.md`); until then the engine is exercised by the
+integration suite (`ServeWorkerTest`, `EndToEndTest`, `LiveAdapterTest`) and the helper's runners by
+`scripts/lib/check-runner`, `scripts/lib/check-runner-paths` and `scripts/lib/check-live-runner`.
 
 **Stopping and restarts.** As the service starts to shut down it asks the worker to stop; after the web
 server has closed (at most 3 s) it waits at most 4 s more, then stops the worker's thread (2 s at most), all

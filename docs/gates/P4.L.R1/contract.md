@@ -61,6 +61,13 @@ R1-L3, and every earlier proxy and helper behaviour).
   after refusals; an unreadable ledger already refusing the request and sending nothing; no credential kept). A
   first baseline run had one test fault, corrected before the freeze: a restarted run name found its first proxy's
   ready file (the helper removes it before every start; the check now does too).
+- Trial: `check-live-proxy` **20 of 20** (`.local/evidence/live-proxy-20261029t171931z/results.txt`); the frozen
+  `check-live-runner` at first 83 of 84: an `mcp_servers` request was refused `field-refused` by the new allowlist
+  before the frozen check's `tool-refused`; the proxy now checks those two fields first (their own code). A slip during
+  the trial, recorded: a log line with an unbalanced quote (`the system's` inside `${…}`) made the helper unparsable;
+  a full Mac check running at the time copied it and failed R-P1/R-P2 (no run ever answered). Found by isolating
+  R-P1 against the committed helper; fixed; `bash -n` clean; R-P1/R-P2 3 of 3. After the fix: `check-live-runner`
+  **84 of 84** (`.local/evidence/live-20261029t171956z/results.txt`), `check-live-proxy` 20 of 20.
 
 ## 5. Dispositions of the rest
 

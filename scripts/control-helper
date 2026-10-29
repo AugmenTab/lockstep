@@ -1395,11 +1395,11 @@ execute_live_run() { # ID OP RUN
       fi
       args+=("$provider_image" "${argv[@]}")
       # The wall clock, and the proxy: a run whose proxy is gone is stopped at once.
+      # The wall clock is a deadline in seconds (C-P4.L.R1 R1-L3), whatever each check costs.
       (
-        n=0
-        while [ $n -lt "$wall" ]; do
+        deadline=$(($(date +%s) + wall))
+        while [ "$(date +%s)" -lt "$deadline" ]; do
           sleep 1
-          n=$((n + 1))
           if [ "$(docker container inspect --format '{{.State.Running}}' "$proxy" 2>/dev/null)" != true ]; then
             : > "$failed"
             docker kill "$name" >/dev/null 2>&1
@@ -1613,6 +1613,10 @@ if [ "$runner_enabled" = 1 ]; then
   fi
 fi
 log "started (pid $$, protocol 1, timeout ${timeout}s${instance:+, instance $instance}${runner_image:+, runner image $runner_image})"
+# C-P4.L.R1 R1-I3: a test override is never silent.
+if [ -n "$test_upstream$test_ca" ] || [ "$egress_network" != bridge ]; then
+  log "TEST OVERRIDE: the egress proxy's upstream ${test_upstream:-api.anthropic.com:443}, CA ${test_ca:-the system CAs}, egress network $egress_network"
+fi
 warned=""
 while [ "$stopping" = 0 ]; do
   [ "$runner_enabled" = 1 ] && runner_tick

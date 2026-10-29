@@ -93,12 +93,16 @@ BETAS = {
     "effort-2025-11-24",
 }
 BLOCKS = {"text", "tool_use", "tool_result", "thinking", "redacted_thinking"}
+# The top-level fields the pinned CLI sends (observed, 2.1.312); any other is refused.
+TOP_FIELDS = {"model", "max_tokens", "messages", "system", "tools", "stream", "output_config", "thinking",
+              "context_management", "metadata"}
 MAX_BODY = 8 * 1024 * 1024
 # Tokens the provider may add to a prompt beyond its bytes (its tool-use system prompt).
 PROMPT_OVERHEAD = 4096
 STOPPING = ("budget-exhausted", "token-limit-reached", "output-allowance-exhausted", "requests-exhausted",
             "model-refused", "effort-refused", "tool-refused", "content-refused", "beta-refused", "path-refused",
-            "max-tokens-refused", "body-refused", "auth-refused", "usage-unknown", "redirect-refused")
+            "max-tokens-refused", "body-refused", "field-refused", "auth-refused", "usage-unknown",
+            "redirect-refused", "ledger-unreadable", "ledger-unwritable")
 
 
 class Refusal(Exception):
@@ -209,6 +213,15 @@ class Ledger:
             tokens += t
         return micro, tokens, invocations
 
+    def has_run(self, run):
+        try:
+            with open(self.path, encoding="ascii") as f:
+                return any(line.split(" ")[:2] == ["invocation", run] for line in f.read().split("\n"))
+        except FileNotFoundError:
+            return False
+        except (OSError, UnicodeDecodeError):
+            raise Refusal("ledger-unreadable")
+
     def append(self, line):
         fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         try:
@@ -256,25 +269,46 @@ def reservation(config, body_bytes, max_tokens):
     return math.ceil(total / (1000000 * 100)), prompt + max_tokens
 
 
+def unique_keys(pairs):
+    """An object with each key once; a key written twice is refused (C-P4.L.R1 R1-M1)."""
+    keys = [k for k, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise Refusal("body-refused")
+    return dict(pairs)
+
+
 def check_request(config, role, body, beta_header):
+    """Checks a request; returns its max_tokens, its beta features and the bytes to send:
+    the proxy's own serialization of the checked document, never the client's bytes."""
     try:
-        request = json.loads(body)
-    except (ValueError, UnicodeDecodeError):
+        request = json.loads(body, object_pairs_hook=unique_keys)
+    except (ValueError, UnicodeDecodeError, RecursionError):
         raise Refusal("body-refused")
     if not isinstance(request, dict):
         raise Refusal("body-refused")
+    # A provider-side MCP server or container is a tool the role may not have (its own code, first).
+    for key in ("mcp_servers", "container"):
+        if key in request:
+            raise Refusal("tool-refused")
+    # Only the fields the pinned CLI sends (R1-M2): no field that could change the price or the tools.
+    if not set(request) <= TOP_FIELDS:
+        raise Refusal("field-refused")
     if request.get("model") != config["model"]:
         raise Refusal("model-refused")
     max_tokens = request.get("max_tokens")
     if not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or not 1 <= max_tokens <= config["request-max-tokens"]:
         raise Refusal("max-tokens-refused")
-    for key in ("mcp_servers", "container"):
-        if key in request:
-            raise Refusal("tool-refused")
-    # The configured effort only: no other effort, and no other output setting.
-    output = request.get("output_config", {"effort": config["effort"]})
+    # The configured effort, always (R1-L5): no other effort, no default, no other output setting.
+    output = request.get("output_config")
     if not isinstance(output, dict) or set(output) != {"effort"} or output["effort"] != config["effort"]:
         raise Refusal("effort-refused")
+    thinking = request.get("thinking", {"type": "adaptive"})
+    if (not isinstance(thinking, dict) or not set(thinking) <= {"type", "display", "budget_tokens"}
+            or thinking.get("type") not in ("adaptive", "enabled", "disabled")):
+        raise Refusal("field-refused")
+    metadata = request.get("metadata", {})
+    if not isinstance(metadata, dict) or not set(metadata) <= {"user_id"} or not all(isinstance(v, str) for v in metadata.values()):
+        raise Refusal("field-refused")
     tools = request.get("tools", [])
     if not isinstance(tools, list):
         raise Refusal("body-refused")
@@ -313,7 +347,11 @@ def check_request(config, role, body, beta_header):
             if beta not in BETAS:
                 raise Refusal("beta-refused")
             betas.append(beta)
-    return max_tokens, betas
+    try:
+        sent = json.dumps(request, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    except (ValueError, RecursionError):
+        raise Refusal("body-refused")
+    return max_tokens, betas, sent
 
 
 def usage_from(raw):
@@ -375,18 +413,22 @@ class StreamUsage:
             kind = event.get("type")
             if kind == "message_start":
                 message = event.get("message")
-                self.start = usage_from(message.get("usage") if isinstance(message, dict) else None)
-                if self.start is None:
+                raw = message.get("usage") if isinstance(message, dict) else None
+                if isinstance(raw, dict) and usage_from(raw) is not None:
+                    self.start = dict(raw)
+                else:
                     self.broken = True
             elif kind == "message_delta":
                 u = event.get("usage")
                 out = u.get("output_tokens") if isinstance(u, dict) else None
-                if isinstance(out, int) and not isinstance(out, bool) and out >= 0:
+                if isinstance(out, int) and not isinstance(out, bool) and out >= 0 and self.start is not None:
                     self.output = out
-                    # Later counts of the prompt, when the provider sends them, replace the first.
-                    for key, name in (("in", "input_tokens"), ("cr", "cache_read_input_tokens")):
-                        if self.start is not None and isinstance(u.get(name), int) and u[name] >= 0:
-                            self.start[key] = u[name]
+                    # The final counts, when the provider sends them, replace the first (R1-L7): the
+                    # prompt, the cache reads and the cache writes with their split.
+                    for name in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens",
+                                 "cache_creation", "server_tool_use"):
+                        if name in u:
+                            self.start[name] = u[name]
                 else:
                     self.broken = True
             elif kind == "message_stop":
@@ -395,7 +437,9 @@ class StreamUsage:
     def result(self):
         if self.broken or self.start is None or self.output is None or not self.stopped:
             return None
-        usage = dict(self.start)
+        usage = usage_from(self.start)
+        if usage is None:
+            return None
         usage["out"] = self.output
         return usage
 
@@ -470,10 +514,14 @@ class Proxy:
                 raise Refusal("budget-exhausted")
             if tokens + reserve_tokens > self.config["token-limit"]:
                 raise Refusal("token-limit-reached")
-            self.requests += 1
-            number = self.requests
+            number = self.requests + 1
+            # The reservation is on disk before anything is counted or sent (R1-L2).
+            try:
+                self.ledger.append("reserve %s %d %d %d %d" % (self.run, number, reserve, reserve_tokens, max_tokens))
+            except OSError:
+                raise Refusal("ledger-unwritable")
+            self.requests = number
             self.output_open += max_tokens
-            self.ledger.append("reserve %s %d %d %d %d" % (self.run, number, reserve, reserve_tokens, max_tokens))
             self.summary["requests"] = self.requests
             self.write_summary()
             return number, reserve, reserve_tokens
@@ -500,8 +548,12 @@ class Proxy:
                     self.summary[k] += usage[k]
             self.output_settled += out
             self.summary["micro"] += micro
-            self.ledger.append("settle %s %d %d %d %d %s %d %d %d %d %d %d" % (
-                (self.run, number, micro, tokens, out, state) + fields + (status,)))
+            try:
+                self.ledger.append("settle %s %d %d %d %d %s %d %d %d %d %d %d" % (
+                    (self.run, number, micro, tokens, out, state) + fields + (status,)))
+            except OSError:
+                # Unsettled, the reservation stays charged; the run cannot go on accounted.
+                self.note_stop("ledger-unwritable")
             self.write_summary()
 
 
@@ -547,7 +599,7 @@ def handler_for(proxy):
                 return
             body = self.rfile.read(int(length))
             try:
-                max_tokens, betas = check_request(proxy.config, proxy.role, body, self.headers.get_all("anthropic-beta") or [])
+                max_tokens, betas, body = check_request(proxy.config, proxy.role, body, self.headers.get_all("anthropic-beta") or [])
                 number, reserve, reserve_tokens = proxy.admit_request(max_tokens, len(body))
             except Refusal as r:
                 self.refuse(403, r.code)
@@ -664,6 +716,9 @@ def main():
         os.makedirs(os.path.join(a["ledger"], "runs"), mode=0o700, exist_ok=True)
         with ledger.lock:
             admit(config, ledger)
+            # A run name is served once (R1-L1): its reservations are keyed by it.
+            if ledger.has_run(a["run"]):
+                raise Refusal("run-reused")
             ledger.append("invocation %s %d" % (a["run"], int(time.time())))
         proxy = Proxy(config, credential, ledger, a["run"], a["role"], upstream, a.get("ca"))
         proxy.write_summary()
