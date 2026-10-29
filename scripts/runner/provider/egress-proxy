@@ -18,7 +18,10 @@
 #     against the owner's budget and token limit in a durable ledger, and
 #     settles it afterwards from the usage the provider reported; a request
 #     whose usage cannot be read stays charged at its reservation;
-#   - never follows or passes on a redirect.
+#   - never follows or passes on a redirect;
+#   - stops the run at its first refusal: nothing more of it is admitted (C-P4.L.R2 H1);
+#   - admits one conversation a run: one opening, then only requests that answer the tool calls
+#     the upstream issued in it; a second agent's conversation is refused (C-P4.L.R2 H2).
 #
 #   egress-proxy describe --config FILE     ("ok claude-code MODEL EFFORT MAX-TOKENS")
 #   egress-proxy admit --config FILE --credential FILE --ledger DIR
@@ -50,6 +53,7 @@
 # A reservation never settled (the proxy stopped mid-request) stays charged.
 # DIR/runs/RUN is the run's summary, rewritten after every request; DIR/runs/
 # RUN.ready appears when the proxy listens. Nothing here ever writes the key.
+import hashlib
 import http.client
 import http.server
 import json
@@ -102,7 +106,10 @@ PROMPT_OVERHEAD = 4096
 STOPPING = ("budget-exhausted", "token-limit-reached", "output-allowance-exhausted", "requests-exhausted",
             "model-refused", "effort-refused", "tool-refused", "content-refused", "beta-refused", "path-refused",
             "max-tokens-refused", "body-refused", "field-refused", "auth-refused", "usage-unknown",
-            "redirect-refused", "ledger-unreadable", "ledger-unwritable")
+            "redirect-refused", "ledger-unreadable", "ledger-unwritable", "conversation-refused")
+# C-P4.L.R2 H1: every code above is terminal: once one is recorded, nothing more of the run is admitted
+# (later requests are refused run-stopped, or by their own check). Not terminal: a provider's own error
+# answer (429, 5xx, another 4xx), passed back and charged at its reservation; the CLI may retry it.
 
 
 class Refusal(Exception):
@@ -349,9 +356,42 @@ def check_request(config, role, body, beta_header):
             betas.append(beta)
     try:
         sent = json.dumps(request, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+        conversation = conversation_of(request)
     except (ValueError, RecursionError):
         raise Refusal("body-refused")
-    return max_tokens, betas, sent
+    return max_tokens, betas, sent, conversation
+
+
+def without_marks(value):
+    """The value without cache_control marks, which the CLI moves from turn to turn."""
+    if isinstance(value, dict):
+        return {k: without_marks(v) for k, v in value.items() if k != "cache_control"}
+    if isinstance(value, list):
+        return [without_marks(v) for v in value]
+    return value
+
+
+def conversation_of(request):
+    """What a request says about its conversation (C-P4.L.R2 H2): whether it is an opening (no
+    assistant turn yet), its digest (to recognize a retry of the opening), the tool calls its
+    history names, and the tool calls it answers."""
+    used, answered = set(), set()
+    opening = True
+    for message in request["messages"]:
+        content = message.get("content")
+        if message.get("role") == "assistant":
+            opening = False
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if block.get("type") == "tool_use":
+                used.add(str(block.get("id")))
+            elif block.get("type") == "tool_result":
+                used.add(str(block.get("tool_use_id")))
+                answered.add(str(block.get("tool_use_id")))
+    body = {k: v for k, v in request.items() if k != "metadata"}
+    digest = hashlib.sha256(json.dumps(without_marks(body), sort_keys=True).encode("utf-8")).hexdigest()
+    return {"opening": opening, "digest": digest, "used": used, "answered": answered}
 
 
 def usage_from(raw):
@@ -396,6 +436,7 @@ class StreamUsage:
         self.output = None
         self.stopped = False
         self.broken = False
+        self.tool_ids = []
 
     def feed(self, chunk):
         self.pending += chunk
@@ -431,6 +472,10 @@ class StreamUsage:
                             self.start[name] = u[name]
                 else:
                     self.broken = True
+            elif kind == "content_block_start":
+                block = event.get("content_block")
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    self.tool_ids.append(str(block.get("id")))
             elif kind == "message_stop":
                 self.stopped = True
 
@@ -465,6 +510,12 @@ class Proxy:
         self.statuses = {}
         self.betas = set()
         self.paths = set()
+        # C-P4.L.R2 H2: the run's one conversation: its opening, and the tool calls the upstream issued.
+        self.opening_digest = None
+        self.opening_answered = False
+        self.issued = set()
+        self.latest = set()
+        self.ended = False
 
     def note_stop(self, code):
         if self.summary["stop"] == "-" and code in STOPPING:
@@ -501,9 +552,13 @@ class Proxy:
             self.note_stop(code)
             self.write_summary()
 
-    def admit_request(self, max_tokens, body_bytes):
-        """Checks the run's and the budget's limits and records the reservation."""
+    def admit_request(self, max_tokens, body_bytes, conversation):
+        """Checks the run's state, its limits, the budget and its one conversation, and records the
+        reservation."""
         with self.ledger.lock, self.lock:
+            # H1: a run that has stopped admits nothing more, whatever the request.
+            if self.summary["stop"] != "-":
+                raise Refusal("run-stopped")
             if self.requests >= self.config["invocation-requests"]:
                 raise Refusal("requests-exhausted")
             if self.output_settled + self.output_open + max_tokens > self.config["invocation-output-tokens"]:
@@ -514,6 +569,7 @@ class Proxy:
                 raise Refusal("budget-exhausted")
             if tokens + reserve_tokens > self.config["token-limit"]:
                 raise Refusal("token-limit-reached")
+            self.check_conversation(conversation)
             number = self.requests + 1
             # The reservation is on disk before anything is counted or sent (R1-L2).
             try:
@@ -525,6 +581,38 @@ class Proxy:
             self.summary["requests"] = self.requests
             self.write_summary()
             return number, reserve, reserve_tokens
+
+    def check_conversation(self, conversation):
+        """H2: one conversation a run. Its opening may be sent again only unchanged and only until it is
+        answered (a retry); every later request may name only tool calls the upstream issued in this
+        run, and must answer the latest answer's tool calls. Anything else is another agent's. A
+        conversation whose latest answer ended the turn (no tool calls) admits nothing more (R2-H2b):
+        the CLI exits after its final answer."""
+        if self.ended:
+            raise Refusal("conversation-refused")
+        if conversation["opening"]:
+            if self.opening_answered:
+                raise Refusal("conversation-refused")
+            if self.opening_digest is not None and conversation["digest"] != self.opening_digest:
+                raise Refusal("conversation-refused")
+            self.opening_digest = conversation["digest"]
+            return
+        if not self.opening_answered:
+            raise Refusal("conversation-refused")
+        if not conversation["used"] <= self.issued:
+            raise Refusal("conversation-refused")
+        if not self.latest <= conversation["answered"]:
+            raise Refusal("conversation-refused")
+
+    def answered(self, conversation, tool_ids):
+        """A complete answer, its usage known: its tool calls are the conversation's latest."""
+        with self.lock:
+            if conversation["opening"]:
+                self.opening_answered = True
+            self.issued |= set(tool_ids)
+            self.latest = set(tool_ids)
+            if not tool_ids:
+                self.ended = True
 
     def settle(self, number, reserve, reserve_tokens, max_tokens, prompt_tokens, usage, status):
         with self.ledger.lock, self.lock:
@@ -599,8 +687,9 @@ def handler_for(proxy):
                 return
             body = self.rfile.read(int(length))
             try:
-                max_tokens, betas, body = check_request(proxy.config, proxy.role, body, self.headers.get_all("anthropic-beta") or [])
-                number, reserve, reserve_tokens = proxy.admit_request(max_tokens, len(body))
+                max_tokens, betas, body, conversation = check_request(
+                    proxy.config, proxy.role, body, self.headers.get_all("anthropic-beta") or [])
+                number, reserve, reserve_tokens = proxy.admit_request(max_tokens, len(body), conversation)
             except Refusal as r:
                 self.refuse(403, r.code)
                 return
@@ -616,6 +705,7 @@ def handler_for(proxy):
                 headers["anthropic-beta"] = ",".join(betas)
             usage = None
             status = 502
+            tool_ids = []
             try:
                 connection = http.client.HTTPSConnection(proxy.host, proxy.port, timeout=600, context=proxy.context)
                 connection.request("POST", "/v1/messages" + ("?beta=true" if path.endswith("?beta=true") else ""), body, headers)
@@ -655,16 +745,23 @@ def handler_for(proxy):
                 if 200 <= status < 300:
                     if stream is not None:
                         usage = stream.result()
+                        tool_ids = stream.tool_ids
                     else:
                         try:
                             parsed = json.loads(whole)
                             usage = usage_from(parsed.get("usage")) if isinstance(parsed, dict) else None
+                            content = parsed.get("content") if isinstance(parsed, dict) else None
+                            tool_ids = [str(b.get("id")) for b in content
+                                        if isinstance(b, dict) and b.get("type") == "tool_use"] if isinstance(content, list) else []
                         except ValueError:
                             usage = None
             except (OSError, http.client.HTTPException, ssl.SSLError):
                 usage = None
                 status = 502 if status in (0, 502) else status
             proxy.settle(number, reserve, reserve_tokens, max_tokens, prompt_tokens, usage, status)
+            # Only a complete answer, its usage known, moves the conversation on (H2).
+            if usage is not None and 200 <= status < 300:
+                proxy.answered(conversation, tool_ids)
 
     return Handler
 

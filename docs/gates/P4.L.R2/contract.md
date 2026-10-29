@@ -117,6 +117,23 @@ all hold; impersonating twice, ending on a final answer — **the CLI resumed un
 written) and **two impersonated requests were admitted** (the bound). One test fault fixed before the freeze (a
 missing `]`).
 
+Result with R2-H2b (`.local/evidence/live-impersonation-20261029t202500z/results.txt`): **12 of 13**. Conditions 1
+(fail-closed: the CLI's next request refused, the run stopped, no answer), 2 (the run's own ledger and request
+allowance; nothing else sent) and 3 (a `provider-stopped` run is `RoleFailed` in the service, never an answer:
+`Roles.runPrepared`; the fix halts for a person: C-P4.L LiveAdapterTest L5-B) hold. **The one-request bound does
+not hold** (`impersonated-2 200`): an impersonator is bounded by the run's own allowances, not to one request. Per
+the owner's instruction this is reported as a **blocking finding** for the smoke (the packet), not built around:
+closing it needs the process-memory isolation of the owner's hardening item 5.
+
+## 10. Verification record (the final implementation, before full qualification)
+
+| Check | Result | Evidence |
+|---|---|---|
+| `check-live-boundary` (H1, H2, H3) | **83/83** | `.local/evidence/live-boundary-20261029t202525z/results.txt` |
+| `check-live-impersonation` (§9) | **12/13** — the one-request bound fails (blocking, reported) | `.local/evidence/live-impersonation-20261029t202500z/results.txt` |
+| `check-live-proxy` (amended A-P4.L.R1-1) | **21/21** | `.local/evidence/live-proxy-20261029t202625z/results.txt` |
+| `check-live-runner` (amended A-P4.L-1) | **84/84** | `.local/evidence/live-20261029t202647z/results.txt` |
+
 Changed: `scripts/runner/provider/egress-proxy`, `scripts/control-helper`, the files of §3, `docs/gates/P4.L.R2/**`,
 `docs/gates/P4.L/**` (the smoke proposal's configuration steps), `docs/gates/C-EXEC/**`, `docs/reviews/**`,
 `docs/OPERATOR_GUIDE.md`, `docs/governance/DECISION_REGISTER.md`; with authorization only, the amended checks of §5.

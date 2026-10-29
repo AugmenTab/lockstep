@@ -1105,10 +1105,17 @@ active_run=""
 # the budget. Only with an owner-made DIR/provider (0700): config (the provider, model,
 # effort, prices and limits) and credential (0600, the API key). The service sees only
 # DIR/runner/provider ("lockstep-provider 1 claude-code MODEL EFFORT"), never a secret.
-# Test overrides (the host check only), read at start, never from a request: the proxy's
-# upstream (LOCKSTEP_RUNNER_TEST_UPSTREAM host:port), a CA file for it
-# (LOCKSTEP_RUNNER_TEST_UPSTREAM_CA) and the network it reaches it on
-# (LOCKSTEP_RUNNER_TEST_EGRESS_NETWORK).
+#
+# Two modes (C-P4.L.R2 H3), decided once at start:
+#   production    no DIR/provider/offline-test: the upstream is api.anthropic.com:443 with the
+#                 system's CAs, the egress network is Docker's bridge, the key is
+#                 DIR/provider/credential.
+#   offline test  an owner-made DIR/provider/offline-test (0600) naming a local upstream, its CA
+#                 and an egress network that Docker reports internal (no route out at all); the
+#                 key is DIR/provider/offline-credential (synthetic). Refused if
+#                 DIR/provider/credential is there too.
+# A test override in the environment (LOCKSTEP_RUNNER_TEST_UPSTREAM, ..._UPSTREAM_CA,
+# ..._EGRESS_NETWORK, the earlier mechanism) is never honoured: its presence turns live runs off.
 provider_dir=$state/provider
 provider_tag=lockstep-provider:claude-2.1.312
 provider_image=""
@@ -1116,15 +1123,12 @@ live_ready=0
 live_max_tokens=0
 live_net_prefix=lockstep-live-${instance:-main}-
 egress_prefix=lockstep-egress-${instance:-main}-
-egress_network=${LOCKSTEP_RUNNER_TEST_EGRESS_NETWORK:-bridge}
-test_upstream=${LOCKSTEP_RUNNER_TEST_UPSTREAM:-}
-test_ca=${LOCKSTEP_RUNNER_TEST_UPSTREAM_CA:-}
-[[ $egress_network =~ ^[a-z0-9][a-z0-9_.-]{0,62}$ ]] || fatal "LOCKSTEP_RUNNER_TEST_EGRESS_NETWORK is not a network name"
-[ -z "$test_upstream" ] || [[ $test_upstream =~ ^[a-z0-9.-]{1,253}:[0-9]{1,5}$ ]] || fatal "LOCKSTEP_RUNNER_TEST_UPSTREAM is not host:port"
-if [ -n "$test_ca" ]; then
-  case $test_ca in /*) ;; *) fatal "LOCKSTEP_RUNNER_TEST_UPSTREAM_CA must be an absolute path" ;; esac
-  [ -f "$test_ca" ] && [ ! -L "$test_ca" ] || fatal "LOCKSTEP_RUNNER_TEST_UPSTREAM_CA is not a file"
-fi
+egress_network=bridge
+test_upstream=""
+test_ca=""
+credential_name=credential
+env_override=""
+[ -n "${LOCKSTEP_RUNNER_TEST_UPSTREAM+set}${LOCKSTEP_RUNNER_TEST_UPSTREAM_CA+set}${LOCKSTEP_RUNNER_TEST_EGRESS_NETWORK+set}" ] && env_override=yes
 
 re_runner_header='^lockstep-runner-request ([^ ]+)$'
 re_argv='^argv ([0-9a-f]{64}|none)$'
@@ -1190,6 +1194,12 @@ init_provider() {
   [ -e "$provider_dir" ] || [ -L "$provider_dir" ] || return 0
   private_dir "$provider_dir" || { log "live runs off: $provider_dir must be a directory owned by this user with mode 0700"; return 0; }
   [ -f "$provider_dir/config" ] && [ ! -L "$provider_dir/config" ] || { log "live runs off: $provider_dir/config is missing"; return 0; }
+  # C-P4.L.R2 H3: the mode, before anything else; no key is read here in either mode.
+  if [ -n "$env_override" ]; then
+    log "live runs off: test-override-refused (a test override in the environment; offline tests use $provider_dir/offline-test)"
+    return 0
+  fi
+  choose_mode || { log "live runs off: $mode_refusal"; return 0; }
   provider_image=$(docker image inspect --format '{{.Id}}' "$provider_tag" 2>/dev/null || true)
   [ -n "$provider_image" ] || { log "live runs off: the image $provider_tag is missing (scripts/provider-image)"; return 0; }
   if [ ! -d "$provider_dir/ledger" ]; then
@@ -1211,7 +1221,55 @@ init_provider() {
   chmod 600 "$tmp"
   place "$tmp" "$runner/provider" || { rm -f "$tmp"; return 0; }
   live_ready=1
-  log "live runs on: ${BASH_REMATCH[1]}, at most $live_max_tokens output tokens a request (image $provider_image)"
+  if [ "$credential_name" = offline-credential ]; then
+    log "live runs on (OFFLINE TEST: upstream $test_upstream, CA $test_ca, internal network $egress_network, key offline-credential): ${BASH_REMATCH[1]}, at most $live_max_tokens output tokens a request (image $provider_image)"
+  else
+    log "live runs on: ${BASH_REMATCH[1]}, at most $live_max_tokens output tokens a request (image $provider_image)"
+  fi
+}
+
+# Sets the mode's upstream, CA, egress network and key file (C-P4.L.R2 H3); false with
+# mode_refusal set when the configuration may not be used.
+choose_mode() {
+  local file=$provider_dir/offline-test line upstream="" ca="" network="" n=0 internal
+  mode_refusal=""
+  egress_network=bridge
+  test_upstream=""
+  test_ca=""
+  credential_name=credential
+  if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+    return 0
+  fi
+  if [ -L "$file" ] || [ ! -f "$file" ] || [ ! -O "$file" ]; then mode_refusal=offline-test-invalid; return 1; fi
+  case $(mode_of "$file") in *00) ;; *) mode_refusal=offline-test-invalid; return 1 ;; esac
+  if grep -q '[^ -~]' "$file" || [ "$(wc -c < "$file" | tr -d ' ')" -gt 1024 ]; then mode_refusal=offline-test-invalid; return 1; fi
+  while IFS= read -r line; do
+    n=$((n + 1))
+    case $n:$line in
+      "1:lockstep-offline-test 1") ;;
+      2:upstream\ *) upstream=${line#upstream } ;;
+      3:ca\ *) ca=${line#ca } ;;
+      4:egress-network\ *) network=${line#egress-network } ;;
+      *) mode_refusal=offline-test-invalid; return 1 ;;
+    esac
+  done < "$file"
+  [ "$n" = 4 ] || { mode_refusal=offline-test-invalid; return 1; }
+  [[ $upstream =~ ^[a-z0-9.-]{1,253}:[0-9]{1,5}$ ]] || { mode_refusal=offline-test-invalid; return 1; }
+  case $ca in /*) ;; *) mode_refusal=offline-test-invalid; return 1 ;; esac
+  [ -f "$ca" ] && [ ! -L "$ca" ] || { mode_refusal=offline-test-invalid; return 1; }
+  [[ $network =~ ^[a-z0-9][a-z0-9_.-]{0,62}$ ]] || { mode_refusal=offline-test-invalid; return 1; }
+  # The production key's file must not be there at all in offline mode.
+  if [ -e "$provider_dir/credential" ] || [ -L "$provider_dir/credential" ]; then
+    mode_refusal="offline-test-with-credential (remove $provider_dir/credential or the offline-test file)"
+    return 1
+  fi
+  # Offline means no route out: Docker must report the egress network internal.
+  internal=$(docker network inspect --format '{{.Internal}}' "$network" 2>/dev/null || true)
+  [ "$internal" = true ] || { mode_refusal="offline-network-not-internal ($network)"; return 1; }
+  egress_network=$network
+  test_upstream=$upstream
+  test_ca=$ca
+  credential_name=offline-credential
 }
 
 # A directory under work/ that this user owns and that is not a symlink.
@@ -1340,9 +1398,9 @@ execute_live_run() { # ID OP RUN
   read -r wall outlim errlim <<< "$(runner_limits "$op")"
   while IFS= read -r -d '' p; do argv+=("$p"); done < "$dir/argv"
   local secrets=(--mount "type=bind,source=$provider_dir/config,target=/etc/lockstep/provider,readonly"
-    --mount "type=bind,source=$provider_dir/credential,target=/run/lockstep/credential,readonly")
+    --mount "type=bind,source=$provider_dir/$credential_name,target=/run/lockstep/credential,readonly")
   # Admission first: nothing is started for a run the budget, the limits or the credential refuse.
-  if [ ! -f "$provider_dir/credential" ] || [ -L "$provider_dir/credential" ] || [ ! -O "$provider_dir/credential" ]; then
+  if [ ! -f "$provider_dir/$credential_name" ] || [ -L "$provider_dir/$credential_name" ] || [ ! -O "$provider_dir/$credential_name" ]; then
     refuse "$id" "$op" credential-missing
     return
   fi
@@ -1613,10 +1671,6 @@ if [ "$runner_enabled" = 1 ]; then
   fi
 fi
 log "started (pid $$, protocol 1, timeout ${timeout}s${instance:+, instance $instance}${runner_image:+, runner image $runner_image})"
-# C-P4.L.R1 R1-I3: a test override is never silent.
-if [ -n "$test_upstream$test_ca" ] || [ "$egress_network" != bridge ]; then
-  log "TEST OVERRIDE: the egress proxy's upstream ${test_upstream:-api.anthropic.com:443}, CA ${test_ca:-the system CAs}, egress network $egress_network"
-fi
 warned=""
 while [ "$stopping" = 0 ]; do
   [ "$runner_enabled" = 1 ] && runner_tick

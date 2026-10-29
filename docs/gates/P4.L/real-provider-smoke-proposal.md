@@ -3,7 +3,14 @@
 - Status: **PROPOSED — NOT RUN.** Supersedes `docs/gates/P4.17/real-provider-smoke-proposal.md`. Nothing below has
   been done: no provider was called, no real credential exists, nothing is installed, the operator's helper does not
   run with `--runner`, and no real coding transaction has run. **Each numbered approval in §2 is the owner's.**
-- Prepared 2026-10-29 by the writing agent (Implementer, manual) under `.local/plans/phase-04_update3.md` §11.
+- Prepared 2026-10-29 by the writing agent (Implementer, manual) under `.local/plans/phase-04_update3.md` §11;
+  revised under `phase-04_update4.md` (C-P4.L.R2).
+- **Blocked by a finding the owner asked to be reported as blocking** (C-P4.L.R2 §9): the owner accepted the H2
+  limitation for this attended, disposable smoke on condition that an impersonating process is bounded to one
+  request; the regression shows it is bounded only by the run's own allowances (requests, output, budget, wall
+  clock), after which the CLI's next request stops the run with nothing accepted. The owner decides whether that
+  bound is acceptable for this smoke. If the smoke goes ahead: attended throughout, this disposable repository only,
+  never extended to other repositories, unattended runs or production use.
 - Built on: C-P4.L (adapter, egress, credentials, budget; `docs/gates/P4.L/contract.md`), the budget report
   (`docs/gates/P4.L/budget-report.md`), C-P4.R3 (one engine owns a step).
 - It would show: one real model, through the real installed service, worker, helper, container, proxy and Git
@@ -61,6 +68,8 @@
    invocation-requests 80
    ```
 
+   Production mode only (C-P4.L.R2 H3): there must be **no** `.local/control/provider/offline-test` and **no**
+   `LOCKSTEP_RUNNER_TEST_*` variable in the helper's environment (either turns live runs off).
 6. **Start the helper with `--runner`.** The launcher does not do this yet. Either (a) by hand, after `./lockstep stop`:
    `scripts/control-helper --state <checkout>/.local/control --service-port 8000 --projects ~/lockstep-projects
    --runner`, then restart the service from the control pane (so it gets the runner channel); or (b) authorize a small

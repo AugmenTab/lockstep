@@ -321,6 +321,19 @@ proxy goes away, halts the bug for you (`provider-stopped <reason>`); nothing is
 commands keep running with no network. The helper's log says `live runs on: …` or why they are off. Verified
 offline only (`scripts/lib/check-live-runner`, against a local stand-in; no provider contacted).
 
+The proxy's first refusal ends the run: nothing more of it reaches the provider (`run-stopped`). It admits **one
+conversation a run**: the CLI's own; a second agent started inside the role's container (another `claude`, a script
+calling the API) is refused and ends the run (`conversation-refused`). One limitation remains, accepted by the owner
+only for an attended smoke on a disposable repository: a program in the container that reads the CLI's memory could
+continue the run's own conversation in its place for as long as the run's allowances last; the CLI's next request then
+stops the run and nothing is accepted (`docs/gates/P4.L.R2/contract.md` §6, §9).
+
+**Two modes, decided when the helper starts.** *Production*: `provider/config` and `provider/credential`; the proxy
+goes only to `api.anthropic.com` with the system's certificates. *Offline test* (the host checks only): an owner-made
+`provider/offline-test` naming a local upstream, its CA and a Docker network that is internal, with a synthetic key in
+`provider/offline-credential`; refused if `provider/credential` is also there. The old `LOCKSTEP_RUNNER_TEST_*`
+variables are never honoured: their presence turns live runs off (`test-override-refused`).
+
 **Filters.** Lockstep never runs a content filter your repository configures (for example Git LFS) when it
 looks at your folder: it compares raw bytes. A file such a filter would have cleaned therefore counts as a
 change, and the fix stops at *looking at the project's files* until the folder is clean that way.
