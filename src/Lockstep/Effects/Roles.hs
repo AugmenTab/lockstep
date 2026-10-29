@@ -34,6 +34,7 @@ module Lockstep.Effects.Roles
 
 import Control.Exception (IOException, finally, onException, try)
 import Crypto.Random (getRandomBytes)
+import Data.Bits ((.|.))
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
@@ -45,13 +46,13 @@ import Fleece.Aeson qualified as FA
 import Fleece.Core ((#+))
 import Fleece.Core qualified as FC
 import Flipstone.Prelude
-import System.Directory (createDirectory, getPermissions, listDirectory, removePathForcibly, setOwnerSearchable, setOwnerWritable, setPermissions)
+import System.Directory (createDirectory, getPermissions, listDirectory, removePathForcibly, setOwnerWritable, setPermissions)
 import System.IO (FilePath, hClose)
-import System.Posix.Files (getFdStatus, getSymbolicLinkStatus, isDirectory, isRegularFile, isSymbolicLink)
-import System.Posix.IO (OpenFileFlags (nofollow, nonBlock), OpenMode (ReadOnly), closeFd, defaultFileFlags, fdToHandle, openFd)
+import System.Posix.Files (fileMode, getFdStatus, getSymbolicLinkStatus, isDirectory, isRegularFile, isSymbolicLink, setFdMode)
+import System.Posix.IO (OpenFileFlags (directory, nofollow, nonBlock), OpenMode (ReadOnly), closeFd, defaultFileFlags, fdToHandle, openFd)
 import Text.Show (Show)
 
-import Lockstep.Effects.HelperRunner (HelperFailure (..), PreparedRun (..), RunnerChannel, prepareRun, requestCancel, runnerDirectory, submitRun)
+import Lockstep.Effects.HelperRunner (HelperFailure (..), PreparedRun (..), RunnerChannel, prepareRun, runnerDirectory, sendCancel, submitRun)
 import Lockstep.Effects.Process (Cancel, RunResult (..), runDirect)
 import Lockstep.Foundation.RunnerProtocol (RunProfile (..), isRunName)
 import Lockstep.Kernel.Roles
@@ -177,9 +178,23 @@ releaseUnder root workspace = do
     Right _ -> pure ()
     Left (_ :: IOException) -> pure ()
 
+{- | Makes a directory and the directories below it writable and searchable by
+their owner. C-P4.R2 R2-K: the mode is changed on the directory opened without
+following a link, so a link put in its place is never followed.
+-}
 writableTree :: FilePath -> IO ()
 writableTree dir = do
-  _ <- try (getPermissions dir >>= setPermissions dir . setOwnerWritable True . setOwnerSearchable True) :: IO (Either IOException ())
+  _ <-
+    try
+      ( do
+          fd <- openFd dir ReadOnly defaultFileFlags {nofollow = True, directory = True}
+          ( do
+              status <- getFdStatus fd
+              when (isDirectory status) (setFdMode fd (fileMode status .|. 0o700))
+            )
+            `finally` closeFd fd
+      ) ::
+      IO (Either IOException ())
   names <- fromRight [] <$> (try (listDirectory dir) :: IO (Either IOException [FilePath]))
   traverse_
     ( \n -> do
@@ -239,8 +254,9 @@ helperRunner channel =
     let
       prepared = PreparedRun (workspaceName workspace) (workspaceTree workspace) (workspaceInput workspace) (workspaceOutput workspace)
       waitSeconds = if profile == ProfileWrite then 1260 else 660
-    -- C-P4.R1 R-W2: a run whose caller is stopped is cancelled through the helper, not left running.
-    result <- submitRun channel prepared profile argv protected waitSeconds `onException` requestCancel channel (workspaceName workspace)
+    -- C-P4.R1 R-W2, C-P4.R2 R2-W: a run whose caller is stopped is cancelled through the helper, not left
+    -- running; the cancel is sent, never waited for.
+    result <- submitRun channel prepared profile argv protected waitSeconds `onException` sendCancel channel (workspaceName workspace)
     pure $ case result of
       Right r -> Right r
       Left HelperNoResult -> Left (RunnerUncertain (T.pack "helper-no-result"))

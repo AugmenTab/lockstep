@@ -51,7 +51,7 @@ import Lockstep.Application.Database
   )
 import Lockstep.Application.Dispatcher (Job (..), findJob, findJobForReceipt, jobStateCode, requestStop, startDispatcher, stopDispatcher)
 import Lockstep.Application.Engine (Engine (..))
-import Lockstep.Application.EngineWorker (EngineWorker, startEngineWorker, stopEngineWorkerWithin)
+import Lockstep.Application.EngineWorker (EngineWorker, requestEngineStop, startEngineWorker, stopEngineWorkerWithin)
 import Lockstep.Application.Executor (Executor (..), RunOutcome (..), executeOnce, noExecutorFaults)
 import Lockstep.Application.Ledger
   ( LedgerFailure (..)
@@ -262,10 +262,12 @@ serve serveConfig = do
     settings =
       Warp.setOnException onException
         . Warp.setBeforeMainLoop (logLine ("Listening on " <> address))
-        $ serverSettingsWith (traverse_ requestStop dispatcher) serveConfig
+        -- C-P4.R2 R2-W: the worker is asked to stop as the shutdown starts, with the dispatcher.
+        $ serverSettingsWith (traverse_ requestStop dispatcher >> traverse_ requestEngineStop worker) serveConfig
   Warp.runSettings settings (applicationWith serveConfig mbRuntime appLogger)
-    -- The worker's bound (8 s) fits inside scripts/service's 10 s stop.
-    `finally` (traverse_ (stopEngineWorkerWithin 8) worker >> traverse_ stopDispatcher dispatcher >> traverse_ closeDatabase mbRuntime >> finishLogger)
+    -- At most 4 s more for the worker (then 2 s for its thread) after Warp's own graceful close: inside
+    -- scripts/service's 10 s stop.
+    `finally` (traverse_ (stopEngineWorkerWithin 4) worker >> traverse_ stopDispatcher dispatcher >> traverse_ closeDatabase mbRuntime >> finishLogger)
 
 {- | C-P4.17 Q5: the engine worker, when the host helper's runner channel is
 there (@LOCKSTEP_RUNNER_DIR@, which @scripts/service@ passes when the helper
