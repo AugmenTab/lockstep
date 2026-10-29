@@ -3,10 +3,12 @@
 # Docker and the provider image (scripts/provider-image). Starts the real
 # scripts/control-helper with --runner on a disposable state directory
 # (.local/live-check-<stamp>, instance p4lv, test limits: 6 s, 64 KiB, 16 KiB),
-# with a synthetic provider configuration and a synthetic credential, and the
-# egress proxy's upstream replaced by a local stand-in (scripts/lib/live-standin,
-# HTTPS with a certificate made here) on an internal network: nothing here can
-# reach the internet, and no model provider is ever contacted. Runs the real
+# with a synthetic provider configuration and a synthetic credential, in the
+# helper's explicit offline-test mode (DIR/provider/offline-test, the key in
+# DIR/provider/offline-credential; A-P4.L-1, C-P4.L.R2 H3): the egress proxy's
+# upstream is a local stand-in (scripts/lib/live-standin, HTTPS with a certificate
+# made here) on an internal network: nothing here can reach the internet, and no
+# model provider is ever contacted. Runs the real
 # Claude Code CLI of the provider image with the live adapter's argument vector
 # (test/fixtures/live/claude-argv). Touches nothing of the operator's
 # installation; removes its state, containers and networks at the end.
@@ -101,8 +103,7 @@ start_standin() { # MODE
 standin_lines() { [ -f "$work/standin/requests.jsonl" ] && wc -l < "$work/standin/requests.jsonl" | tr -d ' ' || echo 0; }
 
 start_helper() {
-  LOCKSTEP_RUNNER_TEST_LIMITS=1 LOCKSTEP_RUNNER_TEST_EGRESS_NETWORK=$upnet \
-    LOCKSTEP_RUNNER_TEST_UPSTREAM=standin:8443 LOCKSTEP_RUNNER_TEST_UPSTREAM_CA=$work/standin.pem \
+  LOCKSTEP_RUNNER_TEST_LIMITS=1 \
     "$root/scripts/control-helper" --state "$state" --instance "$instance" --runner \
     < /dev/null >> "$work/helper.out" 2>&1 &
   helper_pid=$!
@@ -254,8 +255,12 @@ invocation-output-tokens 60000
 invocation-requests 50
 EOF
 chmod 600 "$state/provider/config"
-printf '%s\n' "$secret" > "$state/provider/credential"
-chmod 600 "$state/provider/credential"
+# A-P4.L-1: the helper's explicit offline-test mode (its upstream, CA and internal network) and its key.
+printf 'lockstep-offline-test 1\nupstream standin:8443\nca %s\negress-network %s\n' "$work/standin.pem" "$upnet" \
+  > "$state/provider/offline-test"
+chmod 600 "$state/provider/offline-test"
+printf '%s\n' "$secret" > "$state/provider/offline-credential"
+chmod 600 "$state/provider/offline-credential"
 
 # 2 an unsupported model is refused, not replaced
 set_config model claude-3-opus
@@ -396,21 +401,21 @@ expect "the upstream's record does not hold it" test -z "$(grep -r -l -F "$secre
 # A change to a host file can reach a container a moment late through the Mac's file sharing
 # (each case fails closed either way); each change is given time to arrive.
 settle() { sleep 3; }
-chmod 644 "$state/provider/credential"
+chmod 644 "$state/provider/offline-credential"
 settle
 go_cli run-live-readonly
 expect "a credential others can read is refused: credential-unusable" refused_with credential-unusable
-chmod 600 "$state/provider/credential"
-printf 'not-a-key\n' > "$state/provider/credential"
+chmod 600 "$state/provider/offline-credential"
+printf 'not-a-key\n' > "$state/provider/offline-credential"
 settle
 go_cli run-live-readonly
 expect "a malformed credential is refused: credential-malformed" refused_with credential-malformed
-rm -f "$state/provider/credential"
+rm -f "$state/provider/offline-credential"
 settle
 go_cli run-live-readonly
 expect "a missing credential is refused: credential-missing" refused_with credential-missing
-printf '%s\n' "$secret" > "$state/provider/credential"
-chmod 600 "$state/provider/credential"
+printf '%s\n' "$secret" > "$state/provider/offline-credential"
+chmod 600 "$state/provider/offline-credential"
 settle
 
 # 17 the tree: read-only for a read-only role, writable for the Implementer, protected files never

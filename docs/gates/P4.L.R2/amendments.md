@@ -1,7 +1,7 @@
 # Amendments to frozen checks for C-P4.L.R2 — for the owner's authorization
 
-- Status: **PROPOSED — awaiting the owner.** The frozen files are unchanged; the amended versions are drafts in
-  `.local/amend/`. Prepared 2026-10-29 by the writing agent (Implementer, manual) under
+- Status: **APPROVED and applied** (authorization record below). Before approval the frozen files were unchanged
+  and the amended versions were drafts in `.local/amend/`. Prepared 2026-10-29 by the writing agent (Implementer, manual) under
   `.local/plans/phase-04_update4.md` §3 and §6.
 - Neither amendment weakens what the check proves: A-P4.L.R1-1 replaces an expectation that contradicts H1 with a
   stricter one; A-P4.L-1 moves the check's offline set-up from environment variables to the explicit offline-test mode
@@ -108,5 +108,11 @@
 
 | Amendment | Decision | By | Date |
 |---|---|---|---|
-| A-P4.L.R1-1 | AUTHORIZATION | | |
-| A-P4.L-1 | AUTHORIZATION | | |
+| A-P4.L.R1-1 | **APPROVED** — "a valid request following a terminal refusal receives `403 run-stopped`, with no additional upstream request" | the owner, in the session | 2026-10-29 |
+| A-P4.L-1 | **APPROVED** — "from inherited environment variables to the explicit offline-test configuration file and offline credential path; all 84 existing behavioral expectations must remain unchanged" | the owner, in the session | 2026-10-29 |
+
+Scope of the authorization (the owner's words, abridged): apply only these exact amendments; verify the resulting
+digests against these records; retain the RED/GREEN evidence; no other frozen-test change; no installation, real
+credential, live call or Gate C-EXEC acceptance. Applied 2026-10-29: `scripts/lib/check-live-proxy` sha256
+`ed6f8134a8c5a45dfa6f2af235af3720bf5153b6f2dee9f57d607226b27a523f` and `scripts/lib/check-live-runner` sha256
+`cb31fdd4863eba88e8a431b7eafafb2ab954000f2a2689e2fd6e645c20ef5cee` — both equal to the proposed digests above.
