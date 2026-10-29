@@ -21,8 +21,9 @@
 | P4.10–P4.14 | **VERIFIED** at checkpoint `30facae` (frozen `5fa1b15`): Mac and Linux clean clone, unit 862/862, integration 518/518 | `C-P4.10-14` | `docs/gates/P4.10-14/` |
 | P4.15 | **VERIFIED** at checkpoint `d59aceb` (frozen `104fd2b`): Mac and Linux clean clone, unit 862/862, integration 531/531 | `C-P4.15` | `docs/gates/P4.15/` |
 | P4.16 | **VERIFIED** at checkpoint `d59aceb` (frozen `1b86ee4`): Mac and Linux clean clone, unit 862/862, integration 531/531 | `C-P4.16` | `docs/gates/P4.16/` |
-| P4.R1 | **IMPLEMENTED** (frozen `8f4361c`): the review's M1–M5 fixed, L6–L11 fixed or reproduced and fixed (`docs/gates/P4.R1/dispositions.md`); targeted 22 of 22, stress 17 MB residency for a 384 MiB tree, host `check-runner-paths` 7 of 7; full qualification pending | `C-P4.R1` | `docs/gates/P4.R1/` |
-| P4.17 | **IMPLEMENTED** (frozen `8f4361c`): the end-to-end browser journey; `lockstep serve` runs the engine worker with the helper's runner channel (Q5); 3 of 3; full qualification pending. Real-provider smoke **PROPOSED, NOT RUN** (`docs/gates/P4.17/real-provider-smoke-proposal.md`) | `C-P4.17` | `docs/gates/P4.17/` |
+| P4.R1 | **VERIFIED** at checkpoint `54966a4` (frozen `8f4361c`, implemented `b77bc81`): the review's M1–M5 fixed, L6–L11 fixed or reproduced and fixed (`docs/gates/P4.R1/dispositions.md`) | `C-P4.R1` | `docs/gates/P4.R1/` |
+| P4.17 | **VERIFIED** at checkpoint `54966a4` (frozen `8f4361c`, implemented `b77bc81`): the end-to-end browser journey; `lockstep serve` runs the engine worker with the helper's runner channel (Q5). Real-provider smoke **PROPOSED, NOT RUN** (`docs/gates/P4.17/real-provider-smoke-proposal.md`) | `C-P4.17` | `docs/gates/P4.17/` |
+| P4.R2 | **VERIFIED** at `54966a4` (frozen `1c52bb6`): the second review's MEDIUM and LOW 2–6. Checkpoint `54966a4`: Mac and Linux clean clone, unit 862/862, integration 562/562; host `check-runner` 0 failures, `check-runner-paths` 7/7; stress 17 MB | `C-P4.R2` | `docs/gates/P4.R2/` |
 
 The first full check at `0b8dbad` failed one test of 518: a start-up race in the folder helper (C-P3.5), which
 gave the pane its copy after placing the list the frozen test waits on. Fixed in the helper at `30facae` (the
@@ -56,7 +57,7 @@ recovery and completion").
 
 ## Where it stands (2026-10-28)
 
-P4.1–P4.16 verified (Mac and Linux). The independent read-only review's findings are remediated (C-P4.R1) and
-P4.17 implemented, both frozen at `8f4361c`; their full Mac and Linux qualification and a second independent
-review follow. Nothing was installed, pushed or published; no provider was invoked (the guard's sentinel log
-is empty in every run). Gate C-EXEC is not claimed.
+P4.1–P4.17, P4.R1 and P4.R2 verified (Mac and Linux) at `54966a4`; two independent read-only reviews, their
+findings remediated or dispositioned. The decision packet (`decision-packet.md`) is ready for the owner.
+Nothing was installed, pushed or published; no provider was invoked (the guard's sentinel log is empty in
+every run). Gate C-EXEC is not claimed; Phase 5 is not started.
