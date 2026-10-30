@@ -1,5 +1,11 @@
 # Gate C-EXEC — decision packet (revised after the live-provider increment)
 
+> **Superseding note (2026-10-30, `phase-04_update4.md`):** the candidate is now **`7018df9`** (the final hardening,
+> C-P4.L.R2: terminal refusals, one conversation a run, explicit offline-test mode). Its completion packet is
+> `docs/gates/P4.L.R2/completion-packet.md`, which supersedes §1–§3 below for the live path. It reports one blocking
+> finding for the real-provider smoke (the owner's one-request bound on an impersonating process does not hold) and
+> the decision the owner needs. Everything below is otherwise unchanged.
+
 - For: the owner. Prepared 2026-10-29 by the writing agent (Implementer, manual). The Implementer cannot accept Gate
   C-EXEC or mark anything Done; this packet recommends.
 - Branch `phase-4` (from `77a96ce`). Authority: `.local/plans/phase-04.md` (`24db39d9…`), `…_update1.md`
