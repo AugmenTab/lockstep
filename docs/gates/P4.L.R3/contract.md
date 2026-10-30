@@ -79,6 +79,35 @@ See `docs/gates/P4.L.R3/amendments.md`.
 
 (Filled after the qualification.)
 
+## 10. The independent review and its regression (frozen before the fixes)
+
+Review: `docs/reviews/phase-4-process-isolation-review-2026-10-30.md` — no HIGH, 2 MEDIUM, 7 LOW. Both MEDIUMs
+measured by the writer before acting.
+
+| # | Decision |
+|---|---|
+| R3-M1 | **The CLI may end its tools.** `CAP_KILL` joins the CLI's capabilities (helper and agent-entry); tool-shell's clearing keeps it from the tools. |
+| R3-M2 | **The repository's Claude settings are never read.** agent-entry starts the CLI with `--setting-sources user` (its own private home only) before the service's arguments, and refuses an argument vector that names `--setting-sources` itself. A change of the image, not of the adapter: the service's argument vector, its fixture and its tests are unchanged. |
+| R3-L1 | Ids are refused unless plain decimal without leading zeros (agent-entry, tool-shell). |
+| R3-L2 | The frozen hostile program is unchanged; the regression requires each refusal to be the kernel's (`EACCES`, `EPERM`, `ESRCH`). |
+| R3-L3 | agent-entry makes `/tmp/claude-2000000000` (0700, the CLI's) before the CLI starts. |
+| R3-L4 | tool-shell sets umask 022 for the tools. Files the CLI makes stay the CLI's uid on a Linux host (group-writable for the host user): recorded in §7. |
+| R3-L5 | agent-entry refuses to start (`isolation-unavailable` reason in its message) if `fs.suid_dumpable` is not 0; the other host conditions are named in §7. |
+| R3-L6 | The helper turns live runs off at start if the image has no `/opt/lockstep/agent-entry` (an image built before R3). |
+| R3-L7 | Recorded: `isolation-unavailable` cannot be exercised on this host (the helper does not run as root); the case is a few lines read by the review. |
+
+Verification (frozen with this section):
+
+| File | sha256 | Covers |
+|---|---|---|
+| `scripts/lib/check-live-isolation` | `8314a67197011c9a00321f903a376cfdd00e461c218361015afc338ad13931ee` | R3-L1 the entry refuses "00", "0UID", "02000000000"; R3-M1 a tool call timed out at 3 s writes nothing at 12 s, and the run goes on; R3-M2 a committed `.claude/settings.json` (a shell prefix and an environment variable) and a `settings.local.json` written during the run are not applied, the tools still run as the host's user, the run completes; R3-L2 each path of the hostile program refused by the kernel; R3-L3 the CLI's temporary directory is the CLI's, 0700; R3-L4 the tools' umask is 022 |
+
+Baseline against `8444664` (`.local/p4lr3-review-red.log`): **8 failures, each its finding** — the three disguised
+ids accepted; the timed-out call wrote `late.txt`; the repository's prefix ran in place of tool-shell, its
+environment reached the tools, and the tools' command ran without the host's `id`; the tools' umask 0002. Passing
+already: R3-L2 and R3-L3. One test fault fixed before this baseline: a planted `ANTHROPIC_BASE_URL` made the CLI retry
+for minutes and starved the next scenario; left out (the same settings source is covered).
+
 ## 8. Allowed paths
 
 Production: `scripts/runner/provider/Dockerfile`, `scripts/runner/provider/agent-entry` (new),
