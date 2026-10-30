@@ -1105,6 +1105,9 @@ active_run=""
 # the budget. Only with an owner-made DIR/provider (0700): config (the provider, model,
 # effort, prices and limits) and credential (0600, the API key). The service sees only
 # DIR/runner/provider ("lockstep-provider 1 claude-code MODEL EFFORT"), never a secret.
+# In the role's container the CLI and its tools are two identities (C-P4.L.R3): every tool
+# call runs as this user with no capabilities; the CLI as uid 2000000000, not dumpable, so
+# no tool process can read its memory, descriptors or files (agent-entry, tool-shell).
 #
 # Two modes (C-P4.L.R2 H3), decided once at start:
 #   production    no DIR/provider/offline-test: the upstream is api.anthropic.com:443 with the
@@ -1399,6 +1402,13 @@ execute_live_run() { # ID OP RUN
   while IFS= read -r -d '' p; do argv+=("$p"); done < "$dir/argv"
   local secrets=(--mount "type=bind,source=$provider_dir/config,target=/etc/lockstep/provider,readonly"
     --mount "type=bind,source=$provider_dir/$credential_name,target=/run/lockstep/credential,readonly")
+  # C-P4.L.R3 I6: the tools run as this user, the CLI as uid 2000000000 (agent-entry); both must differ.
+  case "$(id -u) $(id -g)" in
+    "0 "* | "2000000000 "* | *" 2000000000")
+      refuse "$id" "$op" isolation-unavailable
+      return
+      ;;
+  esac
   # Admission first: nothing is started for a run the budget, the limits or the credential refuse.
   if [ ! -f "$provider_dir/$credential_name" ] || [ -L "$provider_dir/$credential_name" ] || [ ! -O "$provider_dir/$credential_name" ]; then
     refuse "$id" "$op" credential-missing
@@ -1431,11 +1441,15 @@ execute_live_run() { # ID OP RUN
     while [ ! -f "$summary.ready" ] && [ $n -lt 150 ]; do sleep 0.1; n=$((n + 1)); done
     # The proxy reaches out only once it listens on the run's network alone.
     if [ -f "$summary.ready" ] && docker network connect "$egress_network" "$proxy" >/dev/null 2>&1; then
+      # C-P4.L.R3: two identities. The container starts as root with only the three capabilities
+      # agent-entry needs to run the CLI as its own, not dumpable identity and every tool call
+      # (tool-shell) as this user with none; no-new-privileges throughout.
       args=(run --rm --name "$name" --network "$net" --read-only
         --tmpfs /tmp:rw,nosuid,nodev,size=268435456
-        --cap-drop ALL --security-opt no-new-privileges
+        --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add DAC_OVERRIDE
+        --security-opt no-new-privileges
         --pids-limit 256 --memory 4g --memory-swap 4g --cpus 2
-        --user "$(id -u):$(id -g)"
+        --user 0:0
         --env HOME=/tmp --env PATH=/usr/local/bin:/usr/bin:/bin --env LANG=C.UTF-8 --env LC_ALL=C.UTF-8 --env TZ=UTC
         --env ANTHROPIC_BASE_URL=http://lockstep-egress:8080
         --env ANTHROPIC_API_KEY=lockstep-placeholder-the-proxy-holds-the-key
@@ -1451,7 +1465,7 @@ execute_live_run() { # ID OP RUN
           args+=(--mount "type=bind,source=$dir/tree/$p,target=/work/tree/$p,readonly")
         done < "$dir/protected"
       fi
-      args+=("$provider_image" "${argv[@]}")
+      args+=("$provider_image" /opt/lockstep/agent-entry "$(id -u)" "$(id -g)" "${argv[@]}")
       # The wall clock, and the proxy: a run whose proxy is gone is stopped at once.
       # The wall clock is a deadline in seconds (C-P4.L.R1 R1-L3), whatever each check costs.
       (

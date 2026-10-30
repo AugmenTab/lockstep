@@ -2,7 +2,8 @@
 # the live role runs, and the egress proxy, built from the same pinned Debian
 # as the dev image. Built by scripts/provider-image; the helper runs it only
 # for run-live-readonly and run-live-write (the role's container, no network
-# but the proxy's) and for the proxy itself. Nothing here holds a credential.
+# but the proxy's, the CLI and its tools as two identities) and for the proxy
+# itself. Nothing here holds a credential.
 #
 # The CLI is the platform package of @anthropic-ai/claude-code 2.1.312, its
 # npm tarball checked against the registry's published SHA-512 integrity
@@ -36,5 +37,8 @@ RUN apt-get update \
       && rm -rf /var/lib/apt/lists/*
 COPY --from=download /usr/local/bin/claude /usr/local/bin/claude
 COPY egress-proxy /opt/lockstep/egress-proxy
+# The two identities of a live role's container (contract C-P4.L.R3): the CLI's
+# start, and the shell prefix that runs each tool call as the host's user.
+COPY agent-entry tool-shell /opt/lockstep/
 ENV LANG=C.UTF-8 \
     TZ=UTC
