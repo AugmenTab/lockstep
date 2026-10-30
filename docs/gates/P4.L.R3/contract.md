@@ -1,7 +1,8 @@
 # Contract — P4.L.R3 Process isolation between the provider CLI and the processes running repository code
 
 - Contract ID: `C-P4.L.R3@v1`
-- Status: **FROZEN** (§5); amendment A-P4.L.R3-1 to `check-live-impersonation` **PROPOSED, awaiting the owner** (§6)
+- Status: **FROZEN** (§5); amendment A-P4.L.R3-1 to `check-live-impersonation` **APPROVED by the Planner and
+  applied** (§6)
 - Authority: `.local/plans/phase-04_update5.md` (sha256 `b9147c0c…8cc158`), the P4.L.R3 process isolation handoff:
   close the remaining H2 vulnerability of `docs/gates/P4.L.R2/completion-packet.md` §7.
 - Writer: the single writing agent (Implementer, manual). Basis: `phase-4` at `8c14bd5` (candidate `7018df9`), clean.
@@ -63,7 +64,7 @@ stand-in on an internal network; the key is synthetic.
   |---|---|
   | `scripts/lib/live-standin-secret` | `4a3bf4a064ec1be4890c8b8e545651630c13693a603f1459407b025b9f8d2a35` |
   | `scripts/lib/live-memory-thief` | `95bbc88e35f338a8f5048e7ebbc4f16fa49a807f108862336c9eacfaa306ecaa` |
-  | `scripts/lib/check-live-impersonation` (A-P4.L.R3-1, proposed) | `85b0a484f35421860fad8d97bc21616d4c2b306839657b2d5f01a226af44ae8d` |
+  | `scripts/lib/check-live-impersonation` (A-P4.L.R3-1, approved and applied) | `85b0a484f35421860fad8d97bc21616d4c2b306839657b2d5f01a226af44ae8d` |
 
 - Baseline against `7018df9` (the amended check as a trial copy, the committed helper and image; no stubs):
   **16 failures, each the finding** (`.local/p4lr3-red-baseline.log`): a program in the repository read the CLI's

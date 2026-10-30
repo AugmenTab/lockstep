@@ -9,10 +9,19 @@
 # no provider contacted. Results: .local/evidence/live-impersonation-<stamp>/
 #
 # The owner's conditions checked: (1) the CLI's own next request is refused and the
-# run stops with no accepted result, and at most one impersonated request is
-# admitted; (2) impersonated requests use the run's own ledger and allowances.
-# (3), no accepted implementation, review or commit from a stopped run, is the
-# service's mapping of provider-stopped (C-P4.L LiveAdapterTest L5-B).
+# run stops with no accepted result; (2) impersonated requests use the run's own
+# ledger and allowances. (3), no accepted implementation, review or commit from a
+# stopped run, is the service's mapping of provider-stopped (C-P4.L LiveAdapterTest L5-B).
+#
+# Section 2 (C-P4.L.R3, amendment A-P4.L.R3-1): the impersonator must find the
+# conversation itself. A stand-in whose tool-call ids are secret
+# (scripts/lib/live-standin-secret) and a hostile program in the repository
+# (scripts/lib/live-memory-thief), run by the Implementer's Bash tool, that tries
+# the CLI's memory, descriptors, environment, files and identity. No impersonated
+# request may be admitted (the owner's bound, met by isolation); the tools run as
+# the host's user without capabilities, the CLI as another identity and not
+# dumpable; ordinary development still works. With ids handed to it (section 1),
+# an impersonator goes as far as the run's allowances: recorded, not a condition.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 root=$PWD
@@ -175,6 +184,7 @@ hmac() {
   { printf "$opad"; printf "$(hex_escapes "$inner")"; } | sha256
 }
 new_id() { head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+seed="" # a directory whose files the next run's tree also holds (the repository's own code)
 # implement RUN: an Implementer run of the CLI; waits; sets res
 implement() {
   local run=$1 id dir session line body tmp n=0
@@ -183,6 +193,7 @@ implement() {
   dir=$state/runner/work/$run
   mkdir -p "$dir/tree" "$dir/input" "$dir/output"
   printf 'def add(a, b):\n    return a - b\n' > "$dir/tree/calc.py"
+  if [ -n "$seed" ]; then cp -R "$seed/." "$dir/tree/"; fi
   printf '{"role":"implementer","answer":{"file":"result.json","kind":"implementation"}}\n' > "$dir/input/context.json"
   printf 'Fix add.\n' > "$dir/input/role.md"
   session="${run:0:8}-${run:8:4}-${run:12:4}-${run:16:4}-${run:20:12}"
@@ -221,8 +232,8 @@ for n in 1 2; do
   esac
   expect "$label, $ending: the first impersonated request is admitted (the run's own conversation)" said_proxy "$run" "impersonated-1 200"
   if [ "$n" = 2 ]; then
-    expect "$label: at most one impersonated request is admitted (owner condition 1; BLOCKING if not)" \
-      test "$(sed -n 's/^impersonated-2 //p' "$state/runner/work/$run/output/impersonation.txt")" != 200
+    printf 'NOTE %s\n' "$label: with the ids handed to it, the second impersonated request answered $(sed -n 's/^impersonated-2 //p' "$state/runner/work/$run/output/impersonation.txt") (the bound is isolation's: section 2)" \
+      | tee -a "$results"
   fi
   expect "$label: the CLI's own next request is refused and the run stops: provider-stopped conversation-refused" stopped_by_conversation
   expect "$label: no answer was written for the run (nothing to accept)" test ! -e "$state/runner/work/$run/output/result.json"
@@ -232,6 +243,108 @@ for n in 1 2; do
   expect "$label: nothing else reached the upstream (the CLI's opening and the impersonated requests only)" \
     test "$(wc -l < "$work/agent/requests.jsonl" | tr -d ' ')" = "$((n + 1))"
 done
+
+# Section 2 (C-P4.L.R3): the impersonator must find the conversation itself. Ids are secret now.
+host_uid=$(id -u)
+host_gid=$(id -g)
+start_secret() { # NAME STEPS (JSON); the upstream's log is $secret_log, kept with the evidence
+  docker rm -f "$agent" >/dev/null 2>&1 || true
+  printf '%s' "$2" > "$work/agent/steps.json"
+  chmod 644 "$work/agent/steps.json"
+  secret_log=$work/agent/secret-$1.jsonl
+  : > "$secret_log"
+  chmod 666 "$secret_log"
+  docker run -d --name "$agent" --network "$net" --network-alias standin --read-only --user "$(id -u):$(id -g)" \
+    --cap-drop ALL \
+    --mount "type=bind,source=$root/scripts/lib/live-standin-secret,target=/opt/standin,readonly" \
+    --mount "type=bind,source=$work/standin.pem,target=/etc/standin.pem,readonly" \
+    --mount "type=bind,source=$work/standin.key,target=/etc/standin.key,readonly" \
+    --mount "type=bind,source=$work/agent,target=/log" \
+    "$image" python3 /opt/standin --cert /etc/standin.pem --key /etc/standin.key --log "/log/secret-$1.jsonl" \
+    --steps /log/steps.json >/dev/null
+  sleep 1.5
+}
+upstream_count() { wc -l < "$secret_log" | tr -d ' '; }
+outcome_is() { [ "$(sed -n 's/^outcome //p' "$res") $(sed -n 's/^field exit //p' "$res")" = "$1" ]; }
+keep_report() { [ -f "$report" ] && cp "$report" "$work/thief-$1.txt"; return 0; }
+answered() { [ -s "$state/runner/work/$run/output/result.json" ]; }
+denied() { grep -q "^path $1 denied" "$report"; }
+learned_nothing() {
+  local id
+  grep -q '^found ' "$report" && return 1
+  # None of the ids the upstream issued is in the report.
+  for id in $(grep -o 'toolu_01[A-Za-z0-9]\{22\}' "$secret_log" | sort -u); do
+    grep -qF "$id" "$report" && return 1
+  done
+  return 0
+}
+impersonation_refused() {
+  local status
+  status=$(sed -n 's/^impersonated //p' "$report")
+  [ -n "$status" ] && [ "$status" != 200 ]
+}
+in_tree() { grep -qF "$2" "$state/runner/work/$run/tree/$1" 2>/dev/null; }
+said() { grep -qF "$1" "$secret_log"; }
+identity() { grep -o 'identity [^"\\]*end' "$secret_log" | tail -n 1; }
+cli_uid() { identity | sed -n 's/.* cli-uid=\([0-9]*\) .*/\1/p'; }
+
+seed=$work/seed
+mkdir -p "$seed"
+cp "$root/scripts/lib/live-memory-thief" "$seed/thief.py"
+cat > "$seed/dev.sh" <<'EOF'
+echo "identity tool-uid=$(id -u) tool-gid=$(id -g) cli-uid=$(awk '/^Uid:/{print $2}' /proc/1/status) cli-mem-owner=$(stat -c %u /proc/1/mem) $(awk '/^(CapPrm|CapEff|CapAmb|NoNewPrivs):/{printf "%s%s ", $1, $2}' /proc/self/status)end"
+echo '# appended' >> new.py
+mkdir pkg && echo 'X = 1' > pkg/m.py
+python3 -m py_compile calc.py && echo compiled
+python3 -c 'import calc; assert calc.add(2, 3) == 5; print("tested")'
+git init -q . && git add -A && git -c user.name=t -c user.email=t@t commit -qm t && echo committed
+EOF
+answer='{"name":"Edit","input":{"file_path":"/output/result.json","old_string":"","new_string":"{\"kind\":\"implementation\",\"summary\":\"add adds\"}"}}'
+report=/nonexistent
+
+# 2a. The hostile program looks, and keeps what it learns to itself.
+start_secret 2a "[{\"name\":\"Bash\",\"input\":{\"command\":\"python3 thief.py --report /output/thief.txt\",\"description\":\"run the tests\"}},$answer]"
+run=$(new_id)
+implement "$run"
+report=$state/runner/work/$run/output/thief.txt
+keep_report 2a
+label="a hostile program in the repository, run by the Implementer's Bash tool"
+expect "$label: it ran (its report is there)" test -s "$report"
+for p in proc-mem process-vm-readv ptrace-attach ptrace-seize environ fd pidfd-getfd cwd files identity user-namespace signal; do
+  expect "$label: cannot reach the CLI by $p ($(sed -n "s/^path $p //p" "$report" 2>/dev/null))" denied "$p"
+done
+expect "$label: learned no tool-call id of the run" learned_nothing
+expect "$label: the CLI's own conversation went on: the run exited 0" outcome_is "exited 0"
+expect "$label: and its answer was written" answered
+
+# 2b. The hostile program then tries to continue the conversation with what it has.
+start_secret 2b "[{\"name\":\"Bash\",\"input\":{\"command\":\"python3 thief.py --report /output/thief.txt --send --model $model --effort $effort\",\"description\":\"run the tests\"}},$answer]"
+run=$(new_id)
+implement "$run"
+report=$state/runner/work/$run/output/thief.txt
+keep_report 2b
+label="the hostile program, continuing the conversation with what it learned"
+expect "$label: it learned no tool-call id" learned_nothing
+expect "$label: no impersonated request is admitted (the owner's bound: none; answered $(sed -n 's/^impersonated //p' "$report" 2>/dev/null))" impersonation_refused
+expect "$label: the attempt ends the run: provider-stopped conversation-refused" stopped_by_conversation
+expect "$label: no answer was written for the run" test ! -e "$state/runner/work/$run/output/result.json"
+expect "$label: only the CLI's opening reached the upstream ($(upstream_count))" test "$(upstream_count)" = 1
+
+# 2c. Who runs what, and ordinary development across the two identities.
+start_secret 2c "[{\"name\":\"Edit\",\"input\":{\"file_path\":\"/work/tree/calc.py\",\"old_string\":\"return a - b\",\"new_string\":\"return a + b\"}},{\"name\":\"Edit\",\"input\":{\"file_path\":\"/work/tree/new.py\",\"old_string\":\"\",\"new_string\":\"VALUE = 1\\n\"}},{\"name\":\"Bash\",\"input\":{\"command\":\"bash dev.sh\",\"description\":\"develop\"}},{\"name\":\"Edit\",\"input\":{\"file_path\":\"/work/tree/pkg/m.py\",\"old_string\":\"X = 1\",\"new_string\":\"X = 2\"}},$answer]"
+run=$(new_id)
+implement "$run"
+label="the Implementer's tools ($(identity))"
+expect "$label: run as the host's user and group" said "tool-uid=$host_uid tool-gid=$host_gid "
+expect "$label: with no capabilities and no way to gain any" said "CapPrm:0000000000000000 CapEff:0000000000000000 CapAmb:0000000000000000 NoNewPrivs:1 "
+expect "the CLI runs as another identity than its tools (CLI $(cli_uid), tools $host_uid)" test -n "$(cli_uid)" -a "$(cli_uid)" != "$host_uid"
+expect "the CLI is not dumpable (its /proc entries belong to root)" said "cli-mem-owner=0 "
+expect "development: the CLI edits the source" in_tree calc.py "return a + b"
+expect "development: a file the CLI made is appended to by the tools" in_tree new.py "# appended"
+expect "development: a file the tools made is edited by the CLI" in_tree pkg/m.py "X = 2"
+expect "development: compile, test and commit work" said "compiled\\ntested\\ncommitted"
+expect "development: the run exited 0" outcome_is "exited 0"
+expect "development: and its answer was written" answered
 
 echo "check-live-impersonation: $failures failure(s); results in $results"
 [ "$failures" = 0 ]

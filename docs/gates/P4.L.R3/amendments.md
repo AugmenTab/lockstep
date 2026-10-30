@@ -1,6 +1,11 @@
 # Amendment to a frozen check for C-P4.L.R3 — for the owner's authorization
 
-- Status: **PROPOSED, awaiting the owner.** The frozen file is unchanged; the amended version is a draft at
+- Status: **APPROVED and applied.** Authorization record: the owner referred the decision to the Planner
+  (2026-10-30; package `.local/planner/A-P4.L.R3-1-amendment-package.md`); relayed by the owner in the session:
+  "Planner decision: APPROVE A-P4.L.R3-1 in full, as proposed." Applied exactly as proposed; the file's sha256 after
+  applying is `85b0a484f35421860fad8d97bc21616d4c2b306839657b2d5f01a226af44ae8d`, equal to the proposal. No other
+  frozen test changed. The approval does not authorize installation, real credentials, provider calls, the smoke or
+  Gate C-EXEC acceptance. Before approval the frozen file was unchanged; the amended version is a draft at
   `.local/p4lr3/amend/check-live-impersonation`. Prepared 2026-10-30 by the writing agent (Implementer, manual) under
   `.local/plans/phase-04_update5.md` ("Extend `check-live-impersonation` to prove that malicious tool subprocesses
   cannot extract the conversation state or impersonate the CLI").
