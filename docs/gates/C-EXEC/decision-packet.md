@@ -1,5 +1,11 @@
 # Gate C-EXEC — decision packet (revised after the live-provider increment)
 
+> **Superseding note (2026-10-30, `phase-04_update5.md`):** the candidate is now **`24cba9d`** (C-P4.L.R3: the
+> provider CLI and its tools as two identities, so no tool process can learn or continue the run's conversation).
+> Its completion packet `docs/gates/P4.L.R3/completion-packet.md` disposes of H2 as **closed** (the R2 blocking
+> finding) and returns the real-provider smoke proposal for the owner's authorization. Gate C-EXEC stays pending until
+> a live transaction succeeds.
+
 > **Superseding note (2026-10-30, `phase-04_update4.md`):** the candidate is now **`7018df9`** (the final hardening,
 > C-P4.L.R2: terminal refusals, one conversation a run, explicit offline-test mode). Its completion packet is
 > `docs/gates/P4.L.R2/completion-packet.md`, which supersedes §1–§3 below for the live path. It reports one blocking
