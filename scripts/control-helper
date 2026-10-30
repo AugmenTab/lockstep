@@ -1205,6 +1205,11 @@ init_provider() {
   choose_mode || { log "live runs off: $mode_refusal"; return 0; }
   provider_image=$(docker image inspect --format '{{.Id}}' "$provider_tag" 2>/dev/null || true)
   [ -n "$provider_image" ] || { log "live runs off: the image $provider_tag is missing (scripts/provider-image)"; return 0; }
+  # C-P4.L.R3 R3-L6: an image built before the two identities cannot run a live role.
+  docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+    --user "$(id -u):$(id -g)" --log-driver none "$provider_image" test -x /opt/lockstep/agent-entry \
+    < /dev/null > /dev/null 2>&1 ||
+    { log "live runs off: the image $provider_tag predates the CLI/tools isolation; rebuild it (scripts/provider-image)"; return 0; }
   if [ ! -d "$provider_dir/ledger" ]; then
     mkdir -m 700 "$provider_dir/ledger" || { log "live runs off: the ledger cannot be made"; return 0; }
   fi
@@ -1441,12 +1446,12 @@ execute_live_run() { # ID OP RUN
     while [ ! -f "$summary.ready" ] && [ $n -lt 150 ]; do sleep 0.1; n=$((n + 1)); done
     # The proxy reaches out only once it listens on the run's network alone.
     if [ -f "$summary.ready" ] && docker network connect "$egress_network" "$proxy" >/dev/null 2>&1; then
-      # C-P4.L.R3: two identities. The container starts as root with only the three capabilities
-      # agent-entry needs to run the CLI as its own, not dumpable identity and every tool call
-      # (tool-shell) as this user with none; no-new-privileges throughout.
+      # C-P4.L.R3: two identities. The container starts as root with only the four capabilities
+      # agent-entry needs to run the CLI as its own, not dumpable identity, every tool call
+      # (tool-shell) as this user with none, and to let the CLI end its tools; no-new-privileges.
       args=(run --rm --name "$name" --network "$net" --read-only
         --tmpfs /tmp:rw,nosuid,nodev,size=268435456
-        --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add DAC_OVERRIDE
+        --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add DAC_OVERRIDE --cap-add KILL
         --security-opt no-new-privileges
         --pids-limit 256 --memory 4g --memory-swap 4g --cpus 2
         --user 0:0
