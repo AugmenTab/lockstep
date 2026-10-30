@@ -1,0 +1,43 @@
+#!/bin/bash
+# The start of a live role's container (contract C-P4.L.R3 I1-I5). The helper
+# starts the container as root with only CAP_SETUID, CAP_SETGID and
+# CAP_DAC_OVERRIDE and no-new-privileges, and runs:
+#
+#   agent-entry TOOL-UID TOOL-GID ARGV...
+#
+# Two identities: the tools (every process the Bash tool starts, so all the
+# repository's code) run as TOOL-UID:TOOL-GID, the host's user, through
+# tool-shell; the CLI (ARGV) runs as uid 2000000000 with TOOL-GID as its
+# effective group and 2000000000 as its real group, so the kernel makes it not
+# dumpable, keeping the three capabilities (ambient) only to start its tools as
+# the other identity and to reach the run's private files. Nothing here reads a
+# secret; the proxy holds the key.
+set -eu
+agent=2000000000
+caps=+setuid,+setgid,+dac_override
+[ $# -ge 3 ] || { echo "agent-entry: TOOL-UID TOOL-GID ARGV..." >&2; exit 125; }
+tool_uid=$1
+tool_gid=$2
+shift 2
+case $tool_uid$tool_gid in *[!0-9]* | "") echo "agent-entry: ids must be numbers" >&2; exit 125 ;; esac
+if [ "$tool_uid" = 0 ] || [ "$tool_uid" = "$agent" ] || [ "$tool_gid" = "$agent" ]; then
+  echo "agent-entry: the tools' identity must not be root or the CLI's" >&2
+  exit 125
+fi
+# The program found as Docker would find it (the container's PATH). The CLI runs with
+# /usr/local/bin alone on its PATH, so its own git call never runs (I5); any other program
+# (a check's probe) with the container's usual PATH.
+program=$(PATH=/usr/local/bin:/usr/bin:/bin command -v -- "$1") || { echo "agent-entry: $1 not found" >&2; exit 127; }
+shift
+path=/usr/local/bin:/usr/bin:/bin
+[ "$program" != /usr/local/bin/claude ] || path=/usr/local/bin
+# Each home made by its own identity, private to it.
+setpriv --reuid="$tool_uid" --regid="$tool_gid" --clear-groups mkdir -m 700 /tmp/home
+setpriv --reuid="$agent" --regid="$tool_gid" --clear-groups mkdir -m 700 /tmp/agent
+umask 002
+exec setpriv --ruid="$agent" --euid="$agent" --rgid="$agent" --egid="$tool_gid" --clear-groups \
+  --inh-caps="-all,$caps" --ambient-caps="-all,$caps" --bounding-set="-all,$caps" \
+  /usr/bin/env HOME=/tmp/agent PATH="$path" SHELL=/bin/bash \
+  LOCKSTEP_TOOL_UID="$tool_uid" LOCKSTEP_TOOL_GID="$tool_gid" \
+  CLAUDE_CODE_SHELL_PREFIX=/opt/lockstep/tool-shell CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1 \
+  "$program" "$@"

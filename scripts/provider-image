@@ -8,6 +8,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 tag=lockstep-provider:claude-2.1.312
-chmod 755 scripts/runner/provider/egress-proxy
+chmod 755 scripts/runner/provider/egress-proxy scripts/runner/provider/agent-entry scripts/runner/provider/tool-shell
 docker build --quiet --tag "$tag" scripts/runner/provider >/dev/null
 docker image inspect --format '{{.Id}}' "$tag"
