@@ -323,10 +323,13 @@ offline only (`scripts/lib/check-live-runner`, against a local stand-in; no prov
 
 The proxy's first refusal ends the run: nothing more of it reaches the provider (`run-stopped`). It admits **one
 conversation a run**: the CLI's own; a second agent started inside the role's container (another `claude`, a script
-calling the API) is refused and ends the run (`conversation-refused`). One limitation remains, accepted by the owner
-only for an attended smoke on a disposable repository: a program in the container that reads the CLI's memory could
-continue the run's own conversation in its place for as long as the run's allowances last; the CLI's next request then
-stops the run and nothing is accepted (`docs/gates/P4.L.R2/contract.md` §6, §9).
+calling the API) is refused and ends the run (`conversation-refused`). In the role's container the CLI and its tools
+are **two identities** (C-P4.L.R3): every command the CLI runs (so all your repository's code) runs as your user with
+no privileges, the CLI as a separate user that cannot be traced or read, with its own private files and settings; your
+repository's `.claude` settings are not read. So no program in the container can learn the run's conversation and
+continue it in the CLI's place (`docs/gates/P4.L.R3/contract.md`, its limitations in §7). Files the CLI itself creates
+belong to that separate user on a Linux host (group-writable for you). Rebuild the image after updating
+(`scripts/provider-image`): an image from before the two identities turns live runs off.
 
 **Two modes, decided when the helper starts.** *Production*: `provider/config` and `provider/credential`; the proxy
 goes only to `api.anthropic.com` with the system's certificates. *Offline test* (the host checks only): an owner-made

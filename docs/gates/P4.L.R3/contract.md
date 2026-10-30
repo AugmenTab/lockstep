@@ -77,7 +77,35 @@ See `docs/gates/P4.L.R3/amendments.md`.
 
 ## 7. Remaining limitations (stated plainly)
 
-(Filled after the qualification.)
+As amended by §10 (the review round): the CLI also holds `CAP_KILL` (four capabilities) and reads only its own
+settings (`--setting-sources user`, added by agent-entry).
+
+1. **The tools still reach the proxy.** A tool process can open a conversation of its own; it is refused and ends the
+   run (C-P4.L.R2 H2, fail-closed). It cannot continue the run's conversation: it cannot learn the ids.
+2. **The tools can still write the run's answer file.** `/output` is the host user's, as before R3; the answer is a
+   claim the Supervisor verifies independently.
+3. **The CLI's identity is privileged inside the container.** It holds `CAP_SETUID`, `CAP_SETGID`,
+   `CAP_DAC_OVERRIDE`, `CAP_KILL` for the run. Code running as the CLI's identity (a defect in the CLI itself) defeats
+   the boundary, as in any privilege separation. What could reach it is closed: the repository's settings are not read
+   (§10 R3-M2); `git` is not on its `PATH`; its prefix and its homes are fixed by agent-entry.
+4. **The tools' bounding set is the container's four capabilities.** Nothing is permitted, inheritable or ambient and
+   no-new-privileges holds, so it grants nothing (measured); dropping it needs `CAP_SETPCAP`, which nothing holds.
+5. **Host conditions.** Not dumpable needs `fs.suid_dumpable` 0 or 2 (with 1, live runs are off from the helper's
+   start, and agent-entry refuses). `/tmp` symlink
+   safety relies on `fs.protected_symlinks` (Docker's default). Docker with user-namespace remapping, or rootless
+   Docker, is not supported: uid `2000000000` must be mappable. `--read-only` is load-bearing: with `CAP_DAC_OVERRIDE`
+   the CLI could otherwise change `/opt/lockstep/tool-shell` or `/etc/hosts`.
+6. **On a Linux host, files the CLI makes (through `Edit`) belong to uid 2000000000**, group the host user's, mode
+   0664 (directories 0775): the host user can read, change and remove them, not `chmod` or `chown` them. On Docker
+   Desktop (the Mac) bind mounts show them as the host user's. Live isolation is qualified on Docker Desktop only.
+7. **Model-directed reads and writes.** A model steered by repository text can make the CLI's `Read` read the CLI's
+   own files (its home). With `--no-session-persistence` no transcript is written and `Read` refuses `/proc`; no route
+   to the ids through it is known. It can also make `Edit` write the CLI's own user settings; the pinned CLI does not
+   reload them during the run (measured: a planted shell prefix and variable were not applied). A later CLI version
+   that reloads settings would need this re-measured.
+8. **`isolation-unavailable`** (a host uid of 0 or 2000000000) cannot be exercised on this host; it is a few lines,
+   read by the review.
+9. **The kernel is shared.** A kernel defect is out of scope.
 
 ## 10. The independent review and its regression (frozen before the fixes)
 
@@ -107,6 +135,22 @@ ids accepted; the timed-out call wrote `late.txt`; the repository's prefix ran i
 environment reached the tools, and the tools' command ran without the host's `id`; the tools' umask 0002. Passing
 already: R3-L2 and R3-L3. One test fault fixed before this baseline: a planted `ANTHROPIC_BASE_URL` made the CLI retry
 for minutes and starved the next scenario; left out (the same settings source is covered).
+
+## 11. The confirming review
+
+`docs/reviews/phase-4-process-isolation-fix-review-2026-10-30.md` (`08f2b91..9ed6b83`): M1, M2, L1, L3 closed; two
+MEDIUM in the fix itself, both corrected before qualification:
+
+| # | Decision |
+|---|---|
+| R3-F1 | **The image reports its isolation's version.** `agent-entry --check` prints `lockstep-isolation 2 ok` or `… refused REASON`; the helper requires exactly version 2 at start, else live runs are off with the reason (replaces R3-L6's file test, which an image from mid-round passed). |
+| R3-F2 | **`fs.suid_dumpable` 0 or 2 accepted, 1 refused** (replaces R3-L5's 0 only), checked at the helper's start (through `--check`) and at each run's start. |
+| R3-F3 | The helper's start says which: another isolation version; the host refused; the image could not report (with its exit status). |
+| R3-F4 | A model-directed `Edit` of the CLI's own user settings during the run: measured not applied; §7 item 7. |
+
+No new frozen check: R3-F1–F3 are the helper's start, which the live checks pass through on every run (they require
+`live runs on (OFFLINE TEST`), and a host with `fs.suid_dumpable` 1 or an older image cannot be produced here without
+changing the host or keeping a stale image; verified by reading and by the built image's answer.
 
 ## 8. Allowed paths
 
