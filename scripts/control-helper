@@ -1131,6 +1131,8 @@ test_upstream=""
 test_ca=""
 credential_name=credential
 env_override=""
+# The CLI/tools isolation the image must have (agent-entry --check; C-P4.L.R3).
+isolation_version=2
 [ -n "${LOCKSTEP_RUNNER_TEST_UPSTREAM+set}${LOCKSTEP_RUNNER_TEST_UPSTREAM_CA+set}${LOCKSTEP_RUNNER_TEST_EGRESS_NETWORK+set}" ] && env_override=yes
 
 re_runner_header='^lockstep-runner-request ([^ ]+)$'
@@ -1205,11 +1207,26 @@ init_provider() {
   choose_mode || { log "live runs off: $mode_refusal"; return 0; }
   provider_image=$(docker image inspect --format '{{.Id}}' "$provider_tag" 2>/dev/null || true)
   [ -n "$provider_image" ] || { log "live runs off: the image $provider_tag is missing (scripts/provider-image)"; return 0; }
-  # C-P4.L.R3 R3-L6: an image built before the two identities cannot run a live role.
-  docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
-    --user "$(id -u):$(id -g)" --log-driver none "$provider_image" test -x /opt/lockstep/agent-entry \
-    < /dev/null > /dev/null 2>&1 ||
-    { log "live runs off: the image $provider_tag predates the CLI/tools isolation; rebuild it (scripts/provider-image)"; return 0; }
+  # C-P4.L.R3 R3-L5, R3-L6: the image's isolation must be this version, and the host must keep the CLI
+  # not dumpable; otherwise every live role would fail, so live runs are off.
+  out=$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+    --user "$(id -u):$(id -g)" --log-driver none "$provider_image" /opt/lockstep/agent-entry --check \
+    < /dev/null 2>/dev/null) || out="exit $?"
+  case $out in
+    "lockstep-isolation $isolation_version ok") ;;
+    "lockstep-isolation $isolation_version refused "*)
+      log "live runs off: the CLI/tools isolation cannot hold on this host ($(printf '%s' "${out#lockstep-isolation "$isolation_version" refused }" | clean_detail))"
+      return 0
+      ;;
+    "lockstep-isolation "*)
+      log "live runs off: the image $provider_tag has another version of the CLI/tools isolation; rebuild it (scripts/provider-image)"
+      return 0
+      ;;
+    *)
+      log "live runs off: the image $provider_tag could not report its CLI/tools isolation ($(printf '%s' "$out" | clean_detail)); rebuild it (scripts/provider-image) or check Docker"
+      return 0
+      ;;
+  esac
   if [ ! -d "$provider_dir/ledger" ]; then
     mkdir -m 700 "$provider_dir/ledger" || { log "live runs off: the ledger cannot be made"; return 0; }
   fi

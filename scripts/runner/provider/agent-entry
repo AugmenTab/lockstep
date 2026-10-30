@@ -4,6 +4,8 @@
 # CAP_DAC_OVERRIDE and CAP_KILL and no-new-privileges, and runs:
 #
 #   agent-entry TOOL-UID TOOL-GID ARGV...
+#   agent-entry --check     prints "lockstep-isolation VERSION ok", or
+#                           "lockstep-isolation VERSION refused REASON" (the helper's start)
 #
 # Two identities: the tools (every process the Bash tool starts, so all the
 # repository's code) run as TOOL-UID:TOOL-GID, the host's user, through
@@ -14,9 +16,28 @@
 # CLI reads its own settings only, never the repository's (R3-M2). Nothing here
 # reads a secret; the proxy holds the key.
 set -eu
+# The isolation's version: the helper runs live roles only with an image whose agent-entry says
+# this one (R3-L6), so an image built before a change to the isolation turns live runs off.
+version=2
 agent=2000000000
 caps=+setuid,+setgid,+dac_override,+kill
 refuse() { echo "agent-entry: isolation-unavailable: $1" >&2; exit 125; }
+# Not dumpable holds while the kernel's suid_dumpable is 0 or 2 (2 keeps a changed-credential
+# process's dumps root's); 1 would make the CLI traceable by its own uid (R3-L5).
+dumpable_ok() {
+  case $(cat /proc/sys/fs/suid_dumpable 2>/dev/null || echo unreadable) in
+    0 | 2) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+if [ "${1:-}" = --check ]; then
+  if dumpable_ok; then
+    echo "lockstep-isolation $version ok"
+  else
+    echo "lockstep-isolation $version refused fs.suid_dumpable=$(cat /proc/sys/fs/suid_dumpable 2>/dev/null || echo unreadable)"
+  fi
+  exit 0
+fi
 # A plain decimal id: no sign, no leading zero (R3-L1).
 plain_id() {
   case $1 in
@@ -33,8 +54,7 @@ plain_id "$tool_uid" && plain_id "$tool_gid" || refuse "ids must be plain decima
 if [ "$tool_uid" = 0 ] || [ "$tool_uid" = "$agent" ] || [ "$tool_gid" = "$agent" ]; then
   refuse "the tools' identity must not be root or the CLI's"
 fi
-# Not dumpable holds only while the kernel's suid_dumpable is 0 (R3-L5).
-[ "$(cat /proc/sys/fs/suid_dumpable 2>/dev/null)" = 0 ] || refuse "fs.suid_dumpable is not 0"
+dumpable_ok || refuse "fs.suid_dumpable is 1 (the CLI would be traceable)"
 # The program found as Docker would find it (the container's PATH). The CLI runs with
 # /usr/local/bin alone on its PATH, so its own git call never runs (I5), and reads only its own
 # settings (R3-M2); any other program (a check's probe) with the container's usual PATH.

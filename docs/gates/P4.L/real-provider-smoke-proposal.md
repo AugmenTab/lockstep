@@ -4,13 +4,14 @@
   been done: no provider was called, no real credential exists, nothing is installed, the operator's helper does not
   run with `--runner`, and no real coding transaction has run. **Each numbered approval in §2 is the owner's.**
 - Prepared 2026-10-29 by the writing agent (Implementer, manual) under `.local/plans/phase-04_update3.md` §11;
-  revised under `phase-04_update4.md` (C-P4.L.R2).
-- **Blocked by a finding the owner asked to be reported as blocking** (C-P4.L.R2 §9): the owner accepted the H2
-  limitation for this attended, disposable smoke on condition that an impersonating process is bounded to one
-  request; the regression shows it is bounded only by the run's own allowances (requests, output, budget, wall
-  clock), after which the CLI's next request stops the run with nothing accepted. The owner decides whether that
-  bound is acceptable for this smoke. If the smoke goes ahead: attended throughout, this disposable repository only,
-  never extended to other repositories, unattended runs or production use.
+  revised under `phase-04_update4.md` (C-P4.L.R2) and `phase-04_update5.md` (C-P4.L.R3).
+- **The H2 blocking finding is addressed by C-P4.L.R3** (process isolation, candidate `9ed6b83`;
+  `docs/gates/P4.L.R3/completion-packet.md`): the CLI and its tools run as two identities, so a program in the
+  repository cannot learn the run's conversation; measured, an impersonating program now gets **no** request admitted
+  (the owner's bound was one). Returned for the owner's authorization below. The owner's earlier conditions still apply
+  to this first smoke: attended throughout, this disposable repository only, not extended to other repositories,
+  unattended runs or production use without a new decision.
+- *(Before R3, this proposal was blocked: C-P4.L.R2 §9 measured the impersonation bound as the run's own allowances.)*
 - Built on: C-P4.L (adapter, egress, credentials, budget; `docs/gates/P4.L/contract.md`), the budget report
   (`docs/gates/P4.L/budget-report.md`), C-P4.R3 (one engine owns a step).
 - It would show: one real model, through the real installed service, worker, helper, container, proxy and Git
@@ -39,7 +40,8 @@
    0.30 USD per million tokens**. Higher than the real prices only makes the cap stricter.
 3. **Install the candidate** on this Mac (the control pane's *Install*, or `scripts/service install` then apply), and
    build the provider image: `scripts/provider-image` (downloads the CLI package from the npm registry, checks its
-   SHA-512; contacts no model provider).
+   SHA-512; contacts no model provider). It must be built from the candidate (with `/opt/lockstep/agent-entry`); an
+   older image turns live runs off.
 4. **Create the credential**: a new API key in a **dedicated Anthropic Console workspace** for this smoke, with the
    Console's own workspace spend limit set to 5 USD if the Console offers one (a second cap, on the provider's side).
    The owner writes it, never pasting it into a conversation:
@@ -108,6 +110,8 @@ Evidence checklist (the owner's observations are the owner's own words, never ge
   charge, tokens, unknown usage (expected none).
 - [ ] The proxy's refusals (expected none) and the paths it saw (only `/v1/messages?beta=true`).
 - [ ] The helper's runner journal: every run started and ended; no `interrupted`.
+- [ ] Before the smoke, on the operator's Docker: `scripts/lib/check-live-isolation` and
+  `scripts/lib/check-live-impersonation` pass (offline, synthetic key), and `fs.suid_dumpable` is 0.
 - [ ] `docker ps -a` and `docker network ls` after the smoke: no `lockstep-run-`, `lockstep-egress-` or
   `lockstep-live-` left.
 - [ ] The Git branch: its commits by the Supervisor only; the frozen tests unchanged; the fix within the allowed path.
