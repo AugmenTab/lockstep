@@ -69,6 +69,23 @@ vector and its comment). Tests: §3. Documents: `docs/gates/P4.L.S/`, `docs/gate
 - Three test faults fixed before this baseline: the helper's log was read across helper restarts (a run was
   submitted with live runs off); a mode check matched the state directory's own name; empty fields passed or erred.
 
-## 6. Amendment A-P4.L.S-1
+## 6. Amendments
 
-`docs/gates/P4.L.S/amendments.md` (for the Planner).
+A-P4.L.S-1, -2, -3: **APPROVED by the Planner and applied** (`bfd2367`; `docs/gates/P4.L.S/amendments.md`), for
+offline qualification only.
+
+## 7. Qualification at `bfd2367` (image `2dfe970b…`)
+
+- Mac `scripts/check --integration`: all six steps PASSED — unit **870/870**, integration **571/571**, guard clean
+  (`.local/p4ls-check-mac.log`).
+- Linux clean clone: format, lint, build, unit, integration PASSED — **870/870, 571/571** (`.local/p4ls-linux.log`).
+- Host, real Docker, the committed files: `check-live-subscription` **22/22**, `check-live-runner` **84/84**,
+  `check-live-boundary` **83/83**, `check-live-impersonation` **43/43**, `check-live-isolation` **26/26**,
+  `check-live-concurrency` **17/17**, `check-live-proxy` **21/21** (`.local/evidence/live-*-20261031t195…/`).
+
+## 8. The credential boundary
+
+The subscription mode's design (the proxy holding the owner's token) is **offline-only**: Anthropic's documentation
+does not permit a third party to "collect, store, or intermediate Claude.ai credentials or session tokens". The
+disposition, the supported alternative and its costs: `docs/gates/P4.L.S/credential-boundary.md`. No real subscription
+token is to be placed for this mode.
