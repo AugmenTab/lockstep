@@ -232,7 +232,7 @@ answered =
     case runs of
       [Seen profile argv instructions] -> do
         profile @?= ProfileReadOnly
-        L.take 7 argv @?= ["claude", "-p", "--bare", "--model", "claude-sonnet-5-5", "--effort", "medium"]
+        L.take 6 argv @?= ["claude", "-p", "--model", "claude-sonnet-5-5", "--effort", "medium"]
         case L.dropWhile (/= "--session-id") argv of
           _ : session : _ -> T.length session @?= 36
           _ -> assertFailure ("no session id: " <> show argv)
@@ -363,7 +363,7 @@ serveLive =
         let
           run = BS8.unpack (BS.take 32 (BS.drop 11 (snd (BS.breakSubstring "expect run-" request))))
         argv <- BS.readFile (runnerDir <> "/work/" <> run <> "/argv")
-        L.take 7 (BS.split 0 argv) @?= ["claude", "-p", "--bare", "--model", "claude-sonnet-5-5", "--effort", "medium"]
+        L.take 6 (BS.split 0 argv) @?= ["claude", "-p", "--model", "claude-sonnet-5-5", "--effort", "medium"]
         instructions <- BS.readFile (runnerDir <> "/work/" <> run <> "/input/role.md")
         assertBool "the role's instructions are in its input" ("# Lockstep: you are the planner" `BS.isPrefixOf` instructions)
     assertBool ("the log names the live provider: " <> serveLog) ("Engine worker: on (live provider claude-code, model claude-sonnet-5-5, effort medium)" `L.isInfixOf` serveLog)

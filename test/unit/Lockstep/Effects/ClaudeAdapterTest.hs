@@ -67,10 +67,10 @@ tests =
               (T.lines (TE.decodeUtf8 fixture))
         sessionIdOf name @?= session
         claudeArgv (ProviderConfig "claude-opus-5-5" "high") (workspace name) @?= expected
-    , testCase "L1-e the argument vector names no agent, web or MCP tool and reads no stored login or project setting" $ do
+    , testCase "L1-e the argument vector names no agent, web or MCP tool, and no --bare (it refuses subscription login; C-P4.L.S)" $ do
         let
           argv = claudeArgv (ProviderConfig "claude-sonnet-5-5" "medium") (workspace "0123456789abcdef0123456789abcdef")
-        assertBool "bare" ("--bare" `L.elem` argv)
+        assertBool "no --bare" ("--bare" `L.notElem` argv)
         L.take 2 (L.dropWhile (/= "--tools") argv) @?= ["--tools", "Read Edit Bash"]
         assertBool "no MCP server" ("--strict-mcp-config" `L.elem` argv && "--mcp-config" `L.notElem` argv)
         assertBool "no fallback model" ("--fallback-model" `L.notElem` argv)

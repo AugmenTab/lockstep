@@ -1,6 +1,5 @@
 claude
 -p
---bare
 --model
 {MODEL}
 --effort

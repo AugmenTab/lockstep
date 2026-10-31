@@ -274,8 +274,9 @@ if offline; then
   expect "S1 every request carried the subscription token as Authorization: Bearer" every '"auth": "bearer-expected"'
   expect "S1 no request carried an x-api-key" every '"api_key": false'
   expect "S1 every request carried the oauth feature" every '"oauth-2025-04-20"'
-  expect "S1 the role's container saw only a placeholder (no API key, a placeholder token)" \
-    grep -q 'env-api=none env-oauth=lockstep-placeholder' "$log"
+  # A-P4.L.S-2: the CLI keeps even the placeholder from its tools' environment (measured), so either is right.
+  expect "S1 the role's tools saw no API key and no subscription token (none, or only the placeholder)" \
+    grep -qE 'env-api=none env-oauth=(none|lockstep-placeholder-the-proxy-holds-the-token) end' "$log"
   expect "S1 the token is in no file kept or written by the run" \
     test -z "$(grep -r -l -F "$token" "$state/runner" "$state/helper" "$work/helper.out" "$log" 2>/dev/null || true)"
   expect "S3 only /v1/messages was asked for" every '"path": "/v1/messages?beta=true"'
