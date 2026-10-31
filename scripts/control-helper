@@ -1124,6 +1124,7 @@ provider_tag=lockstep-provider:claude-2.1.312
 provider_image=""
 live_ready=0
 live_max_tokens=0
+live_billing=""
 live_net_prefix=lockstep-live-${instance:-main}-
 egress_prefix=lockstep-egress-${instance:-main}-
 egress_network=bridge
@@ -1235,21 +1236,24 @@ init_provider() {
     --user "$(id -u):$(id -g)" --log-driver none \
     --mount "type=bind,source=$provider_dir/config,target=/etc/lockstep/provider,readonly" \
     "$provider_image" python3 /opt/lockstep/egress-proxy describe --config /etc/lockstep/provider 2>/dev/null < /dev/null)
-  if [[ ! $out =~ ^ok\ (claude-code\ [a-z0-9.-]+\ [a-z]+)\ ([0-9]{1,7})$ ]]; then
+  if [[ ! $out =~ ^ok\ (claude-code\ [a-z0-9.-]+\ [a-z]+)\ ([0-9]{1,7})(\ subscription)?$ ]]; then
     log "live runs off: the provider configuration was refused ($(printf '%s' "$out" | clean_detail))"
     return 0
   fi
   # The CLI asks for at most this many output tokens per request (the proxy's own limit).
   live_max_tokens=${BASH_REMATCH[2]}
+  # C-P4.L.S S1: the owner's subscription, or an API key; named in the log, never assumed.
+  live_billing="API key (charged at the configured prices)"
+  [ -z "${BASH_REMATCH[3]}" ] || live_billing="subscription (usage in tokens)"
   tmp=$(mktemp "$runner/.provider.XXXXXX") || return 0
   printf 'lockstep-provider 1 %s\n' "${BASH_REMATCH[1]}" > "$tmp"
   chmod 600 "$tmp"
   place "$tmp" "$runner/provider" || { rm -f "$tmp"; return 0; }
   live_ready=1
   if [ "$credential_name" = offline-credential ]; then
-    log "live runs on (OFFLINE TEST: upstream $test_upstream, CA $test_ca, internal network $egress_network, key offline-credential): ${BASH_REMATCH[1]}, at most $live_max_tokens output tokens a request (image $provider_image)"
+    log "live runs on (OFFLINE TEST: upstream $test_upstream, CA $test_ca, internal network $egress_network, key offline-credential): ${BASH_REMATCH[1]}, $live_billing, at most $live_max_tokens output tokens a request (image $provider_image)"
   else
-    log "live runs on: ${BASH_REMATCH[1]}, at most $live_max_tokens output tokens a request (image $provider_image)"
+    log "live runs on: ${BASH_REMATCH[1]}, $live_billing, at most $live_max_tokens output tokens a request (image $provider_image)"
   fi
 }
 
@@ -1474,7 +1478,6 @@ execute_live_run() { # ID OP RUN
         --user 0:0
         --env HOME=/tmp --env PATH=/usr/local/bin:/usr/bin:/bin --env LANG=C.UTF-8 --env LC_ALL=C.UTF-8 --env TZ=UTC
         --env ANTHROPIC_BASE_URL=http://lockstep-egress:8080
-        --env ANTHROPIC_API_KEY=lockstep-placeholder-the-proxy-holds-the-key
         --env CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 --env DISABLE_AUTOUPDATER=1
         --env DISABLE_TELEMETRY=1 --env DISABLE_ERROR_REPORTING=1
         --env "CLAUDE_CODE_MAX_OUTPUT_TOKENS=$live_max_tokens"
@@ -1482,6 +1485,12 @@ execute_live_run() { # ID OP RUN
         --mount "type=bind,source=$dir/tree,target=/work/tree$([ "$role" = write ] || printf ',readonly')"
         --mount "type=bind,source=$dir/input,target=/input,readonly"
         --mount "type=bind,source=$dir/output,target=/output")
+      # C-P4.L.S S3: a placeholder of the configured kind, so the CLI logs in that way; the proxy
+      # drops it and sends the owner's credential.
+      case $live_billing in
+        subscription*) args+=(--env CLAUDE_CODE_OAUTH_TOKEN=lockstep-placeholder-the-proxy-holds-the-token) ;;
+        *) args+=(--env ANTHROPIC_API_KEY=lockstep-placeholder-the-proxy-holds-the-key) ;;
+      esac
       if [ -f "$dir/protected" ]; then
         while IFS= read -r p; do
           args+=(--mount "type=bind,source=$dir/tree/$p,target=/work/tree/$p,readonly")

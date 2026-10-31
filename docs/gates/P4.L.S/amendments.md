@@ -28,5 +28,59 @@ Full digests: original `2ed204fce6dc775097294107190a45154ae1d3a3092fc39f75f7d8f4
 The fixture is also the argument vector every frozen live check submits, so with the amendment those checks run the
 CLI without `--bare` (in their API-key mode); they must stay green unchanged.
 
-Trials: (to be filled) the amended tests against the current adapter (RED, exactly these lines) and against the
-implementation (GREEN); the live checks with the amended fixture.
+## A-P4.L.S-2 — `scripts/lib/check-live-subscription` (C-P4.L.S, frozen `3764f93`)
+
+- Original `f5fd8dcbc9a7f65fca031ce9f29b987add2e637e0a557cd7e0e8b014f0ab3f60`; proposed
+  `c379d96ab11dfbfff0180015ae5b10162bf04007679d1e1e77baa6e44f8ab76d`.
+- Why: one expectation assumed the Bash tool's environment would show the subscription placeholder. Measured, the CLI
+  keeps `CLAUDE_CODE_OAUTH_TOKEN` out of its tools' environment altogether (`env-oauth=none`): stronger than expected.
+  The expectation now accepts none or only the placeholder; it still requires no API key, and the separate expectation
+  that the token is in no file stays.
+
+  ```diff
+  -  expect "S1 the role's container saw only a placeholder (no API key, a placeholder token)" \
+  -    grep -q 'env-api=none env-oauth=lockstep-placeholder' "$log"
+  +  # A-P4.L.S-2: the CLI keeps even the placeholder from its tools' environment (measured), so either is right.
+  +  expect "S1 the role's tools saw no API key and no subscription token (none, or only the placeholder)" \
+  +    grep -qE 'env-api=none env-oauth=(none|lockstep-placeholder-the-proxy-holds-the-token) end' "$log"
+  ```
+
+## A-P4.L.S-3 — `scripts/lib/live-standin` (C-P4.L, frozen `a6b69e2`)
+
+- Original `6589bf3ed83839f3110ac5b91d05c7beaadf2ff6c3263145eef03ba7a410bf57`; proposed
+  `260d44f6485070550aa7fad16427e39b047dd304836881c3842c9b48cff4c322`.
+- Why: the stand-in decides "after a tool result" from the last message only. Without `--bare` the CLI ends its history
+  with a `system` message after the tool results (measured: roles `user, system, assistant, user, system`), so the
+  stand-in answered every request as if it were the first, and `check-live-runner`'s real-CLI run looped until the
+  request allowance stopped it (50 requests, `requests-exhausted`). The test tool's guess, not the product. Now: a tool
+  result in any message after the last assistant turn. Used only by `check-live-runner`.
+
+  ```diff
+  -            last = messages[-1] if messages else {}
+  -            after_tool = isinstance(last.get("content"), list) and any(
+  -                isinstance(b, dict) and b.get("type") == "tool_result" for b in last["content"])
+  +            # After a tool result: one in a message after the last assistant turn (A-P4.L.S-3: without
+  +            # --bare the CLI ends the history with a system message, so the last message is not it).
+  +            since = []
+  +            for m in messages:
+  +                if isinstance(m, dict) and m.get("role") == "assistant":
+  +                    since = []
+  +                elif isinstance(m, dict):
+  +                    since.append(m)
+  +            after_tool = any(isinstance(m.get("content"), list) and any(
+  +                isinstance(b, dict) and b.get("type") == "tool_result" for b in m["content"]) for m in since)
+  ```
+
+## Trials (the implementation in the working tree, image `2dfe970b…`; amended files as copies in `.local/p4ls/`)
+
+| Check | Result |
+|---|---|
+| `check-live-subscription` (frozen) with the amended fixture | 21 of 22; the one failure is exactly A-P4.L.S-2's line (`env-oauth=none`) |
+| `check-live-subscription` with A-P4.L.S-1 and -2 | **22 of 22** (`.local/evidence/live-subscription-20261031t183025z/`) |
+| `check-live-runner` with the amended fixture | 83 of 84: the real-CLI run looped (A-P4.L.S-3) |
+| `check-live-runner` with the amended fixture and stand-in | **84 of 84** |
+| `check-live-boundary`, `-impersonation`, `-isolation` with the amended fixture | **83/83, 43/43, 26/26** |
+| `check-live-concurrency`, `-proxy` (unchanged) | **17/17, 21/21** |
+
+The Haskell files of A-P4.L.S-1 (the unit and integration tests) are trialled after approval in the full Mac and
+Linux runs: their change is the literal `--bare` in the expected vector, against an adapter that no longer emits it.

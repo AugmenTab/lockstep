@@ -28,7 +28,17 @@
 #   egress-proxy serve --config FILE --credential FILE --ledger DIR --run RUN
 #                      --role readonly|write [--upstream HOST:PORT] [--ca FILE]
 #
-# The configuration (owner-written, "key value" lines, every key exactly once):
+# The configuration (owner-written, "key value" lines, every key exactly once), in one of two
+# billing modes, never one standing in for the other (C-P4.L.S S1):
+#
+#   subscription (the owner's Claude subscription; usage counted in tokens, no prices):
+#   lockstep-provider 1 | provider claude-code | model MODEL | effort EFFORT | billing subscription |
+#   token-limit N | invocation-limit N | request-max-tokens N | invocation-output-tokens N |
+#   invocation-requests N
+#   The credential is a subscription token (sk-ant-oat01-..., from `claude setup-token`), sent as
+#   Authorization: Bearer.
+#
+#   API key (an API key sent as x-api-key; the offline checks' synthetic keys):
 #   lockstep-provider 1
 #   provider claude-code
 #   model MODEL                      effort low|medium|high|xhigh|max
@@ -77,6 +87,9 @@ NUMBER_KEYS = (
     "invocation-output-tokens", "invocation-requests",
 )
 KEYS = ("lockstep-provider", "provider", "model", "effort", "pricing") + NUMBER_KEYS
+SUBSCRIPTION_NUMBER_KEYS = ("token-limit", "invocation-limit", "request-max-tokens", "invocation-output-tokens",
+                            "invocation-requests")
+SUBSCRIPTION_KEYS = ("lockstep-provider", "provider", "model", "effort", "billing") + SUBSCRIPTION_NUMBER_KEYS
 UPSTREAM = "api.anthropic.com:443"
 # The role's tools (C-P4.L L1): the pinned CLI's file and command tools, as it
 # names them with --bare --tools "Read Edit Bash" (observed, 2.1.312). Whether a
@@ -86,8 +99,8 @@ TOOLS = {
     "readonly": {"Read", "Edit", "Bash"},
     "write": {"Read", "Edit", "Bash"},
 }
-# Exactly the beta features the pinned CLI sends (observed, 2.1.312); none of
-# them changes the price or adds a tool. Anything else is refused, never dropped.
+# Exactly the beta features the pinned CLI sends (observed, 2.1.312, with and without --bare;
+# C-P4.L.S S4); none of them adds a tool. Anything else is refused, never dropped.
 BETAS = {
     "claude-code-20250219",
     "interleaved-thinking-2025-05-14",
@@ -95,7 +108,11 @@ BETAS = {
     "per-turn-control-2026-07-01",
     "thinking-token-count-2026-05-13",
     "effort-2025-11-24",
+    "mid-conversation-tool-changes-2026-07-01",
+    "extended-cache-ttl-2025-04-11",
 }
+# The subscription's own feature: admitted, and always sent, in subscription mode only.
+OAUTH_BETA = "oauth-2025-04-20"
 BLOCKS = {"text", "tool_use", "tool_result", "thinking", "redacted_thinking"}
 # The top-level fields the pinned CLI sends (observed, 2.1.312); any other is refused.
 TOP_FIELDS = {"model", "max_tokens", "messages", "system", "tools", "stream", "output_config", "thinking",
@@ -129,18 +146,40 @@ def read_config(path):
         if line == "":
             continue
         m = re.fullmatch(r"([a-z0-9-]+) ([!-~]{1,64})", line)
-        if not m or m.group(1) not in KEYS or m.group(1) in values:
+        if not m or m.group(1) not in KEYS + SUBSCRIPTION_KEYS or m.group(1) in values:
             raise Refusal("provider-config-invalid")
         values[m.group(1)] = m.group(2)
-    if set(values) != set(KEYS) or values["lockstep-provider"] != "1" or values["provider"] != PROVIDER:
+    subscription = "billing" in values
+    if (set(values) != set(SUBSCRIPTION_KEYS if subscription else KEYS) or values["lockstep-provider"] != "1"
+            or values["provider"] != PROVIDER):
         raise Refusal("provider-config-invalid")
     if values["model"] not in MODELS:
         raise Refusal("provider-model-unsupported")
     if values["effort"] not in EFFORTS:
         raise Refusal("provider-effort-unsupported")
+    if subscription:
+        # Usage in tokens only (C-P4.L.S S2): no price, so every charge is 0 and no budget in dollars.
+        if values["billing"] != "subscription":
+            raise Refusal("provider-config-invalid")
+        config = dict(values)
+        for key in SUBSCRIPTION_NUMBER_KEYS:
+            if not re.fullmatch(r"[0-9]{1,15}", values[key]):
+                raise Refusal("provider-config-invalid")
+            config[key] = int(values[key])
+        for key in SUBSCRIPTION_NUMBER_KEYS:
+            if config[key] < 1:
+                raise Refusal("provider-config-invalid")
+        if config["request-max-tokens"] > config["invocation-output-tokens"]:
+            raise Refusal("provider-config-invalid")
+        config.update({"pricing": "subscription", "price-input": 0, "price-output": 0, "price-cache-write-5m": 0,
+                       "price-cache-write-1h": 0, "price-cache-read": 0, "long-context-tokens": 10 ** 15,
+                       "long-context-input-percent": 100, "long-context-output-percent": 100,
+                       "budget-micro-usd": None})
+        return config
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", values["pricing"]):
         raise Refusal("provider-config-invalid")
     config = dict(values)
+    config["billing"] = "api-key"
     for key in NUMBER_KEYS:
         if not re.fullmatch(r"[0-9]{1,15}", values[key]):
             raise Refusal("provider-config-invalid")
@@ -157,7 +196,9 @@ def read_config(path):
     return config
 
 
-def read_credential(path):
+def read_credential(path, billing):
+    """The credential, which must be of the configuration's kind (C-P4.L.S S1): a subscription
+    token for subscription billing, an API key otherwise."""
     try:
         st = os.lstat(path)
     except OSError:
@@ -176,6 +217,8 @@ def read_credential(path):
     key = raw.rstrip(b"\n")
     if not re.fullmatch(rb"sk-ant-[A-Za-z0-9_-]{16,400}", key):
         raise Refusal("credential-malformed")
+    if key.startswith(b"sk-ant-oat") != (billing == "subscription"):
+        raise Refusal("credential-mode-mismatch")
     return key.decode("ascii")
 
 
@@ -243,7 +286,7 @@ def admit(config, ledger):
     if invocations >= config["invocation-limit"]:
         raise Refusal("invocation-limit-reached")
     # The smallest request still possible must fit what is left.
-    if micro >= config["budget-micro-usd"]:
+    if config["budget-micro-usd"] is not None and micro >= config["budget-micro-usd"]:
         raise Refusal("budget-exhausted")
     if tokens + PROMPT_OVERHEAD >= config["token-limit"]:
         raise Refusal("token-limit-reached")
@@ -351,9 +394,11 @@ def check_request(config, role, body, beta_header):
             beta = beta.strip()
             if beta == "":
                 continue
-            if beta not in BETAS:
+            if beta not in BETAS and not (beta == OAUTH_BETA and config["billing"] == "subscription"):
                 raise Refusal("beta-refused")
             betas.append(beta)
+    if config["billing"] == "subscription" and OAUTH_BETA not in betas:
+        betas.append(OAUTH_BETA)
     try:
         sent = json.dumps(request, separators=(",", ":"), ensure_ascii=True).encode("ascii")
         conversation = conversation_of(request)
@@ -567,7 +612,7 @@ class Proxy:
                 raise Refusal("output-allowance-exhausted")
             micro, tokens, _ = self.ledger.totals()
             reserve, reserve_tokens = reservation(self.config, body_bytes, max_tokens)
-            if micro + reserve > self.config["budget-micro-usd"]:
+            if self.config["budget-micro-usd"] is not None and micro + reserve > self.config["budget-micro-usd"]:
                 raise Refusal("budget-exhausted")
             if tokens + reserve_tokens > self.config["token-limit"]:
                 raise Refusal("token-limit-reached")
@@ -709,8 +754,18 @@ def handler_for(proxy):
             with proxy.lock:
                 proxy.betas.update(betas)
                 proxy.summary["forwarded"] += 1
-            headers = {"content-type": "application/json", "content-length": str(len(body)),
-                       "x-api-key": proxy.credential, "host": proxy.host}
+            headers = {"content-type": "application/json", "content-length": str(len(body)), "host": proxy.host}
+            # The owner's credential, never the client's (C-P4.L.S S1).
+            if proxy.config["billing"] == "subscription":
+                headers["authorization"] = "Bearer " + proxy.credential
+                # Who the client is, as the CLI says it (no secret; the provider may ask for Claude Code).
+                agent = self.headers.get("user-agent") or ""
+                if re.fullmatch(r"claude-cli/[0-9.]{1,20} \([a-z, -]{1,40}\)", agent):
+                    headers["user-agent"] = agent
+                if self.headers.get("x-app") == "cli":
+                    headers["x-app"] = "cli"
+            else:
+                headers["x-api-key"] = proxy.credential
             version = self.headers.get("anthropic-version")
             if version and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", version):
                 headers["anthropic-version"] = version
@@ -811,12 +866,13 @@ def main():
         if command == "describe":
             a = arguments(sys.argv[2:], {"config"})
             config = read_config(a["config"])
-            print("ok %s %s %s %d" % (PROVIDER, config["model"], config["effort"], config["request-max-tokens"]))
+            print("ok %s %s %s %d%s" % (PROVIDER, config["model"], config["effort"], config["request-max-tokens"],
+                                        " subscription" if config["billing"] == "subscription" else ""))
             return 0
         if command == "admit":
             a = arguments(sys.argv[2:], {"config", "credential", "ledger"})
             config = read_config(a["config"])
-            read_credential(a["credential"])
+            read_credential(a["credential"], config["billing"])
             admit(config, Ledger(a["ledger"]))
             print("ok")
             return 0
@@ -832,7 +888,7 @@ def main():
         if not re.fullmatch(r"[a-z0-9.-]{1,253}:[0-9]{1,5}", upstream):
             raise Refusal("usage")
         config = read_config(a["config"])
-        credential = read_credential(a["credential"])
+        credential = read_credential(a["credential"], config["billing"])
         ledger = Ledger(a["ledger"])
         os.makedirs(os.path.join(a["ledger"], "runs"), mode=0o700, exist_ok=True)
         with ledger.lock:

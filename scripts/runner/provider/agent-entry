@@ -13,8 +13,10 @@
 # effective group and 2000000000 as its real group, so the kernel makes it not
 # dumpable, keeping the four capabilities (ambient) only to start its tools as
 # the other identity, to end them, and to reach the run's private files. The
-# CLI reads its own settings only, never the repository's (R3-M2). Nothing here
-# reads a secret; the proxy holds the key.
+# CLI reads its own settings only, never the repository's (R3-M2), and no
+# CLAUDE.md, auto-memory or background task (C-P4.L.S S3: what --bare kept out,
+# without --bare, which refuses subscription login). Nothing here reads a
+# secret; the proxy holds the credential.
 set -eu
 # The isolation's version: the helper runs live roles only with an image whose agent-entry says
 # this one (R3-L6), so an image built before a change to the isolation turns live runs off.
@@ -78,4 +80,6 @@ exec setpriv --ruid="$agent" --euid="$agent" --rgid="$agent" --egid="$tool_gid" 
   /usr/bin/env HOME=/tmp/agent PATH="$path" SHELL=/bin/bash \
   LOCKSTEP_TOOL_UID="$tool_uid" LOCKSTEP_TOOL_GID="$tool_gid" \
   CLAUDE_CODE_SHELL_PREFIX=/opt/lockstep/tool-shell CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1 \
+  CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 \
+  ENABLE_TOOL_SEARCH=false \
   "$program" ${first[@]+"${first[@]}"} "$@"
