@@ -84,9 +84,16 @@ def main():
             except ValueError:
                 request = {}
             messages = request.get("messages", [])
-            last = messages[-1] if messages else {}
-            after_tool = isinstance(last.get("content"), list) and any(
-                isinstance(b, dict) and b.get("type") == "tool_result" for b in last["content"])
+            # After a tool result: one in a message after the last assistant turn (A-P4.L.S-3: without
+            # --bare the CLI ends the history with a system message, so the last message is not it).
+            since = []
+            for m in messages:
+                if isinstance(m, dict) and m.get("role") == "assistant":
+                    since = []
+                elif isinstance(m, dict):
+                    since.append(m)
+            after_tool = any(isinstance(m.get("content"), list) and any(
+                isinstance(b, dict) and b.get("type") == "tool_result" for b in m["content"]) for m in since)
             with open(a.log, "a", encoding="utf-8") as f:
                 f.write(json.dumps({
                     "path": self.path, "model": request.get("model"), "max_tokens": request.get("max_tokens"),

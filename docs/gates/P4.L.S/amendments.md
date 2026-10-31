@@ -1,6 +1,11 @@
 # Amendment to frozen tests for C-P4.L.S — for the Planner's authorization
 
-- Status: **PROPOSED.** The frozen files are unchanged; the amended versions are drafts in `.local/p4ls/amend/`.
+- Status: **APPROVED and applied.** Authorization record: the Planner, 2026-10-31 ("P4.L.S Planner Decision"):
+  "APPROVE A-P4.L.S-1, A-P4.L.S-2, and A-P4.L.S-3 in full for offline qualification … Apply exactly the five proposed
+  frozen-file changes … Verify every amended file against its proposed SHA-256 digest." Applied from
+  `.local/p4ls/amend/`; every file's sha256 after applying equals its proposal (below). No other frozen file changed.
+  The approval is for offline qualification only: real subscription token injection and provider calls are **not**
+  authorized (see `credential-boundary.md`).
   Prepared 2026-10-31 by the writing agent (Implementer, manual) under the owner's instruction to use the subscription
   (contract §1–§2).
 

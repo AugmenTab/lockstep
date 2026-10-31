@@ -4,10 +4,12 @@ host helper's live container. Like every adapter it decides only what goes in
 the role's input and which program runs; the runner decides the profile, the
 mounts, the network (the egress proxy alone), the limits and the environment.
 
-The program is the same for every role: @claude -p --bare@ with the configured
-model and effort and the file and command tools only (no agent, web or MCP
-tool; @--bare@ reads no hook, plugin, project instruction file or stored
-login). Which role may change the tree is the container's mount; the tools and
+The program is the same for every role: @claude -p@ with the configured model
+and effort and the file and command tools only (no agent, web or MCP tool). Not
+@--bare@, which refuses the owner's subscription login (C-P4.L.S S3); the
+provider image's start keeps out what it kept out (the repository's settings,
+hooks, plugins, project instruction files, auto-memory). Which role may change
+the tree is the container's mount; the tools and
 the instructions are defence in depth only. The role's answer is the file
 @result.json@ in its output, read and checked as for every adapter (C-P4.5 A5);
 what the CLI prints is evidence. The run's name is the CLI's session id, so an
@@ -116,7 +118,6 @@ claudeArgv config workspace =
     T.pack
     [ "claude"
     , "-p"
-    , "--bare"
     , "--model"
     ]
     <> [providerModel config, T.pack "--effort", providerEffort config]
