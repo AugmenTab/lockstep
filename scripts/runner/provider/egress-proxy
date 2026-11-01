@@ -29,14 +29,15 @@
 #                      --role readonly|write [--upstream HOST:PORT] [--ca FILE]
 #
 # The configuration (owner-written, "key value" lines, every key exactly once), in one of two
-# billing modes, never one standing in for the other (C-P4.L.S S1):
+# billing modes:
 #
-#   subscription (the owner's Claude subscription; usage counted in tokens, no prices):
+#   subscription (the owner's Claude subscription; usage counted in tokens, no prices) — this is the
+#   NATIVE mode (C-P4.L.N): the helper runs `passthrough`, not `serve`; this proxy never sees a token
+#   (the CLI holds its own and talks to the provider over end-to-end TLS). `describe` reads this config
+#   to tell the service the model and effort; `serve`/`admit` are never used for it.
 #   lockstep-provider 1 | provider claude-code | model MODEL | effort EFFORT | billing subscription |
 #   token-limit N | invocation-limit N | request-max-tokens N | invocation-output-tokens N |
 #   invocation-requests N
-#   The credential is a subscription token (sk-ant-oat01-..., from `claude setup-token`), sent as
-#   Authorization: Bearer.
 #
 #   API key (an API key sent as x-api-key; the offline checks' synthetic keys):
 #   lockstep-provider 1
@@ -112,7 +113,6 @@ BETAS = {
     "extended-cache-ttl-2025-04-11",
 }
 # The subscription's own feature: admitted, and always sent, in subscription mode only.
-OAUTH_BETA = "oauth-2025-04-20"
 BLOCKS = {"text", "tool_use", "tool_result", "thinking", "redacted_thinking"}
 # The top-level fields the pinned CLI sends (observed, 2.1.312); any other is refused.
 TOP_FIELDS = {"model", "max_tokens", "messages", "system", "tools", "stream", "output_config", "thinking",
