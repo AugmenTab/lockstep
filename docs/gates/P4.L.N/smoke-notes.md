@@ -13,6 +13,19 @@ Live, attended, native subscription (owner's Max plan), disposable repo `~/locks
 Milestone confirmed: a real request on the owner's subscription reached Anthropic over end-to-end TLS through the
 passthrough filter and returned (native auth works end to end).
 
+### Authoritative DB reconciliation (2026-11-01, `lockstep_invocations`)
+
+The role sessions above were the **first attempt**; the smoke then halted (image-ordering 125) and the owner restarted
+the helper. The complete, authoritative per-stage record (one transaction, 15 invocations) is now in
+`smoke-completion-packet.md` §4. Highlights that correct earlier inference here:
+
+- The restart **resumed** the same transaction from the `candidate` stage — `discovery` (28,315) was reused, not
+  re-run. So the image mistake wasted **~30,026 tokens** (one duplicated `candidate` Planner stage), not 58,341.
+- The **pre-freeze Challenger did run** (`challenge-pre/challenger/answered`, 05:13:09), plus deterministic `mutant`
+  (pre) and `counterexample` (post) checks. Model sessions: Planner ×3, Challenger ×2, Implementer ×2, Reviewer ×1 = 8.
+- `reproduction` did not re-run after the restart (the "go on without reproducing" waiver stood); the post-restart
+  `baseline` exited **ec=1 (RED)** — the correct baseline result.
+
 ## Operational lesson: rebuilding the runner image under a running helper (2026-11-01)
 
 The transaction first halted at `candidate baseline-run-failed`: the deterministic `run-verify` containers
