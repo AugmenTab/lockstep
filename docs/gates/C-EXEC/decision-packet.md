@@ -5,6 +5,14 @@
 > Its completion packet `docs/gates/P4.L.R3/completion-packet.md` disposes of H2 as **closed** (the R2 blocking
 > finding) and returns the real-provider smoke proposal for the owner's authorization. Gate C-EXEC stays pending until
 > a live transaction succeeds.
+>
+> **Superseding note (2026-11-01, `phase-04_update7.md`):** the live path is now **native subscription** — the
+> unmodified CLI holds its own token (a Docker named volume) and reaches Anthropic over end-to-end TLS through a
+> passthrough filter; Lockstep never touches the token. No API-key billing, no token-injection proxy (the P4.L.S
+> injection mode and its checks are retired). Candidate **`05da865`** (C-P4.L.N); packet
+> `docs/gates/P4.L.N/completion-packet.md`. Offline-qualified Mac/Linux 870/571, live checks green, one clean review.
+> The attended subscription-backed calculator smoke (operator steps in the packet §5) is the remaining evidence for
+> Gate C-EXEC; no live auth or provider call has occurred.
 
 > **Superseding note (2026-10-30, `phase-04_update4.md`):** the candidate is now **`7018df9`** (the final hardening,
 > C-P4.L.R2: terminal refusals, one conversation a run, explicit offline-test mode). Its completion packet is
