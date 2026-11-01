@@ -34,44 +34,58 @@
 - **`main` is untouched** (`return a - b`); the repo has **no remote** — nothing was pushed. Only the Supervisor
   committed, only on the work branch.
 
-## 4. Role runs, usage, retries (from the helper log; exact per-role mapping is in the task's technical details)
+## 4. Role runs, usage, retries (reconciled against the authoritative DB record, `lockstep_invocations`)
 
-Usage is **tokens** (subscription usage units, not dollars); the summed per-run figure includes cache reads (see the
-token-breakdown note in `smoke-notes.md`). `run-verify` steps are **deterministic** — Lockstep runs them, no model,
-no tokens.
+This section is now keyed to the database, not inferred from the helper log. Usage is **tokens** (subscription usage
+units, not dollars); the summed per-run figure includes cache reads (see the token-breakdown note in `smoke-notes.md`).
+The `reproduction`, `baseline`, `verification`, `mutant` and `counterexample` steps are **deterministic** — Lockstep
+runs them itself, no model session, no tokens.
 
-**First attempt (blocked, wasted):** Planner discovery 28,315 + Planner candidate 30,026 = **58,341 tokens**, then the
-baseline/reproduction `run-verify` **launch-failed (125)**. Cause: a self-inflicted image-ordering mistake — the
-runner image was rebuilt (`scripts/service install`) under the already-running helper, which kept invoking the stale
-image ID for verify runs. Fixed by restarting the helper. (Full write-up in `smoke-notes.md`.)
+The whole smoke is **one** transaction (one `transaction_id`, 15 invocations). It ran in two attempts around a helper
+restart; the restart **resumed** the transaction (it did not start a new one).
 
-**Successful transaction (after the restart):** 6 live model sessions, **185,813 tokens**:
+**First attempt (blocked):** `discovery/planner` answered (28,315) → `reproduction` **launch-failed (125)** →
+`candidate/planner` answered (30,026) → `candidate/baseline` **launch-failed (125)**. Cause of the 125s: a
+self-inflicted image-ordering mistake — the runner image was rebuilt (`scripts/service install`) under the
+already-running helper, which kept invoking the stale image ID for the deterministic verify runs. Fixed by restarting
+the helper. (Full write-up in `smoke-notes.md`.)
 
-| # | Run (helper id) | Role (inferred) | Tokens |
-|---|---|---|---|
-| 1 | `run-live-readonly ed25e2e7` | Planner — discovery | 30,511 |
-| — | `run-verify 15b94bde` exit 1 | reproduction (deterministic; the bug was reproduced) | — |
-| 2 | `run-live-readonly 5fc5ec2e` | Planner — Contract + candidate tests | 31,646 |
-| — | `run-verify 532212d9` exit 0 | baseline (deterministic) | — |
-| 3 | `run-live-write 5e98465e` | Implementer — attempt | 34,440 |
-| 4 | `run-live-write 56da48ef` | Implementer — attempt | 28,298 |
-| — | `run-verify 0f760578`, `d60a3206` exit 0 | post-fix checks (deterministic) | — |
-| 5 | `run-live-readonly efdb3429` | Challenger — post-fix (or Reviewer) | 30,605 |
-| — | `run-verify 8b5b946a` exit 0 | checks (deterministic) | — |
-| 6 | `run-live-readonly bd29a603` | Reviewer (or Challenger) | 30,313 |
+**After the restart, the transaction resumed from the `candidate` stage** — `discovery` was **not** re-run (its answer
+was reused), so only the `candidate` stage repeated. The authoritative post-restart sequence:
 
-- **Total live usage across the whole smoke: 244,154 tokens over 8 live sessions** (the 58,341 of the first attempt
-  was wasted by the image-ordering mistake, not by the workflow).
-- **Retries:** two `run-live-write` (Implementer) sessions in the successful run — i.e. the Implementer took two
-  attempts (DG-17 permits two). Worth confirming against the task's technical details whether attempt 1's checks
-  failed and attempt 2 succeeded, or both wrote (a point for the role-count scrutiny).
-- Elapsed: the successful transaction ran ~05:13:05–05:14:31 UTC (~90 s of role runs) plus the Supervisor commit and
-  the human decisions; the first (blocked) attempt and the diagnosis/restart added the rest of the wall time.
+| time (UTC) | stage | what | role / outcome | tokens |
+|---|---|---|---|---|
+| 05:12:16 | candidate | planner | Planner — Contract + candidate tests (re-run), answered | 30,511 |
+| 05:13:06 | candidate | baseline | deterministic baseline, **exited ec=1 = RED** (tests detect the bug) ✓ | — |
+| 05:13:09 | challenge-pre | **challenger** | **pre-freeze Challenge**, answered | 31,646 |
+| 05:13:25 | challenge-pre | mutant | deterministic mutant check, exited 0 | — |
+| 05:13:30 | implement | implementer | Implementer — attempt 1, answered | 34,440 |
+| 05:13:42 | implement | implementer | Implementer — attempt 2, answered | 28,298 |
+| 05:13:55/56 | verify | verification | deterministic checks, exited 0 (×2) | — |
+| 05:13:59 | challenge-post | **challenger** | post-fix Challenge, answered | 30,605 |
+| 05:14:15 | challenge-post | counterexample | deterministic counterexample check, exited 0 | — |
+| 05:14:18 | review | reviewer | independent Review, answered | 30,313 |
+
+- **Model sessions, authoritative counts:** Planner ×3 (discovery + candidate first attempt + candidate re-run),
+  **Challenger ×2** (pre-freeze + post-fix), Implementer ×2 (two attempts), Reviewer ×1 — **8 live sessions total**,
+  matching the helper log's 8 live runs.
+- **Total live usage: 244,154 tokens over the 8 sessions.** Of that, the image-ordering mistake made **one** stage
+  redundant — the `candidate` Planner run was done twice (30,026 then re-run 30,511). So the mistake wasted
+  **~30,026 tokens** (one duplicated candidate stage), **not 58,341**: `discovery` (28,315) was reused by the resumed
+  transaction, not repeated. (Earlier drafts said 58,341; that double-counted the reused discovery.)
+- **Retries:** two `implement/implementer` sessions, both `answered` — the Implementer took two attempts (DG-17 permits
+  two). Both are the single Implementer, not parallel writers; the two deterministic `verification` runs after them
+  exited 0 (the fix passed).
+- Elapsed: the resumed transaction ran 05:12:16–05:14:18 UTC (~2 min of role + deterministic steps) plus the Supervisor
+  commit and the human decisions; the first (blocked) attempt and the diagnosis/restart (a ~45-min gap, 04:26→05:12)
+  added the rest of the wall time.
 
 ## 5. Human interventions
 
-- Reproduction decision on the first attempt ("go on without reproducing"); after the restart the reproduction step
-  ran on its own and reproduced the bug, so that waiver was not needed in the successful run.
+- Reproduction decision on the first attempt ("go on without reproducing"). That waiver **stood** across the restart:
+  the DB shows `reproduction` did not re-run after the restart. Instead the deterministic `baseline` check ran and
+  exited **ec=1 (RED)** — i.e. the frozen tests fail against the unfixed code, which is exactly how the baseline proves
+  the tests detect the bug. (An earlier draft said reproduction re-ran and the waiver was moot; that was wrong.)
 - Operational: the owner initialized the auth volume, completed the real `claude auth login` (in a real terminal —
   the `!` session shell has no TTY), and restarted the helper (to recover from the image-ordering mistake).
 - The final **Done** decision.
@@ -83,14 +97,17 @@ image ID for verify runs. Fixed by restarting the helper. (Full write-up in `smo
 - Exactly **one** code-writing Implementer — **yes** (only `run-live-write` is the Implementer; two attempts of the
   one Implementer, not parallel writers).
 - Successful implementation and independent verification — **yes** (deterministic checks green after the fix).
-- Independent Reviewer assessment and semantic challenge — **yes** (the two post-fix read-only sessions).
+- Independent Reviewer assessment and semantic challenge — **yes**, and now confirmed against the DB: a dedicated
+  `review/reviewer` session (05:14:18) **and** two `challenger` sessions — a **pre-freeze** challenge (`challenge-pre`,
+  05:13:09, before the tests were frozen) and a **post-fix** challenge (`challenge-post`, 05:13:59). The required
+  pre-freeze challenge **did occur**.
 - Supervisor-owned Git commit — **yes** (`cf0f209`, `6bb9032`; main untouched; nothing pushed).
 - Recorded runtime, usage, retries, interventions — **yes** (§4, §5).
 - Explicit human Done — **yes** (the owner).
 
 ## 7. Findings and limitations (detail in `smoke-notes.md`)
 
-1. **Image-ordering mistake (mine), cost 58,341 wasted tokens + the restart.** Build the runner/provider images
+1. **Image-ordering mistake (mine), cost ~30,026 wasted tokens (one duplicated candidate stage) + the restart.** Build the runner/provider images
    *before* starting the `--runner` helper; restart the helper if either is rebuilt. Possible Lockstep hardening: the
    helper should detect a moved/missing runner image and refuse cleanly rather than fail opaquely with a per-run 125.
 2. **Token total surprised the owner.** Backlog: surface a per-run usage **breakdown** (input/output/cache), and a
@@ -111,9 +128,25 @@ image ID for verify runs. Fixed by restarting the helper. (Full write-up in `smo
   its volume). No secrets in this packet or the evidence. `main` untouched; no remote; nothing pushed. The run touched
   only the disposable `calc-smoke` repo.
 
-## 9. For the owner
+## 9. Reconciliation against the authoritative record (Planner §1)
 
-Gate C-EXEC is **not** self-accepted. This packet is the evidence of a complete, independently verified,
-subscription-backed transaction with a human Done, presented for your explicit Gate C-EXEC acceptance. Deferred and
-unaffected: Brigid dogfood (after C-EXEC acceptance), the role-count/cost scrutiny, the tech-stack correction pass,
-UX-C8/C9, Phase 5.
+The role sessions were reconciled against `lockstep_invocations` (the authoritative DB record), not just the helper
+log. The actual Planner, Challenger, Implementer and Reviewer sessions all occurred as the workflow requires, and **the
+required pre-freeze challenge DID occur** (`challenge-pre/challenger/answered`, before the tests were frozen).
+
+Deviations found were in my earlier draft, not in the workflow — all corrected above:
+- The restart **resumed** the transaction from `candidate` (discovery reused), so the mistake wasted **~30,026 tokens**
+  (one duplicated candidate stage), not 58,341.
+- Two role labels were wrong: the first post-restart run was the **candidate re-run** (not discovery), and the second
+  was the **pre-freeze Challenger** (not "Planner Contract+tests").
+- `reproduction` did **not** re-run after the restart (the waiver stood); the post-restart `baseline` exited **ec=1
+  (RED)**, the correct baseline result, not exit 0.
+
+No missing acceptance criterion was found. The workflow ran correctly end to end on the real subscription.
+
+## 10. For the owner
+
+Gate C-EXEC is **not** self-accepted. This packet (reconciled against the authoritative DB record) is the evidence of a
+complete, independently verified, subscription-backed transaction with a human Done, presented for your explicit Gate
+C-EXEC acceptance. Deferred and unaffected: Brigid dogfood (after C-EXEC acceptance), the role-count/cost scrutiny, the
+tech-stack correction pass, UX-C8/C9, Phase 5.
