@@ -16,7 +16,8 @@
 # CLI reads its own settings only, never the repository's (R3-M2), and no
 # CLAUDE.md, auto-memory or background task (C-P4.L.S S3: what --bare kept out,
 # without --bare, which refuses subscription login). Nothing here reads a
-# secret; the proxy holds the credential.
+# secret; in native mode the CLI holds its own token in its config volume
+# (C-P4.L.N), in API-key mode the proxy holds the key.
 set -eu
 # The isolation's version: the helper runs live roles only with an image whose agent-entry says
 # this one (R3-L6), so an image built before a change to the isolation turns live runs off.

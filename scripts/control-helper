@@ -1709,12 +1709,9 @@ execute_live_run() { # ID OP RUN
         --mount "type=bind,source=$dir/tree,target=/work/tree$([ "$role" = write ] || printf ',readonly')"
         --mount "type=bind,source=$dir/input,target=/input,readonly"
         --mount "type=bind,source=$dir/output,target=/output")
-      # C-P4.L.S S3: a placeholder of the configured kind, so the CLI logs in that way; the proxy
-      # drops it and sends the owner's credential.
-      case $live_billing in
-        subscription*) args+=(--env CLAUDE_CODE_OAUTH_TOKEN=lockstep-placeholder-the-proxy-holds-the-token) ;;
-        *) args+=(--env ANTHROPIC_API_KEY=lockstep-placeholder-the-proxy-holds-the-key) ;;
-      esac
+      # API-key mode only (native subscription runs through execute_native_run, never here): a
+      # placeholder key the role sends and the proxy drops, injecting the owner's key.
+      args+=(--env ANTHROPIC_API_KEY=lockstep-placeholder-the-proxy-holds-the-key)
       if [ -f "$dir/protected" ]; then
         while IFS= read -r p; do
           args+=(--mount "type=bind,source=$dir/tree/$p,target=/work/tree/$p,readonly")
