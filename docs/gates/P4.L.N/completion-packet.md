@@ -12,7 +12,9 @@
 
 ## 1. HEAD, diff
 
-- Candidate: **`130a14c`**. Basis `8976c42`. Commits: `aaefedb` (freeze, RED), `130a14c` (implementation + retirements).
+- Candidate: **`05da865`**. Basis `8976c42`. Commits: `aaefedb` (freeze, RED), `130a14c` (implementation +
+  retirements), `05da865` (the review's two LOW cleanups: comments and unreachable code only). Mac and the Linux clean
+  clone ran at `130a14c`; `05da865` changes no exercised path (comments and dead code), re-verified by the live checks.
 - Removed: the P4.L.S token-injection mode in `egress-proxy` and `control-helper`, and the frozen checks it was
   verified by (`check-live-subscription`, `live-standin-headers`) — Planner-approved supersession
   (`docs/gates/P4.L.N/supersedes.md`). API-key offline mode is unchanged.
@@ -40,9 +42,12 @@
 - The other frozen live checks against the rebuilt image: `check-live-isolation` **26/26**, `check-live-impersonation`
   **43/43**, `check-live-runner` **84/84**, `check-live-boundary` **83/83**, `check-live-concurrency` **17/17**,
   `check-live-proxy` **21/21**.
+- Host, real Docker: `check-runner` 0 failures, `check-runner-paths` **7/7**, `lockstep-stress` PASS
+  (`.local/p4ln/host-*.log`, `.local/evidence/runner-*`).
 - Mac `scripts/check --integration` at `130a14c`: all six steps PASSED — unit **870/870**, integration **571/571**,
   guard clean (`.local/p4ln-check-mac.log`).
-- Linux clean clone at `130a14c`: **LINUX_RESULT**.
+- Linux clean clone at `130a14c`: format, lint, build, unit, integration PASSED — unit **870/870**, integration
+  **571/571**, case-sensitive disks (`.local/p4ln-linux.log`).
 - Baseline (RED) `.local/p4ln-red-baseline.log`; GREEN evidence `.local/evidence/live-native-*/` and `.local/p4ln/`.
 - Independent review `docs/reviews/phase-4-native-auth-review-2026-11-01.md`: token-intermediation prohibition
   **confirmed honored**; 0 HIGH, 0 MEDIUM, 2 LOW (dead code / stale comments), both fixed; re-verified green.
