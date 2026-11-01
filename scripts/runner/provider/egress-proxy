@@ -196,9 +196,8 @@ def read_config(path):
     return config
 
 
-def read_credential(path, billing):
-    """The credential, which must be of the configuration's kind (C-P4.L.S S1): a subscription
-    token for subscription billing, an API key otherwise."""
+def read_credential(path):
+    """The API key the proxy injects (serve/api-key mode only; native subscription never calls this)."""
     try:
         st = os.lstat(path)
     except OSError:
@@ -217,8 +216,6 @@ def read_credential(path, billing):
     key = raw.rstrip(b"\n")
     if not re.fullmatch(rb"sk-ant-[A-Za-z0-9_-]{16,400}", key):
         raise Refusal("credential-malformed")
-    if key.startswith(b"sk-ant-oat") != (billing == "subscription"):
-        raise Refusal("credential-mode-mismatch")
     return key.decode("ascii")
 
 
@@ -394,11 +391,9 @@ def check_request(config, role, body, beta_header):
             beta = beta.strip()
             if beta == "":
                 continue
-            if beta not in BETAS and not (beta == OAUTH_BETA and config["billing"] == "subscription"):
+            if beta not in BETAS:
                 raise Refusal("beta-refused")
             betas.append(beta)
-    if config["billing"] == "subscription" and OAUTH_BETA not in betas:
-        betas.append(OAUTH_BETA)
     try:
         sent = json.dumps(request, separators=(",", ":"), ensure_ascii=True).encode("ascii")
         conversation = conversation_of(request)
@@ -754,18 +749,8 @@ def handler_for(proxy):
             with proxy.lock:
                 proxy.betas.update(betas)
                 proxy.summary["forwarded"] += 1
-            headers = {"content-type": "application/json", "content-length": str(len(body)), "host": proxy.host}
-            # The owner's credential, never the client's (C-P4.L.S S1).
-            if proxy.config["billing"] == "subscription":
-                headers["authorization"] = "Bearer " + proxy.credential
-                # Who the client is, as the CLI says it (no secret; the provider may ask for Claude Code).
-                agent = self.headers.get("user-agent") or ""
-                if re.fullmatch(r"claude-cli/[0-9.]{1,20} \([a-z, -]{1,40}\)", agent):
-                    headers["user-agent"] = agent
-                if self.headers.get("x-app") == "cli":
-                    headers["x-app"] = "cli"
-            else:
-                headers["x-api-key"] = proxy.credential
+            headers = {"content-type": "application/json", "content-length": str(len(body)),
+                       "x-api-key": proxy.credential, "host": proxy.host}
             version = self.headers.get("anthropic-version")
             if version and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", version):
                 headers["anthropic-version"] = version
@@ -857,9 +842,123 @@ def arguments(argv, names):
     return values
 
 
+# ---------------------------------------------------------------- the passthrough filter (C-P4.L.N)
+# Native subscription auth: the CLI holds its own token and talks to the provider over end-to-end TLS,
+# so this never reads the request or the token. It accepts only CONNECT to an allowed host on 443 and
+# relays the bytes; everything else is refused. A --map HOST=ALIAS:PORT sends an allowed host to a
+# stand-in (the offline check only); without it the host is reached as itself.
+
+def passthrough_summary(path, allowed, tunnels, refused, hosts):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="ascii") as f:
+        f.write("mode passthrough\nallowed %s\ntunnels %d\nrefused %d\nhosts %s\n"
+                % (",".join(sorted(allowed)), tunnels, refused, ",".join(sorted(hosts)) or "-"))
+    os.replace(tmp, path)
+
+
+def run_passthrough(allowed, mapping, run, ledger_dir):
+    os.makedirs(os.path.join(ledger_dir, "runs"), mode=0o700, exist_ok=True)
+    summary_path = os.path.join(ledger_dir, "runs", run)
+    state = {"tunnels": 0, "refused": 0, "hosts": set()}
+    lock = threading.Lock()
+    passthrough_summary(summary_path, allowed, 0, 0, state["hosts"])
+
+    def record():
+        with lock:
+            passthrough_summary(summary_path, allowed, state["tunnels"], state["refused"], state["hosts"])
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        server_version = "lockstep-egress"
+        sys_version = ""
+
+        def log_message(self, *_):
+            pass
+
+        def deny(self, code):
+            with lock:
+                state["refused"] += 1
+            record()
+            try:
+                self.send_response(403)
+                self.send_header("content-type", "text/plain")
+                self.send_header("content-length", str(len(code) + 1))
+                self.send_header("connection", "close")
+                self.end_headers()
+                self.wfile.write((code + "\n").encode("ascii"))
+            except OSError:
+                pass
+            self.close_connection = True
+
+        def refuse_method(self):
+            self.deny("method-refused")
+
+        do_GET = do_PUT = do_DELETE = do_PATCH = do_HEAD = do_OPTIONS = do_POST = refuse_method
+
+        def do_CONNECT(self):
+            host, _, port = self.path.rpartition(":")
+            if port != "443" or host not in allowed:
+                self.deny("host-refused")
+                return
+            target_host, target_port = mapping.get(host, (host, 443))
+            try:
+                upstream = socket.create_connection((target_host, target_port), timeout=30)
+            except OSError:
+                self.deny("upstream-unreachable")
+                return
+            with lock:
+                state["tunnels"] += 1
+                state["hosts"].add(host)
+            record()
+            try:
+                self.send_response(200, "Connection Established")
+                self.end_headers()
+            except OSError:
+                upstream.close()
+                return
+            client = self.connection
+            client.settimeout(None)
+            upstream.settimeout(None)
+            done = threading.Event()
+
+            def pump(src, dst):
+                try:
+                    while not done.is_set():
+                        chunk = src.recv(65536)
+                        if not chunk:
+                            break
+                        dst.sendall(chunk)
+                except OSError:
+                    pass
+                finally:
+                    done.set()
+                    for s in (src, dst):
+                        try:
+                            s.shutdown(socket.SHUT_RDWR)
+                        except OSError:
+                            pass
+
+            t = threading.Thread(target=pump, args=(upstream, client), daemon=True)
+            t.start()
+            pump(client, upstream)
+            t.join(1)
+            upstream.close()
+            self.close_connection = True
+
+    address = socket.gethostbyname(socket.gethostname())
+    server = http.server.ThreadingHTTPServer((address, 8080), Handler)
+    server.daemon_threads = True
+    signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown, daemon=True).start())
+    with open(os.path.join(ledger_dir, "runs", run + ".ready"), "w", encoding="ascii") as f:
+        f.write("%s\n" % address)
+    server.serve_forever()
+    record()
+    return 0
+
+
 def main():
     if len(sys.argv) < 2:
-        print("usage: egress-proxy describe|admit|serve ...", file=sys.stderr)
+        print("usage: egress-proxy describe|admit|serve|passthrough ...", file=sys.stderr)
         return 64
     command = sys.argv[1]
     try:
@@ -872,10 +971,31 @@ def main():
         if command == "admit":
             a = arguments(sys.argv[2:], {"config", "credential", "ledger"})
             config = read_config(a["config"])
-            read_credential(a["credential"], config["billing"])
+            read_credential(a["credential"])
             admit(config, Ledger(a["ledger"]))
             print("ok")
             return 0
+        if command == "passthrough":
+            a = arguments(sys.argv[2:], {"run", "ledger", "allow", "map"})
+            for need in ("run", "ledger", "allow"):
+                if need not in a:
+                    raise Refusal("usage")
+            if not re.fullmatch(r"[0-9a-f]{32}", a["run"]):
+                raise Refusal("usage")
+            allowed = set()
+            for host in a["allow"].split(","):
+                if not re.fullmatch(r"[a-z0-9.-]{1,253}", host):
+                    raise Refusal("usage")
+                allowed.add(host)
+            mapping = {}
+            if "map" in a:
+                for pair in a["map"].split(","):
+                    name, _, target = pair.partition("=")
+                    th, _, tp = target.rpartition(":")
+                    if name not in allowed or not re.fullmatch(r"[a-z0-9.-]{1,253}", th) or not tp.isdigit():
+                        raise Refusal("usage")
+                    mapping[name] = (th, int(tp))
+            return run_passthrough(allowed, mapping, a["run"], a["ledger"])
         if command != "serve":
             raise Refusal("usage")
         a = arguments(sys.argv[2:], {"config", "credential", "ledger", "run", "role", "upstream", "ca"})
@@ -888,7 +1008,7 @@ def main():
         if not re.fullmatch(r"[a-z0-9.-]{1,253}:[0-9]{1,5}", upstream):
             raise Refusal("usage")
         config = read_config(a["config"])
-        credential = read_credential(a["credential"], config["billing"])
+        credential = read_credential(a["credential"])
         ledger = Ledger(a["ledger"])
         os.makedirs(os.path.join(a["ledger"], "runs"), mode=0o700, exist_ok=True)
         with ledger.lock:

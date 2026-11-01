@@ -36,6 +36,7 @@ instance=""
 service_port=8000
 projects=""
 runner_enabled=0
+provider_auth_action=""
 while [ $# -gt 0 ]; do
   case $1 in
     --runner) runner_enabled=1; shift ;;
@@ -43,6 +44,8 @@ while [ $# -gt 0 ]; do
     --instance) [ $# -ge 2 ] || usage; instance=$2; shift 2 ;;
     --service-port) [ $# -ge 2 ] || usage; service_port=$2; shift 2 ;;
     --projects) [ $# -ge 2 ] || usage; projects=$2; shift 2 ;;
+    --provider-auth-init) provider_auth_action=init; shift ;;
+    --provider-auth-login) provider_auth_action=login; shift ;;
     *) usage ;;
   esac
 done
@@ -69,6 +72,32 @@ pane=$state/pane
 helper=$state/helper
 requests=$pane/requests
 results=$pane/results
+
+# C-P4.L.N: set up or sign in to the native auth volume, then exit. The owner runs these; the role
+# container never does. init owns an empty volume to the CLI identity; login runs the unmodified CLI's
+# own sign-in in a temporary container against that volume. Lockstep never reads or copies the token.
+if [ -n "$provider_auth_action" ]; then
+  auth_volume=lockstep-provider-auth-${instance:-main}
+  provider_tag=lockstep-provider:claude-2.1.312
+  cli_uid=2000000000
+  docker image inspect "$provider_tag" >/dev/null 2>&1 || { echo "control-helper: the image $provider_tag is missing (scripts/provider-image)" >&2; exit 69; }
+  case $provider_auth_action in
+    init)
+      docker volume create "$auth_volume" >/dev/null || exit 70
+      docker run --rm --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --security-opt no-new-privileges \
+        --network none --log-driver none --mount "type=volume,source=$auth_volume,target=/auth" \
+        "$provider_tag" sh -c "chown $cli_uid:$cli_uid /auth && chmod 700 /auth" || exit 70
+      echo "auth volume $auth_volume is ready (owned by the CLI identity $cli_uid); now: control-helper --state $state ${instance:+--instance $instance} --provider-auth-login"
+      exit 0 ;;
+    login)
+      docker volume inspect "$auth_volume" >/dev/null 2>&1 || { echo "control-helper: run --provider-auth-init first" >&2; exit 69; }
+      echo "Signing in to your Claude subscription in a temporary container (Anthropic's own flow). No repository is mounted; Lockstep does not see the token." >&2
+      exec docker run --rm -it --user "$cli_uid:$cli_uid" --read-only --tmpfs /tmp \
+        --cap-drop ALL --security-opt no-new-privileges \
+        --env HOME=/tmp --env CLAUDE_CONFIG_DIR=/auth --mount "type=volume,source=$auth_volume,target=/auth" \
+        "$provider_tag" claude auth login --claudeai ;;
+  esac
+fi
 
 mode_of() {
   stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null
@@ -1125,6 +1154,12 @@ provider_image=""
 live_ready=0
 live_max_tokens=0
 live_billing=""
+# C-P4.L.N: native subscription auth. The CLI holds its own token in this Docker named volume (owned by
+# the CLI identity, set up by the helper's provider-auth-init/login, never by the role container); the
+# passthrough filter reaches only the hosts in provider/egress-hosts.
+live_native=0
+auth_volume=lockstep-provider-auth-${instance:-main}
+egress_hosts=""
 live_net_prefix=lockstep-live-${instance:-main}-
 egress_prefix=lockstep-egress-${instance:-main}-
 egress_network=bridge
@@ -1192,6 +1227,37 @@ init_runner() {
   export LOCKSTEP_SERVICE_RUNNER=$runner
 }
 
+# C-P4.L.N: the CLI's identity inside the role container (C-P4.L.R3), which owns the auth volume.
+provider_cli_uid=2000000000
+
+# The egress allowlist (provider/egress-hosts): exact hostnames, one a line, no wildcard. Prints them
+# comma-joined for the filter; fails if missing, empty or malformed.
+read_egress_hosts() {
+  local file=$provider_dir/egress-hosts line out="" n=0
+  [ -f "$file" ] && [ ! -L "$file" ] || return 1
+  [ "$(wc -c < "$file" | tr -d ' ')" -le 4096 ] || return 1
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    [[ $line =~ ^[a-z0-9.-]{1,253}$ ]] || return 1
+    out="$out${out:+,}$line"
+    n=$((n + 1))
+  done < "$file"
+  [ "$n" -ge 1 ] || return 1
+  printf '%s' "$out"
+}
+
+# The auth volume is set up when it exists and its root is owned by the CLI identity with mode 0700
+# (the helper's provider-auth-init does this; the role container never changes it).
+auth_ready() {
+  docker volume inspect "$auth_volume" >/dev/null 2>&1 || return 1
+  local out
+  out=$(docker run --rm --user "$provider_cli_uid:$provider_cli_uid" --read-only --tmpfs /tmp --network none \
+    --cap-drop ALL --security-opt no-new-privileges --log-driver none \
+    --mount "type=volume,source=$auth_volume,target=/auth" "$provider_image" \
+    sh -c '[ -O /auth ] && [ "$(stat -c %a /auth)" = 700 ] && echo ready' 2>/dev/null) || return 1
+  [ "$out" = ready ]
+}
+
 # The provider, if the owner configured one: the image present, the configuration
 # accepted by the proxy's own check; then the service is told the model and effort.
 init_provider() {
@@ -1242,9 +1308,21 @@ init_provider() {
   fi
   # The CLI asks for at most this many output tokens per request (the proxy's own limit).
   live_max_tokens=${BASH_REMATCH[2]}
-  # C-P4.L.S S1: the owner's subscription, or an API key; named in the log, never assumed.
+  # The owner's subscription (native), or an API key; named in the log, never assumed.
   live_billing="API key (charged at the configured prices)"
-  [ -z "${BASH_REMATCH[3]}" ] || live_billing="subscription (usage in tokens)"
+  live_native=0
+  if [ -n "${BASH_REMATCH[3]}" ]; then
+    # C-P4.L.N: native subscription. No credential is read here or ever by Lockstep; the CLI holds its
+    # own token in the auth volume. Require the volume to be set up and the egress allowlist present.
+    live_native=1
+    live_billing="subscription, native (usage in tokens)"
+    egress_hosts=$(read_egress_hosts) || { log "live runs off: $provider_dir/egress-hosts is missing or invalid (one hostname a line)"; return 0; }
+    auth_ready || { log "live runs off: the auth volume $auth_volume is not set up; run 'control-helper provider-auth-init' then 'provider-auth-login'"; return 0; }
+    if [ -e "$provider_dir/credential" ] || [ -L "$provider_dir/credential" ]; then
+      log "live runs off: native subscription uses no credential file; remove $provider_dir/credential"
+      return 0
+    fi
+  fi
   tmp=$(mktemp "$runner/.provider.XXXXXX") || return 0
   printf 'lockstep-provider 1 %s\n' "${BASH_REMATCH[1]}" > "$tmp"
   chmod 600 "$tmp"
@@ -1413,10 +1491,156 @@ execute_run() { # ID OP RUN
   log "$op $id: $outcome (exit $rc)"
 }
 
+# One native subscription live role run (C-P4.L.N): the CLI authenticates itself from the auth
+# volume and reaches the provider through the passthrough filter (no proxy injection, no credential
+# read by Lockstep). Preflight the sign-in; start the filter; run the role's two-identity container
+# with the auth volume mounted to the CLI; record usage in tokens from the CLI's own output.
+execute_native_run() { # ID OP RUN
+  local id=$1 op=$2 run=$3 dir=$runner_work/$3 name=$runner_name_prefix$3 wall outlim errlim
+  local results=$runner_results journal_file=$helper/runner-journal
+  local net=$live_net_prefix$3 filter=$egress_prefix$3 role=readonly summary=$provider_dir/ledger/runs/$3
+  local started finished rc=125 outcome marker=$runner_work/$3/.timed-out failed=$runner_work/$3/.egress-failed
+  local watchdog p out_bytes err_bytes n status tokens
+  local -a argv=() args=() filter_args=()
+  [ "$op" = run-live-write ] && role=write
+  read -r wall outlim errlim <<< "$(runner_limits "$op")"
+  while IFS= read -r -d '' p; do argv+=("$p"); done < "$dir/argv"
+  case "$(id -u) $(id -g)" in
+    "0 "* | "$provider_cli_uid "* | *" $provider_cli_uid") refuse "$id" "$op" isolation-unavailable; return ;;
+  esac
+  # Preflight (C-P4.L.N N4): the CLI's own auth status against the mounted volume, no network. Not
+  # authenticated → refuse; the engine halts for the operator and nothing is retried by itself.
+  status=$(docker run --rm --user "$provider_cli_uid:$provider_cli_uid" --read-only --tmpfs /tmp --network none \
+    --cap-drop ALL --security-opt no-new-privileges --log-driver none \
+    --env HOME=/tmp --env CLAUDE_CONFIG_DIR=/auth --mount "type=volume,source=$auth_volume,target=/auth" \
+    "$provider_image" claude auth status --json 2>/dev/null < /dev/null || true)
+  case $status in
+    *'"loggedIn": true'*) ;;
+    *) refuse "$id" "$op" not-authenticated; return ;;
+  esac
+  started=$(date +%s)
+  journal "start $id $op"
+  rm -f "$marker" "$failed" "$summary" "$summary.ready"
+  mkdir -p "$provider_dir/ledger/runs" 2>/dev/null || true
+  # The filter allows only the configured hosts; offline-test maps the real host to the stand-in.
+  filter_args=(--run "$run" --ledger /ledger --allow "$egress_hosts")
+  [ -n "$test_upstream" ] && filter_args+=(--map "api.anthropic.com=$test_upstream")
+  if docker network create --internal "$net" >/dev/null 2>&1 &&
+    docker run -d --name "$filter" --network "$net" --network-alias lockstep-egress --read-only \
+      --tmpfs /tmp:rw,nosuid,nodev,size=16777216 --cap-drop ALL --security-opt no-new-privileges \
+      --pids-limit 64 --memory 256m --memory-swap 256m --cpus 1 --user "$(id -u):$(id -g)" --log-driver none \
+      --env HOME=/tmp --env PATH=/usr/local/bin:/usr/bin:/bin --env LANG=C.UTF-8 --env TZ=UTC \
+      --mount "type=bind,source=$provider_dir/ledger,target=/ledger" \
+      "$provider_image" python3 /opt/lockstep/egress-proxy passthrough "${filter_args[@]}" < /dev/null >/dev/null 2>&1; then
+    n=0
+    while [ ! -f "$summary.ready" ] && [ $n -lt 150 ]; do sleep 0.1; n=$((n + 1)); done
+    if [ -f "$summary.ready" ] && docker network connect "$egress_network" "$filter" >/dev/null 2>&1; then
+      args=(run --rm --name "$name" --network "$net" --read-only
+        --tmpfs /tmp:rw,nosuid,nodev,size=268435456
+        --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add DAC_OVERRIDE --cap-add KILL
+        --security-opt no-new-privileges
+        --pids-limit 256 --memory 4g --memory-swap 4g --cpus 2
+        --user 0:0
+        --env HOME=/tmp --env PATH=/usr/local/bin:/usr/bin:/bin --env LANG=C.UTF-8 --env LC_ALL=C.UTF-8 --env TZ=UTC
+        --env HTTPS_PROXY=http://lockstep-egress:8080 --env HTTP_PROXY=http://lockstep-egress:8080
+        --env NO_PROXY= --env no_proxy=
+        --env CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 --env DISABLE_AUTOUPDATER=1
+        --env DISABLE_TELEMETRY=1 --env DISABLE_ERROR_REPORTING=1
+        --env "CLAUDE_CODE_MAX_OUTPUT_TOKENS=$live_max_tokens"
+        --env CLAUDE_CONFIG_DIR=/auth
+        --mount "type=volume,source=$auth_volume,target=/auth"
+        --log-driver none --workdir /work/tree
+        --mount "type=bind,source=$dir/tree,target=/work/tree$([ "$role" = write ] || printf ',readonly')"
+        --mount "type=bind,source=$dir/input,target=/input,readonly"
+        --mount "type=bind,source=$dir/output,target=/output")
+      # Offline test only: trust the stand-in's CA so the CLI's TLS to the mapped host verifies.
+      [ -n "$test_ca" ] && args+=(--env NODE_EXTRA_CA_CERTS=/etc/lockstep/ca.pem
+        --mount "type=bind,source=$test_ca,target=/etc/lockstep/ca.pem,readonly")
+      if [ -f "$dir/protected" ]; then
+        while IFS= read -r p; do
+          args+=(--mount "type=bind,source=$dir/tree/$p,target=/work/tree/$p,readonly")
+        done < "$dir/protected"
+      fi
+      args+=("$provider_image" /opt/lockstep/agent-entry "$(id -u)" "$(id -g)" "${argv[@]}")
+      (
+        deadline=$(($(date +%s) + wall))
+        while [ "$(date +%s)" -lt "$deadline" ]; do
+          sleep 1
+          if [ "$(docker container inspect --format '{{.State.Running}}' "$filter" 2>/dev/null)" != true ]; then
+            : > "$failed"; docker kill "$name" >/dev/null 2>&1; exit 0
+          fi
+        done
+        : > "$marker"; docker kill "$name" >/dev/null 2>&1
+      ) &
+      watchdog=$!
+      docker "${args[@]}" < /dev/null 2> >(head -c $((errlim + 1)) > "$dir/stderr") | head -c $((outlim + 1)) > "$dir/stdout"
+      rc=${PIPESTATUS[0]}
+      kill "$watchdog" 2>/dev/null
+      pkill -P "$watchdog" 2>/dev/null
+      wait "$watchdog" 2>/dev/null
+      [ "$(docker container inspect --format '{{.State.Running}}' "$filter" 2>/dev/null)" = true ] || : > "$failed"
+    else
+      : > "$failed"
+    fi
+  else
+    : > "$failed"
+  fi
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  docker stop --time 3 "$filter" >/dev/null 2>&1 || true
+  docker rm -f "$filter" >/dev/null 2>&1 || true
+  docker network rm "$net" >/dev/null 2>&1 || true
+  sleep 0.2
+  finished=$(date +%s)
+  touch "$dir/stdout" "$dir/stderr"
+  out_bytes=$(wc -c < "$dir/stdout" | tr -d ' ')
+  err_bytes=$(wc -c < "$dir/stderr" | tr -d ' ')
+  # Usage in tokens (C-P4.L.N N5), from the CLI's own JSON result on stdout; no dollars.
+  tokens=$(native_tokens "$dir/stdout")
+  if [ -e "$runner_work/$run/.cancelled" ]; then outcome=cancelled
+  elif [ -e "$marker" ]; then outcome=timed-out
+  elif [ -e "$failed" ]; then outcome=provider-stopped
+  elif [ "$out_bytes" -gt "$outlim" ] || [ "$err_bytes" -gt "$errlim" ]; then outcome=output-limit
+  elif [ "$rc" = 125 ]; then outcome=launch-failed
+  else outcome=exited
+  fi
+  rm -f "$marker" "$runner_work/$run/.cancelled"
+  if [ "$outcome" = provider-stopped ]; then
+    write_result "$id" "$op" provider-stopped - "$started" "$finished" "" \
+      "exit $rc" "run $run" "image $runner_image" "provider-stop egress-failed" \
+      "egress.micro 0" "egress.tokens $tokens" || true
+  else
+    write_result "$id" "$op" "$outcome" - "$started" "$finished" "" \
+      "exit $rc" "run $run" "image $runner_image" \
+      "stdout-bytes $out_bytes" "stderr-bytes $err_bytes" \
+      "stdout-sha256 $(sha256 < "$dir/stdout")" "stderr-sha256 $(sha256 < "$dir/stderr")" \
+      "limits $wall $outlim $errlim" "egress.micro 0" "egress.tokens $tokens" || true
+  fi
+  journal "end $id $outcome"
+  log "$op $id: $outcome (exit $rc, $tokens tokens)"
+}
+
+# The run's token usage from the CLI's JSON result (stdout): input + output + cache, in the image's
+# python (an internal tool); 0 if the result cannot be read.
+native_tokens() { # STDOUT-FILE
+  local t
+  t=$(docker run --rm --network none --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+    --user "$(id -u):$(id -g)" --log-driver none \
+    --mount "type=bind,source=$1,target=/r.json,readonly" "$provider_image" python3 -c '
+import json, sys
+try:
+    u = json.load(open("/r.json")).get("usage", {})
+    print(sum(int(u.get(k, 0) or 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")))
+except Exception:
+    print(0)
+' 2>/dev/null < /dev/null || true)
+  case $t in ''|*[!0-9]*) echo 0 ;; *) echo "$t" ;; esac
+}
+
 # One live role run (C-P4.L L2-L4): admission, the run's internal network, the proxy,
 # the role's container, then everything removed; the signed result carries the proxy's
 # summary. Runs in the background, like execute_run.
 execute_live_run() { # ID OP RUN
+  if [ "$live_native" = 1 ]; then execute_native_run "$@"; return; fi
   local id=$1 op=$2 run=$3 dir=$runner_work/$3 name=$runner_name_prefix$3 wall outlim errlim lim
   local ipad=$ripad opad=$ropad results=$runner_results journal_file=$helper/runner-journal
   local net=$live_net_prefix$3 proxy=$egress_prefix$3 role=readonly summary=$provider_dir/ledger/runs/$3
