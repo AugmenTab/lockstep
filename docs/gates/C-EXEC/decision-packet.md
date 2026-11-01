@@ -1,5 +1,14 @@
 # Gate C-EXEC — decision packet (revised after the live-provider increment)
 
+> **ACCEPTED — 2026-11-01.** The owner explicitly **accepted Gate C-EXEC** after the attended subscription-backed
+> calculator smoke succeeded end to end (a real bug fixed through Lockstep: frozen tests `6bb9032`, Supervisor fix
+> `cf0f209`, main untouched, nothing pushed; human Done) and after the smoke was reconciled against the authoritative
+> DB record (`docs/gates/P4.L.N/smoke-completion-packet.md` §4/§9, commit `0a004a7` — pre-freeze challenge confirmed,
+> role counts Planner ×3 / Challenger ×2 / Implementer ×2 / Reviewer ×1, no missing acceptance criterion). The
+> previously approved **Brigid dogfood** is deferred to the next session at the owner's instruction ("It's late, we'll
+> kick that off tomorrow"). Not started.
+
+
 > **Superseding note (2026-10-30, `phase-04_update5.md`):** the candidate is now **`24cba9d`** (C-P4.L.R3: the
 > provider CLI and its tools as two identities, so no tool process can learn or continue the run's conversation).
 > Its completion packet `docs/gates/P4.L.R3/completion-packet.md` disposes of H2 as **closed** (the R2 blocking
