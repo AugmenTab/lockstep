@@ -31,16 +31,20 @@ import Data.Time.Format (defaultTimeLocale, formatTime)
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
 
-import Lockstep.Persistence.Fields (headMay, selectJoined, tableReference, uuidField)
+import Lockstep.Kernel.Identity (ProjectId, RepositoryId, TaskId, WorkOrderId)
+import Lockstep.Persistence.Entity (foreignKeyTo)
+import Lockstep.Persistence.Fields (headMay, selectJoined, tableReference)
 import Lockstep.Persistence.Ledger (WorkOrderRow (..), workOrderIdField, workOrderTable)
 import Lockstep.Persistence.Projects (projectIdField, projectRepositoryField, projectTable)
+import Lockstep.Persistence.Repositories (repositoryIdField, repositoryTable)
+import Lockstep.Persistence.Tasks (taskIdField, taskTable)
 
 data EnablementRow
   = EnablementRow
   { enablementRowKey :: T.Text
   , enablementRowDigest :: T.Text
-  , enablementRowProject :: T.Text
-  , enablementRowRepository :: T.Text
+  , enablementRowProject :: ProjectId
+  , enablementRowRepository :: RepositoryId
   , enablementRowEngineer :: T.Text
   , enablementRowFolder :: T.Text
   , enablementRowProfile :: T.Text
@@ -54,9 +58,9 @@ data AdmissionRow
   = AdmissionRow
   { admissionRowKey :: T.Text
   , admissionRowDigest :: T.Text
-  , admissionRowTask :: T.Text
-  , admissionRowProject :: T.Text
-  , admissionRowWorkOrder :: T.Text
+  , admissionRowTask :: TaskId
+  , admissionRowProject :: ProjectId
+  , admissionRowWorkOrder :: WorkOrderId
   , admissionRowEffectiveDigest :: T.Text
   , admissionRowActor :: T.Text
   , admissionRowAt :: T.Text
@@ -92,13 +96,13 @@ enablementKeyField :: O.FieldDefinition O.NotNull T.Text
 enablementKeyField =
   O.unboundedTextField "idempotency_key"
 
-enablementProjectField :: O.FieldDefinition O.NotNull T.Text
+enablementProjectField :: O.FieldDefinition O.NotNull ProjectId
 enablementProjectField =
-  uuidField "project_id"
+  foreignKeyTo projectTable projectIdField "project_id"
 
-enablementRepositoryField :: O.FieldDefinition O.NotNull T.Text
+enablementRepositoryField :: O.FieldDefinition O.NotNull RepositoryId
 enablementRepositoryField =
-  uuidField "repository_id"
+  foreignKeyTo repositoryTable repositoryIdField "repository_id"
 
 enablementEngineerField :: O.FieldDefinition O.NotNull T.Text
 enablementEngineerField =
@@ -108,7 +112,7 @@ enablementFolderField :: O.FieldDefinition O.NotNull T.Text
 enablementFolderField =
   O.unboundedTextField "folder"
 
-findEnablementByProject :: O.MonadOrville m => T.Text -> m (Maybe EnablementRow)
+findEnablementByProject :: O.MonadOrville m => ProjectId -> m (Maybe EnablementRow)
 findEnablementByProject project =
   O.findFirstEntityBy enablementTable (O.where_ (O.fieldEquals enablementProjectField project))
 
@@ -144,19 +148,19 @@ admissionIdField :: O.FieldDefinition O.NotNull Int64
 admissionIdField =
   O.bigIntegerField "id"
 
-admissionTaskField :: O.FieldDefinition O.NotNull T.Text
+admissionTaskField :: O.FieldDefinition O.NotNull TaskId
 admissionTaskField =
-  uuidField "task_id"
+  foreignKeyTo taskTable taskIdField "task_id"
 
-admissionProjectField :: O.FieldDefinition O.NotNull T.Text
+admissionProjectField :: O.FieldDefinition O.NotNull ProjectId
 admissionProjectField =
-  uuidField "project_id"
+  foreignKeyTo projectTable projectIdField "project_id"
 
-admissionWorkOrderField :: O.FieldDefinition O.NotNull T.Text
+admissionWorkOrderField :: O.FieldDefinition O.NotNull WorkOrderId
 admissionWorkOrderField =
-  uuidField "work_order_id"
+  foreignKeyTo workOrderTable workOrderIdField "work_order_id"
 
-findAdmissionByTask :: O.MonadOrville m => T.Text -> m (Maybe AdmissionRow)
+findAdmissionByTask :: O.MonadOrville m => TaskId -> m (Maybe AdmissionRow)
 findAdmissionByTask task =
   O.findFirstEntityBy admissionTable (O.where_ (O.fieldEquals admissionTaskField task))
 
@@ -171,15 +175,15 @@ insertAdmission =
 -- Facts from other tables ---------------------------------------------------------
 
 -- | The repository a project was connected to (C-P3.5 J1), if any.
-projectRepository :: O.MonadOrville m => T.Text -> m (Maybe T.Text)
+projectRepository :: O.MonadOrville m => ProjectId -> m (Maybe RepositoryId)
 projectRepository project =
-  headMay
+  join . headMay
     <$> selectJoined
-      (O.marshallReadOnlyField (uuidField "repository_id"))
+      (O.marshallReadOnlyField projectRepositoryField)
       (tableReference projectTable)
       (O.where_ (O.fieldIsNotNull projectRepositoryField `O.andExpr` O.fieldEquals projectIdField project))
 
 -- | The effective Profile digest a Work Order was created with (C-P2.5).
-workOrderEffectiveDigest :: O.MonadOrville m => T.Text -> m (Maybe T.Text)
+workOrderEffectiveDigest :: O.MonadOrville m => WorkOrderId -> m (Maybe T.Text)
 workOrderEffectiveDigest workOrder =
-  fmap workOrderRowEffectiveDigest <$> O.findFirstEntityBy workOrderTable (O.where_ (O.fieldEquals workOrderIdField workOrder))
+  fmap workOrderRowEffectiveDigest <$> O.findEntity workOrderTable workOrder

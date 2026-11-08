@@ -31,7 +31,7 @@ import Text.Show (Show, show)
 
 import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), checkReadiness, withDatabase)
-import Lockstep.Application.Identity (newUuid)
+import Lockstep.Application.Identity (newIdentity)
 import Lockstep.Application.Profiles (sha256Hasher)
 import Lockstep.Kernel.Conversation
   ( HumanRequest (..)
@@ -50,7 +50,7 @@ import Lockstep.Kernel.Conversation
   , requestStateName
   , stepRequestChecked
   )
-import Lockstep.Kernel.Identity (parseUuid, uuidText)
+import Lockstep.Kernel.Identity (HumanRequestId (..), WorkOrderId (..), identityText, parseIdentity)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
 import Lockstep.Kernel.Transition (Command (..), Principal (..))
 import Lockstep.Persistence.Conversation qualified as Store
@@ -155,10 +155,6 @@ sha256Text text =
   case sha256Hasher of
     Hasher f -> contentDigestText (f text)
 
-canonicalId :: T.Text -> Maybe T.Text
-canonicalId =
-  either (const Nothing) (Just . uuidText) . parseUuid
-
 splitChoices :: T.Text -> [T.Text]
 splitChoices text =
   if T.null text then [] else T.splitOn (T.pack ",") text
@@ -166,8 +162,8 @@ splitChoices text =
 requestOf :: Store.RequestRow -> StoredRequest
 requestOf row =
   StoredRequest
-    { storedRequestId = Store.requestRowId row
-    , storedWorkOrder = Store.requestRowWorkOrder row
+    { storedRequestId = identityText (Store.requestRowId row)
+    , storedWorkOrder = identityText (Store.requestRowWorkOrder row)
     , storedEngineer = Store.requestRowEngineer row
     , storedContract = Store.requestRowContract row
     , storedKind = Store.requestRowKind row
@@ -183,7 +179,7 @@ requestOf row =
 messageOf :: Store.MessageRow -> StoredMessage
 messageOf row =
   StoredMessage
-    { messageRequest = Store.messageRowRequest row
+    { messageRequest = identityText (Store.messageRowRequest row)
     , messageSequence = fromIntegral (Store.messageRowSequence row)
     , messageKind = Store.messageRowKind row
     , messagePrincipal = Store.messageRowPrincipal row
@@ -221,9 +217,9 @@ openRequest runtime key sender request =
     case checked of
       Left code -> pure (Right (Left code))
       Right (workOrder, kind, question, evidence, authority) -> do
-        u <- newUuid
+        requestId <- newIdentity
         let
-          digest = sha256Text (requestPayloadText workOrder (newRequestEngineer request) (newRequestContract request) kind question evidence authority)
+          digest = sha256Text (requestPayloadText (identityText workOrder) (newRequestEngineer request) (newRequestContract request) kind question evidence authority)
           keyText = idempotencyKeyText key
         withDatabase runtime . O.withTransaction $ do
           existing <- Store.findRequestByKey keyText
@@ -239,7 +235,7 @@ openRequest runtime key sender request =
                   let
                     row =
                       Store.RequestRow
-                        { Store.requestRowId = uuidText u
+                        { Store.requestRowId = requestId
                         , Store.requestRowKey = keyText
                         , Store.requestRowDigest = digest
                         , Store.requestRowWorkOrder = workOrder
@@ -257,7 +253,7 @@ openRequest runtime key sender request =
                   Store.insertRequest row
                   Store.insertMessage
                     Store.MessageRow
-                      { Store.messageRowRequest = uuidText u
+                      { Store.messageRowRequest = requestId
                       , Store.messageRowSequence = 1
                       , Store.messageRowKey = keyText
                       , Store.messageRowDigest = digest
@@ -276,7 +272,7 @@ openRequest runtime key sender request =
       SenderAgent _ -> Left (T.pack "agent-assertion")
       SenderSupervisor -> Right ()
       _ -> Left (T.pack "not-authorized")
-    workOrder <- maybe (Left (T.pack "unknown-work-order")) Right (canonicalId (newRequestWorkOrder request))
+    workOrder <- maybe (Left (T.pack "unknown-work-order")) Right (parseIdentity (newRequestWorkOrder request) :: Maybe WorkOrderId)
     case newRequestContract request of
       Just c | not (validDigest c) -> Left (T.pack "invalid-contract-digest")
       _ -> Right ()
@@ -294,12 +290,12 @@ openRequest runtime key sender request =
 postMessage :: DatabaseRuntime -> IdempotencyKey -> T.Text -> Sender -> RequestInput -> IO (Either NotReadyReason (Either T.Text StoredMessage))
 postMessage runtime key rawId sender input =
   whenReady runtime $
-    case canonicalId rawId of
+    case parseIdentity rawId of
       Nothing -> pure (Right (Left (T.pack "unknown-request")))
       Just requestId -> do
         let
           principal = senderPrincipal sender
-          digest = sha256Text (messagePayloadText requestId principal (senderEvidence sender) input)
+          digest = sha256Text (messagePayloadText (identityText requestId) principal (senderEvidence sender) input)
           keyText = idempotencyKeyText key
         withDatabase runtime . O.withTransaction $ do
           existing <- Store.findMessageByKey keyText
@@ -344,7 +340,7 @@ postMessage runtime key rawId sender input =
 
 conversation :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe Conversation))
 conversation runtime rawId =
-  case canonicalId rawId of
+  case parseIdentity rawId of
     Nothing -> pure (Right Nothing)
     Just requestId ->
       whenReady runtime . withDatabase runtime $ do

@@ -17,7 +17,7 @@ module Lockstep.Application.Execution
 
 import Data.ByteString.Lazy qualified as LBS
 import Data.List qualified as L
-import Data.Maybe (fromMaybe, isNothing)
+import Data.Maybe (isNothing)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Flipstone.Prelude
@@ -33,7 +33,7 @@ import Lockstep.Application.Profiles (sha256Hasher, storedDefinition)
 import Lockstep.Application.ProjectChecks (ExpectedChecks (..))
 import Lockstep.Application.Projects (ProjectFolders (..))
 import Lockstep.Application.Repositories (ownershipHolds)
-import Lockstep.Application.Tasks (TaskView (..), findTaskIn)
+import Lockstep.Application.Tasks (TaskView (..), findTaskWithProjectIn)
 import Lockstep.Kernel.Execution
   ( admissionBlock
   , admissionRequestText
@@ -43,7 +43,7 @@ import Lockstep.Kernel.Execution
   , insideProjectsFolder
   , missingBugChecks
   )
-import Lockstep.Kernel.Identity (TicketId (..), parseUuid, uuidText)
+import Lockstep.Kernel.Identity (ProjectId (..), RepositoryId (..), TaskId (..), TicketId (..), WorkOrderId (..), identityText, parseIdentity)
 import Lockstep.Kernel.Policy (checksLost)
 import Lockstep.Kernel.Profile
   ( Behaviour (..)
@@ -160,10 +160,6 @@ sha256Text text =
   case sha256Hasher of
     Hasher f -> contentDigestText (f text)
 
-canonicalId :: T.Text -> Maybe T.Text
-canonicalId =
-  either (const Nothing) (Just . uuidText) . parseUuid
-
 refuse :: String -> Either T.Text a
 refuse =
   Left . T.pack
@@ -171,8 +167,8 @@ refuse =
 enablementOf :: Store.EnablementRow -> Enablement
 enablementOf row =
   Enablement
-    { enablementProject = Store.enablementRowProject row
-    , enablementRepository = Store.enablementRowRepository row
+    { enablementProject = identityText (Store.enablementRowProject row)
+    , enablementRepository = identityText (Store.enablementRowRepository row)
     , enablementEngineer = Store.enablementRowEngineer row
     , enablementFolder = Store.enablementRowFolder row
     , enablementChecks = Store.enablementRowProfile row
@@ -185,9 +181,9 @@ enablementOf row =
 admissionOf :: Store.AdmissionRow -> Admission
 admissionOf row =
   Admission
-    { admissionTask = Store.admissionRowTask row
-    , admissionProject = Store.admissionRowProject row
-    , admissionWorkOrder = Store.admissionRowWorkOrder row
+    { admissionTask = identityText (Store.admissionRowTask row)
+    , admissionProject = identityText (Store.admissionRowProject row)
+    , admissionWorkOrder = identityText (Store.admissionRowWorkOrder row)
     , admissionEffectiveDigest = Store.admissionRowEffectiveDigest row
     , admissionActor = Store.admissionRowActor row
     , admissionAt = Store.admissionRowAt row
@@ -201,7 +197,7 @@ writable folders row =
     _ -> False
 
 -- | A connected project's folder, Engineer and repository; Nothing when it is not connected.
-connection :: Projects.ProjectRow -> O.Orville (Maybe (T.Text, T.Text, T.Text))
+connection :: Projects.ProjectRow -> O.Orville (Maybe (T.Text, T.Text, RepositoryId))
 connection row =
   case (Projects.rowSetup row, Projects.rowFolder row, Projects.rowEngineerName row) of
     (Connected, Just folder, Just engineer) -> fmap (\repository -> (folder, engineer, repository)) <$> Store.projectRepository (Projects.rowId row)
@@ -224,7 +220,7 @@ missingFor current catalogDefinitions =
     _ -> missingBugChecks []
 
 -- | The repository's current checks: the default's id and its latest stored row.
-currentChecks :: T.Text -> O.Orville (Maybe T.Text, Maybe Profiles.ProfileRow)
+currentChecks :: RepositoryId -> O.Orville (Maybe T.Text, Maybe Profiles.ProfileRow)
 currentChecks repository = do
   currentId <- Profiles.repositoryDefault repository
   row <- maybe (pure Nothing) (`Profiles.findProfile` Nothing) currentId
@@ -245,7 +241,7 @@ expectationMet current expected =
 
 executionStatus :: DatabaseRuntime -> ProjectFolders -> T.Text -> IO (Either NotReadyReason (Maybe ExecutionStatus))
 executionStatus runtime folders rawId =
-  case canonicalId rawId of
+  case parseIdentity rawId of
     Nothing -> pure (Right Nothing)
     Just pid ->
       whenReady runtime . withDatabase runtime $ do
@@ -266,7 +262,7 @@ executionStatus runtime folders rawId =
 enableExecution :: DatabaseRuntime -> ProjectFolders -> IdempotencyKey -> T.Text -> ExpectedChecks -> IO (Either NotReadyReason (Either T.Text Enablement))
 enableExecution runtime folders key rawId expected =
   whenReady runtime $
-    case canonicalId rawId of
+    case parseIdentity rawId of
       Nothing -> pure (Right (refuse "unknown-project"))
       Just pid ->
         withDatabase runtime . O.withTransaction $ do
@@ -283,7 +279,7 @@ enableExecution runtime folders key rawId expected =
                   | otherwise -> do
                       let
                         keyText = idempotencyKeyText key
-                        digest = sha256Text (enablementRequestText pid (expectedText expected))
+                        digest = sha256Text (enablementRequestText (identityText pid) (expectedText expected))
                       byKey <- Store.findEnablementByKey keyText
                       existing <- Store.findEnablementByProject pid
                       case (byKey, existing) of
@@ -404,44 +400,46 @@ admitBug runtime folders key rawId expected
         u <- newUuid
         let
           keyText = idempotencyKeyText key
-          taskText = fromMaybe rawId (canonicalId rawId)
-          digest = sha256Text (admissionRequestText taskText expected)
+          parsed = parseIdentity rawId
+          -- A key replays only the request it recorded, and a recorded request names a task identity.
+          digest = (\t -> sha256Text (admissionRequestText (identityText t) expected)) <$> parsed
         withDatabase runtime . O.withTransaction $ do
           Tasks.lockTasks
           Profiles.lockProfiles
           byKey <- Store.findAdmissionByKey keyText
-          case byKey of
-            Just a
-              | Store.admissionRowDigest a == digest -> pure (Right (admissionOf a))
+          case (byKey, parsed, digest) of
+            (Just a, _, _)
+              | Just (Store.admissionRowDigest a) == digest -> pure (Right (admissionOf a))
               | otherwise -> pure (refuse "key-conflict")
-            Nothing ->
-              case (canonicalId rawId, parseUuid rawId) of
-                (Just tid, Right ticketUuid) -> do
-                  found <- findTaskIn tid
-                  case found of
-                    Nothing -> pure (refuse "unknown-task")
-                    Just (Left code) -> pure (Left code)
-                    Just (Right task) -> do
-                      project <- Projects.findProjectById (taskProject task)
-                      enablement <- Store.findEnablementByProject (taskProject task)
-                      already <- Store.findAdmissionByTask tid
-                      case (project, enablement, already) of
-                        (Nothing, _, _) -> pure (refuse "unknown-task")
-                        (_, Nothing, _) -> pure (refuse "execution-not-enabled")
-                        (_, _, Just _) -> pure (refuse "already-admitted")
-                        (Just row, Just e, Nothing)
-                          | taskTicketRevision task /= expected -> pure (refuse "stale-revision")
-                          | Just code <- admissionBlock (taskReadinessOf task) -> pure (Left code)
-                          | not (writable folders row) -> pure (refuse "folder-read-only")
-                          | otherwise -> handOver u keyText digest tid (TicketId ticketUuid) task (enablementOf e)
-                _ -> pure (refuse "unknown-task")
+            (Nothing, Just tid, Just requestDigest) -> do
+              found <- findTaskWithProjectIn tid
+              case found of
+                Nothing -> pure (refuse "unknown-task")
+                Just (Left code) -> pure (Left code)
+                Just (Right (projectId, task)) -> do
+                  project <- Projects.findProjectById projectId
+                  enablement <- Store.findEnablementByProject projectId
+                  already <- Store.findAdmissionByTask tid
+                  case (project, enablement, already) of
+                    (Nothing, _, _) -> pure (refuse "unknown-task")
+                    (_, Nothing, _) -> pure (refuse "execution-not-enabled")
+                    (_, _, Just _) -> pure (refuse "already-admitted")
+                    (Just row, Just e, Nothing)
+                      | taskTicketRevision task /= expected -> pure (refuse "stale-revision")
+                      | Just code <- admissionBlock (taskReadinessOf task) -> pure (Left code)
+                      | not (writable folders row) -> pure (refuse "folder-read-only")
+                      | otherwise -> handOver u keyText requestDigest tid task e
+            _ -> pure (refuse "unknown-task")
  where
-  handOver u keyText digest tid ticket task enablement = do
-    owned <- ownershipHolds (enablementRepository enablement) (enablementEngineer enablement) (T.unpack (enablementFolder enablement))
+  -- A task and its Ticket share one UUID (C-P3.6 K2).
+  ticketOf (TaskId t) =
+    TicketId t
+  handOver u keyText digest tid task enablement = do
+    owned <- ownershipHolds (Store.enablementRowRepository enablement) (Store.enablementRowEngineer enablement) (T.unpack (Store.enablementRowFolder enablement))
     case owned of
       Left code -> pure (Left code)
       Right () -> do
-        (_, currentRow) <- currentChecks (enablementRepository enablement)
+        (_, currentRow) <- currentChecks (Store.enablementRowRepository enablement)
         catalogRows <- Profiles.latestProfiles
         currentDefinition <- traverse storedDefinition currentRow
         catalog <- Just <$> traverse storedDefinition catalogRows
@@ -452,8 +450,8 @@ admitBug runtime folders key rawId expected
               createWorkOrderIn
                 u
                 NewWorkOrder
-                  { newTicket = ticket
-                  , newEngineer = enablementEngineer enablement
+                  { newTicket = ticketOf tid
+                  , newEngineer = Store.enablementRowEngineer enablement
                   , newKind = Engineering
                   , newPriority = taskPriority task
                   , newDependencies = []
@@ -466,9 +464,7 @@ admitBug runtime folders key rawId expected
                 | code == T.pack "ticket-not-ready" -> pure (refuse "task-not-ready")
                 | code == T.pack "repository-default-profile-unset" -> pure (refuse "bug-checks-missing")
               Left _ -> pure (refuse "admission-refused")
-              Right _ -> do
-                let
-                  workOrder = uuidText u
+              Right workOrder -> do
                 -- The work order was created in this transaction with its digest; none is an integrity violation, and the creation rolls back.
                 effective <- maybe (integrityViolation "a work order created in this transaction has no effective digest") pure =<< Store.workOrderEffectiveDigest workOrder
                 Store.insertAdmission
@@ -476,7 +472,7 @@ admitBug runtime folders key rawId expected
                     { Store.admissionRowKey = keyText
                     , Store.admissionRowDigest = digest
                     , Store.admissionRowTask = tid
-                    , Store.admissionRowProject = enablementProject enablement
+                    , Store.admissionRowProject = Store.enablementRowProject enablement
                     , Store.admissionRowWorkOrder = workOrder
                     , Store.admissionRowEffectiveDigest = effective
                     , Store.admissionRowActor = actor
@@ -488,6 +484,6 @@ admitBug runtime folders key rawId expected
 
 findAdmission :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe Admission))
 findAdmission runtime rawId =
-  case canonicalId rawId of
+  case parseIdentity rawId of
     Nothing -> pure (Right Nothing)
     Just tid -> whenReady runtime (withDatabase runtime (fmap admissionOf <$> Store.findAdmissionByTask tid))

@@ -117,6 +117,7 @@ library
       Lockstep.Persistence.Connection
       Lockstep.Persistence.Conversation
       Lockstep.Persistence.DecisionReceipts
+      Lockstep.Persistence.Entity
       Lockstep.Persistence.Execution
       Lockstep.Persistence.Fields
       Lockstep.Persistence.Integrity
@@ -230,6 +231,7 @@ test-suite lockstep-compliance
   main-is: Main.hs
   other-modules:
       Lockstep.Compliance.DefectsTest
+      Lockstep.Compliance.IdentityTest
       Lockstep.Compliance.JsonTest
       Lockstep.Compliance.PersistenceTest
       Lockstep.Compliance.Support

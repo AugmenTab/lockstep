@@ -1,9 +1,12 @@
+{-# LANGUAGE TypeFamilies #-}
+
 {- | Storage for Engineers, repository ownership and identity decisions
 (contract C-P2.1 I8, I9). Callers run these inside one transaction;
 'lockRepositories' serializes registrations.
 -}
 module Lockstep.Persistence.Repositories
   ( RepositoryRow (..)
+  , EngineerEntry (..)
   , NewDecision (..)
   , insertEngineer
   , findEngineerByName
@@ -30,6 +33,8 @@ import Orville.PostgreSQL qualified as O
 import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
 
+import Lockstep.Kernel.Identity (EngineerId (..), RepositoryId (..))
+import Lockstep.Persistence.Entity (EntityKey, Table, foreignKeyTo, identityField, keyField, mkEntityTable)
 import Lockstep.Persistence.Fields
   ( ConflictTarget (..)
   , digestField
@@ -41,14 +46,13 @@ import Lockstep.Persistence.Fields
   , qualifiedReference
   , selectJoined
   , tableReference
-  , uuidField
   )
 
--- | An active repository with its owner's name; identities are canonical UUID text.
+-- | An active repository with its owner's name.
 data RepositoryRow
   = RepositoryRow
-  { rowRepositoryId :: T.Text
-  , rowOwnerId :: T.Text
+  { rowRepositoryId :: RepositoryId
+  , rowOwnerId :: EngineerId
   , rowOwnerName :: T.Text
   , rowCommonDir :: T.Text
   , rowPhysicalId :: T.Text
@@ -57,6 +61,8 @@ data RepositoryRow
   , rowOtherRemotes :: T.Text
   }
 
+type instance EntityKey RepositoryRow = RepositoryId
+
 data NewDecision
   = NewDecision
   { decisionOperation :: T.Text
@@ -64,45 +70,55 @@ data NewDecision
   , decisionPath :: Maybe T.Text
   , decisionRemote :: Maybe T.Text
   , decisionRefusal :: Maybe T.Text
-  , decisionEngineerId :: Maybe T.Text
-  , decisionRepositoryId :: Maybe T.Text
+  , decisionEngineerId :: Maybe EngineerId
+  , decisionRepositoryId :: Maybe RepositoryId
   , decisionObservation :: Maybe T.Text
   }
 
 -- lockstep_engineers -------------------------------------------------------------
 
--- | (id, name).
-engineerTable :: O.TableDefinition (O.HasKey T.Text) (T.Text, T.Text) (T.Text, T.Text)
-engineerTable =
-  O.mkTableDefinition "lockstep_engineers" (O.primaryKey engineerIdField) $
-    (,)
-      <$> O.marshallField fst engineerIdField
-      <*> O.marshallField snd engineerNameField
+-- | An Engineer as stored: its identity and its unique name.
+data EngineerEntry
+  = EngineerEntry
+  { engineerEntryId :: EngineerId
+  , engineerEntryName :: T.Text
+  }
 
-engineerIdField :: O.FieldDefinition O.NotNull T.Text
+type instance EntityKey EngineerEntry = EngineerId
+
+engineerTable :: Table EngineerEntry EngineerEntry
+engineerTable =
+  mkEntityTable "lockstep_engineers" engineerIdField $
+    EngineerEntry
+      <$> O.marshallField engineerEntryId engineerIdField
+      <*> O.marshallField engineerEntryName engineerNameField
+
+engineerIdField :: O.FieldDefinition O.NotNull EngineerId
 engineerIdField =
-  uuidField "id"
+  keyField "id"
 
 engineerNameField :: O.FieldDefinition O.NotNull T.Text
 engineerNameField =
   O.unboundedTextField "name"
 
 -- | Inserts an Engineer unless the name is taken; True when inserted.
-insertEngineer :: O.MonadOrville m => T.Text -> T.Text -> m Bool
+insertEngineer :: O.MonadOrville m => EngineerId -> T.Text -> m Bool
 insertEngineer engineerId name =
-  insertIgnoringConflict (ConflictOn "name") engineerTable (engineerId, name)
+  insertIgnoringConflict (ConflictOn "name") engineerTable (EngineerEntry engineerId name)
 
-findEngineerByName :: O.MonadOrville m => T.Text -> m (Maybe T.Text)
+findEngineerByName :: O.MonadOrville m => T.Text -> m (Maybe EngineerId)
 findEngineerByName name =
-  fmap fst <$> O.findFirstEntityBy engineerTable (O.where_ (O.fieldEquals engineerNameField name))
+  fmap engineerEntryId <$> O.findFirstEntityBy engineerTable (O.where_ (O.fieldEquals engineerNameField name))
 
 -- lockstep_repositories ----------------------------------------------------------
 
 {- | A repository and the digest of its rendered observation. The rows read
 back carry their owner's name, which lives in @lockstep_engineers@, so the
 table reads a row still waiting for it; 'activeRepositories' supplies it.
+Its key is still 'RepositoryRow''s ('EntityKey'); only the read type differs
+from 'Table', so it is built with 'O.mkTableDefinition' directly.
 -}
-repositoryTable :: O.TableDefinition (O.HasKey T.Text) (RepositoryRow, BS.ByteString) (T.Text -> RepositoryRow)
+repositoryTable :: O.TableDefinition (O.HasKey (EntityKey RepositoryRow)) (RepositoryRow, BS.ByteString) (T.Text -> RepositoryRow)
 repositoryTable =
   O.mkTableDefinition "lockstep_repositories" (O.primaryKey repositoryIdField) $
     (\repositoryId ownerId commonDir physicalId remote identity others _digest ownerName -> RepositoryRow repositoryId ownerId ownerName commonDir physicalId remote identity others)
@@ -115,13 +131,13 @@ repositoryTable =
       <*> O.marshallField (rowOtherRemotes . fst) (O.unboundedTextField "other_remotes")
       <*> O.marshallField snd (digestField "observation_digest")
 
-repositoryIdField :: O.FieldDefinition O.NotNull T.Text
+repositoryIdField :: O.FieldDefinition O.NotNull RepositoryId
 repositoryIdField =
-  uuidField "id"
+  keyField "id"
 
-repositoryOwnerField :: O.FieldDefinition O.NotNull T.Text
+repositoryOwnerField :: O.FieldDefinition O.NotNull EngineerId
 repositoryOwnerField =
-  uuidField "owner_engineer_id"
+  foreignKeyTo engineerTable engineerIdField "owner_engineer_id"
 
 repositoryRegisteredAtField :: O.FieldDefinition O.NotNull UTCTime
 repositoryRegisteredAtField =
@@ -186,8 +202,10 @@ decisionTable =
       <* O.marshallField decisionRemote (O.nullableField (O.unboundedTextField "requested_remote"))
       <* O.marshallField (T.pack . maybe "accepted" (const "refused") . decisionRefusal) (O.unboundedTextField "outcome")
       <* O.marshallField decisionRefusal (O.nullableField (O.unboundedTextField "refusal_code"))
-      <* O.marshallField decisionEngineerId (O.nullableField (uuidField "engineer_id"))
-      <* O.marshallField decisionRepositoryId (O.nullableField (uuidField "repository_id"))
+      -- The decision log's identities are typed but carry no constraint: the
+      -- schema declares none (a decision row is written for every attempt).
+      <* O.marshallField decisionEngineerId (O.nullableField (identityField "engineer_id"))
+      <* O.marshallField decisionRepositoryId (O.nullableField (identityField "repository_id"))
       <* O.marshallField decisionObservation (O.nullableField (O.unboundedTextField "observation"))
 
 -- | Records one decision; returns its id.

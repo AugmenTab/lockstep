@@ -27,6 +27,8 @@ import Orville.PostgreSQL qualified as O
 import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
 
+import Lockstep.Kernel.Identity (EngineerId, RepositoryId (..))
+import Lockstep.Persistence.Entity (foreignKeyTo, identityField)
 import Lockstep.Persistence.Fields
   ( headMay
   , joinedOn
@@ -35,7 +37,6 @@ import Lockstep.Persistence.Fields
   , qualifiedReference
   , selectJoined
   , tableReference
-  , uuidField
   )
 import Lockstep.Persistence.Repositories
   ( engineerIdField
@@ -62,16 +63,16 @@ data NewProfileDecision
   , profileDecisionVersion :: Maybe Int32
   , profileDecisionDigest :: Maybe T.Text
   , profileDecisionEngineer :: Maybe T.Text
-  , profileDecisionRepository :: Maybe T.Text
+  , profileDecisionRepository :: Maybe RepositoryId
   , profileDecisionOutcome :: T.Text
   , profileDecisionRefusal :: Maybe T.Text
   }
 
--- | An Engineer and its active repository, if any (identities as UUID text).
+-- | An Engineer and its active repository, if any.
 data EngineerRepository
   = EngineerRepository
-  { engineerRowId :: T.Text
-  , engineerRowRepository :: Maybe T.Text
+  { engineerRowId :: EngineerId
+  , engineerRowRepository :: Maybe RepositoryId
   }
 
 -- lockstep_profiles ----------------------------------------------------------------
@@ -164,23 +165,23 @@ engineerRepository name =
 -- lockstep_repository_profiles -------------------------------------------------------
 
 -- | (repository, Profile id): every assignment, newest last.
-repositoryProfileTable :: O.TableDefinition O.NoKey (T.Text, T.Text) (T.Text, T.Text)
+repositoryProfileTable :: O.TableDefinition O.NoKey (RepositoryId, T.Text) (RepositoryId, T.Text)
 repositoryProfileTable =
   O.mkTableDefinitionWithoutKey "lockstep_repository_profiles" $
     (,)
       <$> O.marshallField fst repositoryProfileRepositoryField
       <*> O.marshallField snd profileIdField
 
-repositoryProfileRepositoryField :: O.FieldDefinition O.NotNull T.Text
+repositoryProfileRepositoryField :: O.FieldDefinition O.NotNull RepositoryId
 repositoryProfileRepositoryField =
-  uuidField "repository_id"
+  foreignKeyTo repositoryTable repositoryIdField "repository_id"
 
-insertRepositoryProfile :: O.MonadOrville m => T.Text -> T.Text -> m ()
+insertRepositoryProfile :: O.MonadOrville m => RepositoryId -> T.Text -> m ()
 insertRepositoryProfile repositoryId profileId =
   O.insertEntity repositoryProfileTable (repositoryId, profileId)
 
 -- | The repository's current default Profile id: the latest assignment.
-repositoryDefault :: O.MonadOrville m => T.Text -> m (Maybe T.Text)
+repositoryDefault :: O.MonadOrville m => RepositoryId -> m (Maybe T.Text)
 repositoryDefault repositoryId =
   fmap snd
     <$> O.findFirstEntityBy
@@ -199,7 +200,8 @@ profileDecisionTable =
       <* O.marshallField profileDecisionVersion (O.nullableField profileVersionField)
       <* O.marshallField profileDecisionDigest (O.nullableField (O.unboundedTextField "digest"))
       <* O.marshallField profileDecisionEngineer (O.nullableField (O.unboundedTextField "engineer_name"))
-      <* O.marshallField profileDecisionRepository (O.nullableField (uuidField "repository_id"))
+      -- Typed, without a constraint: the schema declares none for the decision log.
+      <* O.marshallField profileDecisionRepository (O.nullableField (identityField "repository_id"))
       <* O.marshallField profileDecisionOutcome (O.unboundedTextField "outcome")
       <* O.marshallField profileDecisionRefusal (O.nullableField (O.unboundedTextField "refusal_code"))
 

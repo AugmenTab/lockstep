@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeFamilies #-}
+
 {- | Storage for projects (contract C-P3.5 J1, J2). Callers run these inside
 one transaction; 'lockProjects' serializes creations and connections.
 -}
@@ -25,12 +27,15 @@ import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
 import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
 
+import Lockstep.Kernel.Identity (ProjectId (..), RepositoryId)
 import Lockstep.Kernel.Project (SetupState (..), parseSetupState, setupStateCode)
-import Lockstep.Persistence.Fields (codeField, increment, selectJoined, setNow, tableReference, uuidField)
+import Lockstep.Persistence.Entity (EntityKey, Table, keyField, mkEntityTable, nullableForeignKeyTo)
+import Lockstep.Persistence.Fields (codeField, increment, selectJoined, setNow, tableReference)
+import Lockstep.Persistence.Repositories (repositoryIdField, repositoryTable)
 
 data ProjectRow
   = ProjectRow
-  { rowId :: T.Text
+  { rowId :: ProjectId
   , rowName :: T.Text
   , rowOutcome :: T.Text
   , rowSetup :: SetupState
@@ -41,10 +46,12 @@ data ProjectRow
   , rowCreationDigest :: Maybe T.Text
   }
 
+type instance EntityKey ProjectRow = ProjectId
+
 -- | What a new project is created with; everything else starts at its default.
 data NewProject
   = NewProject
-  { newProjectId :: T.Text
+  { newProjectId :: ProjectId
   , newProjectKey :: T.Text
   , newProjectName :: T.Text
   , newProjectOutcome :: T.Text
@@ -55,9 +62,9 @@ data NewProject
 'ProjectRow'. The setup refusal, folder, Engineer and revision are read only:
 the connection steps change them with 'updateProjectSetup'.
 -}
-projectTable :: O.TableDefinition (O.HasKey T.Text) NewProject ProjectRow
+projectTable :: Table NewProject ProjectRow
 projectTable =
-  O.mkTableDefinition "lockstep_projects" (O.primaryKey projectIdField) $
+  mkEntityTable "lockstep_projects" projectIdField $
     (\projectId _key name outcome setup refusal folder engineer revision digest -> ProjectRow projectId name outcome setup refusal folder engineer revision digest)
       <$> O.marshallField newProjectId projectIdField
       <*> O.marshallField newProjectKey projectKeyField
@@ -70,9 +77,9 @@ projectTable =
       <*> O.marshallReadOnlyField projectRevisionField
       <*> O.marshallField (Just . newProjectDigest) (O.nullableField (O.unboundedTextField "creation_digest"))
 
-projectIdField :: O.FieldDefinition O.NotNull T.Text
+projectIdField :: O.FieldDefinition O.NotNull ProjectId
 projectIdField =
-  uuidField "id"
+  keyField "id"
 
 projectKeyField :: O.FieldDefinition O.NotNull T.Text
 projectKeyField =
@@ -103,9 +110,9 @@ projectRevisionField :: O.FieldDefinition O.NotNull Int64
 projectRevisionField =
   O.bigIntegerField "revision"
 
-projectRepositoryField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+projectRepositoryField :: O.FieldDefinition O.Nullable (Maybe RepositoryId)
 projectRepositoryField =
-  O.nullableField (uuidField "repository_id")
+  nullableForeignKeyTo repositoryTable repositoryIdField "repository_id"
 
 projectCreatedAtField :: O.FieldDefinition O.NotNull UTCTime
 projectCreatedAtField =
@@ -135,7 +142,7 @@ findProjectByKey :: O.MonadOrville m => T.Text -> m (Maybe ProjectRow)
 findProjectByKey key =
   O.findFirstEntityBy projectTable (O.where_ (O.fieldEquals projectKeyField key) <> creationOrder)
 
-findProjectById :: O.MonadOrville m => T.Text -> m (Maybe ProjectRow)
+findProjectById :: O.MonadOrville m => ProjectId -> m (Maybe ProjectRow)
 findProjectById projectId =
   O.findFirstEntityBy projectTable (O.where_ (O.fieldEquals projectIdField projectId) <> creationOrder)
 
@@ -148,14 +155,14 @@ projectNameTaken name =
     not . null
       <$> projectsWhere (Expr.equals (lower (O.fieldColumnReference projectNameField)) (lower (Expr.valueExpression (SqlValue.fromText name))))
 
-insertProject :: O.MonadOrville m => T.Text -> T.Text -> T.Text -> T.Text -> T.Text -> m ()
+insertProject :: O.MonadOrville m => ProjectId -> T.Text -> T.Text -> T.Text -> T.Text -> m ()
 insertProject projectId key name outcome digest =
   O.insertEntity projectTable (NewProject projectId key name outcome digest)
 
 {- | Records one connection attempt if the project is still at the expected
 revision; True when it was. The revision goes up by one.
 -}
-updateProjectSetup :: O.MonadOrville m => T.Text -> Int64 -> SetupState -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> m Bool
+updateProjectSetup :: O.MonadOrville m => ProjectId -> Int64 -> SetupState -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> Maybe RepositoryId -> m Bool
 updateProjectSetup projectId expected setup refusal folder engineerName repositoryId =
   not . null
     <$> O.updateFieldsAndReturnEntities

@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeFamilies #-}
+
 {- | Storage for durable subjects, events, effect intents, observations,
 gate evidence, schedule decisions and Work Units (contract C-P2.5 E9–E18).
 Statements only: every decision is made by the Kernel and sequenced by
@@ -63,6 +65,7 @@ module Lockstep.Persistence.Ledger
   , insertScheduleDecision
   , latestScheduleDecision
   , lockScheduling
+  , WorkUnitRow (..)
   , insertWorkUnit
   , activeOwners
   , databaseNow
@@ -79,6 +82,9 @@ import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
 import System.IO.Error (userError)
 
+import Lockstep.Kernel.Effect (OperationId (..))
+import Lockstep.Kernel.Identity (EngineerId, RepositoryId, TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..))
+import Lockstep.Persistence.Entity (EntityKey, Table, foreignKeyTo, keyField, mkEntityTable, nullableForeignKeyTo)
 import Lockstep.Persistence.Fields
   ( clockTimestamp
   , forUpdate
@@ -94,32 +100,44 @@ import Lockstep.Persistence.Fields
   , setExpression
   , setNow
   , tableReference
-  , uuidField
   )
-import Lockstep.Persistence.Repositories (activeRepositoryCondition, repositoryIdField, repositoryOwnerField, repositoryTable)
+import Lockstep.Persistence.Repositories (activeRepositoryCondition, engineerIdField, engineerTable, repositoryIdField, repositoryOwnerField, repositoryTable)
 
 -- Subjects ---------------------------------------------------------------------
 
+{- | A durable subject: a Ticket or a Work Order, as its kind says. The
+identity is the subject's own (a 'TicketId' or 'WorkOrderId' carries the same
+UUID), so this polymorphic table and the columns that refer to any subject
+(events, refusals, intents) hold the library 'Uuid', with the kind column
+deciding which identity it is.
+-}
 data SubjectRow
   = SubjectRow
-  { subjectRowId :: T.Text
+  { subjectRowId :: Uuid
   , subjectRowKind :: T.Text
   , subjectRowRevision :: Int32
   , subjectRowState :: T.Text
   }
 
-subjectTable :: O.TableDefinition (O.HasKey T.Text) SubjectRow SubjectRow
+type instance EntityKey SubjectRow = Uuid
+
+subjectTable :: Table SubjectRow SubjectRow
 subjectTable =
-  O.mkTableDefinition "lockstep_subjects" (O.primaryKey subjectIdField) $
+  mkEntityTable "lockstep_subjects" subjectIdField $
     SubjectRow
       <$> O.marshallField subjectRowId subjectIdField
       <*> O.marshallField subjectRowKind subjectKindField
       <*> O.marshallField subjectRowRevision subjectRevisionField
       <*> O.marshallField subjectRowState subjectStateField
 
-subjectIdField :: O.FieldDefinition O.NotNull T.Text
+subjectIdField :: O.FieldDefinition O.NotNull Uuid
 subjectIdField =
-  uuidField "id"
+  keyField "id"
+
+-- | A column referring to any subject (a Ticket's or a Work Order's identity).
+subjectReferenceField :: String -> O.FieldDefinition O.NotNull Uuid
+subjectReferenceField =
+  foreignKeyTo subjectTable subjectIdField
 
 subjectKindField :: O.FieldDefinition O.NotNull T.Text
 subjectKindField =
@@ -142,7 +160,7 @@ subjectUpdatedAtField =
   O.utcTimestampField "updated_at"
 
 -- | The subject row, locked until the transaction ends.
-lockSubject :: O.MonadOrville m => T.Text -> m (Maybe SubjectRow)
+lockSubject :: O.MonadOrville m => Uuid -> m (Maybe SubjectRow)
 lockSubject subjectId =
   O.findFirstEntityBy subjectTable (O.where_ (O.fieldEquals subjectIdField subjectId) <> forUpdate)
 
@@ -162,11 +180,11 @@ subjectsOfKind kind =
         <> O.orderBy (O.orderByField subjectCreatedAtField O.ascendingOrder <> O.orderByField subjectIdField O.ascendingOrder)
     )
 
-insertSubject :: O.MonadOrville m => T.Text -> T.Text -> T.Text -> m ()
+insertSubject :: O.MonadOrville m => Uuid -> T.Text -> T.Text -> m ()
 insertSubject subjectId kind state =
   O.insertEntity subjectTable (SubjectRow subjectId kind 1 state)
 
-updateSubject :: O.MonadOrville m => T.Text -> Int32 -> T.Text -> m ()
+updateSubject :: O.MonadOrville m => Uuid -> Int32 -> T.Text -> m ()
 updateSubject subjectId revision state =
   O.updateFields
     subjectTable
@@ -174,7 +192,7 @@ updateSubject subjectId revision state =
     (Just (O.fieldEquals subjectIdField subjectId))
 
 -- | An unlocked subject row (C-P2.9-R1 selection).
-subjectRow :: O.MonadOrville m => T.Text -> m (Maybe SubjectRow)
+subjectRow :: O.MonadOrville m => Uuid -> m (Maybe SubjectRow)
 subjectRow subjectId =
   O.findFirstEntityBy subjectTable (O.where_ (O.fieldEquals subjectIdField subjectId))
 
@@ -195,7 +213,7 @@ data StoredEvent
   , storedEvent :: EventRow
   }
 
-eventTable :: O.TableDefinition O.NoKey (T.Text, EventRow) StoredEvent
+eventTable :: O.TableDefinition O.NoKey (Uuid, EventRow) StoredEvent
 eventTable =
   O.mkTableDefinitionWithoutKey "lockstep_events" $
     (\eventId _subject event -> StoredEvent eventId event)
@@ -212,20 +230,20 @@ eventIdField :: O.FieldDefinition O.NotNull Int64
 eventIdField =
   O.bigIntegerField "id"
 
-eventSubjectField :: O.FieldDefinition O.NotNull T.Text
+eventSubjectField :: O.FieldDefinition O.NotNull Uuid
 eventSubjectField =
-  uuidField "subject_id"
+  subjectReferenceField "subject_id"
 
 eventSequenceField :: O.FieldDefinition O.NotNull Int32
 eventSequenceField =
   O.integerField "sequence"
 
-insertEvent :: O.MonadOrville m => T.Text -> EventRow -> m (Maybe Int64)
+insertEvent :: O.MonadOrville m => Uuid -> EventRow -> m (Maybe Int64)
 insertEvent subjectId row =
   fmap storedEventId . headMay <$> O.insertAndReturnEntities eventTable ((subjectId, row) :| [])
 
 -- | The subject's events, in sequence order.
-subjectEvents :: O.MonadOrville m => T.Text -> m [EventRow]
+subjectEvents :: O.MonadOrville m => Uuid -> m [EventRow]
 subjectEvents subjectId =
   fmap storedEvent
     <$> O.findEntitiesBy
@@ -236,7 +254,7 @@ subjectEvents subjectId =
 
 data NewRefusal
   = NewRefusal
-  { refusalSubject :: T.Text
+  { refusalSubject :: Uuid
   , refusalExpectedRevision :: Int32
   , refusalPrincipal :: T.Text
   , refusalCommand :: T.Text
@@ -247,7 +265,7 @@ refusalTable :: O.TableDefinition O.NoKey NewRefusal NewRefusal
 refusalTable =
   O.mkTableDefinitionWithoutKey "lockstep_decision_refusals" $
     NewRefusal
-      <$> O.marshallField refusalSubject (uuidField "subject_id")
+      <$> O.marshallField refusalSubject (subjectReferenceField "subject_id")
       <*> O.marshallField refusalExpectedRevision (O.integerField "expected_revision")
       <*> O.marshallField refusalPrincipal (O.unboundedTextField "principal")
       <*> O.marshallField refusalCommand (O.unboundedTextField "command")
@@ -260,33 +278,35 @@ insertRefusal =
 -- | Every decision refusal, oldest first (C-P2.8 V2).
 allRefusals :: O.MonadOrville m => m [NewRefusal]
 allRefusals =
-  O.findEntitiesBy refusalTable (O.orderBy (O.orderByField identityField O.ascendingOrder))
+  O.findEntitiesBy refusalTable (O.orderBy (O.orderByField sequenceField O.ascendingOrder))
 
 -- | The @id bigint GENERATED ALWAYS AS IDENTITY@ column of the append-only tables; only ordered by.
-identityField :: O.FieldDefinition O.NotNull Int64
-identityField =
+sequenceField :: O.FieldDefinition O.NotNull Int64
+sequenceField =
   O.bigIntegerField "id"
 
 -- Tickets ----------------------------------------------------------------------
 
 data TicketRow
   = TicketRow
-  { ticketRowId :: T.Text
+  { ticketRowId :: TicketId
   , ticketRowTitle :: T.Text
   , ticketRowContentRevision :: Int32
   }
 
-ticketTable :: O.TableDefinition (O.HasKey T.Text) TicketRow TicketRow
+type instance EntityKey TicketRow = TicketId
+
+ticketTable :: Table TicketRow TicketRow
 ticketTable =
-  O.mkTableDefinition "lockstep_tickets" (O.primaryKey ticketIdField) $
+  mkEntityTable "lockstep_tickets" ticketIdField $
     TicketRow
       <$> O.marshallField ticketRowId ticketIdField
       <*> O.marshallField ticketRowTitle ticketTitleField
       <*> O.marshallField ticketRowContentRevision ticketContentRevisionField
 
-ticketIdField :: O.FieldDefinition O.NotNull T.Text
+ticketIdField :: O.FieldDefinition O.NotNull TicketId
 ticketIdField =
-  uuidField "id"
+  keyField "id"
 
 ticketTitleField :: O.FieldDefinition O.NotNull T.Text
 ticketTitleField =
@@ -296,15 +316,15 @@ ticketContentRevisionField :: O.FieldDefinition O.NotNull Int32
 ticketContentRevisionField =
   O.integerField "content_revision"
 
-insertTicket :: O.MonadOrville m => T.Text -> T.Text -> m ()
+insertTicket :: O.MonadOrville m => TicketId -> T.Text -> m ()
 insertTicket ticketId title =
   O.insertEntity ticketTable (TicketRow ticketId title 1)
 
-findTicket :: O.MonadOrville m => T.Text -> m (Maybe TicketRow)
-findTicket ticketId =
-  O.findFirstEntityBy ticketTable (O.where_ (O.fieldEquals ticketIdField ticketId))
+findTicket :: O.MonadOrville m => TicketId -> m (Maybe TicketRow)
+findTicket =
+  O.findEntity ticketTable
 
-updateTicket :: O.MonadOrville m => T.Text -> T.Text -> Int32 -> m ()
+updateTicket :: O.MonadOrville m => TicketId -> T.Text -> Int32 -> m ()
 updateTicket ticketId title contentRevision =
   O.updateFields
     ticketTable
@@ -315,11 +335,11 @@ updateTicket ticketId title contentRevision =
 
 data WorkOrderRow
   = WorkOrderRow
-  { workOrderRowId :: T.Text
+  { workOrderRowId :: WorkOrderId
   , workOrderRowKind :: T.Text
-  , workOrderRowTicket :: T.Text
+  , workOrderRowTicket :: TicketId
   , workOrderRowTicketRevision :: Int32
-  , workOrderRowRepository :: T.Text
+  , workOrderRowRepository :: RepositoryId
   , workOrderRowPriority :: Int32
   , workOrderRowAdmittedAt :: UTCTime
   , workOrderRowClasses :: T.Text
@@ -330,15 +350,17 @@ data WorkOrderRow
   , workOrderRowBindingDigest :: T.Text
   }
 
-workOrderTable :: O.TableDefinition (O.HasKey T.Text) WorkOrderRow WorkOrderRow
+type instance EntityKey WorkOrderRow = WorkOrderId
+
+workOrderTable :: Table WorkOrderRow WorkOrderRow
 workOrderTable =
-  O.mkTableDefinition "lockstep_work_orders" (O.primaryKey workOrderIdField) $
+  mkEntityTable "lockstep_work_orders" workOrderIdField $
     WorkOrderRow
       <$> O.marshallField workOrderRowId workOrderIdField
       <*> O.marshallField workOrderRowKind (O.unboundedTextField "kind")
-      <*> O.marshallField workOrderRowTicket (uuidField "ticket_id")
+      <*> O.marshallField workOrderRowTicket (foreignKeyTo ticketTable ticketIdField "ticket_id")
       <*> O.marshallField workOrderRowTicketRevision (O.integerField "ticket_content_revision")
-      <*> O.marshallField workOrderRowRepository (uuidField "repository_id")
+      <*> O.marshallField workOrderRowRepository (foreignKeyTo repositoryTable repositoryIdField "repository_id")
       <*> O.marshallField workOrderRowPriority (O.integerField "priority")
       <*> O.marshallField workOrderRowAdmittedAt (O.utcTimestampField "admitted_at")
       <*> O.marshallField workOrderRowClasses (O.unboundedTextField "classes")
@@ -348,43 +370,48 @@ workOrderTable =
       <*> O.marshallField workOrderRowEffectiveDigest (O.unboundedTextField "effective_digest")
       <*> O.marshallField workOrderRowBindingDigest (O.unboundedTextField "binding_digest")
 
-workOrderIdField :: O.FieldDefinition O.NotNull T.Text
+workOrderIdField :: O.FieldDefinition O.NotNull WorkOrderId
 workOrderIdField =
-  uuidField "id"
+  keyField "id"
+
+-- | A column referring to a Work Order.
+workOrderReferenceField :: String -> O.FieldDefinition O.NotNull WorkOrderId
+workOrderReferenceField =
+  foreignKeyTo workOrderTable workOrderIdField
 
 insertWorkOrder :: O.MonadOrville m => WorkOrderRow -> m ()
 insertWorkOrder =
   O.insertEntity workOrderTable
 
-findWorkOrder :: O.MonadOrville m => T.Text -> m (Maybe WorkOrderRow)
-findWorkOrder workOrderId =
-  O.findFirstEntityBy workOrderTable (O.where_ (O.fieldEquals workOrderIdField workOrderId))
+findWorkOrder :: O.MonadOrville m => WorkOrderId -> m (Maybe WorkOrderRow)
+findWorkOrder =
+  O.findEntity workOrderTable
 
 allWorkOrders :: O.MonadOrville m => m [WorkOrderRow]
 allWorkOrders =
   O.findEntitiesBy workOrderTable (O.orderBy (O.orderByField workOrderIdField O.ascendingOrder))
 
 -- | (Work Order, the Work Order it depends on).
-dependencyTable :: O.TableDefinition O.NoKey (T.Text, T.Text) (T.Text, T.Text)
+dependencyTable :: O.TableDefinition O.NoKey (WorkOrderId, WorkOrderId) (WorkOrderId, WorkOrderId)
 dependencyTable =
   O.mkTableDefinitionWithoutKey "lockstep_work_order_dependencies" $
     (,)
       <$> O.marshallField fst dependencyWorkOrderField
       <*> O.marshallField snd dependencyDependsOnField
 
-dependencyWorkOrderField :: O.FieldDefinition O.NotNull T.Text
+dependencyWorkOrderField :: O.FieldDefinition O.NotNull WorkOrderId
 dependencyWorkOrderField =
-  uuidField "work_order_id"
+  workOrderReferenceField "work_order_id"
 
-dependencyDependsOnField :: O.FieldDefinition O.NotNull T.Text
+dependencyDependsOnField :: O.FieldDefinition O.NotNull WorkOrderId
 dependencyDependsOnField =
-  uuidField "depends_on"
+  workOrderReferenceField "depends_on"
 
-insertDependency :: O.MonadOrville m => T.Text -> T.Text -> m ()
+insertDependency :: O.MonadOrville m => WorkOrderId -> WorkOrderId -> m ()
 insertDependency workOrderId dependsOn =
   O.insertEntity dependencyTable (workOrderId, dependsOn)
 
-dependenciesOf :: O.MonadOrville m => T.Text -> m [T.Text]
+dependenciesOf :: O.MonadOrville m => WorkOrderId -> m [WorkOrderId]
 dependenciesOf workOrderId =
   fmap snd
     <$> O.findEntitiesBy
@@ -400,7 +427,7 @@ data SourceRow
   }
 
 -- | (Work Order, position, source); read back as the source alone.
-sourceTable :: O.TableDefinition O.NoKey (T.Text, Int32, SourceRow) SourceRow
+sourceTable :: O.TableDefinition O.NoKey (WorkOrderId, Int32, SourceRow) SourceRow
 sourceTable =
   O.mkTableDefinitionWithoutKey "lockstep_work_order_profile_sources" $
     (\_workOrder _position source -> source)
@@ -413,20 +440,20 @@ sourceTable =
               <*> O.marshallField (\(_, _, s) -> sourceRowDigest s) (O.unboundedTextField "digest")
           )
 
-sourceWorkOrderField :: O.FieldDefinition O.NotNull T.Text
+sourceWorkOrderField :: O.FieldDefinition O.NotNull WorkOrderId
 sourceWorkOrderField =
-  uuidField "work_order_id"
+  workOrderReferenceField "work_order_id"
 
 sourcePositionField :: O.FieldDefinition O.NotNull Int32
 sourcePositionField =
   O.integerField "position"
 
-insertSource :: O.MonadOrville m => T.Text -> Int32 -> SourceRow -> m ()
+insertSource :: O.MonadOrville m => WorkOrderId -> Int32 -> SourceRow -> m ()
 insertSource workOrderId position row =
   O.insertEntity sourceTable (workOrderId, position, row)
 
 -- | The bound sources, in their order.
-sourcesOf :: O.MonadOrville m => T.Text -> m [SourceRow]
+sourcesOf :: O.MonadOrville m => WorkOrderId -> m [SourceRow]
 sourcesOf workOrderId =
   O.findEntitiesBy
     sourceTable
@@ -436,8 +463,8 @@ sourcesOf workOrderId =
 
 data IntentRow
   = IntentRow
-  { intentRowOperation :: T.Text
-  , intentRowSubject :: T.Text
+  { intentRowOperation :: OperationId
+  , intentRowSubject :: Uuid
   , intentRowSubjectKind :: T.Text
   , intentRowBasisRevision :: Int32
   , intentRowKey :: T.Text
@@ -464,11 +491,15 @@ data IntentRow
 
 {- | The intent table's own columns. Its rows carry their subject's kind,
 which lives in @lockstep_subjects@, so the table reads a row still waiting
-for that kind; 'intentRows' supplies it from the join.
+for that kind; 'intentRows' supplies it from the join. Its key is still
+'IntentRow''s ('EntityKey'); only the read type differs from 'Table', so it is
+built with 'O.mkTableDefinition' directly.
 -}
-intentTable :: O.TableDefinition (O.HasKey T.Text) IntentRow (T.Text -> IntentRow)
+intentTable :: O.TableDefinition (O.HasKey (EntityKey IntentRow)) IntentRow (T.Text -> IntentRow)
 intentTable =
   O.mkTableDefinition "lockstep_effect_intents" (O.primaryKey intentOperationField) intentColumns
+
+type instance EntityKey IntentRow = OperationId
 
 intentColumns :: O.SqlMarshaller IntentRow (T.Text -> IntentRow)
 intentColumns =
@@ -499,13 +530,13 @@ intentColumns =
     <*> O.marshallField intentRowActivation intentActivationField
     <*> O.marshallField intentRowFirstDispatched intentFirstDispatchedField
 
-intentOperationField :: O.FieldDefinition O.NotNull T.Text
+intentOperationField :: O.FieldDefinition O.NotNull OperationId
 intentOperationField =
-  uuidField "operation_id"
+  keyField "operation_id"
 
-intentSubjectField :: O.FieldDefinition O.NotNull T.Text
+intentSubjectField :: O.FieldDefinition O.NotNull Uuid
 intentSubjectField =
-  uuidField "subject_id"
+  subjectReferenceField "subject_id"
 
 intentClassField :: O.FieldDefinition O.NotNull T.Text
 intentClassField =
@@ -572,21 +603,21 @@ insertIntent row =
       }
 
 -- | The intent row with its subject's kind, locked until the transaction ends.
-lockIntent :: O.MonadOrville m => T.Text -> m (Maybe IntentRow)
+lockIntent :: O.MonadOrville m => OperationId -> m (Maybe IntentRow)
 lockIntent operation =
   headMay <$> intentRows (O.where_ (qualifiedEquals (qualified intentTable intentOperationField) operation) <> forUpdateOf intentTable)
 
 -- | The intent row, without locking it (C-P2.9-R1 selection).
-findIntent :: O.MonadOrville m => T.Text -> m (Maybe IntentRow)
+findIntent :: O.MonadOrville m => OperationId -> m (Maybe IntentRow)
 findIntent operation =
   headMay <$> intentRows (O.where_ (qualifiedEquals (qualified intentTable intentOperationField) operation))
 
 -- | A subject's intent rows, oldest first, without locking them (C-P2.8 V2).
-intentsOfSubject :: O.MonadOrville m => T.Text -> m [IntentRow]
+intentsOfSubject :: O.MonadOrville m => Uuid -> m [IntentRow]
 intentsOfSubject subjectId =
   intentRows
     ( O.where_ (qualifiedEquals (qualified intentTable intentSubjectField) subjectId)
-        <> O.orderBy (qualifiedOrder (qualified intentTable identityField) O.ascendingOrder)
+        <> O.orderBy (qualifiedOrder (qualified intentTable sequenceField) O.ascendingOrder)
     )
 
 -- | Intents joined to their subjects, which give each row its subject's kind.
@@ -612,7 +643,7 @@ intentsWithSubjects =
     ]
 
 -- | C-P2.9-R1 M2: rebinds an intent to the activation a Human carried it into.
-setActivation :: O.MonadOrville m => T.Text -> Int32 -> m ()
+setActivation :: O.MonadOrville m => OperationId -> Int32 -> m ()
 setActivation operation generation =
   O.updateFields
     intentTable
@@ -670,7 +701,7 @@ data ObservationRow
   }
 
 -- | (operation id, observation); read back as the observation.
-observationTable :: O.TableDefinition O.NoKey (T.Text, ObservationRow) ObservationRow
+observationTable :: O.TableDefinition O.NoKey (OperationId, ObservationRow) ObservationRow
 observationTable =
   O.mkTableDefinitionWithoutKey "lockstep_effect_observations" $
     (\_operation observation -> observation)
@@ -683,29 +714,29 @@ observationTable =
           )
 
 -- | The @operation_id@ column of the tables recorded against an intent.
-operationReferenceField :: O.FieldDefinition O.NotNull T.Text
+operationReferenceField :: O.FieldDefinition O.NotNull OperationId
 operationReferenceField =
-  uuidField "operation_id"
+  foreignKeyTo intentTable intentOperationField "operation_id"
 
-insertObservation :: O.MonadOrville m => T.Text -> Int32 -> T.Text -> Maybe T.Text -> m ()
+insertObservation :: O.MonadOrville m => OperationId -> Int32 -> T.Text -> Maybe T.Text -> m ()
 insertObservation operation generation observation refusal =
   O.insertEntity observationTable (operation, ObservationRow generation observation (isNothing refusal) refusal)
 
-observationsOf :: O.MonadOrville m => T.Text -> m [ObservationRow]
+observationsOf :: O.MonadOrville m => OperationId -> m [ObservationRow]
 observationsOf operation =
   O.findEntitiesBy
     observationTable
-    (O.where_ (O.fieldEquals operationReferenceField operation) <> O.orderBy (O.orderByField identityField O.ascendingOrder))
+    (O.where_ (O.fieldEquals operationReferenceField operation) <> O.orderBy (O.orderByField sequenceField O.ascendingOrder))
 
 -- Execution and recovery (C-P2.6) ------------------------------------------------
 
 -- | An intent's operation id alone.
-operationIds :: O.MonadOrville m => O.SelectOptions -> m [T.Text]
+operationIds :: O.MonadOrville m => O.SelectOptions -> m [OperationId]
 operationIds =
   selectJoined (O.marshallReadOnlyField intentOperationField) (tableReference intentTable)
 
 -- | The intent's subject, read without a lock (the caller locks the subject first, then the intent).
-intentSubject :: O.MonadOrville m => T.Text -> m (Maybe T.Text)
+intentSubject :: O.MonadOrville m => OperationId -> m (Maybe Uuid)
 intentSubject operation =
   headMay
     <$> selectJoined
@@ -714,7 +745,7 @@ intentSubject operation =
       (O.where_ (O.fieldEquals intentOperationField operation))
 
 -- | X10: intents of active Work Orders that may be claimed now, oldest first.
-runnableIntentIds :: O.MonadOrville m => m [T.Text]
+runnableIntentIds :: O.MonadOrville m => m [OperationId]
 runnableIntentIds =
   let
     stateIs value = qualifiedEquals (ofIntent intentStateField) (T.pack value)
@@ -733,7 +764,7 @@ runnableIntentIds =
                     `O.orExpr` Expr.parenthesized (stateIs "confirmed-not-applied" `O.andExpr` retriesLeft)
                 )
           )
-          <> O.orderBy (qualifiedOrder (ofIntent identityField) O.ascendingOrder)
+          <> O.orderBy (qualifiedOrder (ofIntent sequenceField) O.ascendingOrder)
       )
 
 -- | A column of @lockstep_effect_intents@ in a join.
@@ -747,14 +778,14 @@ ofSubject =
   qualified subjectTable
 
 -- | X10: dispatched intents whose lease has ended, oldest first.
-recoverableIntentIds :: O.MonadOrville m => m [T.Text]
+recoverableIntentIds :: O.MonadOrville m => m [OperationId]
 recoverableIntentIds =
   operationIds
     ( O.where_
         ( O.fieldEquals intentStateField (T.pack "dispatched")
             `O.andExpr` Expr.lessThanOrEqualTo (O.fieldColumnReference intentLeaseUntilField) Expr.now
         )
-        <> O.orderBy (O.orderByField identityField O.ascendingOrder)
+        <> O.orderBy (O.orderByField sequenceField O.ascendingOrder)
     )
 
 data RecoveryRow
@@ -763,7 +794,7 @@ data RecoveryRow
   , recoveryRowDecision :: T.Text
   }
 
-recoveryTable :: O.TableDefinition O.NoKey (T.Text, RecoveryRow) RecoveryRow
+recoveryTable :: O.TableDefinition O.NoKey (OperationId, RecoveryRow) RecoveryRow
 recoveryTable =
   O.mkTableDefinitionWithoutKey "lockstep_effect_recoveries" $
     (\_operation recovery -> recovery)
@@ -773,20 +804,20 @@ recoveryTable =
               <*> O.marshallField (recoveryRowDecision . snd) (O.unboundedTextField "decision")
           )
 
-insertRecovery :: O.MonadOrville m => T.Text -> Int32 -> T.Text -> m ()
+insertRecovery :: O.MonadOrville m => OperationId -> Int32 -> T.Text -> m ()
 insertRecovery operation generation decision =
   O.insertEntity recoveryTable (operation, RecoveryRow generation decision)
 
-recoveriesOf :: O.MonadOrville m => T.Text -> m [RecoveryRow]
+recoveriesOf :: O.MonadOrville m => OperationId -> m [RecoveryRow]
 recoveriesOf operation =
   O.findEntitiesBy
     recoveryTable
-    (O.where_ (O.fieldEquals operationReferenceField operation) <> O.orderBy (O.orderByField identityField O.ascendingOrder))
+    (O.where_ (O.fieldEquals operationReferenceField operation) <> O.orderBy (O.orderByField sequenceField O.ascendingOrder))
 
 -- Reconciliation and resolution (C-P2.7) ----------------------------------------
 
 -- | R4: queryable intents whose outcome is unknown, or dispatched with an ended lease, oldest first.
-reconcilableIntentIds :: O.MonadOrville m => m [T.Text]
+reconcilableIntentIds :: O.MonadOrville m => m [OperationId]
 reconcilableIntentIds =
   operationIds
     ( O.where_
@@ -799,7 +830,7 @@ reconcilableIntentIds =
                     )
               )
         )
-        <> O.orderBy (O.orderByField identityField O.ascendingOrder)
+        <> O.orderBy (O.orderByField sequenceField O.ascendingOrder)
     )
 
 data ResolutionRow
@@ -810,7 +841,7 @@ data ResolutionRow
   , resolutionRowAcknowledged :: Bool
   }
 
-resolutionTable :: O.TableDefinition O.NoKey (T.Text, ResolutionRow) ResolutionRow
+resolutionTable :: O.TableDefinition O.NoKey (OperationId, ResolutionRow) ResolutionRow
 resolutionTable =
   O.mkTableDefinitionWithoutKey "lockstep_effect_resolutions" $
     (\_operation resolution -> resolution)
@@ -822,15 +853,15 @@ resolutionTable =
               <*> O.marshallField (resolutionRowAcknowledged . snd) (O.booleanField "duplication_acknowledged")
           )
 
-insertResolution :: O.MonadOrville m => T.Text -> Int32 -> T.Text -> T.Text -> Bool -> m ()
+insertResolution :: O.MonadOrville m => OperationId -> Int32 -> T.Text -> T.Text -> Bool -> m ()
 insertResolution operation generation basis decision acknowledged =
   O.insertEntity resolutionTable (operation, ResolutionRow generation basis decision acknowledged)
 
-resolutionsOf :: O.MonadOrville m => T.Text -> m [ResolutionRow]
+resolutionsOf :: O.MonadOrville m => OperationId -> m [ResolutionRow]
 resolutionsOf operation =
   O.findEntitiesBy
     resolutionTable
-    (O.where_ (O.fieldEquals operationReferenceField operation) <> O.orderBy (O.orderByField identityField O.ascendingOrder))
+    (O.where_ (O.fieldEquals operationReferenceField operation) <> O.orderBy (O.orderByField sequenceField O.ascendingOrder))
 
 -- Evidence, schedule decisions, Work Units -------------------------------------
 
@@ -843,7 +874,7 @@ data EvidenceRow
   }
 
 -- | (Work Order, principal, evidence); read back as the evidence.
-evidenceTable :: O.TableDefinition O.NoKey (T.Text, T.Text, EvidenceRow) EvidenceRow
+evidenceTable :: O.TableDefinition O.NoKey (WorkOrderId, T.Text, EvidenceRow) EvidenceRow
 evidenceTable =
   O.mkTableDefinitionWithoutKey "lockstep_gate_evidence" $
     (\_workOrder _principal evidence -> evidence)
@@ -856,37 +887,37 @@ evidenceTable =
               <*> O.marshallField (\(_, _, e) -> evidenceRowApproval e) (O.unboundedTextField "approval")
           )
 
-evidenceWorkOrderField :: O.FieldDefinition O.NotNull T.Text
+evidenceWorkOrderField :: O.FieldDefinition O.NotNull WorkOrderId
 evidenceWorkOrderField =
-  uuidField "work_order_id"
+  workOrderReferenceField "work_order_id"
 
-insertEvidence :: O.MonadOrville m => T.Text -> T.Text -> EvidenceRow -> m ()
+insertEvidence :: O.MonadOrville m => WorkOrderId -> T.Text -> EvidenceRow -> m ()
 insertEvidence workOrderId principal row =
   O.insertEntity evidenceTable (workOrderId, principal, row)
 
-evidenceOf :: O.MonadOrville m => T.Text -> m [EvidenceRow]
+evidenceOf :: O.MonadOrville m => WorkOrderId -> m [EvidenceRow]
 evidenceOf workOrderId =
   O.findEntitiesBy
     evidenceTable
-    (O.where_ (O.fieldEquals evidenceWorkOrderField workOrderId) <> O.orderBy (O.orderByField identityField O.ascendingOrder))
+    (O.where_ (O.fieldEquals evidenceWorkOrderField workOrderId) <> O.orderBy (O.orderByField sequenceField O.ascendingOrder))
 
 -- | (rendering, digest, selected Work Order); read back as (rendering, digest).
-scheduleDecisionTable :: O.TableDefinition O.NoKey (T.Text, T.Text, Maybe T.Text) (T.Text, T.Text)
+scheduleDecisionTable :: O.TableDefinition O.NoKey (T.Text, T.Text, Maybe WorkOrderId) (T.Text, T.Text)
 scheduleDecisionTable =
   O.mkTableDefinitionWithoutKey "lockstep_schedule_decisions" $
     (\rendering digest _selected -> (rendering, digest))
       <$> O.marshallField (\(r, _, _) -> r) (O.unboundedTextField "rendering")
       <*> O.marshallField (\(_, d, _) -> d) (O.unboundedTextField "digest")
-      <*> O.marshallField (\(_, _, s) -> s) (O.nullableField (uuidField "selected_work_order"))
+      <*> O.marshallField (\(_, _, s) -> s) (nullableForeignKeyTo workOrderTable workOrderIdField "selected_work_order")
 
-insertScheduleDecision :: O.MonadOrville m => T.Text -> T.Text -> Maybe T.Text -> m ()
+insertScheduleDecision :: O.MonadOrville m => T.Text -> T.Text -> Maybe WorkOrderId -> m ()
 insertScheduleDecision rendering digest selected =
   O.insertEntity scheduleDecisionTable (rendering, digest, selected)
 
 -- | The latest schedule decision: (rendering, digest) (C-P2.8 V2).
 latestScheduleDecision :: O.MonadOrville m => m (Maybe (T.Text, T.Text))
 latestScheduleDecision =
-  O.findFirstEntityBy scheduleDecisionTable (O.orderBy (O.orderByField identityField O.descendingOrder))
+  O.findFirstEntityBy scheduleDecisionTable (O.orderBy (O.orderByField sequenceField O.descendingOrder))
 
 {- | Serializes scheduling runs until the transaction ends. Orville has no
 advisory locks; the lock key is a constant.
@@ -897,31 +928,37 @@ lockScheduling =
 
 data WorkUnitRow
   = WorkUnitRow
-  { workUnitRowId :: T.Text
-  , workUnitRowWorkOrder :: T.Text
-  , workUnitRowTicket :: T.Text
-  , workUnitRowRepository :: T.Text
-  , workUnitRowEngineer :: T.Text
+  { workUnitRowId :: WorkUnitId
+  , workUnitRowWorkOrder :: WorkOrderId
+  , workUnitRowTicket :: TicketId
+  , workUnitRowRepository :: RepositoryId
+  , workUnitRowEngineer :: EngineerId
   , workUnitRowPlanRef :: Maybe T.Text
   }
 
-workUnitTable :: O.TableDefinition (O.HasKey T.Text) WorkUnitRow WorkUnitRow
+type instance EntityKey WorkUnitRow = WorkUnitId
+
+workUnitTable :: Table WorkUnitRow WorkUnitRow
 workUnitTable =
-  O.mkTableDefinition "lockstep_work_units" (O.primaryKey (uuidField "id")) $
+  mkEntityTable "lockstep_work_units" workUnitIdField $
     WorkUnitRow
-      <$> O.marshallField workUnitRowId (uuidField "id")
-      <*> O.marshallField workUnitRowWorkOrder (uuidField "work_order_id")
-      <*> O.marshallField workUnitRowTicket (uuidField "ticket_id")
-      <*> O.marshallField workUnitRowRepository (uuidField "repository_id")
-      <*> O.marshallField workUnitRowEngineer (uuidField "engineer_id")
+      <$> O.marshallField workUnitRowId workUnitIdField
+      <*> O.marshallField workUnitRowWorkOrder (workOrderReferenceField "work_order_id")
+      <*> O.marshallField workUnitRowTicket (foreignKeyTo ticketTable ticketIdField "ticket_id")
+      <*> O.marshallField workUnitRowRepository (foreignKeyTo repositoryTable repositoryIdField "repository_id")
+      <*> O.marshallField workUnitRowEngineer (foreignKeyTo engineerTable engineerIdField "engineer_id")
       <*> O.marshallField workUnitRowPlanRef (O.nullableField (O.unboundedTextField "plan_ref"))
 
-insertWorkUnit :: O.MonadOrville m => T.Text -> T.Text -> T.Text -> T.Text -> T.Text -> Maybe T.Text -> m ()
-insertWorkUnit unitId workOrderId ticketId repositoryId engineerId planRef =
-  O.insertEntity workUnitTable (WorkUnitRow unitId workOrderId ticketId repositoryId engineerId planRef)
+workUnitIdField :: O.FieldDefinition O.NotNull WorkUnitId
+workUnitIdField =
+  keyField "id"
+
+insertWorkUnit :: O.MonadOrville m => WorkUnitRow -> m ()
+insertWorkUnit =
+  O.insertEntity workUnitTable
 
 -- | Every active repository ownership: (repository, owning Engineer).
-activeOwners :: O.MonadOrville m => m [(T.Text, T.Text)]
+activeOwners :: O.MonadOrville m => m [(RepositoryId, EngineerId)]
 activeOwners =
   selectJoined
     ( (,)

@@ -8,6 +8,7 @@ module Lockstep.Kernel.Decision
   ( DecisionRequest (..)
   , decisionPayload
   , decisionSubject
+  , decisionSubjectId
   , decisionChoiceName
   , decisionExpected
   , checkDecisionText
@@ -23,7 +24,7 @@ import Flipstone.Prelude
 import Text.Show (Show, show)
 
 import Lockstep.Kernel.Effect (OperationId (..))
-import Lockstep.Kernel.Identity (WorkOrderId (..), uuidText)
+import Lockstep.Kernel.Identity (Uuid, WorkOrderId (..), uuidText)
 
 data DecisionRequest
   = PutBackInLine WorkOrderId Int
@@ -35,14 +36,21 @@ data DecisionRequest
   deriving (Eq, Show)
 
 decisionSubject :: DecisionRequest -> T.Text
-decisionSubject request =
+decisionSubject =
+  uuidText . decisionSubjectId
+
+{- | The decision's subject: the stopped Work Order's identity or the unknown
+step's operation, as its choice says (so the 'Uuid', which the choice types).
+-}
+decisionSubjectId :: DecisionRequest -> Uuid
+decisionSubjectId request =
   case request of
-    PutBackInLine (WorkOrderId u) _ -> uuidText u
-    CancelWork (WorkOrderId u) _ -> uuidText u
-    ItHappened (OperationId u) _ _ -> uuidText u
-    ItDidNotHappen (OperationId u) _ _ -> uuidText u
-    TryAgain (OperationId u) _ _ -> uuidText u
-    GiveUp (OperationId u) _ _ _ -> uuidText u
+    PutBackInLine (WorkOrderId u) _ -> u
+    CancelWork (WorkOrderId u) _ -> u
+    ItHappened (OperationId u) _ _ -> u
+    ItDidNotHappen (OperationId u) _ _ -> u
+    TryAgain (OperationId u) _ _ -> u
+    GiveUp (OperationId u) _ _ _ -> u
 
 decisionChoiceName :: DecisionRequest -> T.Text
 decisionChoiceName request =

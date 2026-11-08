@@ -84,7 +84,7 @@ import Text.Show (Show, show)
 
 import Lockstep.Application.Database (DatabaseRuntime, checkReadiness, readinessCode, withDatabase)
 import Lockstep.Application.Database qualified as Database
-import Lockstep.Application.Identity (newUuid)
+import Lockstep.Application.Identity (newIdentity, newUuid)
 import Lockstep.Application.Profiles (ProfileFailure (..), loadStoredDefinition, sha256Hasher)
 import Lockstep.Kernel.Activation (CarryInput (..), CarryRequest (..), carryChecked, carryRefusalCode)
 import Lockstep.Kernel.Effect
@@ -127,7 +127,7 @@ import Lockstep.Kernel.EventCodec
   , refusedWorkOrderInputText
   , workOrderCreatedText
   )
-import Lockstep.Kernel.Identity (EngineerId (..), RepositoryId (..), TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..), parseUuid, uuidText)
+import Lockstep.Kernel.Identity (EngineerId, RepositoryId, TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..), identityText)
 import Lockstep.Kernel.KeyLifetime (idempotencyHolds)
 import Lockstep.Kernel.Profile
   ( Approval (..)
@@ -311,21 +311,17 @@ refuseWith row failure = do
   Store.insertRefusal row {Store.refusalCode = ledgerFailureCode failure}
   pure (Left failure)
 
-uuidOf :: T.Text -> Either LedgerFailure Uuid
-uuidOf text =
-  either (const (integrity ("a stored identity is malformed: " <> T.unpack text))) Right (parseUuid text)
+{- | A Ticket as a ledger subject: the subject tables are shared by Tickets and
+Work Orders (their kind column decides), so they hold the identity's 'Uuid'.
+-}
+ticketSubject :: TicketId -> Uuid
+ticketSubject (TicketId u) =
+  u
 
-wid :: WorkOrderId -> T.Text
-wid (WorkOrderId u) =
-  uuidText u
-
-tid :: TicketId -> T.Text
-tid (TicketId u) =
-  uuidText u
-
-oid :: OperationId -> T.Text
-oid (OperationId u) =
-  uuidText u
+-- | A Work Order as a ledger subject (see 'ticketSubject').
+orderSubject :: WorkOrderId -> Uuid
+orderSubject (WorkOrderId u) =
+  u
 
 {- | Narrowing for an @integer@ column. Every caller-supplied value passes
 'withinInteger' at its entry point first, and every other value comes from an
@@ -371,16 +367,16 @@ createTicketIn u title
         Right command -> do
           let
             state = ticketStateName Proposed
-          Store.insertSubject (uuidText u) (T.pack "ticket") state
-          Store.insertTicket (uuidText u) title
-          _ <- Store.insertEvent (uuidText u) (Store.EventRow 1 (principalName Human) command state)
+          Store.insertSubject u (T.pack "ticket") state
+          Store.insertTicket (TicketId u) title
+          _ <- Store.insertEvent u (Store.EventRow 1 (principalName Human) command state)
           pure (Right (TicketId u))
 
 {- | A new title for a Ticket as one @TicketRevised@ event, inside the caller's
 transaction, at the Ticket's current revision (C-P3.6 K2: the caller's own
 revision guards the edit). Returns the Ticket's new revision.
 -}
-reviseTicketIn :: T.Text -> T.Text -> O.Orville (Either LedgerFailure Int)
+reviseTicketIn :: TicketId -> T.Text -> O.Orville (Either LedgerFailure Int)
 reviseTicketIn ticketId title = do
   loaded <- loadTicket ticketId
   case loaded of
@@ -394,15 +390,15 @@ reviseTicketIn ticketId title = do
               let
                 revision = fromIntegral (Store.subjectRowRevision s)
                 name = ticketStateName state
-              _ <- Store.insertEvent ticketId (Store.EventRow (int32 (revision + 1)) (principalName Human) text name)
+              _ <- Store.insertEvent (ticketSubject ticketId) (Store.EventRow (int32 (revision + 1)) (principalName Human) text name)
               Store.updateTicket ticketId title (int32 (content + 1))
-              Store.updateSubject ticketId (int32 (revision + 1)) name
+              Store.updateSubject (ticketSubject ticketId) (int32 (revision + 1)) name
               pure (Right (revision + 1))
 
 {- | A Ticket's replayed facts inside the caller's transaction: its state name,
 the reason it is blocked (if it is), its revision and its title.
 -}
-ticketFactsIn :: T.Text -> O.Orville (Either LedgerFailure (T.Text, Maybe T.Text, Int, T.Text))
+ticketFactsIn :: TicketId -> O.Orville (Either LedgerFailure (T.Text, Maybe T.Text, Int, T.Text))
 ticketFactsIn ticketId = do
   loaded <- loadTicket ticketId
   pure $ do
@@ -445,20 +441,20 @@ checkProjection subject state revision =
     (Store.subjectRowState subject == state && fromIntegral (Store.subjectRowRevision subject) == revision)
     (integrity "a stored projection differs from its replayed events")
 
-loadTicket :: T.Text -> O.Orville (Either LedgerFailure (Store.SubjectRow, Store.TicketRow, TicketState, Int))
+loadTicket :: TicketId -> O.Orville (Either LedgerFailure (Store.SubjectRow, Store.TicketRow, TicketState, Int))
 loadTicket ticketId = do
-  subject <- Store.lockSubject ticketId
+  subject <- Store.lockSubject (ticketSubject ticketId)
   row <- Store.findTicket ticketId
   case (subject, row) of
     (Just s, Just r) | Store.subjectRowKind s == T.pack "ticket" -> do
-      events <- Store.subjectEvents ticketId
+      events <- Store.subjectEvents (ticketSubject ticketId)
       pure (fmap (\(state, content) -> (s, r, state, content)) (replayTicket s r events))
     _ -> pure (refused (T.pack "unknown-ticket") "there is no such ticket")
 
 showTicket :: DatabaseRuntime -> TicketId -> IO (Either LedgerFailure SubjectView)
 showTicket runtime t =
   transaction runtime $ \_ -> do
-    loaded <- loadTicket (tid t)
+    loaded <- loadTicket t
     pure $ do
       (s, _, state, content) <- loaded
       pure (SubjectView (fromIntegral (Store.subjectRowRevision s)) (ticketStateName state) content)
@@ -477,12 +473,12 @@ decideTicketIn =
 
 decideTicketWith :: O.Orville () -> TicketId -> Int -> Command TicketInput -> O.Orville (Either LedgerFailure Receipt)
 decideTicketWith afterEvent t expected command@(Command principal input) = withinInteger expected $ do
-  loaded <- loadTicket (tid t)
+  loaded <- loadTicket t
   case loaded of
     Left failure -> pure (Left failure)
     Right (s, _, state, _) -> do
       let
-        refusal = Store.NewRefusal (tid t) (int32 expected) (principalName principal) (refusedTicketInputText input) T.empty
+        refusal = Store.NewRefusal (ticketSubject t) (int32 expected) (principalName principal) (refusedTicketInputText input) T.empty
         revision = fromIntegral (Store.subjectRowRevision s)
       if revision /= expected
         then refuseWith refusal (LedgerRefused (T.pack "stale-revision") (T.pack "the ticket has moved on; re-read it"))
@@ -494,15 +490,15 @@ decideTicketWith afterEvent t expected command@(Command principal input) = withi
               Right text -> do
                 let
                   name = ticketStateName next
-                _ <- Store.insertEvent (tid t) (Store.EventRow (int32 (revision + 1)) (principalName principal) text name)
+                _ <- Store.insertEvent (ticketSubject t) (Store.EventRow (int32 (revision + 1)) (principalName principal) text name)
                 afterEvent
-                Store.updateSubject (tid t) (int32 (revision + 1)) name
+                Store.updateSubject (ticketSubject t) (int32 (revision + 1)) name
                 pure (Right (Receipt (revision + 1) name []))
 
 reviseTicket :: DatabaseRuntime -> TicketId -> Int -> T.Text -> IO (Either LedgerFailure Receipt)
 reviseTicket runtime t expected title =
   withinInteger expected . transaction runtime $ \_ -> do
-    loaded <- loadTicket (tid t)
+    loaded <- loadTicket t
     case loaded of
       Left failure -> pure (Left failure)
       Right (s, _, state, content) ->
@@ -510,7 +506,7 @@ reviseTicket runtime t expected title =
           Left reason -> pure (Left (LedgerRefused (T.pack "not-durable") reason))
           Right text -> do
             let
-              refusal = Store.NewRefusal (tid t) (int32 expected) (principalName Human) text T.empty
+              refusal = Store.NewRefusal (ticketSubject t) (int32 expected) (principalName Human) text T.empty
               revision = fromIntegral (Store.subjectRowRevision s)
               name = ticketStateName state
             if revision /= expected
@@ -519,9 +515,9 @@ reviseTicket runtime t expected title =
                 if not (validTitle title)
                   then refuseWith refusal (LedgerRefused (T.pack "invalid-record") (T.pack "a title has 1 to 200 characters and no control characters"))
                   else do
-                    _ <- Store.insertEvent (tid t) (Store.EventRow (int32 (revision + 1)) (principalName Human) text name)
-                    Store.updateTicket (tid t) title (int32 (content + 1))
-                    Store.updateSubject (tid t) (int32 (revision + 1)) name
+                    _ <- Store.insertEvent (ticketSubject t) (Store.EventRow (int32 (revision + 1)) (principalName Human) text name)
+                    Store.updateTicket t title (int32 (content + 1))
+                    Store.updateSubject (ticketSubject t) (int32 (revision + 1)) name
                     pure (Right (Receipt (revision + 1) name []))
 
 -- Work Orders ----------------------------------------------------------------
@@ -594,7 +590,7 @@ new Work Order's id (C-P4.1 X6). Every refusal comes before any write.
 -}
 createWorkOrderIn :: Uuid -> NewWorkOrder -> O.Orville (Either LedgerFailure WorkOrderId)
 createWorkOrderIn u request = do
-  loaded <- loadTicket (tid (newTicket request))
+  loaded <- loadTicket (newTicket request)
   case loaded of
     Left failure -> pure (Left failure)
     Right (_, _, ticketState, content)
@@ -609,20 +605,20 @@ createWorkOrderIn u request = do
               defaultId <- Profiles.repositoryDefault repositoryId
               defaultRow <- maybe (pure Nothing) (`Profiles.findProfile` Nothing) defaultId
               catalogRows <- Profiles.latestProfiles
-              dependencies <- traverse (Store.findWorkOrder . wid) (newDependencies request)
+              dependencies <- traverse Store.findWorkOrder (newDependencies request)
               now <- Store.databaseNow
               case decideCreation defaultRow catalogRows dependencies of
                 Left failure -> pure (Left failure)
                 Right (effective, binding, sources) -> do
                   let
-                    text = uuidText u
+                    w = WorkOrderId u
                     state = workOrderStateName Pending
-                  Store.insertSubject text (T.pack "work-order") state
+                  Store.insertSubject u (T.pack "work-order") state
                   Store.insertWorkOrder
                     Store.WorkOrderRow
-                      { Store.workOrderRowId = text
+                      { Store.workOrderRowId = w
                       , Store.workOrderRowKind = workOrderKindName (newKind request)
-                      , Store.workOrderRowTicket = tid (newTicket request)
+                      , Store.workOrderRowTicket = newTicket request
                       , Store.workOrderRowTicketRevision = int32 content
                       , Store.workOrderRowRepository = repositoryId
                       , Store.workOrderRowPriority = int32 (newPriority request)
@@ -634,12 +630,12 @@ createWorkOrderIn u request = do
                       , Store.workOrderRowEffectiveDigest = contentDigestText (effectiveDigest effective)
                       , Store.workOrderRowBindingDigest = contentDigestText (bindingDigest binding)
                       }
-                  _ <- Store.insertEvent text (Store.EventRow 1 (principalName Human) workOrderCreatedText state)
+                  _ <- Store.insertEvent u (Store.EventRow 1 (principalName Human) workOrderCreatedText state)
                   traverse_
-                    (\(position, (level, ref)) -> Store.insertSource text position (Store.SourceRow level (profileIdText (refId ref)) (int32 (refVersion ref)) (contentDigestText (refDigest ref))))
+                    (\(position, (level, ref)) -> Store.insertSource w position (Store.SourceRow level (profileIdText (refId ref)) (int32 (refVersion ref)) (contentDigestText (refDigest ref))))
                     (L.zip [1 ..] sources)
-                  traverse_ (Store.insertDependency text . wid) (L.nub (newDependencies request))
-                  pure (Right (WorkOrderId u))
+                  traverse_ (Store.insertDependency w) (L.nub (newDependencies request))
+                  pure (Right w)
  where
   decideCreation defaultRow catalogRows dependencies = do
     row <- maybe (refused (T.pack "repository-default-profile-unset") "the repository has no default profile; see repository set-profile") Right defaultRow
@@ -677,13 +673,12 @@ splitNames text =
 -- | A Work Order rebuilt from its events, with its claim-generation history.
 replayWorkOrder :: Store.SubjectRow -> Store.WorkOrderRow -> [Store.EventRow] -> Either LedgerFailure (WorkOrder, [Int])
 replayWorkOrder subject row events = do
-  u <- uuidOf (Store.subjectRowId subject)
   kind <- maybe (integrity "a stored work order kind is unreadable") Right (parseWorkOrderKind (Store.workOrderRowKind row))
   case events of
     first : rest
       | Store.eventRowSequence first == 1
       , decodeWorkOrderEvent (Store.eventRowCommand first) == Just WorkOrderCreated -> do
-          (order, generations) <- foldM step (newWorkOrder (WorkOrderId u) kind, []) (L.zip [2 ..] rest)
+          (order, generations) <- foldM step (newWorkOrder (Store.workOrderRowId row) kind, []) (L.zip [2 ..] rest)
           checkProjection subject (workOrderStateName (workOrderState order)) (L.length events)
           pure (order, generations)
     _ -> integrity "a work order's first event is not its creation"
@@ -707,7 +702,7 @@ replayWorkOrder subject row events = do
 -- | The binding rebuilt from its stored sources; anything that does not reproduce is an integrity failure.
 loadBinding :: WorkOrderId -> Store.WorkOrderRow -> O.Orville (Either LedgerFailure ProfileBinding)
 loadBinding w row = do
-  sources <- Store.sourcesOf (wid w)
+  sources <- Store.sourcesOf w
   definitions <- traverse definitionFor sources
   pure $ do
     loaded <- sequenceA definitions
@@ -757,7 +752,7 @@ data LoadedOrder
 
 loadWorkOrder :: Store.SubjectRow -> O.Orville (Either LedgerFailure LoadedOrder)
 loadWorkOrder subject = do
-  row <- Store.findWorkOrder (Store.subjectRowId subject)
+  row <- Store.findWorkOrder (WorkOrderId (Store.subjectRowId subject))
   case row of
     Nothing -> pure (integrity "a work order subject has no work order row")
     Just r -> do
@@ -770,7 +765,7 @@ loadWorkOrder subject = do
 
 lockWorkOrder :: WorkOrderId -> O.Orville (Either LedgerFailure LoadedOrder)
 lockWorkOrder w = do
-  subject <- Store.lockSubject (wid w)
+  subject <- Store.lockSubject (orderSubject w)
   case subject of
     Just s | Store.subjectRowKind s == T.pack "work-order" -> loadWorkOrder s
     _ -> pure (refused (T.pack "unknown-work-order") "there is no such work order")
@@ -809,7 +804,7 @@ decideWorkOrder runtime faults w expected command@(Command principal input) requ
       Left failure -> pure (Left failure)
       Right l -> do
         let
-          refusal = Store.NewRefusal (wid w) (int32 expected) (principalName principal) (refusedWorkOrderInputText input) T.empty
+          refusal = Store.NewRefusal (orderSubject w) (int32 expected) (principalName principal) (refusedWorkOrderInputText input) T.empty
           revision = fromIntegral (Store.subjectRowRevision (loadedSubject l))
           decided = do
             when (revision /= expected) (refused (T.pack "stale-revision") "the work order has moved on; re-read it")
@@ -828,9 +823,9 @@ decideWorkOrder runtime faults w expected command@(Command principal input) requ
           Right (next, text, intents) -> do
             let
               name = workOrderStateName (workOrderState next)
-            event <- Store.insertEvent (wid w) (Store.EventRow (int32 (revision + 1)) (principalName principal) text name)
+            event <- Store.insertEvent (orderSubject w) (Store.EventRow (int32 (revision + 1)) (principalName principal) text name)
             run (faultAfterEvent faults)
-            Store.updateSubject (wid w) (int32 (revision + 1)) name
+            Store.updateSubject (orderSubject w) (int32 (revision + 1)) name
             case event of
               Nothing -> pure (integrity "the event insert returned no row")
               Just eventId -> do
@@ -904,12 +899,12 @@ recordGateEvidence runtime principal w evidence
   | principal /= Human && principal /= Supervisor = pure (refused (T.pack "not-authorized") "only a human or the Supervisor records gate evidence")
   | otherwise =
       transaction runtime $ \_ -> do
-        row <- Store.findWorkOrder (wid w)
+        row <- Store.findWorkOrder w
         case row of
           Nothing -> pure (refused (T.pack "unknown-work-order") "there is no such work order")
           Just _ -> do
             Store.insertEvidence
-              (wid w)
+              w
               (principalName principal)
               Store.EvidenceRow
                 { Store.evidenceRowArtifact = artifactName (evidenceArtifact evidence)
@@ -986,26 +981,26 @@ scheduleOnce runtime =
                         let
                           rendering = renderScheduleDecision decision
                           digest = contentDigestText (scheduleDigest sha256Hasher decision)
-                        Store.insertScheduleDecision rendering digest (fmap (wid . fst) claim)
+                        Store.insertScheduleDecision rendering digest (fmap fst claim)
                         pure (Right (ScheduleReceipt rendering digest claim))
 
-repositoryDefaultRow :: (T.Text, T.Text) -> O.Orville (Maybe (T.Text, Profiles.ProfileRow))
+repositoryDefaultRow :: (RepositoryId, EngineerId) -> O.Orville (Maybe (RepositoryId, Profiles.ProfileRow))
 repositoryDefaultRow (repositoryId, _) = do
   profileId <- Profiles.repositoryDefault repositoryId
   row <- maybe (pure Nothing) (`Profiles.findProfile` Nothing) profileId
   pure (fmap (\r -> (repositoryId, r)) row)
 
-orderExtras :: LoadedOrder -> O.Orville ([T.Text], [Store.EvidenceRow], Maybe Store.TicketRow)
+orderExtras :: LoadedOrder -> O.Orville ([WorkOrderId], [Store.EvidenceRow], Maybe Store.TicketRow)
 orderExtras l = do
-  dependencies <- Store.dependenciesOf (Store.subjectRowId (loadedSubject l))
-  evidence <- Store.evidenceOf (Store.subjectRowId (loadedSubject l))
+  dependencies <- Store.dependenciesOf (Store.workOrderRowId (loadedRow l))
+  evidence <- Store.evidenceOf (Store.workOrderRowId (loadedRow l))
   ticket <- Store.findTicket (Store.workOrderRowTicket (loadedRow l))
   pure (dependencies, evidence, ticket)
 
 -- | Every Work Order with its repository, priority and Ticket title, and the decision the Scheduler would make now.
 data SchedulePreview
   = SchedulePreview
-  { previewOrders :: [(WorkOrderId, T.Text, Int, T.Text)]
+  { previewOrders :: [(WorkOrderId, RepositoryId, Int, T.Text)]
   , previewDecision :: ScheduleDecision
   }
   deriving (Eq, Show)
@@ -1040,46 +1035,38 @@ previewSchedule runtime =
               }
 
 -- | The C-P2.4 input from the loaded ledger. Phase 2 has no resources.
-assemble :: [LoadedOrder] -> [(T.Text, T.Text)] -> [(T.Text, Profiles.ProfileRow)] -> [Profiles.ProfileRow] -> [([T.Text], [Store.EvidenceRow], Maybe Store.TicketRow)] -> Either LedgerFailure SchedulerInput
+assemble :: [LoadedOrder] -> [(RepositoryId, EngineerId)] -> [(RepositoryId, Profiles.ProfileRow)] -> [Profiles.ProfileRow] -> [([WorkOrderId], [Store.EvidenceRow], Maybe Store.TicketRow)] -> Either LedgerFailure SchedulerInput
 assemble orders owners defaults catalogRows extras = do
   scheduled <- traverse order (L.zip orders extras)
-  ownerIds <- traverse (\(r, e) -> (,) <$> fmap RepositoryId (uuidOf r) <*> fmap EngineerId (uuidOf e)) owners
-  defaultRefs <- traverse (\(r, row) -> (,) <$> fmap RepositoryId (uuidOf r) <*> fmap (profileRef sha256Hasher) (kernelProfileRefusal (loadStoredDefinition row))) defaults
+  defaultRefs <- traverse (\(r, row) -> (,) r <$> fmap (profileRef sha256Hasher) (kernelProfileRefusal (loadStoredDefinition row))) defaults
   catalog <- traverse (fmap (profileRef sha256Hasher) . kernelProfileRefusal . loadStoredDefinition) catalogRows
-  revisions <- traverse revision (L.nubBy (\a b -> fst a == fst b) [(Store.ticketRowId t, t) | (_, _, Just t) <- extras])
   pure
     SchedulerInput
       { inputOrders = scheduled
-      , inputOwners = ownerIds
+      , inputOwners = owners
       , inputDefaults = defaultRefs
       , inputCatalog = catalog
       , inputResources = []
-      , inputRevisions = revisions
+      , inputRevisions = L.nubBy (\a b -> fst a == fst b) [(Store.ticketRowId t, fromIntegral (Store.ticketRowContentRevision t)) | (_, _, Just t) <- extras]
       }
  where
-  revision (ticketId, t) = do
-    u <- uuidOf ticketId
-    pure (TicketId u, fromIntegral (Store.ticketRowContentRevision t))
   order (l, (dependencies, evidence, _)) = do
     let
       row = loadedRow l
-    repository <- fmap RepositoryId (uuidOf (Store.workOrderRowRepository row))
     priority <- either (const (integrity "a stored priority is invalid")) Right (mkPriority Human (fromIntegral (Store.workOrderRowPriority row)))
-    dependencyIds <- traverse (fmap WorkOrderId . uuidOf) dependencies
     gateEvidence <- traverse storedEvidence evidence
-    ticket <- fmap TicketId (uuidOf (Store.workOrderRowTicket row))
     pure
       ScheduledOrder
         { orderWorkOrder = loadedOrder l
-        , orderRepository = repository
+        , orderRepository = Store.workOrderRowRepository row
         , orderPriority = priority
         , orderAdmittedAt = Store.workOrderRowAdmittedAt row
-        , orderDependencies = dependencyIds
+        , orderDependencies = dependencies
         , orderBinding = loadedBinding l
         , orderConfirmations = []
         , orderEvidence = gateEvidence
         , orderResources = []
-        , orderSource = SourceBasis ticket (fromIntegral (Store.workOrderRowTicketRevision row))
+        , orderSource = SourceBasis (Store.workOrderRowTicket row) (fromIntegral (Store.workOrderRowTicketRevision row))
         }
 
 -- | Appends one Scheduler command to its order; returns the orders changed so far, with their new state.
@@ -1103,8 +1090,8 @@ appendStep :: WorkOrderId -> Int -> Principal -> T.Text -> WorkOrder -> O.Orvill
 appendStep w revision principal text next = do
   let
     name = workOrderStateName (workOrderState next)
-  _ <- Store.insertEvent (wid w) (Store.EventRow (int32 revision) (principalName principal) text name)
-  Store.updateSubject (wid w) (int32 revision) name
+  _ <- Store.insertEvent (orderSubject w) (Store.EventRow (int32 revision) (principalName principal) text name)
+  Store.updateSubject (orderSubject w) (int32 revision) name
 
 -- | The selected order's claim: the next generation it has ever had.
 claimSelected :: [LoadedOrder] -> [(WorkOrderId, (Int, WorkOrder))] -> WorkOrderId -> EngineerId -> O.Orville (Either LedgerFailure (Maybe (WorkOrderId, Claim)))
@@ -1127,7 +1114,7 @@ claimSelected orders marked w engineer =
 
 admitWorkUnit :: DatabaseRuntime -> WorkOrderId -> Maybe T.Text -> IO (Either LedgerFailure WorkUnitId)
 admitWorkUnit runtime w planRef = do
-  u <- newUuid
+  unit <- newIdentity
   transaction runtime $ \_ -> do
     loaded <- lockWorkOrder w
     owners <- Store.activeOwners
@@ -1141,19 +1128,24 @@ admitWorkUnit runtime w planRef = do
               Claimed _ -> Right ()
               Active _ -> Right ()
               _ -> refused (T.pack "work-order-not-active") "a work unit is admitted only for a claimed or active work order"
-            ownerships <- traverse (\(r, e) -> Ownership <$> fmap RepositoryId (uuidOf r) <*> fmap EngineerId (uuidOf e)) owners
-            repository <- fmap RepositoryId (uuidOf (Store.workOrderRowRepository row))
-            ticket <- fmap TicketId (uuidOf (Store.workOrderRowTicket row))
             plan <- traverse planReference planRef
             either
               (const (refused (T.pack "repository-not-owned") "the work order's repository has no active owner"))
               Right
-              (admitWorkUnit' ownerships (WorkUnit.WorkUnitRequest (WorkUnitId u) repository ticket w plan))
+              (admitWorkUnit' (fmap (uncurry Ownership) owners) (WorkUnit.WorkUnitRequest unit (Store.workOrderRowRepository row) (Store.workOrderRowTicket row) w plan))
         case decided of
           Left failure -> pure (Left failure)
           Right admitted -> do
-            Store.insertWorkUnit (uuidText u) (wid w) (Store.workOrderRowTicket row) (Store.workOrderRowRepository row) (engineerText admitted) planRef
-            pure (Right (WorkUnitId u))
+            Store.insertWorkUnit
+              Store.WorkUnitRow
+                { Store.workUnitRowId = unit
+                , Store.workUnitRowWorkOrder = w
+                , Store.workUnitRowTicket = Store.workOrderRowTicket row
+                , Store.workUnitRowRepository = Store.workOrderRowRepository row
+                , Store.workUnitRowEngineer = WorkUnit.admittedEngineer admitted
+                , Store.workUnitRowPlanRef = planRef
+                }
+            pure (Right unit)
 
 planReference :: T.Text -> Either LedgerFailure WorkUnit.PlanRef
 planReference p =
@@ -1162,11 +1154,6 @@ planReference p =
 admitWorkUnit' :: [Ownership] -> WorkUnit.WorkUnitRequest -> Either WorkUnit.WorkUnitRefusal WorkUnit.AdmittedWorkUnit
 admitWorkUnit' =
   WorkUnit.admitWorkUnit
-
-engineerText :: WorkUnit.AdmittedWorkUnit -> T.Text
-engineerText admitted =
-  case WorkUnit.admittedEngineer admitted of
-    EngineerId u -> uuidText u
 
 -- Intents --------------------------------------------------------------------
 
@@ -1178,11 +1165,11 @@ termsColumns terms =
     TermsQueryable l -> (Nothing, Nothing, Just (lookupAuthoritative l), Just (lookupExcludesLateApplication l))
     TermsUnqueryable -> (Nothing, Nothing, Nothing, Nothing)
 
-subjectColumns :: SubjectRef -> T.Text
+subjectColumns :: SubjectRef -> Uuid
 subjectColumns subject =
   case subject of
-    SubjectTicket t -> tid t
-    SubjectWorkOrder w -> wid w
+    SubjectTicket t -> ticketSubject t
+    SubjectWorkOrder w -> orderSubject w
 
 newIntentRow :: Int64 -> Intent -> Store.IntentRow
 newIntentRow eventId intent =
@@ -1193,7 +1180,7 @@ newIntentRow eventId intent =
     lifecycleColumns
       intent
       Store.IntentRow
-        { Store.intentRowOperation = oid (intentOperation intent)
+        { Store.intentRowOperation = intentOperation intent
         , Store.intentRowSubject = subjectColumns (intentSubject intent)
         , Store.intentRowSubjectKind = T.empty
         , Store.intentRowBasisRevision = int32 (intentBasisRevision intent)
@@ -1248,8 +1235,9 @@ lifecycleColumns intent row =
 -- | The intent rebuilt from its row; anything that does not reproduce is an integrity failure.
 restoreIntent :: Store.IntentRow -> Either LedgerFailure Intent
 restoreIntent row = do
-  operation <- fmap OperationId (uuidOf (Store.intentRowOperation row))
-  subjectId <- uuidOf (Store.intentRowSubject row)
+  let
+    operation = Store.intentRowOperation row
+    subjectId = Store.intentRowSubject row
   subject <-
     case T.unpack (Store.intentRowSubjectKind row) of
       "ticket" -> Right (SubjectTicket (TicketId subjectId))
@@ -1303,7 +1291,7 @@ restoreIntent row = do
 
 lockedIntent :: OperationId -> O.Orville (Either LedgerFailure (Store.IntentRow, Intent))
 lockedIntent operation = do
-  row <- Store.lockIntent (oid operation)
+  row <- Store.lockIntent operation
   pure $
     case row of
       Nothing -> refused (T.pack "unknown-intent") "there is no such effect intent"
@@ -1357,11 +1345,11 @@ observeIntent runtime operation generation observation =
     result <- stepStored operation (const (Command Supervisor (IntentObserve generation observation)))
     case result of
       Right intent -> do
-        Store.insertObservation (oid operation) (int32 generation) (observationText observation) Nothing
+        Store.insertObservation operation (int32 generation) (observationText observation) Nothing
         pure (Right intent)
       Left failure@(LedgerRefused code _)
         | code == effectRefusalCode StaleClaim -> do
-            Store.insertObservation (oid operation) (int32 generation) (observationText observation) (Just code)
+            Store.insertObservation operation (int32 generation) (observationText observation) (Just code)
             pure (Left failure)
       Left failure -> pure (Left failure)
 
@@ -1410,7 +1398,7 @@ abandonIntentAcknowledged runtime operation reason acknowledged
               Left r -> pure (Left (effectRefused r))
               Right next -> do
                 Store.updateIntent (lifecycleColumns next row)
-                Store.insertResolution (oid operation) (int32 (intentGeneration intent)) (T.pack "human-abandon") (T.pack "abandoned reason=" <> quotedText reason) acknowledged
+                Store.insertResolution operation (int32 (intentGeneration intent)) (T.pack "human-abandon") (T.pack "abandoned reason=" <> quotedText reason) acknowledged
                 haltForIntentBy Human l (T.pack "abandoned") operation
                 pure (Right next)
 
@@ -1436,7 +1424,7 @@ data StoredObservation
 intentObservations :: DatabaseRuntime -> OperationId -> IO (Either LedgerFailure [StoredObservation])
 intentObservations runtime operation =
   transaction runtime $ \_ -> do
-    rows <- Store.observationsOf (oid operation)
+    rows <- Store.observationsOf operation
     pure
       ( Right
           [ StoredObservation (fromIntegral (Store.observationRowGeneration r)) (Store.observationRowText r) (Store.observationRowAccepted r) (Store.observationRowRefusal r)
@@ -1451,17 +1439,14 @@ C-P2.6 write, so no two of them (nor a decision on the order) can deadlock.
 -}
 lockForExecution :: OperationId -> O.Orville (Either LedgerFailure (LoadedOrder, Store.IntentRow, Intent))
 lockForExecution operation = do
-  subject <- Store.intentSubject (oid operation)
+  subject <- Store.intentSubject operation
   case subject of
     Nothing -> pure (refused (T.pack "unknown-intent") "there is no such effect intent")
-    Just s ->
-      case uuidOf s of
+    Just s -> do
+      loaded <- lockWorkOrder (WorkOrderId s)
+      case loaded of
         Left failure -> pure (Left failure)
-        Right u -> do
-          loaded <- lockWorkOrder (WorkOrderId u)
-          case loaded of
-            Left failure -> pure (Left failure)
-            Right l -> fmap (fmap (\(row, intent) -> (l, row, intent))) (lockedIntent operation)
+        Right l -> fmap (fmap (\(row, intent) -> (l, row, intent))) (lockedIntent operation)
 
 orderActive :: LoadedOrder -> Bool
 orderActive l =
@@ -1513,7 +1498,7 @@ stepForActive operation renew command = do
                 ( refused
                     (T.pack "effect-key-in-use")
                     ( "the same effect key is held by "
-                        <> T.unpack (T.intercalate (T.pack ", ") (fmap Store.intentRowOperation holders))
+                        <> T.unpack (T.intercalate (T.pack ", ") (fmap (identityText . Store.intentRowOperation) holders))
                         <> "; abandon one (with --acknowledge-duplication-risk if it was dispatched), requeue without declaring the key again, and carry the other"
                     )
                 )
@@ -1587,7 +1572,7 @@ haltForIntentBy :: Principal -> LoadedOrder -> T.Text -> OperationId -> O.Orvill
 haltForIntentBy principal l code operation = do
   let
     order = loadedOrder l
-    input = WoHalt (code <> T.pack " operation=" <> oid operation)
+    input = WoHalt (code <> T.pack " operation=" <> identityText operation)
     revision = fromIntegral (Store.subjectRowRevision (loadedSubject l))
   case (stepWorkOrder order (Command principal input), encodeWorkOrderEvent (WorkOrderStep input)) of
     (Right next, Right text) -> appendStep (workOrderId order) (revision + 1) principal text next
@@ -1607,11 +1592,11 @@ concludeIntent runtime operation generation observation =
       Right (l, row, intent) ->
         case stepIntent intent (Command Supervisor (IntentObserve generation observation)) of
           Left r -> do
-            Store.insertObservation (oid operation) (int32 generation) (observationText observation) (Just (effectRefusalCode r))
+            Store.insertObservation operation (int32 generation) (observationText observation) (Just (effectRefusalCode r))
             lateConflict l row intent operation generation observation
             pure (Left (effectRefused r))
           Right observed -> do
-            Store.insertObservation (oid operation) (int32 generation) (observationText observation) Nothing
+            Store.insertObservation operation (int32 generation) (observationText observation) Nothing
             let
               exhausted = intentDispatches observed > effectSpecBudget (intentSpec observed)
               settle = stepIntent observed (Command Supervisor (IntentSettle generation))
@@ -1665,24 +1650,19 @@ recoverDispatched runtime owner seconds operation
                 let
                   next = recoveryIntent recovery
                 Store.updateIntent (lifecycleColumns next row)
-                Store.insertRecovery (oid operation) (int32 (intentGeneration intent)) (renderRecovery recovery)
+                Store.insertRecovery operation (int32 (intentGeneration intent)) (renderRecovery recovery)
                 case recovery of
                   -- N6: the current activation is not halted for an earlier one's intent.
                   RecoverUnknown _ | not superseded -> haltForIntent l (T.pack "outcome-unknown") operation
                   _ -> pure ()
                 pure (Right next)
 
-operationsFrom :: [T.Text] -> Either LedgerFailure [OperationId]
-operationsFrom =
-  traverse (fmap OperationId . uuidOf)
-
 -- | X10, without the intents of an earlier activation (C-P2.9-R1 M2).
 runnableIntents :: DatabaseRuntime -> IO (Either LedgerFailure [OperationId])
 runnableIntents runtime =
   transaction runtime $ \_ -> do
     candidates <- Store.runnableIntentIds
-    kept <- filterM current candidates
-    pure (operationsFrom kept)
+    Right <$> filterM current candidates
  where
   current operation = do
     rows <- Store.findIntent operation
@@ -1696,7 +1676,7 @@ runnableIntents runtime =
 
 recoverableIntents :: DatabaseRuntime -> IO (Either LedgerFailure [OperationId])
 recoverableIntents runtime =
-  transaction runtime $ \_ -> operationsFrom <$> Store.recoverableIntentIds
+  transaction runtime $ \_ -> Right <$> Store.recoverableIntentIds
 
 data StoredRecovery
   = StoredRecovery
@@ -1708,7 +1688,7 @@ data StoredRecovery
 intentRecoveries :: DatabaseRuntime -> OperationId -> IO (Either LedgerFailure [StoredRecovery])
 intentRecoveries runtime operation =
   transaction runtime $ \_ -> do
-    rows <- Store.recoveriesOf (oid operation)
+    rows <- Store.recoveriesOf operation
     pure (Right [StoredRecovery (fromIntegral (Store.recoveryRowGeneration r)) (Store.recoveryRowDecision r) | r <- rows])
 
 -- Reconciliation (C-P2.7) --------------------------------------------------------
@@ -1722,7 +1702,7 @@ lateConflict l row intent operation generation observation =
     LateConsistent -> pure ()
     LateConflict next -> do
       when (next /= intent) (Store.updateIntent (lifecycleColumns next row))
-      Store.insertResolution (oid operation) (int32 generation) (T.pack "late-observation") (T.pack "late-application " <> observationText observation) False
+      Store.insertResolution operation (int32 generation) (T.pack "late-observation") (T.pack "late-application " <> observationText observation) False
       haltForIntent l (T.pack "late-application") operation
 
 reconcileRefused :: ReconcileRefusal -> LedgerFailure
@@ -1757,7 +1737,7 @@ applyLookup runtime operation generation result =
             case reconcileIntent intent (Command Supervisor (ReconcileInput now result)) of
               Left r -> pure (Left (reconcileRefused r))
               Right next -> do
-                Store.insertResolution (oid operation) (int32 generation) (T.pack "lookup") (renderLookup result) False
+                Store.insertResolution operation (int32 generation) (T.pack "lookup") (renderLookup result) False
                 let
                   settle = stepIntent next (Command Supervisor (IntentSettle (intentGeneration next)))
                   exhausted = intentDispatches next > effectSpecBudget (intentSpec next)
@@ -1805,12 +1785,12 @@ resolveOutcome runtime operation generation resolution =
                 case resolution of
                   RetryAcknowledgingDuplication a -> (T.pack "human-retry", a)
                   _ -> (T.pack "human-attested", False)
-            Store.insertResolution (oid operation) (int32 generation) basis (renderResolution resolution) acknowledged
+            Store.insertResolution operation (int32 generation) basis (renderResolution resolution) acknowledged
             pure (Right next)
 
 reconcilableIntents :: DatabaseRuntime -> IO (Either LedgerFailure [OperationId])
 reconcilableIntents runtime =
-  transaction runtime $ \_ -> operationsFrom <$> Store.reconcilableIntentIds
+  transaction runtime $ \_ -> Right <$> Store.reconcilableIntentIds
 
 data StoredResolution
   = StoredResolution
@@ -1827,17 +1807,17 @@ intentResolutions runtime operation =
 
 storedResolutions :: OperationId -> O.Orville [StoredResolution]
 storedResolutions operation = do
-  rows <- Store.resolutionsOf (oid operation)
+  rows <- Store.resolutionsOf operation
   pure [StoredResolution (fromIntegral (Store.resolutionRowGeneration r)) (Store.resolutionRowBasis r) (Store.resolutionRowDecision r) (Store.resolutionRowAcknowledged r) | r <- rows]
 
 storedObservations :: OperationId -> O.Orville [StoredObservation]
 storedObservations operation = do
-  rows <- Store.observationsOf (oid operation)
+  rows <- Store.observationsOf operation
   pure [StoredObservation (fromIntegral (Store.observationRowGeneration r)) (Store.observationRowText r) (Store.observationRowAccepted r) (Store.observationRowRefusal r) | r <- rows]
 
 storedRecoveries :: OperationId -> O.Orville [StoredRecovery]
 storedRecoveries operation = do
-  rows <- Store.recoveriesOf (oid operation)
+  rows <- Store.recoveriesOf operation
   pure [StoredRecovery (fromIntegral (Store.recoveryRowGeneration r)) (Store.recoveryRowDecision r) | r <- rows]
 
 -- Reading the whole ledger (C-P2.8 V2) -------------------------------------------
@@ -1865,7 +1845,7 @@ data LedgerFacts
   { factTime :: UTCTime
   , factTickets :: [(TicketId, T.Text, T.Text, Int)]
   , factOrders :: [OrderFacts]
-  , factRefusals :: [(T.Text, Int, T.Text, T.Text, T.Text)]
+  , factRefusals :: [(Uuid, Int, T.Text, T.Text, T.Text)]
   , factSchedule :: Maybe (T.Text, T.Text)
   }
 
@@ -1899,15 +1879,16 @@ readLedger runtime =
           }
  where
   ticketFact subject = do
-    row <- Store.findTicket (Store.subjectRowId subject)
+    let
+      t = TicketId (Store.subjectRowId subject)
+    row <- Store.findTicket t
     case row of
       Nothing -> pure (integrity "a ticket subject has no ticket row")
       Just r -> do
         events <- Store.subjectEvents (Store.subjectRowId subject)
         pure $ do
           (state, _) <- replayTicket subject r events
-          u <- uuidOf (Store.subjectRowId subject)
-          pure (TicketId u, Store.ticketRowTitle r, ticketStateName state, fromIntegral (Store.subjectRowRevision subject))
+          pure (t, Store.ticketRowTitle r, ticketStateName state, fromIntegral (Store.subjectRowRevision subject))
   orderFact subject = do
     loaded <- loadWorkOrder subject
     case loaded of
@@ -1917,11 +1898,10 @@ readLedger runtime =
         intents <- traverse intentFact rows
         pure $ do
           is <- sequenceA intents
-          u <- uuidOf (Store.workOrderRowTicket (loadedRow l))
           pure
             OrderFacts
               { factOrder = loadedOrder l
-              , factTicket = TicketId u
+              , factTicket = Store.workOrderRowTicket (loadedRow l)
               , factRevision = fromIntegral (Store.subjectRowRevision subject)
               , factBinding = contentDigestText (bindingDigest (loadedBinding l))
               , factIntents = is
@@ -1992,8 +1972,7 @@ carryIntentChecked runtime principal operation expected acknowledged =
           owned =
             case workOrderState (loadedOrder l) of
               Active c ->
-                case claimEngineer c of
-                  EngineerId u -> (Store.workOrderRowRepository (loadedRow l), uuidText u) `L.elem` owners
+                (Store.workOrderRowRepository (loadedRow l), claimEngineer c) `L.elem` owners
               _ -> True
         case carryChecked intent (Command principal request) of
           Left r -> pure (Left (LedgerRefused (carryRefusalCode r) (T.pack (show r))))
@@ -2003,9 +1982,9 @@ carryIntentChecked runtime principal operation expected acknowledged =
                 case target of
                   Nothing -> pure (refused (T.pack "subject-not-active") "the work order is not active")
                   Just t -> do
-                    Store.setActivation (oid operation) (int32 t)
+                    Store.setActivation operation (int32 t)
                     Store.insertResolution
-                      (oid operation)
+                      operation
                       (int32 (intentGeneration intent))
                       (T.pack "human-carry")
                       (T.pack ("carried principal=" <> T.unpack (principalName principal) <> " from-generation=" <> show source <> " to-generation=" <> show t))
@@ -2015,7 +1994,7 @@ carryIntentChecked runtime principal operation expected acknowledged =
 intentActivation :: DatabaseRuntime -> OperationId -> IO (Either LedgerFailure Int)
 intentActivation runtime operation =
   transaction runtime $ \_ -> do
-    row <- Store.findIntent (oid operation)
+    row <- Store.findIntent operation
     pure (maybe (refused (T.pack "unknown-intent") "there is no such effect intent") (Right . fromIntegral . Store.intentRowActivation) row)
 
 {- | A test seam for C-P2.9-R1 M3: writes a subject and a refusal row, then
@@ -2025,6 +2004,6 @@ probeIntegrityRollback :: DatabaseRuntime -> IO (Either LedgerFailure ())
 probeIntegrityRollback runtime = do
   subject <- newUuid
   transaction runtime $ \_ -> do
-    Store.insertSubject (uuidText subject) (T.pack "ticket") (T.pack "proposed")
-    Store.insertRefusal (Store.NewRefusal (uuidText subject) 1 (T.pack "human") (T.pack "probe") (T.pack "probe"))
+    Store.insertSubject subject (T.pack "ticket") (T.pack "proposed")
+    Store.insertRefusal (Store.NewRefusal subject 1 (T.pack "human") (T.pack "probe") (T.pack "probe"))
     pure (integrity "a probe integrity failure after two writes")

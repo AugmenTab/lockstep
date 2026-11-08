@@ -7,9 +7,11 @@ module Lockstep.Compliance.Support
   , withMigratedRuntime
   , textQuery
   , executeSql
+  , identity
   ) where
 
 import Control.Exception (bracket)
+import Data.Coerce (Coercible)
 import Data.Text qualified as T
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.Unique (hashUnique, newUnique)
@@ -24,8 +26,14 @@ import Text.Show (show)
 import Lockstep.Application.Database (DatabaseRuntime, closeDatabase, openDatabase, runMigrations)
 import Lockstep.Foundation.Config (mkPort)
 import Lockstep.Foundation.SystemConfig (DatabaseConfig (..), mkSecret)
+import Lockstep.Kernel.Identity (Uuid, parseIdentity)
 import Lockstep.Persistence.Connection (poolOptions)
 import Lockstep.Persistence.Migrations (migrations)
+
+-- | An identity of any kind from its canonical text; anything else fails the test.
+identity :: Coercible Uuid ident => T.Text -> IO ident
+identity text =
+  maybe (assertFailure ("not a canonical identity: " <> T.unpack text)) pure (parseIdentity text)
 
 -- | An empty database, dropped afterwards.
 withFreshDatabase :: (DatabaseConfig -> IO ()) -> IO ()

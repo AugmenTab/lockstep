@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeFamilies #-}
+
 {- | Storage for Human Requests and their conversations (contract C-P4.3 H4).
 Messages are never updated or deleted; the migration's triggers refuse it. A
 request row changes only together with the message that changes it, under
@@ -25,15 +27,17 @@ import Data.Time (UTCTime)
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
 
-import Lockstep.Persistence.Fields (forUpdate, setNow, uuidField)
+import Lockstep.Kernel.Identity (HumanRequestId (..), WorkOrderId)
+import Lockstep.Persistence.Entity (EntityKey, Table, foreignKeyTo, keyField, mkEntityTable)
+import Lockstep.Persistence.Fields (forUpdate, setNow)
 import Lockstep.Persistence.Ledger (workOrderIdField, workOrderTable)
 
 data RequestRow
   = RequestRow
-  { requestRowId :: T.Text
+  { requestRowId :: HumanRequestId
   , requestRowKey :: T.Text
   , requestRowDigest :: T.Text
-  , requestRowWorkOrder :: T.Text
+  , requestRowWorkOrder :: WorkOrderId
   , requestRowEngineer :: T.Text
   , requestRowContract :: Maybe T.Text
   , requestRowKind :: T.Text
@@ -47,9 +51,11 @@ data RequestRow
   }
   deriving (Eq)
 
+type instance EntityKey RequestRow = HumanRequestId
+
 data MessageRow
   = MessageRow
-  { messageRowRequest :: T.Text
+  { messageRowRequest :: HumanRequestId
   , messageRowSequence :: Int32
   , messageRowKey :: T.Text
   , messageRowDigest :: T.Text
@@ -65,14 +71,14 @@ data MessageRow
 
 -- lockstep_human_requests -----------------------------------------------------
 
-requestTable :: O.TableDefinition (O.HasKey T.Text) RequestRow RequestRow
+requestTable :: Table RequestRow RequestRow
 requestTable =
-  O.mkTableDefinition "lockstep_human_requests" (O.primaryKey requestIdField) $
+  mkEntityTable "lockstep_human_requests" requestIdField $
     RequestRow
       <$> O.marshallField requestRowId requestIdField
       <*> O.marshallField requestRowKey requestKeyField
       <*> O.marshallField requestRowDigest (O.unboundedTextField "payload_digest")
-      <*> O.marshallField requestRowWorkOrder (uuidField "work_order_id")
+      <*> O.marshallField requestRowWorkOrder (foreignKeyTo workOrderTable workOrderIdField "work_order_id")
       <*> O.marshallField requestRowEngineer (O.unboundedTextField "engineer_name")
       <*> O.marshallField requestRowContract (O.nullableField (O.unboundedTextField "contract_digest"))
       <*> O.marshallField requestRowKind (O.unboundedTextField "kind")
@@ -84,9 +90,9 @@ requestTable =
       <*> O.marshallField requestRowState requestStateField
       <*> O.marshallField requestRowAnswer requestAnswerField
 
-requestIdField :: O.FieldDefinition O.NotNull T.Text
+requestIdField :: O.FieldDefinition O.NotNull HumanRequestId
 requestIdField =
-  uuidField "id"
+  keyField "id"
 
 requestKeyField :: O.FieldDefinition O.NotNull T.Text
 requestKeyField =
@@ -117,12 +123,12 @@ findRequestByKey :: O.MonadOrville m => T.Text -> m (Maybe RequestRow)
 findRequestByKey key =
   O.findFirstEntityBy requestTable (O.where_ (O.fieldEquals requestKeyField key))
 
-findRequest :: O.MonadOrville m => T.Text -> m (Maybe RequestRow)
-findRequest requestId =
-  O.findFirstEntityBy requestTable (O.where_ (O.fieldEquals requestIdField requestId))
+findRequest :: O.MonadOrville m => HumanRequestId -> m (Maybe RequestRow)
+findRequest =
+  O.findEntity requestTable
 
 -- | The request row, locked until the transaction ends.
-lockRequest :: O.MonadOrville m => T.Text -> m (Maybe RequestRow)
+lockRequest :: O.MonadOrville m => HumanRequestId -> m (Maybe RequestRow)
 lockRequest requestId =
   O.findFirstEntityBy requestTable (O.where_ (O.fieldEquals requestIdField requestId) <> forUpdate)
 
@@ -139,7 +145,7 @@ insertRequest =
   O.insertEntity requestTable
 
 -- | The request's revision, state and answer after a message.
-updateRequest :: O.MonadOrville m => T.Text -> Int32 -> T.Text -> Maybe T.Text -> m ()
+updateRequest :: O.MonadOrville m => HumanRequestId -> Int32 -> T.Text -> Maybe T.Text -> m ()
 updateRequest requestId revision state answer =
   O.updateFields
     requestTable
@@ -170,9 +176,9 @@ messageTable =
       <*> O.marshallField messageRowBody (O.unboundedTextField "body")
       <*> O.marshallField messageRowChoice (O.nullableField (O.unboundedTextField "choice"))
 
-messageRequestField :: O.FieldDefinition O.NotNull T.Text
+messageRequestField :: O.FieldDefinition O.NotNull HumanRequestId
 messageRequestField =
-  uuidField "request_id"
+  foreignKeyTo requestTable requestIdField "request_id"
 
 messageSequenceField :: O.FieldDefinition O.NotNull Int32
 messageSequenceField =
@@ -186,7 +192,7 @@ findMessageByKey :: O.MonadOrville m => T.Text -> m (Maybe MessageRow)
 findMessageByKey key =
   O.findFirstEntityBy messageTable (O.where_ (O.fieldEquals messageKeyField key))
 
-requestMessages :: O.MonadOrville m => T.Text -> m [MessageRow]
+requestMessages :: O.MonadOrville m => HumanRequestId -> m [MessageRow]
 requestMessages requestId =
   O.findEntitiesBy
     messageTable
@@ -196,6 +202,6 @@ insertMessage :: O.MonadOrville m => MessageRow -> m ()
 insertMessage =
   O.insertEntity messageTable
 
-workOrderExists :: O.MonadOrville m => T.Text -> m Bool
+workOrderExists :: O.MonadOrville m => WorkOrderId -> m Bool
 workOrderExists workOrder =
-  isJust <$> O.findFirstEntityBy workOrderTable (O.where_ (O.fieldEquals workOrderIdField workOrder))
+  isJust <$> O.findEntity workOrderTable workOrder

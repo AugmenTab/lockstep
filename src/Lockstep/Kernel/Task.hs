@@ -24,6 +24,7 @@ module Lockstep.Kernel.Task
   , readinessWords
   , mostImportantReady
   , createsCycle
+  , createsCycleOf
   , taskRefusalCodes
   , taskRefusalWords
   , taskRequestText
@@ -205,7 +206,12 @@ mostImportantReady tasks =
 the other edges (task, depends on); the task's own current edges are replaced.
 -}
 createsCycle :: [(T.Text, T.Text)] -> T.Text -> [T.Text] -> Bool
-createsCycle edges task deps =
+createsCycle =
+  createsCycleOf
+
+-- | 'createsCycle' over any task identity (the application passes its typed task identities).
+createsCycleOf :: Eq task => [(task, task)] -> task -> [task] -> Bool
+createsCycleOf edges task deps =
   let
     others = [e | e@(from, _) <- edges, from /= task]
     reaches seen from =

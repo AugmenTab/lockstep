@@ -18,7 +18,9 @@ module Lockstep.Application.Engine
   , RecordView (..)
   , InvocationView (..)
   , startTransaction
+  , startTransactionFor
   , advance
+  , advanceTransaction
   , transactionView
   , transactionForWorkOrder
   , decideCompletion
@@ -86,7 +88,7 @@ import Lockstep.Application.EngineRecords
   , verificationSummarySchema
   )
 import Lockstep.Application.EngineRecords qualified as Records
-import Lockstep.Application.Identity (newUuid)
+import Lockstep.Application.Identity (newIdentity)
 import Lockstep.Application.Repositories (ownershipHolds)
 import Lockstep.Application.Tasks (TaskView (..), findTaskIn)
 import Lockstep.Effects.GitSupervisor (Basis (..), CommitMeta (..), advanceBranch, branchHead, commitChanges, commitTime, createWorkBranch, observeBasis, snapshotChanges, writeSnapshot)
@@ -98,7 +100,7 @@ import Lockstep.Foundation.Json (Json (..), renderJson, string, strings)
 import Lockstep.Foundation.RunnerProtocol (RunProfile (..))
 import Lockstep.Kernel.Candidate (MutantRun (..), classifyTest, disposeFinding, quoteGrounded)
 import Lockstep.Kernel.GitBasis (Change (..), TreeEntry (..), TreeMode (..), protectedPathValid, treePathValid, workBranch)
-import Lockstep.Kernel.Identity (parseUuid, uuidText)
+import Lockstep.Kernel.Identity (InvocationId (..), ProjectId (..), TaskId (..), TransactionId (..), WorkOrderId (..), identityText, parseIdentity)
 import Lockstep.Kernel.Roles
   ( Candidate (..)
   , CandidateTest (..)
@@ -215,10 +217,6 @@ db runtime action = do
       Left (DatabaseCorrupt _) -> Left (T.pack "database-corrupt")
       Left _ -> Left (T.pack "database-unavailable")
 
-canonicalId :: T.Text -> Maybe T.Text
-canonicalId =
-  either (const Nothing) (Just . uuidText) . parseUuid
-
 sha256Hex :: BS.ByteString -> T.Text
 sha256Hex bytes =
   TE.decodeLatin1 (convertToBase Base16 (hashWith SHA256 bytes))
@@ -245,9 +243,9 @@ lastStage =
 viewOf :: Store.TransactionRow -> [Store.RecordRow] -> [Store.InvocationRow] -> TransactionView
 viewOf row records invocations =
   TransactionView
-    { viewId = Store.txRowId row
-    , viewWorkOrder = Store.txRowWorkOrder row
-    , viewTask = Store.txRowTask row
+    { viewId = identityText (Store.txRowId row)
+    , viewWorkOrder = identityText (Store.txRowWorkOrder row)
+    , viewTask = identityText (Store.txRowTask row)
     , viewEngineer = Store.txRowEngineer row
     , viewFolder = Store.txRowFolder row
     , viewState = Store.txRowState row
@@ -263,7 +261,7 @@ viewOf row records invocations =
         ]
     , viewInvocations =
         [ InvocationView
-            (Store.invocationRowId i)
+            (identityText (Store.invocationRowId i))
             (Store.invocationRowStage i)
             (Store.invocationRowWhat i)
             (Store.invocationRowRunner i)
@@ -275,7 +273,7 @@ viewOf row records invocations =
         ]
     }
 
-loadView :: T.Text -> O.Orville (Maybe TransactionView)
+loadView :: TransactionId -> O.Orville (Maybe TransactionView)
 loadView txId = do
   row <- Store.findTransaction txId
   case row of
@@ -290,14 +288,14 @@ loadView txId = do
 transactionView :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe TransactionView))
 transactionView runtime raw =
   whenReady runtime $
-    case canonicalId raw of
+    case parseIdentity raw of
       Nothing -> pure (Right Nothing)
       Just txId -> withDatabase runtime (loadView txId)
 
 transactionForWorkOrder :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe TransactionView))
 transactionForWorkOrder runtime raw =
   whenReady runtime $
-    case canonicalId raw of
+    case parseIdentity raw of
       Nothing -> pure (Right Nothing)
       Just workOrder ->
         withDatabase runtime $ do
@@ -305,7 +303,7 @@ transactionForWorkOrder runtime raw =
           maybe (pure Nothing) (loadView . Store.txRowId) row
 
 -- | C-P4.15 W1: the running or halted transactions, in start order.
-activeTransactionIds :: DatabaseRuntime -> IO (Either NotReadyReason [T.Text])
+activeTransactionIds :: DatabaseRuntime -> IO (Either NotReadyReason [TransactionId])
 activeTransactionIds runtime =
   whenReady runtime (withDatabase runtime (fmap Store.txRowId <$> Store.activeTransactions))
 
@@ -313,12 +311,12 @@ activeTransactionIds runtime =
 projectStarted :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason Bool)
 projectStarted runtime raw =
   whenReady runtime $
-    case canonicalId raw of
+    case parseIdentity raw of
       Nothing -> pure (Right False)
       Just project -> withDatabase runtime (Store.projectStarted project)
 
 -- | C-P4.15 W1: the handed-over bug Work Orders with no transaction yet, in hand-over order.
-pendingWorkOrders :: DatabaseRuntime -> IO (Either NotReadyReason [T.Text])
+pendingWorkOrders :: DatabaseRuntime -> IO (Either NotReadyReason [WorkOrderId])
 pendingWorkOrders runtime =
   whenReady runtime (withDatabase runtime Store.pendingAdmissions)
 
@@ -327,58 +325,59 @@ pendingWorkOrders runtime =
 {- | E1: the transaction for an admitted bug Work Order (C-P4.1), at the basis
 stage. Again for the same Work Order: the same transaction. Refused:
 @unknown-work-order@, @not-admitted@, @engineer-busy@ (the Engineer's one
-writer holds another running or halted transaction).
+writer holds another running or halted transaction). The text is parsed here;
+'startTransactionFor' is the same for a Work Order identity.
 -}
 startTransaction :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Either T.Text TransactionView))
 startTransaction runtime raw =
-  whenReady runtime $
-    case canonicalId raw of
-      Nothing -> pure (Right (Left (T.pack "unknown-work-order")))
-      Just workOrder -> do
-        u <- newUuid
-        withDatabase runtime . O.withTransaction $ do
-          existing <- Store.findTransactionByWorkOrder workOrder
-          case existing of
-            Just row -> maybe (Left (T.pack "transaction-unreadable")) Right <$> loadView (Store.txRowId row)
-            Nothing -> do
-              facts <- Store.admissionFacts workOrder
-              case facts of
-                Nothing -> pure (Left (T.pack "not-admitted"))
-                Just f -> do
-                  -- C-P4.R1 R-O1: starts for one Engineer check and insert one after the other.
-                  Store.lockEngineer (Store.factEngineer f)
-                  busy <- Store.busyTransactions (Store.factEngineer f)
-                  if not (L.null busy)
-                    then pure (Left (T.pack "engineer-busy"))
-                    else do
-                      let
-                        txId = uuidText u
-                        row =
-                          Store.TransactionRow
-                            { Store.txRowId = txId
-                            , Store.txRowWorkOrder = workOrder
-                            , Store.txRowTask = Store.factTask f
-                            , Store.txRowEngineer = Store.factEngineer f
-                            , Store.txRowFolder = Store.factFolder f
-                            , Store.txRowState = T.pack "running"
-                            , Store.txRowStage = StageBasis
-                            , Store.txRowHaltCode = Nothing
-                            , Store.txRowCandidates = 0
-                            , Store.txRowAttempts = 0
-                            , Store.txRowBasis = Nothing
-                            , Store.txRowBranch = Nothing
-                            , Store.txRowFreeze = Nothing
-                            , Store.txRowCandidate = Nothing
-                            , Store.txRowAccepted = Nothing
-                            , Store.txRowContract = Nothing
-                            , Store.txRowRevision = 1
-                            }
-                      Store.insertTransaction row
-                      appendRecord txId 1 (T.pack "started") Supervisor StageBasis $
-                        record startedSchema (Started workOrder (Store.factEngineer f) (Store.factFolder f))
-                      maybe (Left (T.pack "transaction-unreadable")) Right <$> loadView txId
+  maybe (whenReady runtime (pure (Right (Left (T.pack "unknown-work-order"))))) (startTransactionFor runtime) (parseIdentity raw)
 
-appendRecord :: T.Text -> Int32 -> T.Text -> Principal -> Stage -> Json -> O.Orville ()
+startTransactionFor :: DatabaseRuntime -> WorkOrderId -> IO (Either NotReadyReason (Either T.Text TransactionView))
+startTransactionFor runtime workOrder =
+  whenReady runtime $ do
+    txId <- newIdentity
+    withDatabase runtime . O.withTransaction $ do
+      existing <- Store.findTransactionByWorkOrder workOrder
+      case existing of
+        Just row -> maybe (Left (T.pack "transaction-unreadable")) Right <$> loadView (Store.txRowId row)
+        Nothing -> do
+          facts <- Store.admissionFacts workOrder
+          case facts of
+            Nothing -> pure (Left (T.pack "not-admitted"))
+            Just f -> do
+              -- C-P4.R1 R-O1: starts for one Engineer check and insert one after the other.
+              Store.lockEngineer (Store.factEngineer f)
+              busy <- Store.busyTransactions (Store.factEngineer f)
+              if not (L.null busy)
+                then pure (Left (T.pack "engineer-busy"))
+                else do
+                  let
+                    row =
+                      Store.TransactionRow
+                        { Store.txRowId = txId
+                        , Store.txRowWorkOrder = workOrder
+                        , Store.txRowTask = Store.factTask f
+                        , Store.txRowEngineer = Store.factEngineer f
+                        , Store.txRowFolder = Store.factFolder f
+                        , Store.txRowState = T.pack "running"
+                        , Store.txRowStage = StageBasis
+                        , Store.txRowHaltCode = Nothing
+                        , Store.txRowCandidates = 0
+                        , Store.txRowAttempts = 0
+                        , Store.txRowBasis = Nothing
+                        , Store.txRowBranch = Nothing
+                        , Store.txRowFreeze = Nothing
+                        , Store.txRowCandidate = Nothing
+                        , Store.txRowAccepted = Nothing
+                        , Store.txRowContract = Nothing
+                        , Store.txRowRevision = 1
+                        }
+                  Store.insertTransaction row
+                  appendRecord txId 1 (T.pack "started") Supervisor StageBasis $
+                    record startedSchema (Started (identityText workOrder) (Store.factEngineer f) (Store.factFolder f))
+                  maybe (Left (T.pack "transaction-unreadable")) Right <$> loadView txId
+
+appendRecord :: TransactionId -> Int32 -> T.Text -> Principal -> Stage -> Json -> O.Orville ()
 appendRecord txId sequence kind principal stage body =
   let
     rendered = renderJson body
@@ -398,7 +397,7 @@ appendRecord txId sequence kind principal stage body =
 started from (@stale-step@ otherwise), with its records; a halt adds a
 @halt@ record. Returns the new row.
 -}
-applyInput :: DatabaseRuntime -> T.Text -> Int32 -> Principal -> TxInput -> [(T.Text, Json)] -> (Store.TransactionRow -> Store.TransactionRow) -> IO (Either T.Text Store.TransactionRow)
+applyInput :: DatabaseRuntime -> TransactionId -> Int32 -> Principal -> TxInput -> [(T.Text, Json)] -> (Store.TransactionRow -> Store.TransactionRow) -> IO (Either T.Text Store.TransactionRow)
 applyInput runtime txId revision principal input records change =
   db runtime . O.withTransaction $ do
     locked <- Store.lockTransaction txId
@@ -459,22 +458,24 @@ the run it left is then settled as before (E4).
 -}
 advance :: DatabaseRuntime -> Engine -> T.Text -> IO (Either NotReadyReason (Either T.Text StepReport))
 advance runtime engine raw =
-  whenReady runtime $
-    case canonicalId raw of
-      Nothing -> pure (Right (Left (T.pack "unknown-transaction")))
-      Just txId -> do
-        -- The step is relative to the row read here: if another engine moves it while this one
-        -- waits for the lock, the step is stale (settleUnfinished checks the revision).
-        loaded <- withDatabase runtime (Store.findTransaction txId)
-        case loaded of
-          Left reason -> pure (Left reason)
-          Right Nothing -> pure (Right (Left (T.pack "unknown-transaction")))
-          Right (Just row) -> do
-            owned <- withSessionLock runtime TransactionStepLock txId (const (advanceRow runtime engine row))
-            pure $ case owned of
-              Right stepped -> Right stepped
-              Left LockBusy -> Right (Left (T.pack "busy"))
-              Left (LockUnavailable reason) -> Left reason
+  maybe (whenReady runtime (pure (Right (Left (T.pack "unknown-transaction"))))) (advanceTransaction runtime engine) (parseIdentity raw)
+
+-- | 'advance' for a transaction identity.
+advanceTransaction :: DatabaseRuntime -> Engine -> TransactionId -> IO (Either NotReadyReason (Either T.Text StepReport))
+advanceTransaction runtime engine txId =
+  whenReady runtime $ do
+    -- The step is relative to the row read here: if another engine moves it while this one
+    -- waits for the lock, the step is stale (settleUnfinished checks the revision).
+    loaded <- withDatabase runtime (Store.findTransaction txId)
+    case loaded of
+      Left reason -> pure (Left reason)
+      Right Nothing -> pure (Right (Left (T.pack "unknown-transaction")))
+      Right (Just row) -> do
+        owned <- withSessionLock runtime TransactionStepLock (identityText txId) (const (advanceRow runtime engine row))
+        pure $ case owned of
+          Right stepped -> Right stepped
+          Left LockBusy -> Right (Left (T.pack "busy"))
+          Left (LockUnavailable reason) -> Left reason
 
 advanceRow :: DatabaseRuntime -> Engine -> Store.TransactionRow -> IO (Either T.Text StepReport)
 advanceRow runtime engine row =
@@ -563,7 +564,7 @@ decideCompletion runtime raw sender choice =
       SenderSupervisor -> refuse "not-authorized"
       SenderPlanner _ -> refuse "not-authorized"
       SenderHuman _ ->
-        case (T.unpack choice, canonicalId raw) of
+        case (T.unpack choice, parseIdentity raw) of
           ("done", Just txId) -> decide txId HumanDone
           ("not-done", Just txId) -> decide txId HumanStop
           ("done", Nothing) -> refuse "unknown-transaction"
@@ -615,7 +616,7 @@ settleUnfinished runtime row _ =
                   (\i -> Store.finishInvocation (Store.invocationRowId i) (emptyFinish (T.pack (if isRole i then "uncertain" else "interrupted"))))
                   invocations
               input = RoleUncertain (T.pack "unfinished-invocation")
-              body = record unfinishedSchema (Unfinished (fmap Store.invocationRowId roles))
+              body = record unfinishedSchema (Unfinished (fmap (identityText . Store.invocationRowId) roles))
             case () of
               _
                 | L.null invocations -> pure (Right Nothing)
@@ -696,7 +697,7 @@ basisStage runtime row = do
         Left code -> refuse code
         Right basis -> do
           let
-            branch = workBranch (Store.txRowWorkOrder row)
+            branch = workBranch (identityText (Store.txRowWorkOrder row))
           made <- createWorkBranch folder branch (basisCommit basis)
           case made of
             Left code -> refuse code
@@ -831,7 +832,7 @@ Planner, the challenger or the Reviewer; any other ending decides the input
 from what was recorded, and the Implementer's answer (its change was a
 workspace, not an answer) halts @answer-not-recoverable@.
 -}
-invokeRecorded :: DatabaseRuntime -> Engine -> Store.TransactionRow -> Role -> Stage -> T.Text -> [ExtraFile] -> [T.Text] -> T.Text -> IO (Either T.Text (Either TxInput (RoleAnswer, [TreeEntry], Workspace, T.Text)))
+invokeRecorded :: DatabaseRuntime -> Engine -> Store.TransactionRow -> Role -> Stage -> T.Text -> [ExtraFile] -> [T.Text] -> T.Text -> IO (Either T.Text (Either TxInput (RoleAnswer, [TreeEntry], Workspace, InvocationId)))
 invokeRecorded runtime engine row role stage commit extras protected context = do
   earlier <- db runtime (Right . L.filter ((== roleName role) . Store.invocationRowWhat) <$> Store.transactionInvocations (Store.txRowId row))
   case earlier of
@@ -871,9 +872,7 @@ invokeRecorded runtime engine row role stage commit extras protected context = d
             case prepared of
               Left code -> pure (Right (Left (SupervisorFailed code)))
               Right argv -> do
-                u <- newUuid
-                let
-                  invocation = uuidText u
+                invocation <- newIdentity
                 started <-
                   db runtime . O.withTransaction $ do
                     locked <- Store.lockTransaction (Store.txRowId row)
@@ -924,7 +923,7 @@ invokeRecorded runtime engine row role stage commit extras protected context = d
       Roles.RoleUncertain c -> pure (Left (T.pack "uncertain " <> c, Nothing, RoleUncertain c))
 
 -- | An invocation as recorded before it runs, at the transaction's revision.
-invocationRow :: Store.TransactionRow -> T.Text -> Stage -> T.Text -> T.Text -> T.Text -> [T.Text] -> Store.InvocationRow
+invocationRow :: Store.TransactionRow -> InvocationId -> Stage -> T.Text -> T.Text -> T.Text -> [T.Text] -> Store.InvocationRow
 invocationRow row invocation stage what runner adapter argv =
   Store.InvocationRow
     { Store.invocationRowId = invocation
@@ -975,9 +974,7 @@ reproductionStage runtime engine row = do
     case ws of
       Left code -> settle runtime row (SupervisorFailed code) [] id
       Right (workspace, _) -> do
-        u <- newUuid
-        let
-          invocation = uuidText u
+        invocation <- newIdentity
         started <-
           db runtime $ do
             Store.insertInvocation (invocationRow row invocation StageReproduction (T.pack "reproduction") (runnerName (engineRunner engine)) (T.pack "supervisor") (checkArgv check))
@@ -1006,7 +1003,7 @@ reproductionStage runtime engine row = do
                         , reproductionReproduced = reproduced
                         , reproductionStdout = Just (tailOf (resultStdout result))
                         , reproductionStderr = Just (tailOf (resultStderr result))
-                        , reproductionInvocation = Just invocation
+                        , reproductionInvocation = Just (identityText invocation)
                         }
                 finished <- db runtime (Right <$> Store.finishInvocation invocation (finishOf (outcomeName (resultOutcome result)) result))
                 case finished of
@@ -1029,9 +1026,7 @@ after. Left: the runner refused it or its result is unknown (finished
 -}
 runCommand :: DatabaseRuntime -> Engine -> Store.TransactionRow -> Stage -> T.Text -> Workspace -> [T.Text] -> IO (Either T.Text RunResult)
 runCommand runtime engine row stage what workspace argv = do
-  u <- newUuid
-  let
-    invocation = uuidText u
+  invocation <- newIdentity
   started <-
     db runtime $ do
       Store.insertInvocation (invocationRow row invocation stage what (runnerName (engineRunner engine)) (T.pack "supervisor") argv)
@@ -1296,9 +1291,9 @@ freezeStage runtime row = do
                 changes = [Change (testPath x) (Just (ModeFile, TE.encodeUtf8 (testContent x))) | x <- candidateTests c]
                 message =
                   T.pack "Lockstep: frozen tests\n\nLockstep-Work-Order: "
-                    <> Store.txRowWorkOrder row
+                    <> identityText (Store.txRowWorkOrder row)
                     <> T.pack "\nLockstep-Transaction: "
-                    <> Store.txRowId row
+                    <> identityText (Store.txRowId row)
                     <> T.pack "\n"
               committed <- commitChanges folder basis changes (CommitMeta message (t + 1))
               case committed of
@@ -1369,7 +1364,7 @@ implementStage runtime engine row = do
             Right (Right (AnswerImplementation i, entries, workspace, invocation)) -> do
               found <- snapshotChanges entries (workspaceTree workspace)
               let
-                refused code paths = settle runtime row (ImplementationRefused code) [(T.pack "implementation-refused", record implementationRefusedSchema (Records.ImplementationRefused code paths invocation))] id
+                refused code paths = settle runtime row (ImplementationRefused code) [(T.pack "implementation-refused", record implementationRefusedSchema (Records.ImplementationRefused code paths (identityText invocation)))] id
               case found of
                 Left code -> refused code []
                 Right changes
@@ -1387,7 +1382,7 @@ implementStage runtime engine row = do
                               T.pack "Fix: "
                                 <> title
                                 <> T.pack "\n\nLockstep-Work-Order: "
-                                <> Store.txRowWorkOrder row
+                                <> identityText (Store.txRowWorkOrder row)
                                 <> T.pack "\nLockstep-Contract: "
                                 <> fromMaybe T.empty (Store.txRowContract row)
                                 <> T.pack "\nLockstep-Attempt: "
@@ -1403,7 +1398,7 @@ implementStage runtime engine row = do
                                 Implemented
                                 [
                                   ( T.pack "implementation"
-                                  , record implementationSchema (ImplementationRecord (implementationSummary i) (fmap changePath changes) candidate (toInteger attempt) invocation)
+                                  , record implementationSchema (ImplementationRecord (implementationSummary i) (fmap changePath changes) candidate (toInteger attempt) (identityText invocation))
                                   )
                                 ]
                                 (\r -> r {Store.txRowCandidate = Just candidate})
@@ -1575,7 +1570,7 @@ reviewStage runtime engine row = do
                 Approve -> ReviewApproved
                 Reject -> ReviewRejected
                 NeedsHuman -> ReviewNeedsHuman
-          settle runtime row input [(T.pack "review", record reviewSchema (ReviewRecord candidate (verdictName (reviewVerdict r)) (reviewReasons r) (Just invocation)))] id
+          settle runtime row input [(T.pack "review", record reviewSchema (ReviewRecord candidate (verdictName (reviewVerdict r)) (reviewReasons r) (Just (identityText invocation))))] id
         Right (Right _) -> settle runtime row (RoleFailed (T.pack "answer-invalid wrong-stage")) [] id
 
 -- Acceptance (C-P4.10-14 A1) ------------------------------------------------------------------------
@@ -1644,12 +1639,13 @@ ensureRequest runtime row stage code = do
               key
               SenderSupervisor
               NewHumanRequest
-                { newRequestWorkOrder = Store.txRowWorkOrder row
+                { -- NewHumanRequest is a frozen-test boundary record: its Work Order is text.
+                  newRequestWorkOrder = identityText (Store.txRowWorkOrder row)
                 , newRequestEngineer = Store.txRowEngineer row
                 , newRequestContract = Store.txRowContract row
                 , newRequestChoices = Just (haltChoices stage code)
                 , newRequestQuestion = haltQuestion stage code
-                , newRequestEvidence = T.pack "Transaction " <> Store.txRowId row <> T.pack ", record " <> T.pack (show (Store.recordRowSequence h)) <> T.pack ": " <> code
+                , newRequestEvidence = T.pack "Transaction " <> identityText (Store.txRowId row) <> T.pack ", record " <> T.pack (show (Store.recordRowSequence h)) <> T.pack ": " <> code
                 , newRequestAuthority = T.pack "Whether Lockstep tries this step again, accepts it as it is, or stops this bug fix."
                 }
           pure $ case opened of
@@ -1666,7 +1662,7 @@ haltKey row rs =
       either
         (const (Left (T.pack "halt-key-invalid")))
         (\key -> Right (key, h))
-        (mkIdempotencyKey (T.pack "halt-" <> T.filter (/= '-') (Store.txRowId row) <> T.pack "-" <> T.pack (show (Store.recordRowSequence h))))
+        (mkIdempotencyKey (T.pack "halt-" <> T.filter (/= '-') (identityText (Store.txRowId row)) <> T.pack "-" <> T.pack (show (Store.recordRowSequence h))))
 
 {- | C-P4.16: the request for a halted transaction's current halt, as it
 stands (open or answered); Nothing when the transaction is not halted or
@@ -1675,7 +1671,7 @@ the request is not opened yet. Reads only.
 haltRequest :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe StoredRequest))
 haltRequest runtime raw =
   whenReady runtime $
-    case canonicalId raw of
+    case parseIdentity raw of
       Nothing -> pure (Right Nothing)
       Just txId -> do
         found <- withDatabase runtime $ do

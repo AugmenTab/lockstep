@@ -3,7 +3,7 @@
 {- | Behaviour-preservation checks for the Orville conversion of the
 persistence layer (stack-compliance pass, 2026-11-07), on a real PostgreSQL
 with the production migrations. Each check pins one thing the hand-written
-SQL used to do explicitly and the typed definitions now do: uuid text in and
+SQL used to do explicitly and the typed definitions now do: native uuid in and
 out, bytea digests as lowercase hex, ON CONFLICT inserts, server-clock
 expiries, optimistic concurrency, and the job outcome digest computed in the
 update. The independent oracle in each case is the server itself, asked with
@@ -29,7 +29,8 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 import Text.Show (show)
 
-import Lockstep.Compliance.Support (textQuery, withMigrated)
+import Lockstep.Compliance.Support (executeSql, identity, textQuery, withMigrated)
+import Lockstep.Kernel.Identity (EngineerId (..), ProjectId (..), parseUuid, uuidText)
 import Lockstep.Kernel.Project (SetupState (..))
 import Lockstep.Persistence.CommandCenter (JobEvidenceRow (..), recentJobs)
 import Lockstep.Persistence.Commands (NewReceipt (..), ReceiptRow (rowDigestHex), findReceiptByKey, insertReceipt)
@@ -43,13 +44,22 @@ tests :: TestTree
 tests =
   testGroup
     "Orville persistence behaviour (stack compliance; real PostgreSQL)"
-    [ testCase "uuid columns: canonical text in and out; upper case accepted and read back lower case; malformed text refused by the server" $
+    [ testCase "uuid columns: the library UUID in and out, stored as the server's own uuid; malformed text has no UUID to send" $
         withMigrated $ \run -> do
-          run (insertSubject "0A1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D" "ticket" "draft")
-          found <- run (subjectRow "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d")
-          fmap subjectRowId found @?= Just "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
-          refused <- try (run (insertSubject "not-a-uuid" "ticket" "draft")) :: IO (Either SomeException ())
-          assertBool "a malformed uuid is refused" (isLeft refused)
+          subject <- identity "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+          run (insertSubject subject "ticket" "draft")
+          found <- run (subjectRow subject)
+          fmap subjectRowId found @?= Just subject
+          oracle <- run (textQuery "SELECT id::text AS v FROM lockstep_subjects")
+          oracle @?= [uuidText subject]
+          -- A row written by the server from upper-case text is the same UUID.
+          run (executeSql "INSERT INTO lockstep_subjects (id, kind, revision, state) VALUES ('1A1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D', 'ticket', 1, 'draft')")
+          upper <- identity "1a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+          foundUpper <- run (subjectRow upper)
+          fmap subjectRowId foundUpper @?= Just upper
+          assertBool "malformed text is no UUID" (isLeft (parseUuid "not-a-uuid"))
+          refused <- try (run (executeSql "INSERT INTO lockstep_subjects (id, kind, revision, state) VALUES ('not-a-uuid', 'ticket', 1, 'draft')")) :: IO (Either SomeException ())
+          assertBool "the server refuses it too" (isLeft refused)
     , testCase "bytea digests: every byte value survives, read back as the hex encode(..., 'hex') gives" $
         withMigrated $ \run -> do
           let
@@ -62,9 +72,12 @@ tests =
           oracle @?= [hex digest]
     , testCase "ON CONFLICT (name) DO NOTHING: a taken name inserts nothing and says so" $
         withMigrated $ \run -> do
-          first <- run (insertEngineer "11111111-1111-4111-8111-111111111111" "ada")
-          second <- run (insertEngineer "22222222-2222-4222-8222-222222222222" "ada")
-          other <- run (insertEngineer "33333333-3333-4333-8333-333333333333" "grace")
+          ada <- identity "11111111-1111-4111-8111-111111111111"
+          ada2 <- identity "22222222-2222-4222-8222-222222222222"
+          grace <- identity "33333333-3333-4333-8333-333333333333"
+          first <- run (insertEngineer ada "ada")
+          second <- run (insertEngineer ada2 "ada")
+          other <- run (insertEngineer grace "grace")
           (first, second, other) @?= (True, False, True)
           names <- run (textQuery "SELECT name AS v FROM lockstep_engineers ORDER BY name")
           names @?= ["ada", "grace"]
@@ -82,8 +95,7 @@ tests =
           (revoked, revokedAgain) @?= (1, 0)
     , testCase "optimistic concurrency: a stale revision changes nothing; the expected one changes the row and adds one" $
         withMigrated $ \run -> do
-          let
-            projectId = "44444444-4444-4444-8444-444444444444"
+          projectId <- identity "44444444-4444-4444-8444-444444444444"
           run (insertProject projectId "compliance-project-0001" "Compliance" "outcome" (T.replicate 64 "a"))
           stale <- run (updateProjectSetup projectId 2 SetupFailed (Just "refused-x") Nothing Nothing Nothing)
           current <- run (updateProjectSetup projectId 1 SetupFailed (Just "refused-x") Nothing Nothing Nothing)

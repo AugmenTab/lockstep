@@ -11,8 +11,7 @@ few SQL expressions Orville has no typed constructor for are named here once.
 -}
 module Lockstep.Persistence.Fields
   ( -- * Field types
-    uuidField
-  , digestField
+    digestField
   , hexDigest
   , codeField
 
@@ -69,20 +68,6 @@ import Orville.PostgreSQL.Marshall.SqlMarshaller qualified as SqlMarshaller
 import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
 import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
 import Orville.PostgreSQL.Schema.TableDefinition qualified as TableDefinition
-
-{- | A @uuid@ column whose values Lockstep carries as their canonical text
-(lowercase, hyphenated). Parameters are sent as untyped text, so PostgreSQL
-parses them as @uuid@ (a malformed value is refused by the server, as the
-former @CAST(... AS uuid)@ was), and values come back in the same text form
-@id::text@ produced.
--}
-uuidField :: String -> O.FieldDefinition O.NotNull T.Text
-uuidField =
-  O.fieldOfType
-    O.unboundedText
-      { O.sqlTypeExpr = Expr.uuid
-      , O.sqlTypeOid = O.sqlTypeOid O.uuid
-      }
 
 {- | A @bytea@ column holding a digest. Orville 1.1 has no @bytea@ type, so it
 is defined here over PostgreSQL's text format: values are sent as @\\x@ hex

@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeFamilies #-}
+
 {- | Storage for coding transactions (contract C-P4.6 T5): the transaction's
 head row, its immutable records, and its invocations (recorded before they
 start, finished exactly once; the migration's triggers refuse anything else).
@@ -39,7 +41,9 @@ import Orville.PostgreSQL qualified as O
 import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
 
+import Lockstep.Kernel.Identity (InvocationId (..), ProjectId, RepositoryId, TaskId, TransactionId (..), WorkOrderId)
 import Lockstep.Kernel.Transaction (Stage, parseStage, stageName)
+import Lockstep.Persistence.Entity (EntityKey, Table, foreignKeyTo, keyField, mkEntityTable)
 import Lockstep.Persistence.Execution
   ( admissionIdField
   , admissionProjectField
@@ -67,14 +71,15 @@ import Lockstep.Persistence.Fields
   , setExpression
   , setNow
   , tableReference
-  , uuidField
   )
+import Lockstep.Persistence.Ledger (workOrderIdField, workOrderTable)
+import Lockstep.Persistence.Tasks (taskIdField, taskTable)
 
 data TransactionRow
   = TransactionRow
-  { txRowId :: T.Text
-  , txRowWorkOrder :: T.Text
-  , txRowTask :: T.Text
+  { txRowId :: TransactionId
+  , txRowWorkOrder :: WorkOrderId
+  , txRowTask :: TaskId
   , txRowEngineer :: T.Text
   , txRowFolder :: T.Text
   , txRowState :: T.Text
@@ -92,9 +97,11 @@ data TransactionRow
   }
   deriving (Eq)
 
+type instance EntityKey TransactionRow = TransactionId
+
 data RecordRow
   = RecordRow
-  { recordRowTransaction :: T.Text
+  { recordRowTransaction :: TransactionId
   , recordRowSequence :: Int32
   , recordRowKind :: T.Text
   , recordRowPrincipal :: T.Text
@@ -106,8 +113,8 @@ data RecordRow
 
 data InvocationRow
   = InvocationRow
-  { invocationRowId :: T.Text
-  , invocationRowTransaction :: T.Text
+  { invocationRowId :: InvocationId
+  , invocationRowTransaction :: TransactionId
   , invocationRowStage :: T.Text
   , invocationRowWhat :: T.Text
   , invocationRowRunner :: T.Text
@@ -131,6 +138,8 @@ data InvocationRow
   }
   deriving (Eq)
 
+type instance EntityKey InvocationRow = InvocationId
+
 -- | How an invocation ended; written once.
 data Finish
   = Finish
@@ -151,13 +160,13 @@ data Finish
 
 -- Transactions ---------------------------------------------------------------------
 
-transactionTable :: O.TableDefinition (O.HasKey T.Text) TransactionRow TransactionRow
+transactionTable :: Table TransactionRow TransactionRow
 transactionTable =
-  O.mkTableDefinition "lockstep_transactions" (O.primaryKey txIdField) $
+  mkEntityTable "lockstep_transactions" txIdField $
     TransactionRow
       <$> O.marshallField txRowId txIdField
       <*> O.marshallField txRowWorkOrder txWorkOrderField
-      <*> O.marshallField txRowTask (uuidField "task_id")
+      <*> O.marshallField txRowTask (foreignKeyTo taskTable taskIdField "task_id")
       <*> O.marshallField txRowEngineer txEngineerField
       <*> O.marshallField txRowFolder (O.unboundedTextField "folder")
       <*> O.marshallField txRowState txStateField
@@ -173,13 +182,13 @@ transactionTable =
       <*> O.marshallField txRowContract txContractField
       <*> O.marshallField txRowRevision txRevisionField
 
-txIdField :: O.FieldDefinition O.NotNull T.Text
+txIdField :: O.FieldDefinition O.NotNull TransactionId
 txIdField =
-  uuidField "id"
+  keyField "id"
 
-txWorkOrderField :: O.FieldDefinition O.NotNull T.Text
+txWorkOrderField :: O.FieldDefinition O.NotNull WorkOrderId
 txWorkOrderField =
-  uuidField "work_order_id"
+  foreignKeyTo workOrderTable workOrderIdField "work_order_id"
 
 txEngineerField :: O.FieldDefinition O.NotNull T.Text
 txEngineerField =
@@ -256,16 +265,16 @@ insertTransaction :: O.MonadOrville m => TransactionRow -> m ()
 insertTransaction =
   O.insertEntity transactionTable
 
-findTransaction :: O.MonadOrville m => T.Text -> m (Maybe TransactionRow)
-findTransaction txId =
-  O.findFirstEntityBy transactionTable (O.where_ (O.fieldEquals txIdField txId))
+findTransaction :: O.MonadOrville m => TransactionId -> m (Maybe TransactionRow)
+findTransaction =
+  O.findEntity transactionTable
 
 -- | The transaction row, locked until the database transaction ends.
-lockTransaction :: O.MonadOrville m => T.Text -> m (Maybe TransactionRow)
+lockTransaction :: O.MonadOrville m => TransactionId -> m (Maybe TransactionRow)
 lockTransaction txId =
   O.findFirstEntityBy transactionTable (O.where_ (O.fieldEquals txIdField txId) <> forUpdate)
 
-findTransactionByWorkOrder :: O.MonadOrville m => T.Text -> m (Maybe TransactionRow)
+findTransactionByWorkOrder :: O.MonadOrville m => WorkOrderId -> m (Maybe TransactionRow)
 findTransactionByWorkOrder workOrder =
   O.findFirstEntityBy transactionTable (O.where_ (O.fieldEquals txWorkOrderField workOrder))
 
@@ -340,15 +349,15 @@ recordTable =
       <*> O.marshallField recordRowBody (O.unboundedTextField "body")
       <*> O.marshallField recordRowDigest (O.unboundedTextField "body_digest")
 
-recordTransactionField :: O.FieldDefinition O.NotNull T.Text
+recordTransactionField :: O.FieldDefinition O.NotNull TransactionId
 recordTransactionField =
-  uuidField "transaction_id"
+  foreignKeyTo transactionTable txIdField "transaction_id"
 
 recordSequenceField :: O.FieldDefinition O.NotNull Int32
 recordSequenceField =
   O.integerField "sequence"
 
-transactionRecords :: O.MonadOrville m => T.Text -> m [RecordRow]
+transactionRecords :: O.MonadOrville m => TransactionId -> m [RecordRow]
 transactionRecords txId =
   O.findEntitiesBy
     recordTable
@@ -361,9 +370,9 @@ appendRecord =
 
 -- Invocations ----------------------------------------------------------------------
 
-invocationTable :: O.TableDefinition (O.HasKey T.Text) InvocationRow InvocationRow
+invocationTable :: Table InvocationRow InvocationRow
 invocationTable =
-  O.mkTableDefinition "lockstep_invocations" (O.primaryKey invocationIdField) $
+  mkEntityTable "lockstep_invocations" invocationIdField $
     InvocationRow
       <$> O.marshallField invocationRowId invocationIdField
       <*> O.marshallField invocationRowTransaction invocationTransactionField
@@ -385,13 +394,13 @@ invocationTable =
       <*> O.marshallField invocationRowAnswer invocationAnswerField
       <*> O.marshallField invocationRowAnswerDigest invocationAnswerDigestField
 
-invocationIdField :: O.FieldDefinition O.NotNull T.Text
+invocationIdField :: O.FieldDefinition O.NotNull InvocationId
 invocationIdField =
-  uuidField "id"
+  keyField "id"
 
-invocationTransactionField :: O.FieldDefinition O.NotNull T.Text
+invocationTransactionField :: O.FieldDefinition O.NotNull TransactionId
 invocationTransactionField =
-  uuidField "transaction_id"
+  foreignKeyTo transactionTable txIdField "transaction_id"
 
 nullableText :: String -> O.FieldDefinition O.Nullable (Maybe T.Text)
 nullableText =
@@ -477,7 +486,7 @@ insertInvocation row =
       }
 
 -- | Writes how the invocation ended; a second finish is refused by the trigger.
-finishInvocation :: O.MonadOrville m => T.Text -> Finish -> m ()
+finishInvocation :: O.MonadOrville m => InvocationId -> Finish -> m ()
 finishInvocation invocationId f =
   O.updateFields
     invocationTable
@@ -497,13 +506,13 @@ finishInvocation invocationId f =
     )
     (Just (O.fieldEquals invocationIdField invocationId))
 
-unfinishedInvocations :: O.MonadOrville m => T.Text -> m [InvocationRow]
+unfinishedInvocations :: O.MonadOrville m => TransactionId -> m [InvocationRow]
 unfinishedInvocations txId =
   O.findEntitiesBy
     invocationTable
     (O.where_ (O.fieldEquals invocationTransactionField txId `O.andExpr` O.fieldIsNull invocationFinishedAtField) <> invocationOrder)
 
-transactionInvocations :: O.MonadOrville m => T.Text -> m [InvocationRow]
+transactionInvocations :: O.MonadOrville m => TransactionId -> m [InvocationRow]
 transactionInvocations txId =
   O.findEntitiesBy invocationTable (O.where_ (O.fieldEquals invocationTransactionField txId) <> invocationOrder)
 
@@ -512,10 +521,10 @@ transactionInvocations txId =
 -- | The bug admission of a Work Order and its project's enablement.
 data AdmissionFacts
   = AdmissionFacts
-  { factWorkOrder :: T.Text
-  , factTask :: T.Text
-  , factProject :: T.Text
-  , factRepository :: T.Text
+  { factWorkOrder :: WorkOrderId
+  , factTask :: TaskId
+  , factProject :: ProjectId
+  , factRepository :: RepositoryId
   , factEngineer :: T.Text
   , factFolder :: T.Text
   }
@@ -529,7 +538,7 @@ ofEnablement :: O.FieldDefinition nullability a -> O.QualifiedFieldDefinition O.
 ofEnablement =
   qualified enablementTable
 
-admissionFacts :: O.MonadOrville m => T.Text -> m (Maybe AdmissionFacts)
+admissionFacts :: O.MonadOrville m => WorkOrderId -> m (Maybe AdmissionFacts)
 admissionFacts workOrder =
   headMay
     <$> selectJoined
@@ -558,7 +567,7 @@ enablementColumn field =
   O.marshallQualifyFields (O.tableIdentifier enablementTable) (O.marshallReadOnlyField field)
 
 -- | Whether Lockstep has started on any bug of the project (C-P4.16).
-projectStarted :: O.MonadOrville m => T.Text -> m Bool
+projectStarted :: O.MonadOrville m => ProjectId -> m Bool
 projectStarted project =
   not . L.null
     <$> selectJoined
@@ -573,7 +582,7 @@ projectStarted project =
 order (C-P4.15 W1): admissions with no matching transaction in a left join
 (what @NOT EXISTS (SELECT 1 FROM lockstep_transactions ...)@ selected).
 -}
-pendingAdmissions :: O.MonadOrville m => m [T.Text]
+pendingAdmissions :: O.MonadOrville m => m [WorkOrderId]
 pendingAdmissions =
   selectJoined
     (O.marshallQualifyFields (O.tableIdentifier admissionTable) (O.marshallReadOnlyField admissionWorkOrderField))

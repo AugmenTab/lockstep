@@ -32,13 +32,12 @@ import Lockstep.Kernel.Effect
   , IdempotencyTerms (..)
   , IntentRequest (..)
   , LookupTerms (..)
-  , OperationId (..)
+  , OperationId
   , effectSpecClass
   , effectSpecName
   , mkEffectKey
   , mkEffectSpec
   )
-import Lockstep.Kernel.Identity (parseUuid, uuidText)
 import Lockstep.Persistence.Sandbox qualified as Store
 
 -- | The catalogue: name, class terms, retry budget.
@@ -82,10 +81,6 @@ destination runtime action = do
   result <- withDatabase runtime (O.withTransaction action)
   either (\reason -> throwIO (userError ("sandbox destination unavailable: " <> show reason))) pure result
 
-operationText :: OperationId -> T.Text
-operationText (OperationId u) =
-  uuidText u
-
 hang :: IO a
 hang =
   threadDelay 3600000000 >> throwIO (userError "a sandbox hang ended")
@@ -105,7 +100,7 @@ adapter runtime spec =
       maybe (throwIO (userError "unreadable sandbox parameters")) pure $
         T.stripPrefix (T.pack "mode=") parameters >>= \m -> L.lookup (T.unpack m) modes
     let
-      op = operationText operation
+      op = operation
       name = effectSpecName spec
     case effectSpecClass spec of
       Idempotent -> do
@@ -159,7 +154,7 @@ sandboxReconcilers :: DatabaseRuntime -> IO [EffectReconciler]
 sandboxReconcilers runtime =
   pure
     [ EffectReconciler spec $ \operation _ -> do
-        (outcome, _) <- destination runtime (Store.settleQueryable (operationText operation) (T.pack "fenced"))
+        (outcome, _) <- destination runtime (Store.settleQueryable operation (T.pack "fenced"))
         pure (if outcome == T.pack "applied" then LookupApplied (T.pack "applied") else LookupAbsent)
     | spec <- specs
     , effectSpecClass spec == Queryable
@@ -171,9 +166,4 @@ sandboxApplications runtime = do
   pure $
     case result of
       Left reason -> Left (LedgerUnavailable (T.pack (show reason)))
-      Right rows -> traverse row rows
- where
-  row (op, effect, n) =
-    case parseUuid op of
-      Right u -> Right (OperationId u, effect, fromIntegral n)
-      Left _ -> Left (LedgerIntegrity (T.pack "a sandbox application has an unreadable operation id"))
+      Right rows -> Right [(op, effect, fromIntegral n) | (op, effect, n) <- rows]

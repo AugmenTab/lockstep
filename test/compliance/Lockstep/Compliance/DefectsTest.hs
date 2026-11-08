@@ -29,11 +29,12 @@ import Lockstep.Application.Database (MigrateError (..), MigrateReport (..), Not
 import Lockstep.Application.Ledger (LedgerFailure (..), createTicket, decideTicket, noFaults)
 import Lockstep.Application.Profiles (sha256Hasher)
 import Lockstep.Application.Projects (ProjectView (..), findProject)
-import Lockstep.Compliance.Support (executeSql, textQuery, withFreshDatabase, withMigrated, withMigratedRuntime)
+import Lockstep.Compliance.Support (executeSql, identity, textQuery, withFreshDatabase, withMigrated, withMigratedRuntime)
 import Lockstep.Foundation.Digest (sha256Bytes, sha256Utf8)
 import Lockstep.Kernel.Conversation (HumanRequest, RequestInput (..), RequestKind (..), newHumanRequest, stepRequest, stepRequestChecked)
 import Lockstep.Kernel.Effect (ClassTerms (..), IdempotencyTerms (..), mkEffectSpec)
 import Lockstep.Kernel.EventCodec (TicketEvent (..), WorkOrderEvent (..), decodeWorkOrderEvent, encodeTicketEvent, encodeWorkOrderEvent, refusedTicketInputText, workOrderCreatedText)
+import Lockstep.Kernel.Identity (ProjectId (..), identityText)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText, mkContentDigest)
 import Lockstep.Kernel.Project (SetupState (..), parseSetupState, setupStateCode)
 import Lockstep.Kernel.Ticket (TicketInput (..))
@@ -83,8 +84,7 @@ tests =
         assertBool "the recorded text is never empty" (not (T.null (refusedTicketInputText TicketAccept)))
     , testCase "6. an integrity violation inside a transaction rolls the transaction back" $
         withMigrated $ \run -> do
-          let
-            subject = "5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a"
+          subject <- identity "5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a"
           result <- try (run (O.withTransaction (insertSubject subject "ticket" "draft" >> integrityViolation "compliance: a required row is missing"))) :: IO (Either IntegrityViolation ())
           result @?= Left (IntegrityViolation "compliance: a required row is missing")
           found <- run (subjectRow subject)
@@ -102,23 +102,21 @@ tests =
         assertBool "an unknown stage is a decoding failure" (isLeft (decodeStage "deploy"))
     , testCase "7b. a project row whose setup state is corrupt fails to read; it is not shown as organized" $
         withMigrated $ \run -> do
-          let
-            projectId = "66666666-6666-4666-8666-666666666666"
+          projectId <- identity "66666666-6666-4666-8666-666666666666"
           run (insertProject projectId "compliance-project-0007" "Compliance" "outcome" (T.replicate 64 "a"))
           run (executeSql "ALTER TABLE lockstep_projects DROP CONSTRAINT lockstep_projects_setup_check")
-          run (executeSql ("UPDATE lockstep_projects SET setup = 'bogus' WHERE id = '" <> T.unpack projectId <> "'"))
+          run (executeSql ("UPDATE lockstep_projects SET setup = 'bogus' WHERE id = '" <> T.unpack (identityText projectId) <> "'"))
           stored <- run (textQuery "SELECT setup AS v FROM lockstep_projects")
           stored @?= ["bogus"]
           read' <- try (run (fmap (fmap rowSetup) (findProjectById projectId))) :: IO (Either SomeException (Maybe SetupState))
           assertBool "the corrupt row did not read as a project" (isLeft read')
     , testCase "7c. through the application, a corrupt row is reported as corrupt data with its diagnosis (not organized, not 'unavailable')" $
         withMigratedRuntime $ \runtime run -> do
-          let
-            projectId = "77777777-7777-4777-8777-777777777777"
+          projectId <- identity "77777777-7777-4777-8777-777777777777"
           run (insertProject projectId "compliance-project-0077" "Compliance" "outcome" (T.replicate 64 "a"))
           run (executeSql "ALTER TABLE lockstep_projects DROP CONSTRAINT lockstep_projects_setup_check")
-          run (executeSql ("UPDATE lockstep_projects SET setup = 'bogus' WHERE id = '" <> T.unpack projectId <> "'"))
-          found <- findProject runtime projectId
+          run (executeSql ("UPDATE lockstep_projects SET setup = 'bogus' WHERE id = '" <> T.unpack (identityText projectId) <> "'"))
+          found <- findProject runtime (identityText projectId)
           case found of
             Left (DatabaseCorrupt detail) ->
               assertBool ("the diagnosis names the column and value: " <> T.unpack detail) ("setup" `T.isInfixOf` detail && "bogus" `T.isInfixOf` detail)

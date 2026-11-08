@@ -35,7 +35,8 @@ import System.Timeout (timeout)
 import Text.Show (Show)
 
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, reasonDiagnosis)
-import Lockstep.Application.Engine (Engine, StepReport (..), activeTransactionIds, advance, pendingWorkOrders, startTransaction)
+import Lockstep.Application.Engine (Engine, StepReport (..), activeTransactionIds, advanceTransaction, pendingWorkOrders, startTransactionFor)
+import Lockstep.Kernel.Identity (TransactionId (..), identityText)
 
 data EngineWorker
   = EngineWorker
@@ -67,7 +68,7 @@ enginePass runtime engine stopping = do
   started <-
     case pending of
       Left reason -> pure [(T.pack "pending work orders", Left (PassDatabase reason))]
-      Right workOrders -> [] <$ traverse_ (startTransaction runtime) workOrders
+      Right workOrders -> [] <$ traverse_ (startTransactionFor runtime) workOrders
   active <- activeTransactionIds runtime
   case active of
     Left reason -> pure (started <> [(T.pack "active transactions", Left (PassDatabase reason))])
@@ -84,9 +85,9 @@ enginePass runtime engine stopping = do
             stepped <- one txId
             (stepped :) <$> each rest
   one txId = do
-    stepped <- advance runtime engine txId
+    stepped <- advanceTransaction runtime engine txId
     pure
-      ( txId
+      ( identityText txId
       , case stepped of
           Left reason -> Left (PassDatabase reason)
           Right (Left code) -> Left (PassRefused code)

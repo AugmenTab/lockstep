@@ -15,13 +15,19 @@ import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
 
-import Lockstep.Persistence.Fields (ConflictTarget (..), insertIgnoringConflict, uuidField)
+import Lockstep.Kernel.Identity (Uuid)
+import Lockstep.Persistence.Entity (identityField)
+import Lockstep.Persistence.Fields (ConflictTarget (..), insertIgnoringConflict)
 
+{- | A receipt's subject is the stopped Work Order or the unknown step's
+operation, as its choice says: polymorphic, so it is held as the library
+'Uuid' (the schema declares no constraint on it).
+-}
 data ReceiptRow
   = ReceiptRow
   { receiptRowKey :: T.Text
   , receiptRowDigest :: T.Text
-  , receiptRowSubject :: T.Text
+  , receiptRowSubject :: Uuid
   , receiptRowChoice :: T.Text
   , receiptRowExpected :: Int32
   , receiptRowOutcome :: T.Text
@@ -52,17 +58,17 @@ payloadDigestField :: O.FieldDefinition O.NotNull T.Text
 payloadDigestField =
   O.unboundedTextField "payload_digest"
 
-subjectField :: O.FieldDefinition O.NotNull T.Text
+subjectField :: O.FieldDefinition O.NotNull Uuid
 subjectField =
-  uuidField "subject"
+  identityField "subject"
 
 outcomeField :: O.FieldDefinition O.NotNull T.Text
 outcomeField =
   O.unboundedTextField "outcome"
 
 -- | The identity column; only ordered by.
-identityField :: O.FieldDefinition O.NotNull Int64
-identityField =
+sequenceField :: O.FieldDefinition O.NotNull Int64
+sequenceField =
   O.bigIntegerField "id"
 
 findReceipt :: O.MonadOrville m => T.Text -> m (Maybe ReceiptRow)
@@ -70,12 +76,12 @@ findReceipt key =
   O.findFirstEntityBy receiptTable (O.where_ (O.fieldEquals keyField key))
 
 -- | The latest applied receipt for a subject, if any.
-latestReceiptFor :: O.MonadOrville m => T.Text -> m (Maybe ReceiptRow)
+latestReceiptFor :: O.MonadOrville m => Uuid -> m (Maybe ReceiptRow)
 latestReceiptFor subject =
   O.findFirstEntityBy
     receiptTable
     ( O.where_ (O.fieldEquals outcomeField (T.pack "applied") `O.andExpr` O.fieldEquals subjectField subject)
-        <> O.orderBy (O.orderByField identityField O.descendingOrder)
+        <> O.orderBy (O.orderByField sequenceField O.descendingOrder)
     )
 
 -- | Inserts the receipt unless one with its key exists; True when this call inserted it.
@@ -86,7 +92,7 @@ insertReceipt =
 -- lockstep_decision_attempts -----------------------------------------------------
 
 -- | (key, payload digest, subject).
-attemptTable :: O.TableDefinition O.NoKey (T.Text, T.Text, T.Text) (T.Text, T.Text, T.Text)
+attemptTable :: O.TableDefinition O.NoKey (T.Text, T.Text, Uuid) (T.Text, T.Text, Uuid)
 attemptTable =
   O.mkTableDefinitionWithoutKey "lockstep_decision_attempts" $
     (,,)
@@ -100,6 +106,6 @@ attemptDigest key =
   fmap (\(_, digest, _) -> digest) <$> O.findFirstEntityBy attemptTable (O.where_ (O.fieldEquals keyField key))
 
 -- | Records that an attempt with this key starts now; True when this call recorded it.
-insertAttempt :: O.MonadOrville m => T.Text -> T.Text -> T.Text -> m Bool
+insertAttempt :: O.MonadOrville m => T.Text -> T.Text -> Uuid -> m Bool
 insertAttempt key digest subject =
   insertIgnoringConflict (ConflictOn "idempotency_key") attemptTable (key, digest, subject)

@@ -57,6 +57,38 @@ passed 16/16 (`.local/td-lifecycle-rerun.log`); no change here touches either fi
 before `write_result`, or the test waiting for the `end` line (both are protected files).
 lockstep-compliance **34/34** (`.local/td-compliance-2.log`).
 
+## Increment B — identity
+
+- **B1** (`5947b7b`): Kernel identities over `Data.UUID.Types` (`uuid-types`); `parseUuid` is `UUID.fromText` plus the
+  canonical round-trip rule; generation is `Data.UUID.V4.nextRandom` (no hand-set bits, no nil fallback). New
+  `ProjectId`, `TaskId`, `TransactionId`, `InvocationId`, `HumanRequestId`; `parseIdentity` / `identityText` over
+  `Coercible Uuid`.
+- **B3/B4**: `Lockstep.Persistence.Entity` (Artificer's `Database.Entity`, adapted: `EntityKey` type family, `Table`,
+  `mkEntityTable`, `keyField`/`identityField` over `O.uuidField` via `O.coerceField`, `foreignKeyTo` derived from the
+  referenced table). Every keyed table is keyed by its identity type; FK columns derived from the referenced table
+  except where the schema declares no constraint (decision logs, receipts' polymorphic subject, the sandbox's own
+  key) — each commented. Polymorphic subject columns are typed `Uuid` with their kind column. `Fields.uuidField`
+  (uuid carried as `Text`) removed. Application parses text once at each public entry (`parseIdentity`) with the
+  entry's existing refusal code; `canonicalId`, `validId`-style re-parsing and `uuidOf` removed.
+- **B5**: compliance `IdentityTest` (round trips per kind, non-canonical refused, version 4, a typed key through
+  PostgreSQL); compile-time negative fixture `.local/td-fixtures/IdConfusion.hs` rejects a `WorkOrderId` where a
+  `ProjectId` is required and a `TaskId` key on the project table (`.local/tdB-fixture.log`).
+- **Frozen-pinned Text boundaries** (Application records/functions the frozen suites construct or call with `Text`;
+  typed beneath, converted at the boundary; owner amendment request in the completion packet): `ProjectView.projectId`,
+  `findProject`/`connectProject*`; `NewTask.newTaskProject`/`newTaskDependencies`, `TaskEdit.editDependencies`,
+  `TaskView.taskId`/`taskProject`/`taskDependencies`, `createTask`/`editTask`/`decideTask`/`findTask`;
+  `Admission.*`, `Enablement.enablementProject`/`enablementRepository`, `enableExecution`/`admitBug`/
+  `executionStatus`/`findAdmission`; `TransactionView.viewId`/`viewWorkOrder`/`viewTask`, `InvocationView.invocationId`,
+  `startTransaction`/`advance`/`transactionView`/`transactionForWorkOrder`/`decideCompletion` (typed
+  `startTransactionFor`/`advanceTransaction` used internally); `StoredRequest.*`, `StoredMessage.messageRequest`,
+  `NewHumanRequest.newRequestWorkOrder`, `postMessage`/`conversation`; `RepositoryRecord.repositoryRecordId`;
+  `DecisionReceipt.receiptSubject`, `decidedReceipt`/`findDecision`; `ProjectChecks` entry points;
+  `LedgerView.RefusalLine` subject; Kernel `createsCycle` (Text), `decisionSubject`.
+- Behaviour change: `decidedReceipt` with non-canonical (upper-case) subject text is refused as `unavailable`
+  (PostgreSQL used to accept it); Web already refused such input.
+- Qualification (`scripts/check --integration`, working tree over `5947b7b`, `.local/td-check-B.log`): format, lint,
+  build, unit **870/870**, guard, integration **571/571**, backup/restore — all PASSED; compliance **38/38**.
+
 Behavioural differences (deliberate): an expected revision above `Int64` is refused (was wrapped); a Ledger revision
 or generation above `Int32` is refused before anything is written (was wrapped into a refusal or observation row); a
 corrupt setup or stage column is a read failure (was shown as organized / basis); `lockstep db migrate` prints

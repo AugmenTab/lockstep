@@ -40,6 +40,7 @@ import Lockstep.Application.Database
   )
 import Lockstep.Application.ProfileDocument (decodeProfileDocument)
 import Lockstep.Foundation.Digest (sha256Sized, sha256Utf8)
+import Lockstep.Kernel.Identity (RepositoryId)
 import Lockstep.Kernel.Profile
   ( Behaviour (..)
   , Hasher (..)
@@ -247,7 +248,7 @@ unknownProfile =
   refused (T.pack "profile-unknown") (T.pack "there is no such profile version")
 
 -- | Records a new default for the Engineer's repository.
-setRepositoryProfile :: DatabaseRuntime -> T.Text -> T.Text -> IO (Either NotReadyReason (Either ProfileFailure T.Text))
+setRepositoryProfile :: DatabaseRuntime -> T.Text -> T.Text -> IO (Either NotReadyReason (Either ProfileFailure RepositoryId))
 setRepositoryProfile runtime engineer profileId =
   whenReady runtime . withDatabase runtime . O.withTransaction $ do
     let

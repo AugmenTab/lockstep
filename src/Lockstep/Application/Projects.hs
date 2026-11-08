@@ -36,12 +36,12 @@ import Text.Show (Show)
 
 import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
 import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason, Readiness (..), SessionLock (..), checkReadiness, withDatabase, withSessionLock)
-import Lockstep.Application.Identity (newEngineerId, newUuid)
+import Lockstep.Application.Identity (newEngineerId, newIdentity)
 import Lockstep.Application.Profiles (sha256Hasher)
-import Lockstep.Application.Repositories (Observed, Refused (..), RepositoryRecord (..), addEngineerIn, observeRegistration, observedIdentity, registerObservedIn)
+import Lockstep.Application.Repositories (Observed, Refused (..), addEngineerIn, observeRegistration, observedIdentity, registerObservedIn)
 import Lockstep.Effects.ProjectFolders (childFolders, gitIdentity, isProjectFolder, makeProjectFolder)
 import Lockstep.Foundation.FolderProtocol (validFolderPath)
-import Lockstep.Kernel.Identity (parseUuid, uuidText)
+import Lockstep.Kernel.Identity (ProjectId (..), RepositoryId, identityText, parseIdentity)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
 import Lockstep.Kernel.Project
   ( FolderChoice (..)
@@ -116,7 +116,7 @@ data ProjectView
 viewOf :: Store.ProjectRow -> ProjectView
 viewOf row =
   ProjectView
-    { projectId = Store.rowId row
+    { projectId = identityText (Store.rowId row)
     , projectName = Store.rowName row
     , projectOutcome = Store.rowOutcome row
     , projectSetup = Store.rowSetup row
@@ -140,7 +140,7 @@ createProject runtime folders request =
       (Left e, _) -> pure (Right (Left (ruleErrorCode e)))
       (_, Left e) -> pure (Right (Left (ruleErrorCode e)))
       (Right name, Right outcome) -> do
-        projectUuid <- newUuid
+        newId <- newIdentity
         let
           choice = newProjectFolder request
           digest = sha256Text (projectRequestText name outcome choice)
@@ -164,8 +164,6 @@ createProject runtime folders request =
               if taken
                 then pure (Left (T.pack "project-name-taken"))
                 else do
-                  let
-                    newId = uuidText projectUuid
                   Store.insertProject newId (idempotencyKeyText (newProjectKey request)) (projectNameText name) (projectOutcomeText outcome) digest
                   row <- Store.findProjectById newId
                   pure (maybe (Left (T.pack "unknown-project")) (\r -> Right (r, True)) row)
@@ -213,9 +211,9 @@ in that window. The service never calls it.
 connectProjectAround :: (FilePath -> IO ()) -> ProjectFaults -> DatabaseRuntime -> ProjectFolders -> T.Text -> Int64 -> FolderChoice -> IO (Either NotReadyReason (Either T.Text ProjectView))
 connectProjectAround afterFolder faults runtime folders rawId expected choice =
   whenReady runtime $
-    case parseUuid rawId of
-      Left _ -> pure (Right (Left (T.pack "unknown-project")))
-      Right parsed -> connectLocked (Hooks afterFolder faults) runtime folders (uuidText parsed) expected choice
+    case parseIdentity rawId of
+      Nothing -> pure (Right (Left (T.pack "unknown-project")))
+      Just pid -> connectLocked (Hooks afterFolder faults) runtime folders pid expected choice
 
 -- | The test-only hooks of one connection attempt; the service uses 'noHooks'.
 data Hooks
@@ -229,10 +227,10 @@ noHooks =
 lock for the project; the project is read again under it, so a stale or
 already-connected request is answered before any side effect.
 -}
-connectLocked :: Hooks -> DatabaseRuntime -> ProjectFolders -> T.Text -> Int64 -> FolderChoice -> IO (Either NotReadyReason (Either T.Text ProjectView))
+connectLocked :: Hooks -> DatabaseRuntime -> ProjectFolders -> ProjectId -> Int64 -> FolderChoice -> IO (Either NotReadyReason (Either T.Text ProjectView))
 connectLocked hooks runtime folders pid expected choice = do
   locked <-
-    withSessionLock runtime ProjectConnectLock pid $ \_ -> do
+    withSessionLock runtime ProjectConnectLock (identityText pid) $ \_ -> do
       found <- withDatabase runtime (Store.findProjectById pid)
       case fmap (fmap viewOf) found of
         Left reason -> pure (Left reason)
@@ -241,7 +239,7 @@ connectLocked hooks runtime folders pid expected choice = do
           | projectSetup view == Connected -> pure (Right (Left (T.pack "already-connected")))
           | projectRevision view /= expected -> pure (Right (Left (T.pack "stale-revision")))
           | choice == DecideLater -> pure (Right (Right view))
-          | otherwise -> attempt hooks runtime folders view choice
+          | otherwise -> attempt hooks runtime folders pid view choice
   pure $
     case locked of
       Right result -> result
@@ -255,24 +253,24 @@ leaves none of them. A folder this attempt made stays whatever the outcome
 (C-C.R1 R6-1): once published it may already be someone else's, and a kept
 folder no project is connected to is offered again, so Try again can connect it.
 -}
-attempt :: Hooks -> DatabaseRuntime -> ProjectFolders -> ProjectView -> FolderChoice -> IO (Either NotReadyReason (Either T.Text ProjectView))
-attempt (Hooks afterFolder faults) runtime folders view choice = do
+attempt :: Hooks -> DatabaseRuntime -> ProjectFolders -> ProjectId -> ProjectView -> FolderChoice -> IO (Either NotReadyReason (Either T.Text ProjectView))
+attempt (Hooks afterFolder faults) runtime folders pid view choice = do
   let
     slug = either (const (T.pack "project")) projectSlug (mkProjectName (projectName view))
   folder <- chooseFolder runtime folders slug choice
   case folder of
-    Left code -> settle (recordIn view SetupFailed (Just code) Nothing (projectEngineer view) Nothing)
+    Left code -> settle (recordIn pid view SetupFailed (Just code) Nothing (projectEngineer view) Nothing)
     Right path -> do
       first <- observeRegistration path Nothing
       fallback <- observeRegistration path (Just (T.pack "origin"))
       afterFolder path
-      settle (connectIn view slug path first fallback)
+      settle (connectIn pid view slug path first fallback)
  where
   settle action = do
     committed <-
       withDatabase runtime . O.withTransaction $ do
         Store.lockProjects
-        current <- Store.findProjectById (projectId view)
+        current <- Store.findProjectById pid
         case current of
           Nothing -> pure (Left (T.pack "unknown-project"))
           Just row
@@ -281,8 +279,8 @@ attempt (Hooks afterFolder faults) runtime folders view choice = do
     faultAfterCommit faults committed
 
 -- | The Engineer, the registration and the recorded attempt, inside the attempt's transaction.
-connectIn :: ProjectView -> T.Text -> FilePath -> Observed -> Observed -> O.Orville (Either T.Text ProjectView)
-connectIn view slug path first fallback = do
+connectIn :: ProjectId -> ProjectView -> T.Text -> FilePath -> Observed -> Observed -> O.Orville (Either T.Text ProjectView)
+connectIn pid view slug path first fallback = do
   -- C-C.R1 R13b, R5-2, R6-2: under the projects lock, the folder must still be there and be
   -- the one the registrable observation saw (the first one if it succeeded, else the
   -- @origin@ fallback; the same physical Git directory, not merely the same path):
@@ -293,23 +291,23 @@ connectIn view slug path first fallback = do
     registrable = observedIdentity first <|> observedIdentity fallback
     replaced = isNothing current || (isJust registrable && current /= registrable)
   if not present || replaced
-    then recordIn view SetupFailed (Just (T.pack "folder-not-offered")) Nothing (projectEngineer view) Nothing
+    then recordIn pid view SetupFailed (Just (T.pack "folder-not-offered")) Nothing (projectEngineer view) Nothing
     else do
       engineer <- ensureEngineerIn view slug
       case engineer of
-        Left code -> recordIn view SetupFailed (Just code) Nothing (projectEngineer view) Nothing
+        Left code -> recordIn pid view SetupFailed (Just code) Nothing (projectEngineer view) Nothing
         Right name -> do
           registered <- registerIn name path first fallback
           case registered of
-            Left code -> recordIn view SetupFailed (Just code) Nothing (Just name) Nothing
-            Right repository -> recordIn view Connected Nothing (Just (T.pack path)) (Just name) (Just (repositoryRecordId repository))
+            Left code -> recordIn pid view SetupFailed (Just code) Nothing (Just name) Nothing
+            Right repositoryId -> recordIn pid view Connected Nothing (Just (T.pack path)) (Just name) (Just repositoryId)
 
 -- | Records the attempt at the revision it was read at; the new state.
-recordIn :: ProjectView -> SetupState -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> O.Orville (Either T.Text ProjectView)
-recordIn view setup refusal folder engineer repository = do
-  updated <- Store.updateProjectSetup (projectId view) (projectRevision view) setup refusal folder engineer repository
+recordIn :: ProjectId -> ProjectView -> SetupState -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> Maybe RepositoryId -> O.Orville (Either T.Text ProjectView)
+recordIn pid view setup refusal folder engineer repository = do
+  updated <- Store.updateProjectSetup pid (projectRevision view) setup refusal folder engineer repository
   if updated
-    then maybe (Left (T.pack "unknown-project")) (Right . viewOf) <$> Store.findProjectById (projectId view)
+    then maybe (Left (T.pack "unknown-project")) (Right . viewOf) <$> Store.findProjectById pid
     else pure (Left (T.pack "stale-revision"))
 
 -- | The folder to connect: an offered one, or a new one this attempt made.
@@ -354,7 +352,7 @@ one that observation saw; otherwise @folder-not-offered@ and nothing is
 registered. A refused observation registers nothing; its refusal is recorded
 as before.
 -}
-registerIn :: T.Text -> FilePath -> Observed -> Observed -> O.Orville (Either T.Text RepositoryRecord)
+registerIn :: T.Text -> FilePath -> Observed -> Observed -> O.Orville (Either T.Text RepositoryId)
 registerIn engineer path first fallback = do
   registered <- registerSame first
   case registered of
@@ -368,7 +366,7 @@ registerIn engineer path first fallback = do
     other -> pure (codeOf other)
  where
   codeOf =
-    either (Left . either id refusedCode) Right
+    either (Left . either id refusedCode) (Right . fst)
   registerSame observed =
     case observedIdentity observed of
       Nothing -> either (Left . Right) Right <$> registerObservedIn engineer observed
@@ -384,9 +382,9 @@ listProjects runtime =
 
 findProject :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe ProjectView))
 findProject runtime rawId =
-  case parseUuid rawId of
-    Left _ -> pure (Right Nothing)
-    Right parsed -> whenReady runtime (withDatabase runtime (fmap (fmap viewOf) (Store.findProjectById (uuidText parsed))))
+  case parseIdentity rawId of
+    Nothing -> pure (Right Nothing)
+    Just pid -> whenReady runtime (withDatabase runtime (fmap (fmap viewOf) (Store.findProjectById pid)))
 
 {- | Each direct child of the projects folder and each added folder that is a
 real directory with a real @.git@ directory, and that no project has connected.

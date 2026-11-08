@@ -111,7 +111,7 @@ project facts =
     { projectionTime = factTime facts
     , projectionTickets = [TicketLine t title state revision | (t, title, state, revision) <- factTickets facts]
     , projectionOrders = fmap order (factOrders facts)
-    , projectionRefusals = [RefusalLine s e p c code | (s, e, p, c, code) <- factRefusals facts]
+    , projectionRefusals = [RefusalLine (uuidText s) e p c code | (s, e, p, c, code) <- factRefusals facts]
     , projectionSchedule = factSchedule facts
     }
  where

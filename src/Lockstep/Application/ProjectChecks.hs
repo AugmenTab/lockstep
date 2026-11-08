@@ -36,7 +36,7 @@ import Lockstep.Application.Ledger (SchedulePreview (..), ledgerFailureCode, pre
 import Lockstep.Application.ProfileDocument (decodeProfileDocument, encodeProfileDocument)
 import Lockstep.Application.Profiles (loadStoredDefinition, sha256Hasher)
 import Lockstep.Application.Projects (ProjectView (..), findProject)
-import Lockstep.Kernel.Identity (WorkOrderId (..), uuidText)
+import Lockstep.Kernel.Identity (RepositoryId, WorkOrderId (..), identityText)
 import Lockstep.Kernel.Policy (checksLost)
 import Lockstep.Kernel.Profile
   ( Behaviour (..)
@@ -175,7 +175,7 @@ builtInChoice =
     basicDefinition
 
 -- | The project's repository, through its Engineer (C-P3.5): only a project with a folder has one.
-repositoryOf :: ProjectView -> O.Orville (Maybe T.Text)
+repositoryOf :: ProjectView -> O.Orville (Maybe RepositoryId)
 repositoryOf view =
   case projectEngineer view of
     Nothing -> pure Nothing
@@ -216,7 +216,7 @@ rulesFor current catalogRows kind =
                     }
 
 -- | L6: the project's queued orders, those that can start first in line order, then the others by priority and id.
-queueOf :: T.Text -> SchedulePreview -> [QueueEntry]
+queueOf :: RepositoryId -> SchedulePreview -> [QueueEntry]
 queueOf repository preview =
   let
     decision = previewDecision preview
@@ -231,8 +231,8 @@ queueOf repository preview =
     first <> L.sortOn (\e -> (Down (entryPriority e), entryOrder e)) rest
 
 orderText :: WorkOrderId -> T.Text
-orderText (WorkOrderId u) =
-  uuidText u
+orderText =
+  identityText
 
 projectChecks :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe ProjectChecks))
 projectChecks runtime pid = do

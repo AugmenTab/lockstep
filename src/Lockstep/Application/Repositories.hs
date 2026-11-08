@@ -46,7 +46,7 @@ import Lockstep.Application.Database
 import Lockstep.Application.Identity (newEngineerId, newRepositoryId)
 import Lockstep.Effects.Git (observeRepository)
 import Lockstep.Effects.ProjectFolders (gitIdentity)
-import Lockstep.Kernel.Identity (EngineerId (..), RepositoryId (..), parseUuid, uuidText)
+import Lockstep.Kernel.Identity (EngineerId, RepositoryId (..), identityText)
 import Lockstep.Kernel.Repository
   ( AuthoritativeRemote (..)
   , OwnedRepository (..)
@@ -130,7 +130,7 @@ addEngineer runtime name = do
 The caller checks readiness.
 -}
 addEngineerIn :: EngineerId -> T.Text -> O.Orville (Either Refused EngineerRecord)
-addEngineerIn engineerId@(EngineerId uuid) name = do
+addEngineerIn engineerId name = do
   let
     decision =
       Store.NewDecision
@@ -150,11 +150,11 @@ addEngineerIn engineerId@(EngineerId uuid) name = do
         (T.pack "engineer-name-invalid")
         (T.pack "an Engineer name is a-z followed by up to 39 of a-z, 0-9 and -")
     else do
-      inserted <- Store.insertEngineer (uuidText uuid) name
+      inserted <- Store.insertEngineer engineerId name
       if not inserted
         then refusedWith decision (T.pack "engineer-name-taken") (T.pack "an Engineer with this name exists")
         else do
-          _ <- record decision {Store.decisionEngineerId = Just (uuidText uuid)}
+          _ <- record decision {Store.decisionEngineerId = Just engineerId}
           pure (Right (EngineerRecord engineerId name))
 
 -- | A folder as Git showed it, read-only, before any registration transaction.
@@ -180,16 +180,17 @@ registerRepository runtime request = do
       pure (Left reason)
     Ready _ -> do
       observed <- observeRegistration (registrationPath request) (registrationRemote request)
-      withDatabase runtime . O.withTransaction $ registerObservedIn (registrationEngineer request) observed
+      withDatabase runtime . O.withTransaction $ fmap (fmap snd) (registerObservedIn (registrationEngineer request) observed)
 
 {- | Registration of an observed folder inside the caller's transaction, under
 the registration lock, with the same decision row (C-C.R1 R5). The caller
 checks readiness. This is the only ownership check, for the command line and a
 project's attempt alike (C-C.R1 R6-3); an attempt reaches it holding the
-projects lock (projects → repositories).
+projects lock (projects → repositories). The registered repository's identity
+comes back typed beside its record.
 -}
-registerObservedIn :: T.Text -> Observed -> O.Orville (Either Refused RepositoryRecord)
-registerObservedIn engineerName (Observed path remote repositoryId@(RepositoryId repositoryUuid) observed) = do
+registerObservedIn :: T.Text -> Observed -> O.Orville (Either Refused (RepositoryId, RepositoryRecord))
+registerObservedIn engineerName (Observed path remote repositoryId observed) = do
   let
     request = RegisterRequest engineerName path remote
   Store.lockRepositories
@@ -207,12 +208,12 @@ registerObservedIn engineerName (Observed path remote repositoryId@(RepositoryId
         , Store.decisionObservation = either (const Nothing) (Just . renderObservation) observed
         }
     refuse refusal = refusedWith decision (refusalCode refusal) (renderRefusal refusal)
-  case (engineer >>= fmap EngineerId . either (const Nothing) Just . parseUuid, observed) of
+  case (engineer, observed) of
     (Nothing, _) ->
       refusedWith decision (T.pack "unknown-engineer") (T.pack "there is no Engineer with this name")
     (Just _, Left refusal) ->
       refuse refusal
-    (Just engineerId@(EngineerId engineerUuid), Right observation) -> do
+    (Just engineerId, Right observation) -> do
       rows <- Store.activeRepositories
       let
         owned = mapMaybe ownedFromRow rows
@@ -223,10 +224,10 @@ registerObservedIn engineerName (Observed path remote repositoryId@(RepositoryId
             refuse refusal
           Right _ -> do
             let
-              row = rowFor (uuidText repositoryUuid) (uuidText engineerUuid) observation (registrationEngineer request)
+              row = rowFor repositoryId engineerId observation (registrationEngineer request)
             Store.insertRepository row (observationDigest observation)
-            _ <- record decision {Store.decisionRepositoryId = Just (uuidText repositoryUuid)}
-            pure (Right (recordFromRow row))
+            _ <- record decision {Store.decisionRepositoryId = Just repositoryId}
+            pure (Right (repositoryId, recordFromRow row))
 
 listRepositories :: DatabaseRuntime -> IO (Either NotReadyReason [RepositoryRecord])
 listRepositories runtime =
@@ -237,7 +238,7 @@ exactly one active repository, it is this one, and the physical identity of
 @<folder>/.git@ read now is the registered one. @ownership-invalid@ or
 @repository-changed@ otherwise.
 -}
-ownershipHolds :: T.Text -> T.Text -> FilePath -> O.Orville (Either T.Text ())
+ownershipHolds :: RepositoryId -> T.Text -> FilePath -> O.Orville (Either T.Text ())
 ownershipHolds repositoryId engineer folder = do
   rows <- Store.activeRepositories
   current <- liftIO (gitIdentity folder)
@@ -251,7 +252,7 @@ ownershipHolds repositoryId engineer folder = do
         | otherwise -> Right ()
       _ -> Left (T.pack "ownership-invalid")
 
-rowFor :: T.Text -> T.Text -> RepositoryObservation -> T.Text -> Store.RepositoryRow
+rowFor :: RepositoryId -> EngineerId -> RepositoryObservation -> T.Text -> Store.RepositoryRow
 rowFor repositoryId ownerId observation ownerName =
   Store.RepositoryRow
     { Store.rowRepositoryId = repositoryId
@@ -281,8 +282,6 @@ parsePhysical key =
 -- | Rebuilds the Kernel's view of a stored repository; Nothing for a malformed row.
 ownedFromRow :: Store.RepositoryRow -> Maybe OwnedRepository
 ownedFromRow row = do
-  repositoryUuid <- either (const Nothing) Just (parseUuid (Store.rowRepositoryId row))
-  ownerUuid <- either (const Nothing) Just (parseUuid (Store.rowOwnerId row))
   physical <- parsePhysical (Store.rowPhysicalId row)
   authoritative <-
     case (Store.rowRemoteName row, Store.rowRemoteIdentity row) of
@@ -291,7 +290,7 @@ ownedFromRow row = do
       _ -> Nothing
   pure
     OwnedRepository
-      { ownedOwnership = Ownership (RepositoryId repositoryUuid) (EngineerId ownerUuid)
+      { ownedOwnership = Ownership (Store.rowRepositoryId row) (Store.rowOwnerId row)
       , ownedObservation =
           RepositoryObservation
             { observedCommonDir = Store.rowCommonDir row
@@ -314,7 +313,7 @@ identityFromKey key =
 recordFromRow :: Store.RepositoryRow -> RepositoryRecord
 recordFromRow row =
   RepositoryRecord
-    { repositoryRecordId = Store.rowRepositoryId row
+    { repositoryRecordId = identityText (Store.rowRepositoryId row)
     , repositoryRecordOwner = Store.rowOwnerName row
     , repositoryRecordAuthoritative = (,) <$> Store.rowRemoteName row <*> Store.rowRemoteIdentity row
     , repositoryRecordCommonDir = Store.rowCommonDir row

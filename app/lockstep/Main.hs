@@ -126,7 +126,7 @@ import Lockstep.Foundation.SystemConfig
   , renderConfigError
   )
 import Lockstep.Kernel.Effect (Intent (..), IntentRequest (..), OperationId (..), effectKeyText, intentStateName)
-import Lockstep.Kernel.Identity (EngineerId (..), TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..), parseUuid, uuidText)
+import Lockstep.Kernel.Identity (EngineerId (..), RepositoryId (..), TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..), identityText, parseUuid, uuidText)
 import Lockstep.Kernel.Reconciliation (Resolution (..))
 import Lockstep.Kernel.Ticket qualified as Ticket
 import Lockstep.Kernel.Transition qualified as K
@@ -583,7 +583,7 @@ repositorySetProfile engineer profileId runtime = do
   case result of
     Left reason -> notReady reason
     Right (Left failure) -> profileFailure failure
-    Right (Right repositoryId) -> putStrLn ("repository " <> T.unpack repositoryId <> " default-profile " <> profileId)
+    Right (Right repositoryId) -> putStrLn ("repository " <> T.unpack (identityText repositoryId) <> " default-profile " <> profileId)
 
 profileResolve :: ResolveArgs -> DatabaseRuntime -> IO ()
 profileResolve args runtime = do
