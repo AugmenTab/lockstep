@@ -115,6 +115,7 @@ library
       Lockstep.Persistence.Conversation
       Lockstep.Persistence.DecisionReceipts
       Lockstep.Persistence.Execution
+      Lockstep.Persistence.Fields
       Lockstep.Persistence.Jobs
       Lockstep.Persistence.Ledger
       Lockstep.Persistence.Migrate

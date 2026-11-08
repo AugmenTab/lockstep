@@ -18,11 +18,15 @@ module Lockstep.Persistence.Conversation
   , workOrderExists
   ) where
 
+import Data.List.NonEmpty (NonEmpty ((:|)))
+import Data.Maybe (isJust)
 import Data.Text qualified as T
+import Data.Time (UTCTime)
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
-import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
-import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
+
+import Lockstep.Persistence.Fields (forUpdate, setNow, uuidField)
+import Lockstep.Persistence.Ledger (workOrderIdField, workOrderTable)
 
 data RequestRow
   = RequestRow
@@ -59,40 +63,16 @@ data MessageRow
   }
   deriving (Eq)
 
-sql :: String -> RawSql.RawSql
-sql =
-  RawSql.fromString
+-- lockstep_human_requests -----------------------------------------------------
 
-text :: T.Text -> RawSql.RawSql
-text =
-  RawSql.parameter . SqlValue.fromText
-
-maybeText :: Maybe T.Text -> RawSql.RawSql
-maybeText =
-  maybe (sql "NULL") text
-
-int :: Int32 -> RawSql.RawSql
-int =
-  RawSql.parameter . SqlValue.fromInt32
-
-uuid :: T.Text -> RawSql.RawSql
-uuid value =
-  sql "CAST(" <> text value <> sql " AS uuid)"
-
-headMay :: [a] -> Maybe a
-headMay xs =
-  case xs of
-    [] -> Nothing
-    x : _ -> Just x
-
-requestMarshaller :: O.AnnotatedSqlMarshaller RequestRow RequestRow
-requestMarshaller =
-  O.annotateSqlMarshallerEmptyAnnotation $
+requestTable :: O.TableDefinition (O.HasKey T.Text) RequestRow RequestRow
+requestTable =
+  O.mkTableDefinition "lockstep_human_requests" (O.primaryKey requestIdField) $
     RequestRow
-      <$> O.marshallField requestRowId (O.unboundedTextField "id")
-      <*> O.marshallField requestRowKey (O.unboundedTextField "idempotency_key")
+      <$> O.marshallField requestRowId requestIdField
+      <*> O.marshallField requestRowKey requestKeyField
       <*> O.marshallField requestRowDigest (O.unboundedTextField "payload_digest")
-      <*> O.marshallField requestRowWorkOrder (O.unboundedTextField "work_order_id")
+      <*> O.marshallField requestRowWorkOrder (uuidField "work_order_id")
       <*> O.marshallField requestRowEngineer (O.unboundedTextField "engineer_name")
       <*> O.marshallField requestRowContract (O.nullableField (O.unboundedTextField "contract_digest"))
       <*> O.marshallField requestRowKind (O.unboundedTextField "kind")
@@ -100,89 +80,87 @@ requestMarshaller =
       <*> O.marshallField requestRowQuestion (O.unboundedTextField "question")
       <*> O.marshallField requestRowEvidence (O.unboundedTextField "evidence")
       <*> O.marshallField requestRowAuthority (O.unboundedTextField "requested_authority")
-      <*> O.marshallField requestRowRevision (O.integerField "revision")
-      <*> O.marshallField requestRowState (O.unboundedTextField "state")
-      <*> O.marshallField requestRowAnswer (O.nullableField (O.unboundedTextField "answer"))
+      <*> O.marshallField requestRowRevision requestRevisionField
+      <*> O.marshallField requestRowState requestStateField
+      <*> O.marshallField requestRowAnswer requestAnswerField
 
-selectRequests :: O.MonadOrville m => RawSql.RawSql -> m [RequestRow]
-selectRequests rest =
-  O.executeAndDecode
-    O.SelectQuery
-    ( sql "SELECT id::text AS id, idempotency_key, payload_digest, work_order_id::text AS work_order_id, engineer_name, contract_digest, kind, choices, question, evidence, requested_authority, revision, state, answer FROM lockstep_human_requests "
-        <> rest
-    )
-    requestMarshaller
+requestIdField :: O.FieldDefinition O.NotNull T.Text
+requestIdField =
+  uuidField "id"
+
+requestKeyField :: O.FieldDefinition O.NotNull T.Text
+requestKeyField =
+  O.unboundedTextField "idempotency_key"
+
+requestRevisionField :: O.FieldDefinition O.NotNull Int32
+requestRevisionField =
+  O.integerField "revision"
+
+requestStateField :: O.FieldDefinition O.NotNull T.Text
+requestStateField =
+  O.unboundedTextField "state"
+
+requestAnswerField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+requestAnswerField =
+  O.nullableField (O.unboundedTextField "answer")
+
+-- | Set by the database on insert; only ordered by.
+requestCreatedAtField :: O.FieldDefinition O.NotNull UTCTime
+requestCreatedAtField =
+  O.utcTimestampField "created_at"
+
+requestUpdatedAtField :: O.FieldDefinition O.NotNull UTCTime
+requestUpdatedAtField =
+  O.utcTimestampField "updated_at"
 
 findRequestByKey :: O.MonadOrville m => T.Text -> m (Maybe RequestRow)
 findRequestByKey key =
-  headMay <$> selectRequests (sql "WHERE idempotency_key = " <> text key)
+  O.findFirstEntityBy requestTable (O.where_ (O.fieldEquals requestKeyField key))
 
 findRequest :: O.MonadOrville m => T.Text -> m (Maybe RequestRow)
 findRequest requestId =
-  headMay <$> selectRequests (sql "WHERE id = " <> uuid requestId)
+  O.findFirstEntityBy requestTable (O.where_ (O.fieldEquals requestIdField requestId))
 
 -- | The request row, locked until the transaction ends.
 lockRequest :: O.MonadOrville m => T.Text -> m (Maybe RequestRow)
 lockRequest requestId =
-  headMay <$> selectRequests (sql "WHERE id = " <> uuid requestId <> sql " FOR UPDATE")
+  O.findFirstEntityBy requestTable (O.where_ (O.fieldEquals requestIdField requestId) <> forUpdate)
 
 openRequestRows :: O.MonadOrville m => m [RequestRow]
 openRequestRows =
-  selectRequests (sql "WHERE state = 'open' ORDER BY created_at, id")
+  O.findEntitiesBy
+    requestTable
+    ( O.where_ (O.fieldEquals requestStateField (T.pack "open"))
+        <> O.orderBy (O.orderByField requestCreatedAtField O.ascendingOrder <> O.orderByField requestIdField O.ascendingOrder)
+    )
 
 insertRequest :: O.MonadOrville m => RequestRow -> m ()
-insertRequest row =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_human_requests (id, idempotency_key, payload_digest, work_order_id, engineer_name, contract_digest, kind, choices, question, evidence, requested_authority, revision, state, answer) VALUES ("
-      <> uuid (requestRowId row)
-      <> sql ", "
-      <> text (requestRowKey row)
-      <> sql ", "
-      <> text (requestRowDigest row)
-      <> sql ", "
-      <> uuid (requestRowWorkOrder row)
-      <> sql ", "
-      <> text (requestRowEngineer row)
-      <> sql ", "
-      <> maybeText (requestRowContract row)
-      <> sql ", "
-      <> text (requestRowKind row)
-      <> sql ", "
-      <> text (requestRowChoices row)
-      <> sql ", "
-      <> text (requestRowQuestion row)
-      <> sql ", "
-      <> text (requestRowEvidence row)
-      <> sql ", "
-      <> text (requestRowAuthority row)
-      <> sql ", "
-      <> int (requestRowRevision row)
-      <> sql ", "
-      <> text (requestRowState row)
-      <> sql ", "
-      <> maybeText (requestRowAnswer row)
-      <> sql ")"
+insertRequest =
+  O.insertEntity requestTable
 
 -- | The request's revision, state and answer after a message.
 updateRequest :: O.MonadOrville m => T.Text -> Int32 -> T.Text -> Maybe T.Text -> m ()
 updateRequest requestId revision state answer =
-  O.executeVoid O.UpdateQuery $
-    sql "UPDATE lockstep_human_requests SET revision = "
-      <> int revision
-      <> sql ", state = "
-      <> text state
-      <> sql ", answer = "
-      <> maybeText answer
-      <> sql ", updated_at = now() WHERE id = "
-      <> uuid requestId
+  O.updateFields
+    requestTable
+    ( O.setField requestRevisionField revision
+        :| [ O.setField requestStateField state
+           , O.setField requestAnswerField answer
+           , setNow requestUpdatedAtField
+           ]
+    )
+    (Just (O.fieldEquals requestIdField requestId))
 
-messageMarshaller :: O.AnnotatedSqlMarshaller MessageRow MessageRow
-messageMarshaller =
-  O.annotateSqlMarshallerEmptyAnnotation $
+-- lockstep_conversation_messages ----------------------------------------------
+
+-- | Messages are keyed by an identity column the rows do not carry.
+messageTable :: O.TableDefinition O.NoKey MessageRow MessageRow
+messageTable =
+  O.mkTableDefinitionWithoutKey "lockstep_conversation_messages" $
     MessageRow
-      <$> O.marshallField messageRowRequest (O.unboundedTextField "request_id")
-      <*> O.marshallField messageRowSequence (O.integerField "sequence")
-      <*> O.marshallField messageRowKey (O.unboundedTextField "idempotency_key")
+      <$> O.marshallField messageRowRequest messageRequestField
+      <*> O.marshallField messageRowSequence messageSequenceField
+      <*> O.marshallField messageRowKey messageKeyField
       <*> O.marshallField messageRowDigest (O.unboundedTextField "payload_digest")
       <*> O.marshallField messageRowKind (O.unboundedTextField "kind")
       <*> O.marshallField messageRowPrincipal (O.unboundedTextField "principal")
@@ -192,54 +170,32 @@ messageMarshaller =
       <*> O.marshallField messageRowBody (O.unboundedTextField "body")
       <*> O.marshallField messageRowChoice (O.nullableField (O.unboundedTextField "choice"))
 
-selectMessages :: O.MonadOrville m => RawSql.RawSql -> m [MessageRow]
-selectMessages rest =
-  O.executeAndDecode
-    O.SelectQuery
-    ( sql "SELECT request_id::text AS request_id, sequence, idempotency_key, payload_digest, kind, principal, sender_evidence, channel, request_revision, body, choice FROM lockstep_conversation_messages "
-        <> rest
-    )
-    messageMarshaller
+messageRequestField :: O.FieldDefinition O.NotNull T.Text
+messageRequestField =
+  uuidField "request_id"
+
+messageSequenceField :: O.FieldDefinition O.NotNull Int32
+messageSequenceField =
+  O.integerField "sequence"
+
+messageKeyField :: O.FieldDefinition O.NotNull T.Text
+messageKeyField =
+  O.unboundedTextField "idempotency_key"
 
 findMessageByKey :: O.MonadOrville m => T.Text -> m (Maybe MessageRow)
 findMessageByKey key =
-  headMay <$> selectMessages (sql "WHERE idempotency_key = " <> text key)
+  O.findFirstEntityBy messageTable (O.where_ (O.fieldEquals messageKeyField key))
 
 requestMessages :: O.MonadOrville m => T.Text -> m [MessageRow]
 requestMessages requestId =
-  selectMessages (sql "WHERE request_id = " <> uuid requestId <> sql " ORDER BY sequence")
+  O.findEntitiesBy
+    messageTable
+    (O.where_ (O.fieldEquals messageRequestField requestId) <> O.orderBy (O.orderByField messageSequenceField O.ascendingOrder))
 
 insertMessage :: O.MonadOrville m => MessageRow -> m ()
-insertMessage row =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_conversation_messages (request_id, sequence, idempotency_key, payload_digest, kind, principal, sender_evidence, channel, request_revision, body, choice) VALUES ("
-      <> uuid (messageRowRequest row)
-      <> sql ", "
-      <> int (messageRowSequence row)
-      <> sql ", "
-      <> text (messageRowKey row)
-      <> sql ", "
-      <> text (messageRowDigest row)
-      <> sql ", "
-      <> text (messageRowKind row)
-      <> sql ", "
-      <> text (messageRowPrincipal row)
-      <> sql ", "
-      <> text (messageRowEvidence row)
-      <> sql ", "
-      <> text (messageRowChannel row)
-      <> sql ", "
-      <> int (messageRowRevision row)
-      <> sql ", "
-      <> text (messageRowBody row)
-      <> sql ", "
-      <> maybeText (messageRowChoice row)
-      <> sql ")"
+insertMessage =
+  O.insertEntity messageTable
 
 workOrderExists :: O.MonadOrville m => T.Text -> m Bool
 workOrderExists workOrder =
-  not . null
-    <$> O.executeAndDecode
-      O.SelectQuery
-      (sql "SELECT id::text AS id FROM lockstep_work_orders WHERE id = " <> uuid workOrder)
-      (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.unboundedTextField "id")))
+  isJust <$> O.findFirstEntityBy workOrderTable (O.where_ (O.fieldEquals workOrderIdField workOrder))

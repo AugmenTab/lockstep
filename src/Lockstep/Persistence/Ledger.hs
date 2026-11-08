@@ -20,10 +20,15 @@ module Lockstep.Persistence.Ledger
   , insertTicket
   , findTicket
   , updateTicket
+  , ticketTable
+  , ticketIdField
+  , ticketTitleField
   , WorkOrderRow (..)
   , insertWorkOrder
   , findWorkOrder
   , allWorkOrders
+  , workOrderTable
+  , workOrderIdField
   , insertDependency
   , dependenciesOf
   , SourceRow (..)
@@ -64,58 +69,34 @@ module Lockstep.Persistence.Ledger
   ) where
 
 import Control.Exception (throwIO)
+import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Maybe (isNothing)
 import Data.Text qualified as T
 import Data.Time (UTCTime)
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
+import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
-import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
 import System.IO.Error (userError)
 
-sql :: String -> RawSql.RawSql
-sql =
-  RawSql.fromString
-
-text :: T.Text -> RawSql.RawSql
-text =
-  RawSql.parameter . SqlValue.fromText
-
-int :: Int32 -> RawSql.RawSql
-int =
-  RawSql.parameter . SqlValue.fromInt32
-
-int64 :: Int64 -> RawSql.RawSql
-int64 =
-  RawSql.parameter . SqlValue.fromInt64
-
-bool :: Bool -> RawSql.RawSql
-bool =
-  RawSql.parameter . SqlValue.fromBool
-
-time :: UTCTime -> RawSql.RawSql
-time =
-  RawSql.parameter . SqlValue.fromUTCTime
-
-maybeOf :: (a -> RawSql.RawSql) -> Maybe a -> RawSql.RawSql
-maybeOf =
-  maybe (sql "NULL")
-
-uuid :: T.Text -> RawSql.RawSql
-uuid value =
-  sql "CAST(" <> text value <> sql " AS uuid)"
-
-commaSeparated :: [RawSql.RawSql] -> RawSql.RawSql
-commaSeparated =
-  RawSql.intercalate (sql ", ")
-
-marshal :: O.SqlMarshaller a a -> O.AnnotatedSqlMarshaller a a
-marshal =
-  O.annotateSqlMarshallerEmptyAnnotation
-
-uuidField :: String -> O.FieldDefinition O.NotNull T.Text
-uuidField =
-  O.unboundedTextField
+import Lockstep.Persistence.Fields
+  ( clockTimestamp
+  , forUpdate
+  , forUpdateOf
+  , headMay
+  , joinedOn
+  , qualified
+  , qualifiedEquals
+  , qualifiedOrder
+  , qualifiedReference
+  , selectJoined
+  , selectValue
+  , setExpression
+  , setNow
+  , tableReference
+  , uuidField
+  )
+import Lockstep.Persistence.Repositories (activeRepositoryCondition, repositoryIdField, repositoryOwnerField, repositoryTable)
 
 -- Subjects ---------------------------------------------------------------------
 
@@ -127,51 +108,75 @@ data SubjectRow
   , subjectRowState :: T.Text
   }
 
-subjectMarshaller :: O.AnnotatedSqlMarshaller SubjectRow SubjectRow
-subjectMarshaller =
-  marshal $
+subjectTable :: O.TableDefinition (O.HasKey T.Text) SubjectRow SubjectRow
+subjectTable =
+  O.mkTableDefinition "lockstep_subjects" (O.primaryKey subjectIdField) $
     SubjectRow
-      <$> O.marshallField subjectRowId (uuidField "id")
-      <*> O.marshallField subjectRowKind (O.unboundedTextField "kind")
-      <*> O.marshallField subjectRowRevision (O.integerField "revision")
-      <*> O.marshallField subjectRowState (O.unboundedTextField "state")
+      <$> O.marshallField subjectRowId subjectIdField
+      <*> O.marshallField subjectRowKind subjectKindField
+      <*> O.marshallField subjectRowRevision subjectRevisionField
+      <*> O.marshallField subjectRowState subjectStateField
 
-subjectColumns :: String
-subjectColumns =
-  "SELECT id::text AS id, kind, revision, state FROM lockstep_subjects "
+subjectIdField :: O.FieldDefinition O.NotNull T.Text
+subjectIdField =
+  uuidField "id"
+
+subjectKindField :: O.FieldDefinition O.NotNull T.Text
+subjectKindField =
+  O.unboundedTextField "kind"
+
+subjectRevisionField :: O.FieldDefinition O.NotNull Int32
+subjectRevisionField =
+  O.integerField "revision"
+
+subjectStateField :: O.FieldDefinition O.NotNull T.Text
+subjectStateField =
+  O.unboundedTextField "state"
+
+subjectCreatedAtField :: O.FieldDefinition O.NotNull UTCTime
+subjectCreatedAtField =
+  O.utcTimestampField "created_at"
+
+subjectUpdatedAtField :: O.FieldDefinition O.NotNull UTCTime
+subjectUpdatedAtField =
+  O.utcTimestampField "updated_at"
 
 -- | The subject row, locked until the transaction ends.
 lockSubject :: O.MonadOrville m => T.Text -> m (Maybe SubjectRow)
 lockSubject subjectId =
-  headMay
-    <$> O.executeAndDecode O.SelectQuery (sql subjectColumns <> sql "WHERE id = " <> uuid subjectId <> sql " FOR UPDATE") subjectMarshaller
+  O.findFirstEntityBy subjectTable (O.where_ (O.fieldEquals subjectIdField subjectId) <> forUpdate)
 
 -- | Every subject of one kind, by id, locked until the transaction ends.
 lockSubjectsOfKind :: O.MonadOrville m => T.Text -> m [SubjectRow]
 lockSubjectsOfKind kind =
-  O.executeAndDecode O.SelectQuery (sql subjectColumns <> sql "WHERE kind = " <> text kind <> sql " ORDER BY id FOR UPDATE") subjectMarshaller
+  O.findEntitiesBy
+    subjectTable
+    (O.where_ (O.fieldEquals subjectKindField kind) <> O.orderBy (O.orderByField subjectIdField O.ascendingOrder) <> forUpdate)
 
 -- | Every subject of one kind, by creation, without locking them (C-P2.8 V2).
 subjectsOfKind :: O.MonadOrville m => T.Text -> m [SubjectRow]
 subjectsOfKind kind =
-  O.executeAndDecode O.SelectQuery (sql subjectColumns <> sql "WHERE kind = " <> text kind <> sql " ORDER BY created_at, id") subjectMarshaller
+  O.findEntitiesBy
+    subjectTable
+    ( O.where_ (O.fieldEquals subjectKindField kind)
+        <> O.orderBy (O.orderByField subjectCreatedAtField O.ascendingOrder <> O.orderByField subjectIdField O.ascendingOrder)
+    )
 
 insertSubject :: O.MonadOrville m => T.Text -> T.Text -> T.Text -> m ()
 insertSubject subjectId kind state =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_subjects (id, kind, revision, state) VALUES ("
-      <> commaSeparated [uuid subjectId, text kind, int 1, text state]
-      <> sql ")"
+  O.insertEntity subjectTable (SubjectRow subjectId kind 1 state)
 
 updateSubject :: O.MonadOrville m => T.Text -> Int32 -> T.Text -> m ()
 updateSubject subjectId revision state =
-  O.executeVoid O.UpdateQuery $
-    sql "UPDATE lockstep_subjects SET revision = "
-      <> int revision
-      <> sql ", state = "
-      <> text state
-      <> sql ", updated_at = now() WHERE id = "
-      <> uuid subjectId
+  O.updateFields
+    subjectTable
+    (O.setField subjectRevisionField revision :| [O.setField subjectStateField state, setNow subjectUpdatedAtField])
+    (Just (O.fieldEquals subjectIdField subjectId))
+
+-- | An unlocked subject row (C-P2.9-R1 selection).
+subjectRow :: O.MonadOrville m => T.Text -> m (Maybe SubjectRow)
+subjectRow subjectId =
+  O.findFirstEntityBy subjectTable (O.where_ (O.fieldEquals subjectIdField subjectId))
 
 -- Events -----------------------------------------------------------------------
 
@@ -183,30 +188,51 @@ data EventRow
   , eventRowStateAfter :: T.Text
   }
 
+-- | An event row as stored: its identity, its subject and the event.
+data StoredEvent
+  = StoredEvent
+  { storedEventId :: Int64
+  , storedEvent :: EventRow
+  }
+
+eventTable :: O.TableDefinition O.NoKey (T.Text, EventRow) StoredEvent
+eventTable =
+  O.mkTableDefinitionWithoutKey "lockstep_events" $
+    (\eventId _subject event -> StoredEvent eventId event)
+      <$> O.marshallReadOnlyField eventIdField
+      <*> O.marshallField fst eventSubjectField
+      <*> ( EventRow
+              <$> O.marshallField (eventRowSequence . snd) eventSequenceField
+              <*> O.marshallField (eventRowPrincipal . snd) (O.unboundedTextField "principal")
+              <*> O.marshallField (eventRowCommand . snd) (O.unboundedTextField "command")
+              <*> O.marshallField (eventRowStateAfter . snd) (O.unboundedTextField "state_after")
+          )
+
+eventIdField :: O.FieldDefinition O.NotNull Int64
+eventIdField =
+  O.bigIntegerField "id"
+
+eventSubjectField :: O.FieldDefinition O.NotNull T.Text
+eventSubjectField =
+  uuidField "subject_id"
+
+eventSequenceField :: O.FieldDefinition O.NotNull Int32
+eventSequenceField =
+  O.integerField "sequence"
+
 insertEvent :: O.MonadOrville m => T.Text -> EventRow -> m (Maybe Int64)
 insertEvent subjectId row =
-  headMay
-    <$> O.executeAndDecode
-      O.InsertQuery
-      ( sql "INSERT INTO lockstep_events (subject_id, sequence, principal, command, state_after) VALUES ("
-          <> commaSeparated [uuid subjectId, int (eventRowSequence row), text (eventRowPrincipal row), text (eventRowCommand row), text (eventRowStateAfter row)]
-          <> sql ") RETURNING id"
-      )
-      (marshal (O.marshallField id (O.bigIntegerField "id")))
+  fmap storedEventId . headMay <$> O.insertAndReturnEntities eventTable ((subjectId, row) :| [])
 
 -- | The subject's events, in sequence order.
 subjectEvents :: O.MonadOrville m => T.Text -> m [EventRow]
 subjectEvents subjectId =
-  O.executeAndDecode
-    O.SelectQuery
-    (sql "SELECT sequence, principal, command, state_after FROM lockstep_events WHERE subject_id = " <> uuid subjectId <> sql " ORDER BY sequence")
-    ( marshal $
-        EventRow
-          <$> O.marshallField eventRowSequence (O.integerField "sequence")
-          <*> O.marshallField eventRowPrincipal (O.unboundedTextField "principal")
-          <*> O.marshallField eventRowCommand (O.unboundedTextField "command")
-          <*> O.marshallField eventRowStateAfter (O.unboundedTextField "state_after")
-    )
+  fmap storedEvent
+    <$> O.findEntitiesBy
+      eventTable
+      (O.where_ (O.fieldEquals eventSubjectField subjectId) <> O.orderBy (O.orderByField eventSequenceField O.ascendingOrder))
+
+-- Decision refusals ------------------------------------------------------------
 
 data NewRefusal
   = NewRefusal
@@ -217,27 +243,29 @@ data NewRefusal
   , refusalCode :: T.Text
   }
 
+refusalTable :: O.TableDefinition O.NoKey NewRefusal NewRefusal
+refusalTable =
+  O.mkTableDefinitionWithoutKey "lockstep_decision_refusals" $
+    NewRefusal
+      <$> O.marshallField refusalSubject (uuidField "subject_id")
+      <*> O.marshallField refusalExpectedRevision (O.integerField "expected_revision")
+      <*> O.marshallField refusalPrincipal (O.unboundedTextField "principal")
+      <*> O.marshallField refusalCommand (O.unboundedTextField "command")
+      <*> O.marshallField refusalCode (O.unboundedTextField "refusal_code")
+
 insertRefusal :: O.MonadOrville m => NewRefusal -> m ()
-insertRefusal r =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_decision_refusals (subject_id, expected_revision, principal, command, refusal_code) VALUES ("
-      <> commaSeparated [uuid (refusalSubject r), int (refusalExpectedRevision r), text (refusalPrincipal r), text (refusalCommand r), text (refusalCode r)]
-      <> sql ")"
+insertRefusal =
+  O.insertEntity refusalTable
 
 -- | Every decision refusal, oldest first (C-P2.8 V2).
 allRefusals :: O.MonadOrville m => m [NewRefusal]
 allRefusals =
-  O.executeAndDecode
-    O.SelectQuery
-    (sql "SELECT subject_id::text AS subject_id, expected_revision, principal, command, refusal_code FROM lockstep_decision_refusals ORDER BY id")
-    ( marshal $
-        NewRefusal
-          <$> O.marshallField refusalSubject (uuidField "subject_id")
-          <*> O.marshallField refusalExpectedRevision (O.integerField "expected_revision")
-          <*> O.marshallField refusalPrincipal (O.unboundedTextField "principal")
-          <*> O.marshallField refusalCommand (O.unboundedTextField "command")
-          <*> O.marshallField refusalCode (O.unboundedTextField "refusal_code")
-    )
+  O.findEntitiesBy refusalTable (O.orderBy (O.orderByField identityField O.ascendingOrder))
+
+-- | The @id bigint GENERATED ALWAYS AS IDENTITY@ column of the append-only tables; only ordered by.
+identityField :: O.FieldDefinition O.NotNull Int64
+identityField =
+  O.bigIntegerField "id"
 
 -- Tickets ----------------------------------------------------------------------
 
@@ -248,31 +276,40 @@ data TicketRow
   , ticketRowContentRevision :: Int32
   }
 
+ticketTable :: O.TableDefinition (O.HasKey T.Text) TicketRow TicketRow
+ticketTable =
+  O.mkTableDefinition "lockstep_tickets" (O.primaryKey ticketIdField) $
+    TicketRow
+      <$> O.marshallField ticketRowId ticketIdField
+      <*> O.marshallField ticketRowTitle ticketTitleField
+      <*> O.marshallField ticketRowContentRevision ticketContentRevisionField
+
+ticketIdField :: O.FieldDefinition O.NotNull T.Text
+ticketIdField =
+  uuidField "id"
+
+ticketTitleField :: O.FieldDefinition O.NotNull T.Text
+ticketTitleField =
+  O.unboundedTextField "title"
+
+ticketContentRevisionField :: O.FieldDefinition O.NotNull Int32
+ticketContentRevisionField =
+  O.integerField "content_revision"
+
 insertTicket :: O.MonadOrville m => T.Text -> T.Text -> m ()
 insertTicket ticketId title =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_tickets (id, title, content_revision) VALUES (" <> commaSeparated [uuid ticketId, text title, int 1] <> sql ")"
+  O.insertEntity ticketTable (TicketRow ticketId title 1)
 
 findTicket :: O.MonadOrville m => T.Text -> m (Maybe TicketRow)
 findTicket ticketId =
-  headMay <$> tickets (sql "WHERE id = " <> uuid ticketId)
-
-tickets :: O.MonadOrville m => RawSql.RawSql -> m [TicketRow]
-tickets condition =
-  O.executeAndDecode
-    O.SelectQuery
-    (sql "SELECT id::text AS id, title, content_revision FROM lockstep_tickets " <> condition)
-    ( marshal $
-        TicketRow
-          <$> O.marshallField ticketRowId (uuidField "id")
-          <*> O.marshallField ticketRowTitle (O.unboundedTextField "title")
-          <*> O.marshallField ticketRowContentRevision (O.integerField "content_revision")
-    )
+  O.findFirstEntityBy ticketTable (O.where_ (O.fieldEquals ticketIdField ticketId))
 
 updateTicket :: O.MonadOrville m => T.Text -> T.Text -> Int32 -> m ()
 updateTicket ticketId title contentRevision =
-  O.executeVoid O.UpdateQuery $
-    sql "UPDATE lockstep_tickets SET title = " <> text title <> sql ", content_revision = " <> int contentRevision <> sql " WHERE id = " <> uuid ticketId
+  O.updateFields
+    ticketTable
+    (O.setField ticketTitleField title :| [O.setField ticketContentRevisionField contentRevision])
+    (Just (O.fieldEquals ticketIdField ticketId))
 
 -- Work Orders ------------------------------------------------------------------
 
@@ -293,70 +330,66 @@ data WorkOrderRow
   , workOrderRowBindingDigest :: T.Text
   }
 
-insertWorkOrder :: O.MonadOrville m => WorkOrderRow -> m ()
-insertWorkOrder row =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_work_orders (id, kind, ticket_id, ticket_content_revision, repository_id, priority, admitted_at, classes, path_classes, non_behavioural_rationale, binding_approver, effective_digest, binding_digest) VALUES ("
-      <> commaSeparated
-        [ uuid (workOrderRowId row)
-        , text (workOrderRowKind row)
-        , uuid (workOrderRowTicket row)
-        , int (workOrderRowTicketRevision row)
-        , uuid (workOrderRowRepository row)
-        , int (workOrderRowPriority row)
-        , time (workOrderRowAdmittedAt row)
-        , text (workOrderRowClasses row)
-        , text (workOrderRowPathClasses row)
-        , maybeOf text (workOrderRowNonBehavioural row)
-        , text (workOrderRowApprover row)
-        , text (workOrderRowEffectiveDigest row)
-        , text (workOrderRowBindingDigest row)
-        ]
-      <> sql ")"
+workOrderTable :: O.TableDefinition (O.HasKey T.Text) WorkOrderRow WorkOrderRow
+workOrderTable =
+  O.mkTableDefinition "lockstep_work_orders" (O.primaryKey workOrderIdField) $
+    WorkOrderRow
+      <$> O.marshallField workOrderRowId workOrderIdField
+      <*> O.marshallField workOrderRowKind (O.unboundedTextField "kind")
+      <*> O.marshallField workOrderRowTicket (uuidField "ticket_id")
+      <*> O.marshallField workOrderRowTicketRevision (O.integerField "ticket_content_revision")
+      <*> O.marshallField workOrderRowRepository (uuidField "repository_id")
+      <*> O.marshallField workOrderRowPriority (O.integerField "priority")
+      <*> O.marshallField workOrderRowAdmittedAt (O.utcTimestampField "admitted_at")
+      <*> O.marshallField workOrderRowClasses (O.unboundedTextField "classes")
+      <*> O.marshallField workOrderRowPathClasses (O.unboundedTextField "path_classes")
+      <*> O.marshallField workOrderRowNonBehavioural (O.nullableField (O.unboundedTextField "non_behavioural_rationale"))
+      <*> O.marshallField workOrderRowApprover (O.unboundedTextField "binding_approver")
+      <*> O.marshallField workOrderRowEffectiveDigest (O.unboundedTextField "effective_digest")
+      <*> O.marshallField workOrderRowBindingDigest (O.unboundedTextField "binding_digest")
 
-workOrders :: O.MonadOrville m => RawSql.RawSql -> m [WorkOrderRow]
-workOrders condition =
-  O.executeAndDecode
-    O.SelectQuery
-    ( sql "SELECT id::text AS id, kind, ticket_id::text AS ticket_id, ticket_content_revision, repository_id::text AS repository_id, priority, admitted_at, classes, path_classes, non_behavioural_rationale, binding_approver, effective_digest, binding_digest FROM lockstep_work_orders "
-        <> condition
-    )
-    ( marshal $
-        WorkOrderRow
-          <$> O.marshallField workOrderRowId (uuidField "id")
-          <*> O.marshallField workOrderRowKind (O.unboundedTextField "kind")
-          <*> O.marshallField workOrderRowTicket (uuidField "ticket_id")
-          <*> O.marshallField workOrderRowTicketRevision (O.integerField "ticket_content_revision")
-          <*> O.marshallField workOrderRowRepository (uuidField "repository_id")
-          <*> O.marshallField workOrderRowPriority (O.integerField "priority")
-          <*> O.marshallField workOrderRowAdmittedAt (O.utcTimestampField "admitted_at")
-          <*> O.marshallField workOrderRowClasses (O.unboundedTextField "classes")
-          <*> O.marshallField workOrderRowPathClasses (O.unboundedTextField "path_classes")
-          <*> O.marshallField workOrderRowNonBehavioural (O.nullableField (O.unboundedTextField "non_behavioural_rationale"))
-          <*> O.marshallField workOrderRowApprover (O.unboundedTextField "binding_approver")
-          <*> O.marshallField workOrderRowEffectiveDigest (O.unboundedTextField "effective_digest")
-          <*> O.marshallField workOrderRowBindingDigest (O.unboundedTextField "binding_digest")
-    )
+workOrderIdField :: O.FieldDefinition O.NotNull T.Text
+workOrderIdField =
+  uuidField "id"
+
+insertWorkOrder :: O.MonadOrville m => WorkOrderRow -> m ()
+insertWorkOrder =
+  O.insertEntity workOrderTable
 
 findWorkOrder :: O.MonadOrville m => T.Text -> m (Maybe WorkOrderRow)
 findWorkOrder workOrderId =
-  headMay <$> workOrders (sql "WHERE id = " <> uuid workOrderId)
+  O.findFirstEntityBy workOrderTable (O.where_ (O.fieldEquals workOrderIdField workOrderId))
 
 allWorkOrders :: O.MonadOrville m => m [WorkOrderRow]
 allWorkOrders =
-  workOrders (sql "ORDER BY id")
+  O.findEntitiesBy workOrderTable (O.orderBy (O.orderByField workOrderIdField O.ascendingOrder))
+
+-- | (Work Order, the Work Order it depends on).
+dependencyTable :: O.TableDefinition O.NoKey (T.Text, T.Text) (T.Text, T.Text)
+dependencyTable =
+  O.mkTableDefinitionWithoutKey "lockstep_work_order_dependencies" $
+    (,)
+      <$> O.marshallField fst dependencyWorkOrderField
+      <*> O.marshallField snd dependencyDependsOnField
+
+dependencyWorkOrderField :: O.FieldDefinition O.NotNull T.Text
+dependencyWorkOrderField =
+  uuidField "work_order_id"
+
+dependencyDependsOnField :: O.FieldDefinition O.NotNull T.Text
+dependencyDependsOnField =
+  uuidField "depends_on"
 
 insertDependency :: O.MonadOrville m => T.Text -> T.Text -> m ()
 insertDependency workOrderId dependsOn =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_work_order_dependencies (work_order_id, depends_on) VALUES (" <> commaSeparated [uuid workOrderId, uuid dependsOn] <> sql ")"
+  O.insertEntity dependencyTable (workOrderId, dependsOn)
 
 dependenciesOf :: O.MonadOrville m => T.Text -> m [T.Text]
 dependenciesOf workOrderId =
-  O.executeAndDecode
-    O.SelectQuery
-    (sql "SELECT depends_on::text AS v FROM lockstep_work_order_dependencies WHERE work_order_id = " <> uuid workOrderId <> sql " ORDER BY depends_on")
-    (marshal (O.marshallField id (uuidField "v")))
+  fmap snd
+    <$> O.findEntitiesBy
+      dependencyTable
+      (O.where_ (O.fieldEquals dependencyWorkOrderField workOrderId) <> O.orderBy (O.orderByField dependencyDependsOnField O.ascendingOrder))
 
 data SourceRow
   = SourceRow
@@ -366,26 +399,38 @@ data SourceRow
   , sourceRowDigest :: T.Text
   }
 
+-- | (Work Order, position, source); read back as the source alone.
+sourceTable :: O.TableDefinition O.NoKey (T.Text, Int32, SourceRow) SourceRow
+sourceTable =
+  O.mkTableDefinitionWithoutKey "lockstep_work_order_profile_sources" $
+    (\_workOrder _position source -> source)
+      <$> O.marshallField (\(w, _, _) -> w) sourceWorkOrderField
+      <*> O.marshallField (\(_, p, _) -> p) sourcePositionField
+      <*> ( SourceRow
+              <$> O.marshallField (\(_, _, s) -> sourceRowLevel s) (O.unboundedTextField "level")
+              <*> O.marshallField (\(_, _, s) -> sourceRowProfile s) (O.unboundedTextField "profile_id")
+              <*> O.marshallField (\(_, _, s) -> sourceRowVersion s) (O.integerField "version")
+              <*> O.marshallField (\(_, _, s) -> sourceRowDigest s) (O.unboundedTextField "digest")
+          )
+
+sourceWorkOrderField :: O.FieldDefinition O.NotNull T.Text
+sourceWorkOrderField =
+  uuidField "work_order_id"
+
+sourcePositionField :: O.FieldDefinition O.NotNull Int32
+sourcePositionField =
+  O.integerField "position"
+
 insertSource :: O.MonadOrville m => T.Text -> Int32 -> SourceRow -> m ()
 insertSource workOrderId position row =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_work_order_profile_sources (work_order_id, position, level, profile_id, version, digest) VALUES ("
-      <> commaSeparated [uuid workOrderId, int position, text (sourceRowLevel row), text (sourceRowProfile row), int (sourceRowVersion row), text (sourceRowDigest row)]
-      <> sql ")"
+  O.insertEntity sourceTable (workOrderId, position, row)
 
 -- | The bound sources, in their order.
 sourcesOf :: O.MonadOrville m => T.Text -> m [SourceRow]
 sourcesOf workOrderId =
-  O.executeAndDecode
-    O.SelectQuery
-    (sql "SELECT level, profile_id, version, digest FROM lockstep_work_order_profile_sources WHERE work_order_id = " <> uuid workOrderId <> sql " ORDER BY position")
-    ( marshal $
-        SourceRow
-          <$> O.marshallField sourceRowLevel (O.unboundedTextField "level")
-          <*> O.marshallField sourceRowProfile (O.unboundedTextField "profile_id")
-          <*> O.marshallField sourceRowVersion (O.integerField "version")
-          <*> O.marshallField sourceRowDigest (O.unboundedTextField "digest")
-    )
+  O.findEntitiesBy
+    sourceTable
+    (O.where_ (O.fieldEquals sourceWorkOrderField workOrderId) <> O.orderBy (O.orderByField sourcePositionField O.ascendingOrder))
 
 -- Intents ----------------------------------------------------------------------
 
@@ -417,102 +462,176 @@ data IntentRow
   , intentRowFirstDispatched :: Maybe UTCTime
   }
 
+{- | The intent table's own columns. Its rows carry their subject's kind,
+which lives in @lockstep_subjects@, so the table reads a row still waiting
+for that kind; 'intentRows' supplies it from the join.
+-}
+intentTable :: O.TableDefinition (O.HasKey T.Text) IntentRow (T.Text -> IntentRow)
+intentTable =
+  O.mkTableDefinition "lockstep_effect_intents" (O.primaryKey intentOperationField) intentColumns
+
+intentColumns :: O.SqlMarshaller IntentRow (T.Text -> IntentRow)
+intentColumns =
+  ( \operation subject basis key event spec class_ budget lifetime refuses authoritative excludesLate parameters digest state generation dispatches leaseOwner leaseUntil outcome settled activation firstDispatched kind ->
+      IntentRow operation subject kind basis key event spec class_ budget lifetime refuses authoritative excludesLate parameters digest state generation dispatches leaseOwner leaseUntil outcome settled activation firstDispatched
+  )
+    <$> O.marshallField intentRowOperation intentOperationField
+    <*> O.marshallField intentRowSubject intentSubjectField
+    <*> O.marshallField intentRowBasisRevision (O.integerField "basis_revision")
+    <*> O.marshallField intentRowKey (O.unboundedTextField "effect_key")
+    <*> O.marshallField intentRowEvent (O.bigIntegerField "event_id")
+    <*> O.marshallField intentRowSpecName (O.unboundedTextField "spec_name")
+    <*> O.marshallField intentRowClass intentClassField
+    <*> O.marshallField intentRowBudget intentBudgetField
+    <*> O.marshallField intentRowKeyLifetime (O.nullableField (O.bigIntegerField "key_lifetime_seconds"))
+    <*> O.marshallField intentRowRefusesChanged (O.nullableField (O.booleanField "refuses_changed_parameters"))
+    <*> O.marshallField intentRowLookupAuthoritative (O.nullableField (O.booleanField "lookup_authoritative"))
+    <*> O.marshallField intentRowLookupExcludesLate (O.nullableField (O.booleanField "lookup_excludes_late_application"))
+    <*> O.marshallField intentRowParameters (O.unboundedTextField "parameters")
+    <*> O.marshallField intentRowParametersDigest (O.unboundedTextField "parameters_digest")
+    <*> O.marshallField intentRowState intentStateField
+    <*> O.marshallField intentRowGeneration intentGenerationField
+    <*> O.marshallField intentRowDispatches intentDispatchesField
+    <*> O.marshallField intentRowLeaseOwner intentLeaseOwnerField
+    <*> O.marshallField intentRowLeaseUntil intentLeaseUntilField
+    <*> O.marshallField intentRowOutcome intentOutcomeField
+    <*> O.marshallField intentRowSettledApplied intentSettledField
+    <*> O.marshallField intentRowActivation intentActivationField
+    <*> O.marshallField intentRowFirstDispatched intentFirstDispatchedField
+
+intentOperationField :: O.FieldDefinition O.NotNull T.Text
+intentOperationField =
+  uuidField "operation_id"
+
+intentSubjectField :: O.FieldDefinition O.NotNull T.Text
+intentSubjectField =
+  uuidField "subject_id"
+
+intentClassField :: O.FieldDefinition O.NotNull T.Text
+intentClassField =
+  O.unboundedTextField "effect_class"
+
+intentBudgetField :: O.FieldDefinition O.NotNull Int32
+intentBudgetField =
+  O.integerField "retry_budget"
+
+intentStateField :: O.FieldDefinition O.NotNull T.Text
+intentStateField =
+  O.unboundedTextField "state"
+
+intentGenerationField :: O.FieldDefinition O.NotNull Int32
+intentGenerationField =
+  O.integerField "generation"
+
+intentDispatchesField :: O.FieldDefinition O.NotNull Int32
+intentDispatchesField =
+  O.integerField "dispatches"
+
+intentLeaseOwnerField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+intentLeaseOwnerField =
+  O.nullableField (O.unboundedTextField "lease_owner")
+
+intentLeaseUntilField :: O.FieldDefinition O.Nullable (Maybe UTCTime)
+intentLeaseUntilField =
+  O.nullableField (O.utcTimestampField "lease_until")
+
+intentOutcomeField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+intentOutcomeField =
+  O.nullableField (O.unboundedTextField "outcome_text")
+
+intentSettledField :: O.FieldDefinition O.Nullable (Maybe Bool)
+intentSettledField =
+  O.nullableField (O.booleanField "settled_applied")
+
+intentActivationField :: O.FieldDefinition O.NotNull Int32
+intentActivationField =
+  O.integerField "activation_generation"
+
+intentFirstDispatchedField :: O.FieldDefinition O.Nullable (Maybe UTCTime)
+intentFirstDispatchedField =
+  O.nullableField (O.utcTimestampField "first_dispatched_at")
+
+intentUpdatedAtField :: O.FieldDefinition O.NotNull UTCTime
+intentUpdatedAtField =
+  O.utcTimestampField "updated_at"
+
+{- | Inserts the intent's identity, spec, parameters and starting lifecycle.
+Its lease, outcome, settlement and first dispatch start empty, whatever the
+row says, as the columns' defaults always made them.
+-}
 insertIntent :: O.MonadOrville m => IntentRow -> m ()
 insertIntent row =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_effect_intents (operation_id, subject_id, basis_revision, effect_key, event_id, spec_name, effect_class, retry_budget, key_lifetime_seconds, refuses_changed_parameters, lookup_authoritative, lookup_excludes_late_application, parameters, parameters_digest, state, generation, dispatches, activation_generation) VALUES ("
-      <> commaSeparated
-        [ uuid (intentRowOperation row)
-        , uuid (intentRowSubject row)
-        , int (intentRowBasisRevision row)
-        , text (intentRowKey row)
-        , int64 (intentRowEvent row)
-        , text (intentRowSpecName row)
-        , text (intentRowClass row)
-        , int (intentRowBudget row)
-        , maybeOf int64 (intentRowKeyLifetime row)
-        , maybeOf bool (intentRowRefusesChanged row)
-        , maybeOf bool (intentRowLookupAuthoritative row)
-        , maybeOf bool (intentRowLookupExcludesLate row)
-        , text (intentRowParameters row)
-        , text (intentRowParametersDigest row)
-        , text (intentRowState row)
-        , int (intentRowGeneration row)
-        , int (intentRowDispatches row)
-        , int (intentRowActivation row)
-        ]
-      <> sql ")"
+  O.insertEntity
+    intentTable
+    row
+      { intentRowLeaseOwner = Nothing
+      , intentRowLeaseUntil = Nothing
+      , intentRowOutcome = Nothing
+      , intentRowSettledApplied = Nothing
+      , intentRowFirstDispatched = Nothing
+      }
 
 -- | The intent row with its subject's kind, locked until the transaction ends.
 lockIntent :: O.MonadOrville m => T.Text -> m (Maybe IntentRow)
 lockIntent operation =
-  headMay <$> intentRows (sql "WHERE i.operation_id = " <> uuid operation <> sql " FOR UPDATE OF i")
+  headMay <$> intentRows (O.where_ (qualifiedEquals (qualified intentTable intentOperationField) operation) <> forUpdateOf intentTable)
 
 -- | The intent row, without locking it (C-P2.9-R1 selection).
 findIntent :: O.MonadOrville m => T.Text -> m (Maybe IntentRow)
 findIntent operation =
-  headMay <$> intentRows (sql "WHERE i.operation_id = " <> uuid operation)
+  headMay <$> intentRows (O.where_ (qualifiedEquals (qualified intentTable intentOperationField) operation))
 
 -- | A subject's intent rows, oldest first, without locking them (C-P2.8 V2).
 intentsOfSubject :: O.MonadOrville m => T.Text -> m [IntentRow]
 intentsOfSubject subjectId =
-  intentRows (sql "WHERE i.subject_id = " <> uuid subjectId <> sql " ORDER BY i.id")
+  intentRows
+    ( O.where_ (qualifiedEquals (qualified intentTable intentSubjectField) subjectId)
+        <> O.orderBy (qualifiedOrder (qualified intentTable identityField) O.ascendingOrder)
+    )
 
-intentRows :: O.MonadOrville m => RawSql.RawSql -> m [IntentRow]
-intentRows condition =
-  O.executeAndDecode
-    O.SelectQuery
-    ( sql "SELECT i.operation_id::text AS operation_id, i.subject_id::text AS subject_id, s.kind AS subject_kind, i.basis_revision, i.effect_key, i.event_id, i.spec_name, i.effect_class, i.retry_budget, i.key_lifetime_seconds, i.refuses_changed_parameters, i.lookup_authoritative, i.lookup_excludes_late_application, i.parameters, i.parameters_digest, i.state, i.generation, i.dispatches, i.lease_owner, i.lease_until, i.outcome_text, i.settled_applied, i.activation_generation, i.first_dispatched_at FROM lockstep_effect_intents i JOIN lockstep_subjects s ON s.id = i.subject_id "
-        <> condition
+-- | Intents joined to their subjects, which give each row its subject's kind.
+intentRows :: O.MonadOrville m => O.SelectOptions -> m [IntentRow]
+intentRows =
+  selectJoined
+    ( O.marshallQualifyFields (O.tableIdentifier intentTable) intentColumns
+        <*> O.marshallReadOnly (O.marshallQualifyFields (O.tableIdentifier subjectTable) (O.marshallReadOnlyField subjectKindField))
     )
-    ( marshal $
-        IntentRow
-          <$> O.marshallField intentRowOperation (uuidField "operation_id")
-          <*> O.marshallField intentRowSubject (uuidField "subject_id")
-          <*> O.marshallField intentRowSubjectKind (O.unboundedTextField "subject_kind")
-          <*> O.marshallField intentRowBasisRevision (O.integerField "basis_revision")
-          <*> O.marshallField intentRowKey (O.unboundedTextField "effect_key")
-          <*> O.marshallField intentRowEvent (O.bigIntegerField "event_id")
-          <*> O.marshallField intentRowSpecName (O.unboundedTextField "spec_name")
-          <*> O.marshallField intentRowClass (O.unboundedTextField "effect_class")
-          <*> O.marshallField intentRowBudget (O.integerField "retry_budget")
-          <*> O.marshallField intentRowKeyLifetime (O.nullableField (O.bigIntegerField "key_lifetime_seconds"))
-          <*> O.marshallField intentRowRefusesChanged (O.nullableField (O.booleanField "refuses_changed_parameters"))
-          <*> O.marshallField intentRowLookupAuthoritative (O.nullableField (O.booleanField "lookup_authoritative"))
-          <*> O.marshallField intentRowLookupExcludesLate (O.nullableField (O.booleanField "lookup_excludes_late_application"))
-          <*> O.marshallField intentRowParameters (O.unboundedTextField "parameters")
-          <*> O.marshallField intentRowParametersDigest (O.unboundedTextField "parameters_digest")
-          <*> O.marshallField intentRowState (O.unboundedTextField "state")
-          <*> O.marshallField intentRowGeneration (O.integerField "generation")
-          <*> O.marshallField intentRowDispatches (O.integerField "dispatches")
-          <*> O.marshallField intentRowLeaseOwner (O.nullableField (O.unboundedTextField "lease_owner"))
-          <*> O.marshallField intentRowLeaseUntil (O.nullableField (O.utcTimestampField "lease_until"))
-          <*> O.marshallField intentRowOutcome (O.nullableField (O.unboundedTextField "outcome_text"))
-          <*> O.marshallField intentRowSettledApplied (O.nullableField (O.booleanField "settled_applied"))
-          <*> O.marshallField intentRowActivation (O.integerField "activation_generation")
-          <*> O.marshallField intentRowFirstDispatched (O.nullableField (O.utcTimestampField "first_dispatched_at"))
-    )
+    intentsWithSubjects
+
+intentsWithSubjects :: Expr.TableReference
+intentsWithSubjects =
+  joinedOn
+    intentTable
+    [
+      ( Expr.innerJoinType
+      , tableReference subjectTable
+      , Expr.equals
+          (qualifiedReference (qualified subjectTable subjectIdField))
+          (qualifiedReference (qualified intentTable intentSubjectField))
+      )
+    ]
 
 -- | C-P2.9-R1 M2: rebinds an intent to the activation a Human carried it into.
 setActivation :: O.MonadOrville m => T.Text -> Int32 -> m ()
 setActivation operation generation =
-  O.executeVoid O.UpdateQuery $
-    sql "UPDATE lockstep_effect_intents SET activation_generation = " <> int generation <> sql ", updated_at = now() WHERE operation_id = " <> uuid operation
+  O.updateFields
+    intentTable
+    (O.setField intentActivationField generation :| [setNow intentUpdatedAtField])
+    (Just (O.fieldEquals intentOperationField operation))
 
--- | An unlocked subject row (C-P2.9-R1 selection).
-subjectRow :: O.MonadOrville m => T.Text -> m (Maybe SubjectRow)
-subjectRow subjectId =
-  headMay <$> O.executeAndDecode O.SelectQuery (sql subjectColumns <> sql "WHERE id = " <> uuid subjectId) subjectMarshaller
-
--- | C-P2.9-R1 M3: this transaction reads one consistent snapshot and writes nothing. It must be its first statement.
+{- | C-P2.9-R1 M3: this transaction reads one consistent snapshot and writes
+nothing. It must be its first statement. Orville sets isolation only when it
+begins a transaction, and the caller's transaction is already open, so the
+statement is given as SQL.
+-}
 readOnlySnapshot :: O.MonadOrville m => m ()
 readOnlySnapshot =
-  O.executeVoid O.OtherQuery (sql "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+  O.executeVoid O.OtherQuery (RawSql.fromString "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
 
 -- | The statement's own time (PostgreSQL @clock_timestamp()@), for checks that must not use the transaction's start (C-P2.9-R1 M6).
 databaseClock :: O.MonadOrville m => m UTCTime
 databaseClock = do
-  rows <- O.executeAndDecode O.SelectQuery (sql "SELECT clock_timestamp() AS v") (marshal (O.marshallField id (O.utcTimestampField "v")))
+  rows <- selectValue clockTimestamp (O.utcTimestampField "v")
   maybe (liftIO (throwIO (userError "lockstep: SELECT clock_timestamp() returned no row"))) pure (headMay rows)
 
 {- | Writes the lifecycle columns only; a trigger refuses any change to the
@@ -522,32 +641,25 @@ never changed again (C-P2.9-R1 M1).
 -}
 updateIntent :: O.MonadOrville m => IntentRow -> m ()
 updateIntent row =
-  O.executeVoid O.UpdateQuery $
-    sql "UPDATE lockstep_effect_intents SET first_dispatched_at = CASE WHEN "
-      <> text (intentRowState row)
-      <> sql " = 'dispatched' THEN coalesce(first_dispatched_at, clock_timestamp()) ELSE first_dispatched_at END, state = "
-      <> text (intentRowState row)
-      <> sql ", generation = "
-      <> int (intentRowGeneration row)
-      <> sql ", dispatches = "
-      <> int (intentRowDispatches row)
-      <> sql ", lease_owner = "
-      <> maybeOf text (intentRowLeaseOwner row)
-      <> sql ", lease_until = "
-      <> maybeOf time (intentRowLeaseUntil row)
-      <> sql ", outcome_text = "
-      <> maybeOf text (intentRowOutcome row)
-      <> sql ", settled_applied = "
-      <> maybeOf bool (intentRowSettledApplied row)
-      <> sql ", updated_at = now() WHERE operation_id = "
-      <> uuid (intentRowOperation row)
+  O.updateFields
+    intentTable
+    ( O.setField intentStateField (intentRowState row)
+        :| ( [ O.setField intentGenerationField (intentRowGeneration row)
+             , O.setField intentDispatchesField (intentRowDispatches row)
+             , O.setField intentLeaseOwnerField (intentRowLeaseOwner row)
+             , O.setField intentLeaseUntilField (intentRowLeaseUntil row)
+             , O.setField intentOutcomeField (intentRowOutcome row)
+             , O.setField intentSettledField (intentRowSettledApplied row)
+             , setNow intentUpdatedAtField
+             ]
+               <> [ setExpression intentFirstDispatchedField (Expr.coalesce (O.fieldColumnReference intentFirstDispatchedField :| [clockTimestamp]))
+                  | intentRowState row == T.pack "dispatched"
+                  ]
+           )
+    )
+    (Just (O.fieldEquals intentOperationField (intentRowOperation row)))
 
-insertObservation :: O.MonadOrville m => T.Text -> Int32 -> T.Text -> Maybe T.Text -> m ()
-insertObservation operation generation observation refusal =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_effect_observations (operation_id, generation, observation, accepted, refusal_code) VALUES ("
-      <> commaSeparated [uuid operation, int generation, text observation, bool (isNothing refusal), maybeOf text refusal]
-      <> sql ")"
+-- Observations -------------------------------------------------------------------
 
 data ObservationRow
   = ObservationRow
@@ -557,50 +669,93 @@ data ObservationRow
   , observationRowRefusal :: Maybe T.Text
   }
 
+-- | (operation id, observation); read back as the observation.
+observationTable :: O.TableDefinition O.NoKey (T.Text, ObservationRow) ObservationRow
+observationTable =
+  O.mkTableDefinitionWithoutKey "lockstep_effect_observations" $
+    (\_operation observation -> observation)
+      <$> O.marshallField fst operationReferenceField
+      <*> ( ObservationRow
+              <$> O.marshallField (observationRowGeneration . snd) (O.integerField "generation")
+              <*> O.marshallField (observationRowText . snd) (O.unboundedTextField "observation")
+              <*> O.marshallField (observationRowAccepted . snd) (O.booleanField "accepted")
+              <*> O.marshallField (observationRowRefusal . snd) (O.nullableField (O.unboundedTextField "refusal_code"))
+          )
+
+-- | The @operation_id@ column of the tables recorded against an intent.
+operationReferenceField :: O.FieldDefinition O.NotNull T.Text
+operationReferenceField =
+  uuidField "operation_id"
+
+insertObservation :: O.MonadOrville m => T.Text -> Int32 -> T.Text -> Maybe T.Text -> m ()
+insertObservation operation generation observation refusal =
+  O.insertEntity observationTable (operation, ObservationRow generation observation (isNothing refusal) refusal)
+
 observationsOf :: O.MonadOrville m => T.Text -> m [ObservationRow]
 observationsOf operation =
-  O.executeAndDecode
-    O.SelectQuery
-    (sql "SELECT generation, observation, accepted, refusal_code FROM lockstep_effect_observations WHERE operation_id = " <> uuid operation <> sql " ORDER BY id")
-    ( marshal $
-        ObservationRow
-          <$> O.marshallField observationRowGeneration (O.integerField "generation")
-          <*> O.marshallField observationRowText (O.unboundedTextField "observation")
-          <*> O.marshallField observationRowAccepted (O.booleanField "accepted")
-          <*> O.marshallField observationRowRefusal (O.nullableField (O.unboundedTextField "refusal_code"))
-    )
+  O.findEntitiesBy
+    observationTable
+    (O.where_ (O.fieldEquals operationReferenceField operation) <> O.orderBy (O.orderByField identityField O.ascendingOrder))
 
 -- Execution and recovery (C-P2.6) ------------------------------------------------
+
+-- | An intent's operation id alone.
+operationIds :: O.MonadOrville m => O.SelectOptions -> m [T.Text]
+operationIds =
+  selectJoined (O.marshallReadOnlyField intentOperationField) (tableReference intentTable)
 
 -- | The intent's subject, read without a lock (the caller locks the subject first, then the intent).
 intentSubject :: O.MonadOrville m => T.Text -> m (Maybe T.Text)
 intentSubject operation =
-  headMay <$> operationIds (sql "SELECT subject_id::text AS v FROM lockstep_effect_intents WHERE operation_id = " <> uuid operation)
+  headMay
+    <$> selectJoined
+      (O.marshallReadOnlyField intentSubjectField)
+      (tableReference intentTable)
+      (O.where_ (O.fieldEquals intentOperationField operation))
 
 -- | X10: intents of active Work Orders that may be claimed now, oldest first.
 runnableIntentIds :: O.MonadOrville m => m [T.Text]
 runnableIntentIds =
-  operationIds $
-    sql "SELECT i.operation_id::text AS v FROM lockstep_effect_intents i JOIN lockstep_subjects s ON s.id = i.subject_id"
-      <> sql " WHERE s.kind = 'work-order' AND s.state = 'active' AND (i.state = 'pending'"
-      <> sql " OR (i.state = 'claimed' AND i.lease_until <= now())"
-      <> sql " OR (i.state = 'confirmed-not-applied' AND i.dispatches <= i.retry_budget)) ORDER BY i.id"
+  let
+    stateIs value = qualifiedEquals (ofIntent intentStateField) (T.pack value)
+    leaseEnded = Expr.lessThanOrEqualTo (qualifiedReference (ofIntent intentLeaseUntilField)) Expr.now
+    retriesLeft = Expr.lessThanOrEqualTo (qualifiedReference (ofIntent intentDispatchesField)) (qualifiedReference (ofIntent intentBudgetField))
+  in
+    selectJoined
+      (O.marshallQualifyFields (O.tableIdentifier intentTable) (O.marshallReadOnlyField intentOperationField))
+      intentsWithSubjects
+      ( O.where_
+          ( qualifiedEquals (ofSubject subjectKindField) (T.pack "work-order")
+              `O.andExpr` qualifiedEquals (ofSubject subjectStateField) (T.pack "active")
+              `O.andExpr` Expr.parenthesized
+                ( stateIs "pending"
+                    `O.orExpr` Expr.parenthesized (stateIs "claimed" `O.andExpr` leaseEnded)
+                    `O.orExpr` Expr.parenthesized (stateIs "confirmed-not-applied" `O.andExpr` retriesLeft)
+                )
+          )
+          <> O.orderBy (qualifiedOrder (ofIntent identityField) O.ascendingOrder)
+      )
+
+-- | A column of @lockstep_effect_intents@ in a join.
+ofIntent :: O.FieldDefinition nullability a -> O.QualifiedFieldDefinition O.TableIdentifier nullability a
+ofIntent =
+  qualified intentTable
+
+-- | A column of @lockstep_subjects@ in a join.
+ofSubject :: O.FieldDefinition nullability a -> O.QualifiedFieldDefinition O.TableIdentifier nullability a
+ofSubject =
+  qualified subjectTable
 
 -- | X10: dispatched intents whose lease has ended, oldest first.
 recoverableIntentIds :: O.MonadOrville m => m [T.Text]
 recoverableIntentIds =
-  operationIds (sql "SELECT operation_id::text AS v FROM lockstep_effect_intents WHERE state = 'dispatched' AND lease_until <= now() ORDER BY id")
-
-operationIds :: O.MonadOrville m => RawSql.RawSql -> m [T.Text]
-operationIds statement =
-  O.executeAndDecode O.SelectQuery statement (marshal (O.marshallField id (uuidField "v")))
-
-insertRecovery :: O.MonadOrville m => T.Text -> Int32 -> T.Text -> m ()
-insertRecovery operation generation decision =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_effect_recoveries (operation_id, generation, decision) VALUES ("
-      <> commaSeparated [uuid operation, int generation, text decision]
-      <> sql ")"
+  operationIds
+    ( O.where_
+        ( O.fieldEquals intentStateField (T.pack "dispatched")
+            `O.andExpr` Expr.lessThanOrEqualTo (O.fieldColumnReference intentLeaseUntilField) Expr.now
+        )
+        <> O.orderBy (O.orderByField identityField O.ascendingOrder)
+    )
 
 data RecoveryRow
   = RecoveryRow
@@ -608,32 +763,44 @@ data RecoveryRow
   , recoveryRowDecision :: T.Text
   }
 
+recoveryTable :: O.TableDefinition O.NoKey (T.Text, RecoveryRow) RecoveryRow
+recoveryTable =
+  O.mkTableDefinitionWithoutKey "lockstep_effect_recoveries" $
+    (\_operation recovery -> recovery)
+      <$> O.marshallField fst operationReferenceField
+      <*> ( RecoveryRow
+              <$> O.marshallField (recoveryRowGeneration . snd) (O.integerField "generation")
+              <*> O.marshallField (recoveryRowDecision . snd) (O.unboundedTextField "decision")
+          )
+
+insertRecovery :: O.MonadOrville m => T.Text -> Int32 -> T.Text -> m ()
+insertRecovery operation generation decision =
+  O.insertEntity recoveryTable (operation, RecoveryRow generation decision)
+
 recoveriesOf :: O.MonadOrville m => T.Text -> m [RecoveryRow]
 recoveriesOf operation =
-  O.executeAndDecode
-    O.SelectQuery
-    (sql "SELECT generation, decision FROM lockstep_effect_recoveries WHERE operation_id = " <> uuid operation <> sql " ORDER BY id")
-    ( marshal $
-        RecoveryRow
-          <$> O.marshallField recoveryRowGeneration (O.integerField "generation")
-          <*> O.marshallField recoveryRowDecision (O.unboundedTextField "decision")
-    )
+  O.findEntitiesBy
+    recoveryTable
+    (O.where_ (O.fieldEquals operationReferenceField operation) <> O.orderBy (O.orderByField identityField O.ascendingOrder))
 
 -- Reconciliation and resolution (C-P2.7) ----------------------------------------
 
 -- | R4: queryable intents whose outcome is unknown, or dispatched with an ended lease, oldest first.
 reconcilableIntentIds :: O.MonadOrville m => m [T.Text]
 reconcilableIntentIds =
-  operationIds $
-    sql "SELECT operation_id::text AS v FROM lockstep_effect_intents WHERE effect_class = 'queryable'"
-      <> sql " AND (state = 'outcome-unknown' OR (state = 'dispatched' AND lease_until <= now())) ORDER BY id"
-
-insertResolution :: O.MonadOrville m => T.Text -> Int32 -> T.Text -> T.Text -> Bool -> m ()
-insertResolution operation generation basis decision acknowledged =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_effect_resolutions (operation_id, generation, basis, decision, duplication_acknowledged) VALUES ("
-      <> commaSeparated [uuid operation, int generation, text basis, text decision, bool acknowledged]
-      <> sql ")"
+  operationIds
+    ( O.where_
+        ( O.fieldEquals intentClassField (T.pack "queryable")
+            `O.andExpr` Expr.parenthesized
+              ( O.fieldEquals intentStateField (T.pack "outcome-unknown")
+                  `O.orExpr` Expr.parenthesized
+                    ( O.fieldEquals intentStateField (T.pack "dispatched")
+                        `O.andExpr` Expr.lessThanOrEqualTo (O.fieldColumnReference intentLeaseUntilField) Expr.now
+                    )
+              )
+        )
+        <> O.orderBy (O.orderByField identityField O.ascendingOrder)
+    )
 
 data ResolutionRow
   = ResolutionRow
@@ -643,18 +810,27 @@ data ResolutionRow
   , resolutionRowAcknowledged :: Bool
   }
 
+resolutionTable :: O.TableDefinition O.NoKey (T.Text, ResolutionRow) ResolutionRow
+resolutionTable =
+  O.mkTableDefinitionWithoutKey "lockstep_effect_resolutions" $
+    (\_operation resolution -> resolution)
+      <$> O.marshallField fst operationReferenceField
+      <*> ( ResolutionRow
+              <$> O.marshallField (resolutionRowGeneration . snd) (O.integerField "generation")
+              <*> O.marshallField (resolutionRowBasis . snd) (O.unboundedTextField "basis")
+              <*> O.marshallField (resolutionRowDecision . snd) (O.unboundedTextField "decision")
+              <*> O.marshallField (resolutionRowAcknowledged . snd) (O.booleanField "duplication_acknowledged")
+          )
+
+insertResolution :: O.MonadOrville m => T.Text -> Int32 -> T.Text -> T.Text -> Bool -> m ()
+insertResolution operation generation basis decision acknowledged =
+  O.insertEntity resolutionTable (operation, ResolutionRow generation basis decision acknowledged)
+
 resolutionsOf :: O.MonadOrville m => T.Text -> m [ResolutionRow]
 resolutionsOf operation =
-  O.executeAndDecode
-    O.SelectQuery
-    (sql "SELECT generation, basis, decision, duplication_acknowledged FROM lockstep_effect_resolutions WHERE operation_id = " <> uuid operation <> sql " ORDER BY id")
-    ( marshal $
-        ResolutionRow
-          <$> O.marshallField resolutionRowGeneration (O.integerField "generation")
-          <*> O.marshallField resolutionRowBasis (O.unboundedTextField "basis")
-          <*> O.marshallField resolutionRowDecision (O.unboundedTextField "decision")
-          <*> O.marshallField resolutionRowAcknowledged (O.booleanField "duplication_acknowledged")
-    )
+  O.findEntitiesBy
+    resolutionTable
+    (O.where_ (O.fieldEquals operationReferenceField operation) <> O.orderBy (O.orderByField identityField O.ascendingOrder))
 
 -- Evidence, schedule decisions, Work Units -------------------------------------
 
@@ -666,78 +842,97 @@ data EvidenceRow
   , evidenceRowApproval :: T.Text
   }
 
+-- | (Work Order, principal, evidence); read back as the evidence.
+evidenceTable :: O.TableDefinition O.NoKey (T.Text, T.Text, EvidenceRow) EvidenceRow
+evidenceTable =
+  O.mkTableDefinitionWithoutKey "lockstep_gate_evidence" $
+    (\_workOrder _principal evidence -> evidence)
+      <$> O.marshallField (\(w, _, _) -> w) evidenceWorkOrderField
+      <*> O.marshallField (\(_, p, _) -> p) (O.unboundedTextField "principal")
+      <*> ( EvidenceRow
+              <$> O.marshallField (\(_, _, e) -> evidenceRowArtifact e) (O.unboundedTextField "artifact")
+              <*> O.marshallField (\(_, _, e) -> evidenceRowDigest e) (O.unboundedTextField "digest")
+              <*> O.marshallField (\(_, _, e) -> evidenceRowVerifiers e) (O.unboundedTextField "verifiers")
+              <*> O.marshallField (\(_, _, e) -> evidenceRowApproval e) (O.unboundedTextField "approval")
+          )
+
+evidenceWorkOrderField :: O.FieldDefinition O.NotNull T.Text
+evidenceWorkOrderField =
+  uuidField "work_order_id"
+
 insertEvidence :: O.MonadOrville m => T.Text -> T.Text -> EvidenceRow -> m ()
 insertEvidence workOrderId principal row =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_gate_evidence (work_order_id, artifact, digest, verifiers, approval, principal) VALUES ("
-      <> commaSeparated [uuid workOrderId, text (evidenceRowArtifact row), text (evidenceRowDigest row), text (evidenceRowVerifiers row), text (evidenceRowApproval row), text principal]
-      <> sql ")"
+  O.insertEntity evidenceTable (workOrderId, principal, row)
 
 evidenceOf :: O.MonadOrville m => T.Text -> m [EvidenceRow]
 evidenceOf workOrderId =
-  O.executeAndDecode
-    O.SelectQuery
-    (sql "SELECT artifact, digest, verifiers, approval FROM lockstep_gate_evidence WHERE work_order_id = " <> uuid workOrderId <> sql " ORDER BY id")
-    ( marshal $
-        EvidenceRow
-          <$> O.marshallField evidenceRowArtifact (O.unboundedTextField "artifact")
-          <*> O.marshallField evidenceRowDigest (O.unboundedTextField "digest")
-          <*> O.marshallField evidenceRowVerifiers (O.unboundedTextField "verifiers")
-          <*> O.marshallField evidenceRowApproval (O.unboundedTextField "approval")
-    )
+  O.findEntitiesBy
+    evidenceTable
+    (O.where_ (O.fieldEquals evidenceWorkOrderField workOrderId) <> O.orderBy (O.orderByField identityField O.ascendingOrder))
+
+-- | (rendering, digest, selected Work Order); read back as (rendering, digest).
+scheduleDecisionTable :: O.TableDefinition O.NoKey (T.Text, T.Text, Maybe T.Text) (T.Text, T.Text)
+scheduleDecisionTable =
+  O.mkTableDefinitionWithoutKey "lockstep_schedule_decisions" $
+    (\rendering digest _selected -> (rendering, digest))
+      <$> O.marshallField (\(r, _, _) -> r) (O.unboundedTextField "rendering")
+      <*> O.marshallField (\(_, d, _) -> d) (O.unboundedTextField "digest")
+      <*> O.marshallField (\(_, _, s) -> s) (O.nullableField (uuidField "selected_work_order"))
 
 insertScheduleDecision :: O.MonadOrville m => T.Text -> T.Text -> Maybe T.Text -> m ()
 insertScheduleDecision rendering digest selected =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_schedule_decisions (rendering, digest, selected_work_order) VALUES ("
-      <> commaSeparated [text rendering, text digest, maybeOf uuid selected]
-      <> sql ")"
+  O.insertEntity scheduleDecisionTable (rendering, digest, selected)
 
 -- | The latest schedule decision: (rendering, digest) (C-P2.8 V2).
 latestScheduleDecision :: O.MonadOrville m => m (Maybe (T.Text, T.Text))
 latestScheduleDecision =
-  headMay
-    <$> O.executeAndDecode
-      O.SelectQuery
-      (sql "SELECT rendering, digest FROM lockstep_schedule_decisions ORDER BY id DESC LIMIT 1")
-      ( marshal $
-          (,)
-            <$> O.marshallField fst (O.unboundedTextField "rendering")
-            <*> O.marshallField snd (O.unboundedTextField "digest")
-      )
+  O.findFirstEntityBy scheduleDecisionTable (O.orderBy (O.orderByField identityField O.descendingOrder))
 
--- | Serializes scheduling runs until the transaction ends.
+{- | Serializes scheduling runs until the transaction ends. Orville has no
+advisory locks; the lock key is a constant.
+-}
 lockScheduling :: O.MonadOrville m => m ()
 lockScheduling =
-  O.executeVoid O.OtherQuery (sql "SELECT pg_advisory_xact_lock(hashtext('lockstep-scheduler'))")
+  O.executeVoid O.OtherQuery (RawSql.fromString "SELECT pg_advisory_xact_lock(hashtext('lockstep-scheduler'))")
+
+data WorkUnitRow
+  = WorkUnitRow
+  { workUnitRowId :: T.Text
+  , workUnitRowWorkOrder :: T.Text
+  , workUnitRowTicket :: T.Text
+  , workUnitRowRepository :: T.Text
+  , workUnitRowEngineer :: T.Text
+  , workUnitRowPlanRef :: Maybe T.Text
+  }
+
+workUnitTable :: O.TableDefinition (O.HasKey T.Text) WorkUnitRow WorkUnitRow
+workUnitTable =
+  O.mkTableDefinition "lockstep_work_units" (O.primaryKey (uuidField "id")) $
+    WorkUnitRow
+      <$> O.marshallField workUnitRowId (uuidField "id")
+      <*> O.marshallField workUnitRowWorkOrder (uuidField "work_order_id")
+      <*> O.marshallField workUnitRowTicket (uuidField "ticket_id")
+      <*> O.marshallField workUnitRowRepository (uuidField "repository_id")
+      <*> O.marshallField workUnitRowEngineer (uuidField "engineer_id")
+      <*> O.marshallField workUnitRowPlanRef (O.nullableField (O.unboundedTextField "plan_ref"))
 
 insertWorkUnit :: O.MonadOrville m => T.Text -> T.Text -> T.Text -> T.Text -> T.Text -> Maybe T.Text -> m ()
 insertWorkUnit unitId workOrderId ticketId repositoryId engineerId planRef =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_work_units (id, work_order_id, ticket_id, repository_id, engineer_id, plan_ref) VALUES ("
-      <> commaSeparated [uuid unitId, uuid workOrderId, uuid ticketId, uuid repositoryId, uuid engineerId, maybeOf text planRef]
-      <> sql ")"
+  O.insertEntity workUnitTable (WorkUnitRow unitId workOrderId ticketId repositoryId engineerId planRef)
 
 -- | Every active repository ownership: (repository, owning Engineer).
 activeOwners :: O.MonadOrville m => m [(T.Text, T.Text)]
 activeOwners =
-  O.executeAndDecode
-    O.SelectQuery
-    (sql "SELECT id::text AS repository_id, owner_engineer_id::text AS engineer_id FROM lockstep_repositories WHERE released_at IS NULL ORDER BY id")
-    ( marshal $
-        (,)
-          <$> O.marshallField fst (uuidField "repository_id")
-          <*> O.marshallField snd (uuidField "engineer_id")
+  selectJoined
+    ( (,)
+        <$> O.marshallReadOnlyField repositoryIdField
+        <*> O.marshallReadOnlyField repositoryOwnerField
     )
+    (tableReference repositoryTable)
+    (O.where_ activeRepositoryCondition <> O.orderBy (O.orderByField repositoryIdField O.ascendingOrder))
 
 -- | The transaction's time (PostgreSQL @now()@): the clock every lease uses.
 databaseNow :: O.MonadOrville m => m UTCTime
 databaseNow = do
-  rows <- O.executeAndDecode O.SelectQuery (sql "SELECT now() AS v") (marshal (O.marshallField id (O.utcTimestampField "v")))
+  rows <- selectValue Expr.now (O.utcTimestampField "v")
   maybe (liftIO (throwIO (userError "lockstep: SELECT now() returned no row"))) pure (headMay rows)
-
-headMay :: [a] -> Maybe a
-headMay xs =
-  case xs of
-    [] -> Nothing
-    x : _ -> Just x
