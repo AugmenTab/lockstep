@@ -39,10 +39,15 @@ casts in every select. There were no `TableDefinition`s, no `insertEntity`, no `
 | O10 | all | Identifiers are untyped `T.Text` throughout (an Engineer id and a repository id have the same type) | Recommended — deferred | Typed id newtypes would change the Application layer's signatures across the code base; out of scope for a localized pass. |
 | X1 | Migrations | The schema is SQL DDL in an append-only, checksummed migration list | Acceptable exception | The migration ledger verifies every applied migration's checksum (C-P1.2); Orville's auto-migration would compute DDL from table definitions and change schema-management semantics, triggers and partial indexes. The table definitions in this pass describe the existing tables and are never used to migrate. |
 | X2 | Projects, Tasks, Profiles, Repositories | `LOCK TABLE ... IN EXCLUSIVE MODE` | Acceptable exception | Orville has no table-lock statement; constant text, no parameters. |
-| X3 | SessionLocks, Ledger | Advisory locks (`pg_advisory_lock`, `pg_advisory_xact_lock`), `SET lock_timeout`, the `pg_locks` probe | Acceptable exception | PostgreSQL session facilities Orville does not model (C-C.R1 R1, R5). Values are parameters or integers. |
+| X3 | SessionLocks, Ledger | `SET lock_timeout` (a `SET` takes no parameters; the value is an `Int`), the `pg_locks` probe (the key a parameter), and the scheduler's `pg_advisory_xact_lock(hashtext('lockstep-scheduler'))` (constant text) | Acceptable exception | PostgreSQL session facilities Orville does not model (C-C.R1 R1, R5). The session lock and unlock are typed function calls, as is `lockEngineer`; the scheduler lock could be one too (Recommended, left unchanged after the final qualification run). |
 | X4 | Ledger | `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY` inside an open transaction | Acceptable exception | Orville sets isolation only when it begins a transaction; the caller's is already open (C-P2.9-R1 M3). |
-| X5 | Jobs | The job claim (`UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED)`) and the in-update outcome digest (`sha256(convert_to(...))`) | Acceptable exception | One atomic statement that must claim and compute from the row's final values (C-P1.5 E2, C-P1.6 E3); splitting it would weaken atomicity. Kept as SQL with every value a parameter. |
-| X6 | Queries, Migrate | Catalog and ledger probes (`to_regclass`), migration application | Acceptable exception | Schema management, before any table definition applies. |
+| X5 | Jobs | The job claim and the in-update outcome digest | Corrected (was planned as an exception) | Both are expressible with Orville's expression builders and stay single atomic statements: `UPDATE ... WHERE id IN (SELECT id ... ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING ...` with `CASE`, `coalesce` and `make_interval` set clauses, and `outcome_digest = sha256(convert_to(... \|\| ..., 'UTF8'))` in the finishing update. |
+| X6 | Migrate, Migrations | Migration application through libpq's simple-query protocol; the DDL itself | Acceptable exception | Schema management: migrations hold several statements, which Orville's parameterised execution cannot run (see X1). The ledger probe (`to_regclass`) and ledger read are now typed. |
+| X7 | Fields | Two SQL tokens Orville 1.1 has no constructor for: the `bytea` data type name of the digest field, and `DO NOTHING` after a conflict target (Orville exports DO NOTHING only without a target) | Acceptable exception | Named once, in `Lockstep.Persistence.Fields`. |
+
+**Status:** O1–O9 corrected (`7745e3c`, `1d1f40b`). What remains as SQL in `src/Lockstep/Persistence` is listed in
+X2–X7. Text values are always typed parameters; the only values written into SQL text are two internal integers in
+X3 (the lock timeout in seconds and the lock namespace).
 
 ## 2. JSON (json-fleece)
 
@@ -53,8 +58,11 @@ records). Encoding never used Fleece.
 |---|---|---|---|---|
 | J1 | `Web/SecureResponse.hs` `jsonString` | Characters above U+FFFF are written as `\u` + 5 hex digits, which is not JSON (a parser reads U+1F60 then `0`). Every JSON response passes through it. | Required | Responses are encoded by Fleece; the markup-safety pass (`<`, `>`, `&` and non-ASCII as `\uXXXX`) runs over the encoded text and writes astral characters as surrogate pairs. |
 | J2 | `Web/SecureResponse.hs` `errorJson`, `Web/Control.hs`, `Web/App.hs` | Every JSON response body assembled from strings | Required | One Fleece schema per response body (`Web/Json.hs`), encoded with `FA.encode`. Field names, order, null and omission semantics unchanged. |
-| J3 | `Application/Engine.hs`, `Application/EngineCandidate.hs` (with `Foundation/Json.hs`) | Records, role documents and the frozen Contract built as a hand-made JSON tree; several are read back through separate Fleece decoders (two representations of one payload) | Required where a decoder schema exists | Payloads that are decoded through a Fleece schema are encoded through the same schema. The rest stay in the `Json` tree only if a byte-identity check fails (digest-bearing; see the completion notes). |
+| J3 | `Application/Engine.hs`, `Application/EngineCandidate.hs` (with `Foundation/Json.hs`) | Every transaction record, the candidate, the discovery and the frozen Contract built as a hand-made JSON tree; several read back through separate private Fleece decoders (two representations of one payload); acceptance read records by substring search | Required | Corrected: one schema per record kind (`EngineRecords`) for writing and reading; candidate and discovery through the role-answer schemas; acceptance decodes. Byte-identical to the old output (compliance suite), so `body_digest` and `contract_digest` are unchanged; the discovery record's key order follows its answer schema. |
+| J5 | `Application/Engine.hs` role context documents | Composite documents that embed stored records verbatim (`JRaw`) | Acceptable exception | Fleece has no raw-JSON embedding; re-encoding stored records would change what the role sees. Kept in `Foundation.Json`, whose escaping was verified byte-identical to Fleece-aeson. |
+| J6 | `Application/Execution.hs`, `Application/ProjectChecks.hs` | Built-in Profile documents written as JSON text (old audit J3) | Recommended | Corrected: through the Profile document schema; byte-identical (stored digests reproduce). |
 | J4 | `Kernel/EventCodec.hs`, `Kernel/Profile.hs` rendering, `Kernel/Conversation.hs` payload texts, the control and runner line protocols | Not JSON: canonical digest or protocol texts | Not a finding | — |
+| J7 | `Effects/Provider/Claude.hs` | JSON-like text in the role instructions | Not a finding | Prose describing the answer format to the model. |
 
 ## 3. HTTP, HTML and browser code (Orb, Beeline, Brigid, HTMX)
 
@@ -64,13 +72,15 @@ From a read-only survey of `src/Lockstep/Web/**`, `app/` and `static/` against L
 | # | Where | Finding | Class | Disposition |
 |---|---|---|---|---|
 | W1 | `Web/App.hs` `matchAppRoute`, `Web/Operator.hs` `matchOperatorRoute`, `Web/Application.hs` dispatch chain | `/app` and `/operator` are routed by hand (`pathInfo` patterns) in front of the Beeline tree; only health, readiness and liveness are Beeline/Orb routes | Required | Deferred, see §5 |
-| W2 | `Web/App.hs` and `Web/Control.hs` `shell` | Full HTML documents as string lists | Required | Rendered with Brigid |
+| W2 | `Web/App.hs` and `Web/Control.hs` `shell` | Full HTML documents as string lists | Required | Control pane: corrected (Brigid, `Components/Shell`, links from the static route). Application: acceptable exception: the frozen C-P3.4 test pins the `htmx-config` attribute as single-quoted raw JSON (`"allowEval":false`), and Brigid writes double-quoted attribute values as given, so the bytes cannot be produced without breaking the attribute. |
 | W3 | `Web/Control.hs` | The control pane is its own WAI application with its own route matcher | Recommended | Deferred with W1 |
 | W4 | `Web/App.hs`, `Web/Operator.hs`, `Web/Control.hs` | Form bodies read and parsed by hand; responses built with `Wai.responseLBS` | Recommended | Deferred with W1. The 16 KiB/1 MiB limits and the security header values stay. |
 | W5 | Brigid pages | Internal links are string literals, not route builders | Recommended | Follows W1 |
-| W6 | `Web/Application.hs` `staticResponse`, `notFound` | Responses without the security headers the other responses carry | Recommended | Use `respondWith` |
+| W6 | `Web/Application.hs` `staticResponse`, `notFound` | Responses without the security headers the other responses carry | Recommended | Corrected (`respondWith`) |
 | W7 | `Web/RequestGuard.hs`, `Web/SecureResponse.hs` headers | Exact Host/Origin checks and CSP headers in low-level code | Acceptable exception | Security-motivated (C-P1.3 E7), pure |
-| W8 | `Web/Fragment.hs` | Attribute values escaped before `customAttribute`; numeric entities rewritten to named ones | Acceptable exception (verify) | Contract C-C.R1 R8; no raw-HTML hole |
+| W8 | `Web/Fragment.hs` | Attribute values escaped before `customAttribute`; numeric entities rewritten to named ones | Acceptable exception (verified) | Verified in this pass: Brigid 0.4 writes attribute values as given (a JSON value's quotes came out raw), so the manual escaping is required (C-C.R1 R8). |
+| W10 | `Web/Components/Shell.hs` | `-freduction-depth=400` for one module | Acceptable exception | Brigid's type-level content check for `noscript` under `body` needs more than GHC's default 200 steps; the check runs in full. |
+| W11 | `Web/Static.hs` | Template Haskell (`file-embed`) embeds the static assets | Not in scope | Recorded for the Simple Haskell audit (no TH); not a stack bypass. |
 | W9 | `static/app.js` (256 lines), `static/control.js` (662 lines) | `app.js` repeats the server's route table on the client; `control.js` is a fully client-rendered UI | Recommended | Deferred; tied to the header-only session design (C-P3.1 §3) |
 
 ## 4. Core logic and verification
