@@ -12,10 +12,10 @@ module Lockstep.Web.Control
   ) where
 
 import Data.ByteString qualified as BS
-import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as LBS
 import Data.Char qualified as Char
 import Data.List qualified as L
+import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Text.Encoding.Error qualified as TEE
@@ -48,12 +48,28 @@ import Lockstep.Application.ControlPane
   , takeHandover
   )
 import Lockstep.Foundation.Config (BindHost (Loopback), Port, ServeConfig (..), portNumber)
-import Lockstep.Foundation.ControlProtocol (ControlResult (..), outcomeName, parseOp, requestIdText)
+import Lockstep.Foundation.ControlProtocol (ControlResult (..), RequestId, outcomeName, parseOp, requestIdText)
 import Lockstep.Foundation.FolderProtocol (validFolderExpect, validFolderPath)
 import Lockstep.Foundation.InstallProtocol (InstallExpect, InstallOp, parseInstallExpect, parseInstallOp, validFor)
 import Lockstep.Foundation.LifecycleProtocol (LifecycleOp, expectedFor, parseLifecycleExpect, parseLifecycleOp)
+import Lockstep.Web.Components.Shell (controlShell)
+import Lockstep.Web.Json
+  ( FolderEntry (..)
+  , FolderListBody (..)
+  , IdBody (..)
+  , ResultBody (..)
+  , SessionBody (..)
+  , StateBody (..)
+  , UrlBody (..)
+  , folderListSchema
+  , idSchema
+  , resultSchema
+  , sessionSchema
+  , stateSchema
+  , urlSchema
+  )
 import Lockstep.Web.RequestGuard (RouteClass (..), guardRequest)
-import Lockstep.Web.SecureResponse (errorJson, jsonResponse, jsonString, readBodyLimited, respondWith)
+import Lockstep.Web.SecureResponse (errorJson, jsonResponse, readBodyLimited, respondWith)
 import Lockstep.Web.Server (serverSettings)
 import Lockstep.Web.Static (StaticAsset (..), lookupAsset)
 
@@ -80,26 +96,7 @@ notFound =
 -- | The shell every page address returns: no state, no data; the script loads the rest.
 shell :: Wai.Response
 shell =
-  respondWith
-    HTTP.status200
-    [(HTTP.hContentType, "text/html; charset=utf-8")]
-    ( LBS.fromStrict . BS8.pack . L.unlines $
-        [ "<!doctype html>"
-        , "<html lang=\"en\">"
-        , "<head>"
-        , "<meta charset=\"utf-8\">"
-        , "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-        , "<title>Lockstep</title>"
-        , "<link rel=\"stylesheet\" href=\"/static/lockstep.css\">"
-        , "</head>"
-        , "<body class=\"control\">"
-        , "<main id=\"app\" class=\"control-main\" aria-live=\"polite\"><p>Opening Lockstep\226\128\166</p></main>"
-        , "<noscript><p>Lockstep needs JavaScript turned on in this browser.</p></noscript>"
-        , "<script src=\"/static/control.js\"></script>"
-        , "</body>"
-        , "</html>"
-        ]
-    )
+  respondWith HTTP.status200 [(HTTP.hContentType, "text/html; charset=utf-8")] controlShell
 
 data Route
   = Shell
@@ -196,7 +193,7 @@ controlApplication port runtime request respond =
       Session -> withBody $ \bytes -> do
         session <- exchangeSignIn runtime (TE.decodeUtf8With TEE.lenientDecode bytes)
         respond $ case session of
-          Just s -> jsonResponse HTTP.status200 ("{\"session\":" <> jsonString s <> "}")
+          Just s -> jsonResponse HTTP.status200 sessionSchema (SessionBody s)
           Nothing -> errorJson HTTP.status403 "sign-in-refused"
       SignOut -> withBody $ \_ -> withSession $ do
         traverse_ (endSession runtime) sessionHeader
@@ -206,59 +203,55 @@ controlApplication port runtime request respond =
           Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
           Just op -> do
             submitted <- submitRequest runtime op
-            respond $ case submitted of
-              Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
-              Left err -> submitError err
+            respond (accepted submitted)
       Lifecycle -> withBody $ \bytes -> withSession $
         case parseLifecycleBody (TE.decodeUtf8With TEE.lenientDecode bytes) of
           Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
           Just op -> do
             submitted <- submitLifecycle runtime op
-            respond $ case submitted of
-              Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
-              Left err -> submitError err
+            respond (accepted submitted)
       Install -> withBody $ \bytes -> withSession $
         case parseInstallBody (TE.decodeUtf8With TEE.lenientDecode bytes) of
           Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
           Just (op, expect) -> do
             submitted <- submitInstall runtime op expect
-            respond $ case submitted of
-              Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
-              Left err -> submitError err
+            respond (accepted submitted)
       OpenApplication -> withBody $ \_ -> withSession $ do
         submitted <- submitOpenApplication runtime
-        respond $ case submitted of
-          Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
-          Left err -> submitError err
+        respond (accepted submitted)
       FoldersList -> withSession $ do
         list <- readFolders runtime
-        respond . jsonResponse HTTP.status200 $
-          "{\"digest\":"
-            <> jsonString (folderListDigest list)
-            <> ",\"folders\":["
-            <> T.intercalate "," ["{\"mode\":" <> jsonString m <> ",\"path\":" <> jsonString p <> "}" | (m, p) <- folderListEntries list]
-            <> "]}"
+        respond $
+          jsonResponse
+            HTTP.status200
+            folderListSchema
+            (FolderListBody (folderListDigest list) [FolderEntry m p | (m, p) <- folderListEntries list])
       FoldersAdd -> withBody $ \bytes -> withSession $
         case parseFolderBody (TE.decodeUtf8With TEE.lenientDecode bytes) of
           Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
           Just (expect, path) -> do
             submitted <- submitFolder runtime expect path
-            respond $ case submitted of
-              Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
-              Left err -> submitError err
+            respond (accepted submitted)
       Handover rid -> withSession $ do
         url <- takeHandover runtime rid
         respond $ case url of
-          Just u -> jsonResponse HTTP.status200 ("{\"url\":" <> jsonString u <> "}")
+          Just u -> jsonResponse HTTP.status200 urlSchema (UrlBody u)
           Nothing -> notFound
       RequestResult rid -> withSession $ do
         view <- readResult runtime rid
         respond $ case view of
           ResultUnknown -> notFound
-          ResultPending -> jsonResponse HTTP.status200 "{\"state\":\"pending\"}"
-          ResultUntrusted -> jsonResponse HTTP.status200 "{\"state\":\"untrusted\"}"
-          ResultDone result -> jsonResponse HTTP.status200 (resultJson result)
+          ResultPending -> jsonResponse HTTP.status200 stateSchema (StateBody "pending")
+          ResultUntrusted -> jsonResponse HTTP.status200 stateSchema (StateBody "untrusted")
+          ResultDone result -> jsonResponse HTTP.status200 resultSchema (resultBody result)
       Preflight -> respond (errorJson HTTP.status405 "method-not-allowed")
+
+-- | A submitted request: 202 with its id, or the reason it was not written.
+accepted :: Either SubmitError RequestId -> Wai.Response
+accepted submitted =
+  case submitted of
+    Right rid -> jsonResponse HTTP.status202 idSchema (IdBody (requestIdText rid))
+    Left err -> submitError err
 
 submitError :: SubmitError -> Wai.Response
 submitError err =
@@ -300,17 +293,16 @@ parseFolderBody body = do
     then Just (expect, path)
     else Nothing
 
-resultJson :: ControlResult -> T.Text
-resultJson result =
-  T.concat
-    [ "{\"state\":\"done\""
-    , ",\"id\":" <> jsonString (resultId result)
-    , ",\"op\":" <> jsonString (resultOp result)
-    , ",\"outcome\":" <> jsonString (outcomeName (resultOutcome result))
-    , ",\"reason\":" <> maybe "null" jsonString (resultReason result)
-    , ",\"started\":" <> T.pack (show (resultStarted result))
-    , ",\"finished\":" <> T.pack (show (resultFinished result))
-    , ",\"fields\":{" <> T.intercalate "," [jsonString k <> ":" <> jsonString v | (k, v) <- resultFields result] <> "}"
-    , ",\"detail\":" <> jsonString (resultDetail result)
-    , "}"
-    ]
+resultBody :: ControlResult -> ResultBody
+resultBody result =
+  ResultBody
+    { resultBodyState = "done"
+    , resultBodyId = resultId result
+    , resultBodyOp = resultOp result
+    , resultBodyOutcome = outcomeName (resultOutcome result)
+    , resultBodyReason = resultReason result
+    , resultBodyStarted = resultStarted result
+    , resultBodyFinished = resultFinished result
+    , resultBodyFields = Map.fromList (resultFields result)
+    , resultBodyDetail = resultDetail result
+    }

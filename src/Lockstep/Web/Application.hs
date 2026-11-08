@@ -29,7 +29,7 @@ import Lockstep.Web.Components.Page404 (page404)
 import Lockstep.Web.Operator (guardRefusalResponse, handleOperator, matchOperatorRoute)
 import Lockstep.Web.RequestGuard (RouteClass (..), guardRequest)
 import Lockstep.Web.Routes (dispatch, routes)
-import Lockstep.Web.SecureResponse (errorJson)
+import Lockstep.Web.SecureResponse (errorJson, respondWith)
 import Lockstep.Web.Static (StaticAsset (..), lookupAsset, staticRootPath)
 import Lockstep.Web.Types (AppContext (..), Lockstep, getConfig, getDatabase, log, runLockstep)
 
@@ -107,16 +107,17 @@ logExceptions action = do
     Right res ->
       pure res
 
+-- | An allowlisted asset, with the security headers every other response carries.
 staticResponse :: StaticAsset -> Wai.Response
 staticResponse asset =
-  Wai.responseLBS
+  respondWith
     HTTP.status200
     [(HTTP.hContentType, assetContentType asset)]
     (LBS.fromStrict (assetBody asset))
 
 notFound :: Wai.Response
 notFound =
-  Wai.responseLBS
+  respondWith
     HTTP.status404
     [(HTTP.hContentType, htmlContentType)]
     (renderLazyHTML page404)

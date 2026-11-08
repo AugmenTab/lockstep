@@ -10,6 +10,7 @@ module Lockstep.Web.Static
   , lookupAsset
   , staticRootPath
   , stylesheet
+  , assetURL
   ) where
 
 import Beeline.Routing ((/-))
@@ -70,7 +71,12 @@ lookupAsset name =
 
 stylesheet :: B.RelativeURL B.Get
 stylesheet =
+  assetURL stylesheetName
+
+-- | @/static/<name>@, built from the static route (name an asset of the allowlist).
+assetURL :: T.Text -> B.RelativeURL B.Get
+assetURL name =
   B.get GetStaticFile $
     R.make GetStaticFile
       /- staticRootPath
-      /- stylesheetName
+      /- name

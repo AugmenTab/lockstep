@@ -84,8 +84,9 @@ import Lockstep.Web.ChecksPages (checksPage, choiceLosses, projectChecksSection)
 import Lockstep.Web.DecisionPages (decisionPage, decisionsOverview, donePage)
 import Lockstep.Web.ExecutionPages (projectExecutionSection, taskFixingSection)
 import Lockstep.Web.Fragment (attr, cls, fragment, href)
+import Lockstep.Web.Json (SessionBody (..), sessionSchema)
 import Lockstep.Web.RequestGuard (RouteClass (..))
-import Lockstep.Web.SecureResponse (errorJson, htmlResponse, jsonResponse, jsonString, readBodyLimited, respondWith)
+import Lockstep.Web.SecureResponse (errorJson, htmlResponse, jsonResponse, readBodyLimited, respondWith)
 import Lockstep.Web.TaskPages (TaskForm (..), emptyTaskForm, newTaskPage, projectTasks, taskPage, tasksOverview)
 
 data Section
@@ -187,6 +188,9 @@ appRouteClass route =
 
 shell :: Wai.Response
 shell =
+  -- Acceptable exception (stack-compliance audit W2): the frozen C-P3.4 shell test
+  -- pins the htmx-config attribute as single-quoted raw JSON, which Brigid (always
+  -- double quotes, values as given) cannot write. The control pane's shell is Brigid.
   htmlResponse HTTP.status200 . LBS.fromStrict . BS8.pack . L.unlines $
     [ "<!doctype html>"
     , "<html lang=\"en\">"
@@ -237,7 +241,7 @@ handleWithDatabase db route request =
             Just token -> do
               exchanged <- exchangeSignIn db token
               pure $ case exchanged of
-                Right session -> jsonResponse HTTP.status200 ("{\"session\":" <> jsonString (encodeToken session) <> "}")
+                Right session -> jsonResponse HTTP.status200 sessionSchema (SessionBody (encodeToken session))
                 Left _ -> errorJson HTTP.status403 "sign-in-refused"
     SignOut -> do
       _ <- readBodyLimited request 4096
