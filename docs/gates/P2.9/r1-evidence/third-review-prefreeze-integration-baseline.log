@@ -1,0 +1,42 @@
+lockstep> test (suite: lockstep-integration, args: -p "third review")
+
+lockstep-integration
+  Gate B remediation, third review (C-P2.9-R1 §4.5; real PostgreSQL)
+    P1: a new intent is not dispatched while an earlier one with the same effect key may have applied: FAIL (0.45s)
+      test/integration/Lockstep/RemediationThirdReviewTest.hs:257:
+      expected refusal effect-key-in-use
+      Use -p '/third review/&&/P1: a new intent is not dispatched while an earlier one with the same effect key may have applied/' to rerun this test only.
+    P1: the same after the earlier intent's recovery makes it unknown (the reviewer's sequence):       FAIL (0.43s)
+      test/integration/Lockstep/RemediationThirdReviewTest.hs:257:
+      expected refusal effect-key-in-use
+      Use -p '/third review/&&/P1: the same after the earlier intent'\''s recovery makes it unknown (the reviewer'\''s sequence)/' to rerun this test only.
+    P1 control: an abandoned earlier intent does not block the new one:                                OK (0.27s)
+    P1: a carry conflicts with a live same-key intent of any activation:                               FAIL (0.27s)
+      test/integration/Lockstep/RemediationThirdReviewTest.hs:257:
+      expected refusal carry-conflict
+      Use -p '/third review/&&/P1: a carry conflicts with a live same-key intent of any activation/' to rerun this test only.
+    P2: re-carrying an attested intent from a lapsed claim needs the acknowledgment again:             FAIL (0.61s)
+      test/integration/Lockstep/RemediationThirdReviewTest.hs:257:
+      expected refusal duplication-risk-not-acknowledged
+      Use -p '/third review/&&/P2: re-carrying an attested intent from a lapsed claim needs the acknowledgment again/' to rerun this test only.
+    P3: a human retry is refused once the idempotency key's guarantee has ended:                       FAIL (0.58s)
+      test/integration/Lockstep/RemediationThirdReviewTest.hs:257:
+      expected refusal idempotency-key-expired
+      Use -p '/third review/&&/P3: a human retry is refused once the idempotency key'\''s guarantee has ended/' to rerun this test only.
+
+5 out of 6 tests failed (2.61s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

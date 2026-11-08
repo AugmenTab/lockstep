@@ -1,0 +1,86 @@
+#!/bin/bash
+# The start of a live role's container (contract C-P4.L.R3 I1-I5, §10). The
+# helper starts the container as root with only CAP_SETUID, CAP_SETGID,
+# CAP_DAC_OVERRIDE and CAP_KILL and no-new-privileges, and runs:
+#
+#   agent-entry TOOL-UID TOOL-GID ARGV...
+#   agent-entry --check     prints "lockstep-isolation VERSION ok", or
+#                           "lockstep-isolation VERSION refused REASON" (the helper's start)
+#
+# Two identities: the tools (every process the Bash tool starts, so all the
+# repository's code) run as TOOL-UID:TOOL-GID, the host's user, through
+# tool-shell; the CLI (ARGV) runs as uid 2000000000 with TOOL-GID as its
+# effective group and 2000000000 as its real group, so the kernel makes it not
+# dumpable, keeping the four capabilities (ambient) only to start its tools as
+# the other identity, to end them, and to reach the run's private files. The
+# CLI reads its own settings only, never the repository's (R3-M2), and no
+# CLAUDE.md, auto-memory or background task (C-P4.L.S S3: what --bare kept out,
+# without --bare, which refuses subscription login). Nothing here reads a
+# secret; in native mode the CLI holds its own token in its config volume
+# (C-P4.L.N), in API-key mode the proxy holds the key.
+set -eu
+# The isolation's version: the helper runs live roles only with an image whose agent-entry says
+# this one (R3-L6), so an image built before a change to the isolation turns live runs off.
+version=2
+agent=2000000000
+caps=+setuid,+setgid,+dac_override,+kill
+refuse() { echo "agent-entry: isolation-unavailable: $1" >&2; exit 125; }
+# Not dumpable holds while the kernel's suid_dumpable is 0 or 2 (2 keeps a changed-credential
+# process's dumps root's); 1 would make the CLI traceable by its own uid (R3-L5).
+dumpable_ok() {
+  case $(cat /proc/sys/fs/suid_dumpable 2>/dev/null || echo unreadable) in
+    0 | 2) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+if [ "${1:-}" = --check ]; then
+  if dumpable_ok; then
+    echo "lockstep-isolation $version ok"
+  else
+    echo "lockstep-isolation $version refused fs.suid_dumpable=$(cat /proc/sys/fs/suid_dumpable 2>/dev/null || echo unreadable)"
+  fi
+  exit 0
+fi
+# A plain decimal id: no sign, no leading zero (R3-L1).
+plain_id() {
+  case $1 in
+    "" | *[!0-9]*) return 1 ;;
+    0) return 0 ;;
+    0*) return 1 ;;
+  esac
+}
+[ $# -ge 3 ] || refuse "usage: agent-entry TOOL-UID TOOL-GID ARGV..."
+tool_uid=$1
+tool_gid=$2
+shift 2
+plain_id "$tool_uid" && plain_id "$tool_gid" || refuse "ids must be plain decimal numbers"
+if [ "$tool_uid" = 0 ] || [ "$tool_uid" = "$agent" ] || [ "$tool_gid" = "$agent" ]; then
+  refuse "the tools' identity must not be root or the CLI's"
+fi
+dumpable_ok || refuse "fs.suid_dumpable is 1 (the CLI would be traceable)"
+# The program found as Docker would find it (the container's PATH). The CLI runs with
+# /usr/local/bin alone on its PATH, so its own git call never runs (I5), and reads only its own
+# settings (R3-M2); any other program (a check's probe) with the container's usual PATH.
+program=$(PATH=/usr/local/bin:/usr/bin:/bin command -v -- "$1") || { echo "agent-entry: $1 not found" >&2; exit 127; }
+shift
+path=/usr/local/bin:/usr/bin:/bin
+first=()
+if [ "$program" = /usr/local/bin/claude ]; then
+  path=/usr/local/bin
+  for a in "$@"; do
+    case $a in --setting-sources | --setting-sources=*) refuse "the argument vector names --setting-sources" ;; esac
+  done
+  first=(--setting-sources user)
+fi
+# Each home made by its own identity, private to it; the CLI's temporary directory too (R3-L3).
+setpriv --reuid="$tool_uid" --regid="$tool_gid" --clear-groups mkdir -m 700 /tmp/home
+setpriv --reuid="$agent" --regid="$tool_gid" --clear-groups mkdir -m 700 /tmp/agent "/tmp/claude-$agent"
+umask 002
+exec setpriv --ruid="$agent" --euid="$agent" --rgid="$agent" --egid="$tool_gid" --clear-groups \
+  --inh-caps="-all,$caps" --ambient-caps="-all,$caps" --bounding-set="-all,$caps" \
+  /usr/bin/env HOME=/tmp/agent PATH="$path" SHELL=/bin/bash \
+  LOCKSTEP_TOOL_UID="$tool_uid" LOCKSTEP_TOOL_GID="$tool_gid" \
+  CLAUDE_CODE_SHELL_PREFIX=/opt/lockstep/tool-shell CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1 \
+  CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 \
+  ENABLE_TOOL_SEARCH=false \
+  "$program" ${first[@]+"${first[@]}"} "$@"

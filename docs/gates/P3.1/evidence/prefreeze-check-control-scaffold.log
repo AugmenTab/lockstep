@@ -1,0 +1,61 @@
+FAIL first launch exits 0
+FAIL first launch said it prepares Lockstep once
+FAIL first launch built the pane binary with a VERSION
+FAIL first launch: the pane container is running
+FAIL first launch: one helper
+FAIL first launch: the real browser signed in and saw the status (fragment gone)
+FAIL first launch: the status appeared
+FAIL first launch: the page says the application is not installed
+PASS first launch: no service container was started
+FAIL the instance installation could be copied from the pane build
+FAIL second launch exits 0
+PASS second launch did not rebuild
+PASS second launch did not say first use
+PASS second launch reused the pane (start time unchanged)
+FAIL second launch: still one helper
+FAIL database missing: the page says the database is not ready
+FAIL database missing: the page says installed
+PASS database missing: no service started
+FAIL schema behind: launch exits 0
+PASS schema behind: no service started
+PASS schema behind: nothing was migrated
+FAIL schema behind: the page says the database is not ready
+FAIL the instance database could be migrated for the compatible case
+FAIL compatible: launch exits 0
+FAIL compatible: the service was started
+FAIL compatible: the page says ready
+FAIL compatible: the page says the service is running
+FAIL pane mounts exactly the install (read-only) and the pane state (read-write)
+FAIL pane has no Docker socket
+FAIL pane root filesystem is read-only
+Error response from daemon: No such container: lockstep-control-p31c
+FAIL pane drops all capabilities
+FAIL pane runs as this user
+FAIL pane has no database configuration in its environment
+FAIL stop exits 0
+PASS stop removed the pane container
+PASS stop ended the helper
+PASS stop removed the channel keys
+PASS stop left the service running
+FAIL stop says the service keeps running
+FAIL simultaneous launches: one pane container
+FAIL simultaneous launches: one helper
+grep: .local/evidence/control-20261025t235159z/smoke-g1: No such file or directory
+FAIL simultaneous launches: both browsers saw the status
+FAIL squatter: launch exits 0
+FAIL squatter: the pane moved to the next port
+FAIL squatter: the browser reached the real pane
+PASS squatter: received no sign-in request
+FAIL browser fails: exit 70
+FAIL no browser launcher: exit 70
+FAIL forwarding: workspace show exits 0
+FAIL forwarding: workspace show prints the workspace
+PASS no output contains a sign-in link
+PASS the pane log contains no sign-in link
+grep: .local/control-p31c/helper/helper.log: No such file or directory
+PASS the helper log contains no sign-in link
+cat: .local/evidence/control-20261025t235159z/smoke-*: No such file or directory
+PASS the smoke summaries contain no sign-in link
+PASS no launch asked a question without a terminal
+
+check-control: 38 failure(s); results in .local/evidence/control-20261025t235159z/results.txt

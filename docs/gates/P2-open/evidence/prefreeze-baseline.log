@@ -1,0 +1,24 @@
+FAIL open --bogus exits 64
+FAIL open --port 0 exits 64
+FAIL open --port 8000 extra exits 64
+FAIL database not ready exits 69
+FAIL database not ready says so
+PASS database not ready starts no service
+FAIL normal flow exits 0
+FAIL normal flow started the service
+FAIL normal flow: the real browser reached the authenticated /operator page
+FAIL normal flow: the same link is refused the second time (single use)
+FAIL already running exits 0
+PASS already running: the service was not restarted
+FAIL already running: a new sign-in succeeds
+FAIL port mismatch exits 75
+FAIL launcher unavailable exits 70
+FAIL launcher failing exits 70
+FAIL scripts/lockstep workspace show exits 0
+FAIL scripts/lockstep workspace show prints the workspace
+PASS no output contains token=
+PASS no output contains a token-shaped value
+PASS the service log contains no token=
+PASS the smoke summaries contain no token
+
+check-open: 16 failure(s); results in .local/evidence/open-20261019t020239z/results.txt

@@ -1,0 +1,2 @@
+the helper did not make the runner key
+usage: scripts/control-helper --state DIR [--instance NAME] [--service-port N] [--projects DIR]

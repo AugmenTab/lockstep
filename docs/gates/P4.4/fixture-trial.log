@@ -1,0 +1,23 @@
+lockstep> test (suite: lockstep-integration, args: -p C-P4.4)
+
+lockstep-integration
+  C-P4.4 the Supervisor's Git boundary (real Git)
+    a clean repository's HEAD is the basis:                                                              OK (0.04s)
+    a changed, staged or untracked file makes it dirty; an ignored one does not:                         OK (0.05s)
+    a missing folder, a plain folder and an unborn HEAD are refused:                                     OK (0.02s)
+    the work branch is created once; elsewhere is branch-exists; a bad name is refused:                  OK (0.05s)
+    a snapshot is the commit's exact tree: modes and links, no .git, no submodule, not the working tree: OK (0.06s)
+    a snapshot needs an empty, real directory:                                                           OK
+    changes in a snapshot: added, changed, made executable and removed files, in path order:             OK (0.03s)
+    a new or changed link, a .git, a pipe or a link made a file is refused:                              OK (0.17s)
+    the Supervisor's commit: its identity, parent and tree; the person's index and files untouched:      OK (0.06s)
+    the same parent, changes, message and time give the same commit:                                     OK (0.09s)
+    an invalid change set is refused before anything is written:                                         OK
+    the branch moves only from the expected commit, never while checked out:                             OK (0.12s)
+    a repository's configured file-system monitor never runs:                                            OK (0.08s)
+
+All 13 tests passed (0.81s)
+
+
+
+lockstep> Test suite lockstep-integration passed

@@ -1,0 +1,17 @@
+claude
+-p
+--model
+{MODEL}
+--effort
+{EFFORT}
+--tools
+Read Edit Bash
+--dangerously-skip-permissions
+--no-session-persistence
+--output-format
+json
+--strict-mcp-config
+--disable-slash-commands
+--session-id
+{SESSION}
+Your instructions are in {INPUT}/role.md. Read that file first and follow it exactly.

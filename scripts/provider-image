@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Builds the provider image (contract C-P4.L L1, L2): the pinned Claude Code CLI
+# (2.1.312, its package checked against the registry's SHA-512) and the egress
+# proxy, tagged lockstep-provider:claude-2.1.312. Downloads the CLI package from
+# the npm registry; contacts no model provider. Prints the image id.
+#
+#   scripts/provider-image
+set -euo pipefail
+cd "$(dirname "$0")/.."
+tag=lockstep-provider:claude-2.1.312
+chmod 755 scripts/runner/provider/egress-proxy scripts/runner/provider/agent-entry scripts/runner/provider/tool-shell
+docker build --quiet --tag "$tag" scripts/runner/provider >/dev/null
+docker image inspect --format '{{.Id}}' "$tag"

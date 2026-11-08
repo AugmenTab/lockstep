@@ -1,0 +1,32 @@
+as of 2026-10-20T16:57:58Z
+ticket aaf19fc6-827f-46ac-8faf-e61635592340 state=ready revision=2 title="B1 blocked, priority 50"
+ticket 8bfc3759-ae5c-4c34-bd23-16129d97cced state=ready revision=2 title="B1 order one"
+ticket dc2e59e6-d231-4bd5-a789-7c50084d956e state=ready revision=2 title="B1 order three"
+ticket 8e37c7f0-d8b4-4925-8864-f2250166e4a8 state=ready revision=2 title="B1 order four"
+ticket de095b31-03b7-4797-b9fb-b27552865488 state=ready revision=2 title="B1 order five"
+ticket 05c7267c-74ed-4f8e-8f75-de2e8f96bab3 state=ready revision=2 title="B1 order six"
+work-order 46c39b8f-34cd-4b75-80ca-84714731967c ticket=aaf19fc6-827f-46ac-8faf-e61635592340 state=pending revision=1 binding=e26b30d2937f63d0c89eb24cc08402f9b6ab90fe3f68d9dd3cece79a0c05bea8
+work-order b93e108a-040e-44af-89f8-bcb602320b4e ticket=8bfc3759-ae5c-4c34-bd23-16129d97cced state=halted reason="B1: next order" revision=5 binding=c43708818f2a51cc2746043a6f30d8e347c27a43341d2a2d0f0b55da84624f4c
+  effect e158b52e-66e7-453a-aa43-ab5194efcac3 key=sandbox-repeatable spec=sandbox-repeatable class=repeatable state=settled generation=1 dispatches=1 budget=1 status=PASSED reason="applied: applied"
+    observation generation=1 accepted=true refusal=none applied result="applied"
+  effect 97020657-6bc5-479e-9cb8-e0508c71136a key=sandbox-idempotent spec=sandbox-idempotent class=idempotent state=settled generation=2 dispatches=2 budget=1 status=PASSED reason="applied: applied"
+    observation generation=2 accepted=true refusal=none applied result="applied"
+    recovery generation=1 redispatch generation=2 owner="supervisor"
+work-order b657c687-e4b0-4305-96c6-d80d6a929f68 ticket=dc2e59e6-d231-4bd5-a789-7c50084d956e state=halted reason="outcome-unknown operation=12e248e3-e718-44b5-a7eb-30c4f8e4d006" revision=5 binding=f679dedddc5b26f35850d2cbeab824a8362671b5992132b9084ff274427d5c6d
+  effect 12e248e3-e718-44b5-a7eb-30c4f8e4d006 key=sandbox-queryable spec=sandbox-queryable class=queryable state=confirmed-not-applied generation=2 dispatches=1 budget=1 status=BLOCKED reason="the work order is not active"
+    observation generation=1 accepted=true refusal=none no-answer reason="timeout"
+    resolution generation=1 basis=lookup acknowledged=false not-found
+work-order bbc471cf-2d9e-419a-98bc-096441bacf01 ticket=8e37c7f0-d8b4-4925-8864-f2250166e4a8 state=halted reason="outcome-unknown operation=2d28bbbe-0ac2-4bee-b91b-64f6f8043609" revision=5 binding=9104db6e248b92735ac7ebba2200c5ded1597d9bfb2d5a6b7a34f53d7714d0a9
+  effect 2d28bbbe-0ac2-4bee-b91b-64f6f8043609 key=sandbox-unqueryable spec=sandbox-unqueryable class=unqueryable state=settled generation=1 dispatches=1 budget=0 status=ATTESTED reason="attested by a human, not observed: human-attested: B1: the operator checked the sandbox record"
+    recovery generation=1 unknown reason="dispatch-interrupted: unqueryable effect"
+    resolution generation=1 basis=human-attested acknowledged=false attested-applied evidence="B1: the operator checked the sandbox record"
+work-order 097443f2-4b43-4722-ae4b-c4f630e4ca3e ticket=de095b31-03b7-4797-b9fb-b27552865488 state=halted reason="B1: next order" revision=5 binding=84d16fd2bf9ee5a99928f6ea20fabfdcd54bcd9e646417bdbb1eef39a4cc25e5
+  effect 7e1b1d62-2768-4146-9984-7fbce95b43e6 key=sandbox-repeatable spec=sandbox-repeatable class=repeatable state=settled generation=1 dispatches=1 budget=1 status=PASSED reason="applied: applied"
+    observation generation=1 accepted=true refusal=none applied result="applied"
+work-order 4ba2ea48-301a-4bc3-8dee-ff66bfc5bfd8 ticket=05c7267c-74ed-4f8e-8f75-de2e8f96bab3 state=active revision=4 binding=9c14d2f485ce9a4166747da6bd2e9904490c2d5651088105c8a3ff44aaf6f0e0
+  effect 678d0374-aad2-4732-b832-830ba8bef90f key=sandbox-idempotent spec=sandbox-idempotent class=idempotent state=settled generation=2 dispatches=2 budget=1 status=PASSED reason="applied: applied"
+    observation generation=2 accepted=true refusal=none applied result="applied"
+    recovery generation=1 redispatch generation=2 owner="supervisor"
+refusal subject=8bfc3759-ae5c-4c34-bd23-16129d97cced expected=2 principal=human code=illegal-transition command="accept"
+refusal subject=8bfc3759-ae5c-4c34-bd23-16129d97cced expected=1 principal=human code=stale-revision command="accept"
+schedule digest=c32290123bbd3a3d23a720c1f20de76c468f5cfcb54c9f6c1b886daef1175f49

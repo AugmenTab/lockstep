@@ -1,0 +1,14 @@
+# Linux clone, 2026-10-17T20:12:06Z; command: docs/gates/P1.3/evidence/linux-clone-run.sh d2f04eac088d002d6c2a0e5c386c9cadd7873d57
+d2f04eac088d002d6c2a0e5c386c9cadd7873d57
+Application
+Foundation
+Persistence
+Web
+format PASSED
+lint PASSED
+build PASSED
+unit PASSED
+integration PASSED
+All 172 tests passed (0.02s)
+All 39 tests passed (12.38s)
+exit=0

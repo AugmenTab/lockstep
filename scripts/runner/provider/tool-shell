@@ -1,0 +1,28 @@
+#!/bin/bash
+# The CLI's shell prefix (contract C-P4.L.R3 I2, §10): the Claude Code CLI runs
+# every Bash tool call as "tool-shell COMMAND". This closes every inherited
+# descriptor above 2, then runs "bash -c COMMAND" as the tools' identity (the
+# host's user, LOCKSTEP_TOOL_UID:LOCKSTEP_TOOL_GID, set by agent-entry) with no
+# capabilities, no-new-privileges and umask 022, for good: it cannot become the
+# CLI's identity again or read the CLI's memory.
+plain_id() {
+  case $1 in
+    "" | *[!0-9]*) return 1 ;;
+    0) return 0 ;;
+    0*) return 1 ;;
+  esac
+}
+plain_id "${LOCKSTEP_TOOL_UID:-}" && plain_id "${LOCKSTEP_TOOL_GID:-}" || {
+  echo "tool-shell: no tools' identity" >&2
+  exit 126
+}
+[ "$LOCKSTEP_TOOL_UID" != 0 ] || { echo "tool-shell: the tools must not run as root" >&2; exit 126; }
+for fd in /proc/$$/fd/*; do
+  fd=${fd##*/}
+  case $fd in *[!0-9]* | 0 | 1 | 2) continue ;; esac
+  eval "exec $fd>&-" 2>/dev/null
+done
+umask 022
+exec /usr/bin/setpriv --reuid="$LOCKSTEP_TOOL_UID" --regid="$LOCKSTEP_TOOL_GID" --clear-groups \
+  --inh-caps=-all --ambient-caps=-all --no-new-privs \
+  /usr/bin/env HOME=/tmp/home PATH=/usr/local/bin:/usr/bin:/bin /bin/bash -c "$1"

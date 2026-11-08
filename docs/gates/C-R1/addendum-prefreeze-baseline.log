@@ -1,0 +1,68 @@
+lockstep> test (suite: lockstep-integration, args: -p "/Gate C remediation addendum/ || /repeated creation key/ || /marker left by another/ || /out-of-range task and project revisions/")
+
+lockstep-integration
+  guided project setup (C-P3.5; real Git + PostgreSQL)
+    a repeated creation key returns the first project and creates nothing; other content is a key conflict:        FAIL (0.18s)
+      test/integration/Lockstep/ProjectsTest.hs:216:
+      expected: Left "key-conflict"
+       but got: Right "7190f8a7-d2cd-447a-915d-39f586c3dfeb"
+      Use -p '(((/Gate C remediation addendum/||/repeated creation key/)||/marker left by another/)||/out-of-range task and project revisions/)&&/a repeated creation key returns the first project and creates nothing; other content is a key conflict/' to rerun this test only.
+  tasks in projects (C-P3.6; real PostgreSQL)
+    a repeated creation key returns the first task and creates nothing; other content is a key conflict:           FAIL (0.15s)
+      test/integration/Lockstep/TasksTest.hs:151:
+      expected: Left "key-conflict"
+       but got: Right "a57e5013-d304-4f35-9846-f4bfabf00536"
+      Use -p '(((/Gate C remediation addendum/||/repeated creation key/)||/marker left by another/)||/out-of-range task and project revisions/)&&/a repeated creation key returns the first task and creates nothing; other content is a key conflict/' to rerun this test only.
+  Gate C review remediation (C-C.R1; real PostgreSQL)
+    decisions serialized per key (R1)
+      a marker left by another answer with the same key is a key conflict, and nothing runs:                       OK (0.38s)
+  Gate C review remediation over HTTP (C-C.R1)
+    out-of-range task and project revisions are a form error and change nothing (R3):                              OK (0.90s)
+  Gate C remediation addendum (C-C.R1 §3b; real PostgreSQL)
+    a connected project's folder is never removed (Review 3 findings 3, 4)
+      an interruption right after the commit leaves the connected project and its new folder:                      FAIL (0.15s)
+        test/integration/Lockstep/GateCRemediationAddendumTest.hs:106:
+        the connected project's folder was removed
+        Use -p '(((/Gate C remediation addendum/||/repeated creation key/)||/marker left by another/)||/out-of-range task and project revisions/)&&/an interruption right after the commit leaves the connected project and its new folder/' to rerun this test only.
+      a COMMIT whose answer was lost leaves the connected project and its new folder, and nothing else is touched: FAIL (0.16s)
+        test/integration/Lockstep/GateCRemediationAddendumTest.hs:118:
+        expected: ["garden","notes"]
+         but got: ["notes"]
+        Use -p '(((/Gate C remediation addendum/||/repeated creation key/)||/marker left by another/)||/out-of-range task and project revisions/)&&/a COMMIT whose answer was lost leaves the connected project and its new folder, and nothing else is touched/' to rerun this test only.
+      a failed attempt still removes the folder it made when the project does not record it:                       OK (0.26s)
+    rows made before migration 17 replay only when the request is shown equal (A-C.R1-1)
+      a project without a creation digest:                                                                         FAIL
+        Exception: SqlExecutionError {sqlExecutionErrorExecStatus = Just FatalError, sqlExecutionErrorMessage = "ERROR:  column \"creation_digest\" of relation \"lockstep_projects\" does not exist\nLINE 1: UPDATE lockstep_projects SET creation_digest = NULL\n                                     ^\n", sqlExecutionErrorSqlState = Just "42703", sqlExecutionErrorSqlQuery = "UPDATE lockstep_projects SET creation_digest = NULL"}
+        HasCallStack backtrace:
+          collectBacktraces, called at libraries/ghc-internal/src/GHC/Internal/Exception.hs:169:13 in ghc-internal:GHC.Internal.Exception
+          toExceptionWithBacktrace, called at libraries/ghc-internal/src/GHC/Internal/IO.hs:260:11 in ghc-internal:GHC.Internal.IO
+          throwIO, called at ./Control/Concurrent/Async.hs:110:7 in tasty-1.5.3-7clNd4478q2L7Y34nuWmO:Control.Concurrent.Async
+        
+        
+        Use -p '(((/Gate C remediation addendum/||/repeated creation key/)||/marker left by another/)||/out-of-range task and project revisions/)&&/a project without a creation digest/' to rerun this test only.
+      a task without a creation digest, before and after an edit:                                                  FAIL
+        Exception: SqlExecutionError {sqlExecutionErrorExecStatus = Just FatalError, sqlExecutionErrorMessage = "ERROR:  column \"creation_digest\" of relation \"lockstep_project_tasks\" does not exist\nLINE 1: UPDATE lockstep_project_tasks SET creation_digest = NULL\n                                          ^\n", sqlExecutionErrorSqlState = Just "42703", sqlExecutionErrorSqlQuery = "UPDATE lockstep_project_tasks SET creation_digest = NULL"}
+        HasCallStack backtrace:
+          collectBacktraces, called at libraries/ghc-internal/src/GHC/Internal/Exception.hs:169:13 in ghc-internal:GHC.Internal.Exception
+          toExceptionWithBacktrace, called at libraries/ghc-internal/src/GHC/Internal/IO.hs:260:11 in ghc-internal:GHC.Internal.IO
+          throwIO, called at ./Control/Concurrent/Async.hs:110:7 in tasty-1.5.3-7clNd4478q2L7Y34nuWmO:Control.Concurrent.Async
+        
+        
+        Use -p '(((/Gate C remediation addendum/||/repeated creation key/)||/marker left by another/)||/out-of-range task and project revisions/)&&/a task without a creation digest, before and after an edit/' to rerun this test only.
+
+6 out of 9 tests failed (2.47s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

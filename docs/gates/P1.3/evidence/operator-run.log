@@ -1,0 +1,81 @@
+# P1.3 operator run, 2026-10-17T20:11:38Z, commit d2f04eac088d002d6c2a0e5c386c9cadd7873d57
+# command: scripts/db backup; docker run --rm --network lockstep-net -e BACKUP=<that path> -v <repo>:/work lockstep-dev:p1 bash /work/docs/gates/P1.3/evidence/operator-run.sh
+$ lockstep db status
+readiness not_ready schema_behind 1
+revision 1
+pending 1
+[exit 0]
+$ lockstep operator sign-in (schema behind)
+lockstep: not_ready schema_behind 1
+[exit 69]
+$ lockstep db migrate (no backup decision)
+lockstep: migrations are already applied: take a backup (scripts/db backup) and pass --backup FILE, or pass --no-backup
+[exit 75]
+$ lockstep db migrate --backup .local/backups/20261017T201125Z-r1-49664.dump
+applied migrations: 2
+[exit 0]
+$ lockstep db status
+readiness ready 2
+revision 2
+pending 0
+[exit 0]
+$ lockstep operator sign-in
+[exit 0] stderr bytes: 0
+http://127.0.0.1:8000/operator/sign-in?token=<TOKEN-1>
+-- confirm: HTTP/1.1 200 OK
+Cache-Control: no-store
+Referrer-Policy: origin
+Content-Security-Policy: default-src 'none'; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'
+   token occurrences in the confirm body: 1
+-- null-origin: HTTP/1.1 403 Forbidden
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+-- localhost-host: HTTP/1.1 403 Forbidden
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+-- exchange: HTTP/1.1 303 See Other
+Location: /operator
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+Set-Cookie: lockstep_session=<SESSION>; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200
+-- operator: HTTP/1.1 200 OK
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+   operator page: expires at 2026-10-18 08:11:31 UTC.
+-- reuse: HTTP/1.1 403 Forbidden
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+-- bad-csrf: HTTP/1.1 403 Forbidden
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+-- no-origin: HTTP/1.1 403 Forbidden
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+-- sign-out: HTTP/1.1 303 See Other
+Location: /
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+Set-Cookie: lockstep_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0
+-- after: HTTP/1.1 401 Unauthorized
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+$ second sign-in, then lockstep operator sign-out-all
+-- exchange2: HTTP/1.1 303 See Other
+Location: /operator
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+Set-Cookie: lockstep_session=<SESSION>; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200
+revoked sessions: 1
+[exit 0]
+-- after-all: HTTP/1.1 401 Unauthorized
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+serve exit: 0
+-- server log
+Database readiness: ready 2
+Service start recorded
+Listening on 127.0.0.1:8000
+-- bounded exposure (raw-token occurrences; expected 0 everywhere listed)
+token: 0 occurrence(s) in all headers, the server log, CLI stderr and every body except the confirm page
+token: 0 occurrence(s) in all headers, the server log, CLI stderr and every body except the confirm page
+database password occurrences in all outputs: 0

@@ -1,0 +1,24 @@
+== dev image
+== step 1 format
+Loaded config from: /work/fourmolu.yaml
+== step 2 lint and static checks
+No hints
+partial-function lint: all 17 banned functions flagged in test/fixtures/lint/PartialFunctions.hs
+forbidden facilities: none in 145 files
+source paths: all Haskell sources at case-exact module paths
+henforcer configs: test config equals production config minus layering rules
+== step 3 build
+All test running disabled by --no-run-tests flag. To mute this message in future, set
+notify-if-no-run-tests: false in Stack's configuration.
+boundary check: Foundation -> Web and Web -> Persistence rejected by Henforcer; control compiled
+kernel boundary: IO or unsafe in the Kernel:
+src/Lockstep/Kernel/Effect.hs:383:      UnsafeRetryBudget -> "unsafe-retry-budget"
+
+== summary (tested revision d8fa98bf41845f293e5ae78259220787434aa121)
+  1 format                     PASSED
+  2 lint and static checks     PASSED
+  3 build                      FAILED
+  4 unit tests                 NOT_RUN
+  5 no-live-model guard        NOT_RUN
+  6 integration + backup/restore NOT_RUN
+exit=1

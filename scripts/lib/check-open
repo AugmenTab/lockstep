@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# Verification of `lockstep open` (C-OPEN §3), on the host. Needs scripts/db up
+# and an installed binary (scripts/service install); it never reinstalls.
+#
+# Uses its own service container (lockstep-open-check) on a free port and a
+# fresh database lockstep_open_<stamp> on the operator PostgreSQL server,
+# both removed at the end. The browser is scripts/lib/open-smoke-browser
+# (real headless Chromium). Results: .local/evidence/open-<stamp>/results.txt
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+
+export LOCKSTEP_SERVICE_NAME=lockstep-open-check
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+db=lockstep_open_$stamp
+work=.local/evidence/open-$stamp
+config=.local/config/lockstep-open-$stamp.json
+missing=.local/config/lockstep-open-missing-$stamp.json
+mkdir -p "$work"
+results=$work/results.txt
+: > "$results"
+: > "$work/all-output"
+failures=0
+
+record() { # STATUS DESCRIPTION
+  printf '%s %s\n' "$1" "$2" | tee -a "$results"
+  if [ "$1" != PASS ]; then failures=$((failures + 1)); fi
+}
+expect() { # DESCRIPTION CONDITION...
+  local description=$1
+  shift
+  if "$@"; then record PASS "$description"; else record FAIL "$description"; fi
+}
+
+if ! docker container inspect --format '{{.State.Running}}' lockstep-postgres 2>/dev/null | grep -q true; then
+  echo "NOT_RUN: the operator PostgreSQL (lockstep-postgres) is not running; run scripts/db up" >&2
+  exit 2
+fi
+if [ ! -x .local/install/bin/lockstep ]; then
+  echo "NOT_RUN: no installed binary; run scripts/service install" >&2
+  exit 2
+fi
+
+cleanup() {
+  docker rm -f "$LOCKSTEP_SERVICE_NAME" >/dev/null 2>&1 || true
+  docker exec lockstep-postgres psql -q -U lockstep -d lockstep -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" >/dev/null 2>&1 || true
+  rm -f "$config" "$missing"
+}
+trap cleanup EXIT
+docker rm -f "$LOCKSTEP_SERVICE_NAME" >/dev/null 2>&1 || true
+
+port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+other=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+
+umask 077
+docker exec lockstep-postgres psql -q -U lockstep -d lockstep -c "CREATE DATABASE $db" >/dev/null
+sed -E -e 's/"host":"[^"]*"/"host":"127.0.0.1"/' -e 's/"port":[0-9]+/"port":5433/' \
+  -e "s/\"name\":\"[^\"]*\"/\"name\":\"$db\"/" .local/config/lockstep.json > "$config"
+sed -E -e 's/"host":"[^"]*"/"host":"127.0.0.1"/' -e 's/"port":[0-9]+/"port":5433/' \
+  -e "s/\"name\":\"[^\"]*\"/\"name\":\"${db}_missing\"/" .local/config/lockstep.json > "$missing"
+LOCKSTEP_SERVICE_CONFIG=$config scripts/service cli db migrate > "$work/migrate.out" 2>&1
+
+code=0
+run() { # runs a command, keeps its output in $work/out and $work/all-output, sets code
+  set +e
+  "$@" > "$work/out" 2>&1
+  code=$?
+  set -e
+  cat "$work/out" >> "$work/all-output"
+}
+output_has() { grep -q -- "$1" "$work/out"; }
+smoke_has() { grep -sqx -- "$2" "$1"; }
+running() { docker container inspect --format '{{.State.Running}}' "$LOCKSTEP_SERVICE_NAME" 2>/dev/null | grep -q true; }
+absent() { ! docker container inspect "$LOCKSTEP_SERVICE_NAME" >/dev/null 2>&1; }
+started_at() { docker container inspect --format '{{.State.StartedAt}}' "$LOCKSTEP_SERVICE_NAME" 2>/dev/null || echo none; }
+signed_in() { # SMOKE_FILE
+  smoke_has "$1" confirm.status=200 && smoke_has "$1" confirm.path=/operator/sign-in \
+    && smoke_has "$1" signin.path=/operator && smoke_has "$1" signin.status=200 \
+    && smoke_has "$1" signin.signout=yes
+}
+single_use() { smoke_has "$1" replaysignin.status=403 && smoke_has "$1" replaysignin.refused=yes; }
+
+# Refusals (usage)
+run scripts/lockstep open --bogus
+expect "open --bogus exits 64" test "$code" = 64
+run scripts/lockstep open --port 0
+expect "open --port 0 exits 64" test "$code" = 64
+run scripts/lockstep open --port 8000 extra
+expect "open --port 8000 extra exits 64" test "$code" = 64
+
+# Database not ready: refused before anything starts
+LOCKSTEP_SERVICE_CONFIG=$missing LOCKSTEP_BROWSER=false run scripts/lockstep open --port "$port"
+expect "database not ready exits 69" test "$code" = 69
+expect "database not ready says so" output_has "not ready"
+expect "database not ready starts no service" absent
+
+# Normal flow: nothing running
+LOCKSTEP_SERVICE_CONFIG=$config LOCKSTEP_BROWSER=scripts/lib/open-smoke-browser LOCKSTEP_SMOKE_OUT=$work/smoke1 \
+  run scripts/lockstep open --port "$port"
+expect "normal flow exits 0" test "$code" = 0
+expect "normal flow started the service" running
+expect "normal flow: the real browser reached the authenticated /operator page" signed_in "$work/smoke1"
+expect "normal flow: the same link is refused the second time (single use)" single_use "$work/smoke1"
+first_start=$(started_at)
+
+# Already running: no restart; port discovered from the running service
+LOCKSTEP_SERVICE_CONFIG=$config LOCKSTEP_BROWSER=scripts/lib/open-smoke-browser LOCKSTEP_SMOKE_OUT=$work/smoke2 \
+  run scripts/lockstep open
+expect "already running exits 0" test "$code" = 0
+expect "already running: the service was not restarted" test "$(started_at)" = "$first_start"
+expect "already running: a new sign-in succeeds" signed_in "$work/smoke2"
+
+# Port mismatch
+LOCKSTEP_SERVICE_CONFIG=$config LOCKSTEP_BROWSER=false run scripts/lockstep open --port "$other"
+expect "port mismatch exits 75" test "$code" = 75
+
+# Launcher unavailable / failing
+LOCKSTEP_SERVICE_CONFIG=$config LOCKSTEP_BROWSER=/nonexistent/browser run scripts/lockstep open --port "$port"
+expect "launcher unavailable exits 70" test "$code" = 70
+LOCKSTEP_SERVICE_CONFIG=$config LOCKSTEP_BROWSER=false run scripts/lockstep open --port "$port"
+expect "launcher failing exits 70" test "$code" = 70
+
+# Wrapper forwards everything else to the installed CLI
+LOCKSTEP_SERVICE_CONFIG=$config run scripts/lockstep workspace show
+expect "scripts/lockstep workspace show exits 0" test "$code" = 0
+expect "scripts/lockstep workspace show prints the workspace" output_has "^name: "
+
+# No token leaks: not in any output, not in the service log
+docker logs "$LOCKSTEP_SERVICE_NAME" > "$work/service.log" 2>&1 || true
+expect "no output contains token=" bash -c "! grep -q 'token=' '$work/all-output'"
+expect "no output contains a token-shaped value" bash -c "! grep -Eq '[A-Za-z0-9_-]{43}' '$work/all-output'"
+expect "the service log contains no token=" bash -c "! grep -q 'token=' '$work/service.log'"
+expect "the smoke summaries contain no token" bash -c "! cat '$work'/smoke* 2>/dev/null | grep -Eq 'token|[A-Za-z0-9_-]{43}'"
+
+echo
+echo "check-open: $failures failure(s); results in $results"
+[ "$failures" -eq 0 ]

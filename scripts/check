@@ -1,26 +1,155 @@
 #!/usr/bin/env bash
-# Canonical Lockstep repository health check.
+# Repository-native verification command (ARCHITECTURE §4).
 #
-# Runs all required quality gates in a fixed order. Exits non-zero on the
-# first failure. Does not modify tracked repository content and does not
-# install dependencies; assumes `python -m pip install -e ".[dev]"` has
-# already been run.
-
+#   scripts/check                 steps 1-5: format, lint (+ static checks), build, unit,
+#                                 no-live-model guard
+#   scripts/check --integration   additionally step 6: real process/HTTP integration
+#
+# Every step runs inside the dev container (the host needs only Docker). The
+# unit step runs with --network none. Steps 4-6 run with provider-CLI sentinel
+# shims first on PATH (C-P1.7 E2); step 5 fails if a shim does not resolve or
+# was ever invoked, including during step 6.
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$repo_root"
+cd "$(dirname "$0")/.."
 
-run_gate() {
-    local label="$1"
-    shift
-    echo "==> $label"
-    "$@"
+integration=false
+for arg in "$@"; do
+  case "$arg" in
+    --integration) integration=true ;;
+    *) echo "scripts/check: unknown argument: $arg" >&2; exit 64 ;;
+  esac
+done
+
+image=lockstep-dev:p1
+stack_root_volume=lockstep-stack-root
+
+echo "== dev image"
+docker build --quiet --tag "$image" . >/dev/null
+
+run_step() {
+  local network=$1
+  shift
+  docker run --rm \
+    --network "$network" \
+    ${extra_env[@]+"${extra_env[@]}"} \
+    --volume "$PWD:/work" \
+    --volume "$stack_root_volume:/stack-root" \
+    --workdir /work \
+    "$image" \
+    scripts/lib/check-step "$@"
 }
 
-run_gate "ruff format --check" ruff format --check .
-run_gate "ruff check"          ruff check .
-run_gate "mypy"                mypy src/lockstep
-run_gate "pytest"              pytest
+declare -a names=(
+  "1 format"
+  "2 lint and static checks"
+  "3 build"
+  "4 unit tests"
+  "5 no-live-model guard"
+  "6 integration + backup/restore"
+)
+declare -a results=(NOT_RUN NOT_RUN NOT_RUN NOT_RUN NOT_RUN NOT_RUN)
+declare -a extra_env=()
+failed=false
 
-echo "All checks passed."
+step() {
+  local index=$1 network=$2 name=$3
+  if [ "$failed" = true ]; then
+    return
+  fi
+  echo "== step ${names[$index]}"
+  if run_step "$network" "$name"; then
+    results[$index]=PASSED
+  else
+    results[$index]=FAILED
+    failed=true
+  fi
+}
+
+step 0 none format
+step 1 none lint
+step 2 bridge build
+# Provider-CLI sentinel shims (C-P1.7 E2; TESTING_STRATEGY §8.2).
+sentinel_dir=".local/check-sentinel/$$-$RANDOM"
+mkdir -p "$sentinel_dir/bin"
+: > "$sentinel_dir/sentinel.log"
+while IFS= read -r cli; do
+  [ -n "$cli" ] || continue
+  printf '#!/bin/sh\nprintf "%%s %%s\\n" "$(basename "$0")" "$*" >> "${LOCKSTEP_SENTINEL_LOG:-$(dirname "$0")/../sentinel.log}"\nexit 97\n' > "$sentinel_dir/bin/$cli"
+  chmod +x "$sentinel_dir/bin/$cli"
+done < scripts/lib/provider-clis
+sentinel_env=(--env "LOCKSTEP_SENTINEL_DIR=/work/$sentinel_dir")
+
+extra_env=("${sentinel_env[@]}")
+step 3 none unit
+step 4 none guard
+extra_env=()
+if [ "$integration" = true ] && [ "$failed" = false ]; then
+  # A disposable PostgreSQL (ADR-0002 Q8, C-P1.2 E11) on a private network,
+  # removed on exit whatever happens.
+  run_id="$$-$RANDOM"
+  test_network="lockstep-test-$run_id"
+  test_pg="lockstep-test-pg-$run_id"
+  test_password=$(head -c 24 /dev/urandom | base64 | tr -d '/+=\n')
+  cleanup() {
+    docker rm -f "$test_pg" >/dev/null 2>&1 || true
+    docker network rm "$test_network" >/dev/null 2>&1 || true
+  }
+  trap cleanup EXIT
+  echo "== disposable PostgreSQL $(cat scripts/lib/postgres-image)"
+  docker network create "$test_network" >/dev/null
+  docker run -d --name "$test_pg" --network "$test_network" \
+    --env POSTGRES_PASSWORD="$test_password" \
+    "$(cat scripts/lib/postgres-image)" >/dev/null
+  ready=false
+  for _ in $(seq 1 60); do
+    if docker exec "$test_pg" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null; then
+      ready=true
+      break
+    fi
+    sleep 1
+  done
+  if [ "$ready" = true ]; then
+    extra_env=(
+      "${sentinel_env[@]}"
+      --env LOCKSTEP_TEST_PG_HOST="$test_pg"
+      --env LOCKSTEP_TEST_PG_PORT=5432
+      --env LOCKSTEP_TEST_PG_USER=postgres
+      --env LOCKSTEP_TEST_PG_PASSWORD="$test_password"
+    )
+    step 5 "$test_network" integration
+    # The guard's sentinel log must still be empty after the integration step.
+    extra_env=("${sentinel_env[@]}")
+    if [ "${results[4]}" = PASSED ] && ! run_step none guard-log; then
+      results[4]=FAILED
+      failed=true
+    fi
+    extra_env=()
+    if [ "$failed" = false ]; then
+      echo "== backup/restore check"
+      docker exec "$test_pg" createdb -U postgres backupcheck
+      if ! scripts/lib/check-db-backup-restore "$test_pg" postgres backupcheck; then
+        results[5]=FAILED
+        failed=true
+      fi
+    fi
+  else
+    echo "disposable PostgreSQL did not become ready" >&2
+    results[5]=FAILED
+    failed=true
+  fi
+fi
+
+echo
+dirty=""
+if [ -n "$(git status --porcelain)" ]; then
+  dirty=", DIRTY working tree"
+fi
+echo "== summary (tested revision $(git rev-parse HEAD)$dirty)"
+for i in "${!names[@]}"; do
+  printf '  %-28s %s\n' "${names[$i]}" "${results[$i]}"
+done
+
+if [ "$failed" = true ]; then
+  exit 1
+fi

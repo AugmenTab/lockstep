@@ -1,0 +1,10 @@
+# Origin probe, 2026-10-17, docker debian:bookworm-slim, both browsers headless
+# command: docker run --rm -v <dir>:/probe:ro debian:bookworm-slim sh /probe/run.sh
+Chromium 155.0.8059.79 built on Debian GNU/Linux 12 (bookworm)
+Mozilla Firefox 153.5.0esr
+chromium: policy=no-referrer Origin='null' Sec-Fetch-Site='same-origin' Referer=None
+firefox:  policy=no-referrer Origin='null' Sec-Fetch-Site='same-origin' Referer=None
+chromium: policy=same-origin Origin='http://127.0.0.1:8411' Sec-Fetch-Site='same-origin' Referer='http://127.0.0.1:8411/?token=SECRET'
+firefox:  policy=same-origin Origin='http://127.0.0.1:8411' Sec-Fetch-Site='same-origin' Referer='http://127.0.0.1:8411/?token=SECRET'
+chromium: policy=strict-origin-when-cross-origin Origin='http://127.0.0.1:8411' Sec-Fetch-Site='same-origin' Referer='http://127.0.0.1:8411/?token=SECRET'
+firefox:  policy=strict-origin-when-cross-origin Origin='http://127.0.0.1:8411' Sec-Fetch-Site='same-origin' Referer='http://127.0.0.1:8411/?token=SECRET'

@@ -1,0 +1,1328 @@
+== dev image
+== step 1 format
+Loaded config from: /work/fourmolu.yaml
+== step 2 lint and static checks
+No hints
+partial-function lint: all 17 banned functions flagged in test/fixtures/lint/PartialFunctions.hs
+forbidden facilities: none in 221 files
+source paths: all Haskell sources at case-exact module paths
+henforcer configs: test config equals production config minus layering rules
+== step 3 build
+lockstep-0.2.0.0: unregistering (local file changes: src/Lockstep/Web/App.hs)
+All test running disabled by --no-run-tests flag. To mute this message in future, set
+notify-if-no-run-tests: false in Stack's configuration.
+lockstep> build (lib + exe + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+[64 of 80] Compiling Lockstep.Web.App [Source file changed]
+Preprocessing test suite 'lockstep-unit' for lockstep-0.2.0.0...
+Building test suite 'lockstep-unit' for lockstep-0.2.0.0...
+[59 of 59] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-unit/lockstep-unit [Library changed]
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+[2 of 2] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep/lockstep [Library changed]
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[42 of 42] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-integration/lockstep-integration [Library changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-6ggF0AiJnRUCIB81Gsi4xx
+Installing executable lockstep in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/bin
+Registering library for lockstep-0.2.0.0...
+boundary check: Foundation -> Web and Web -> Persistence rejected by Henforcer; control compiled
+kernel boundary: Kernel -> System.Process and Kernel -> Persistence rejected by Henforcer; control compiled; purity scan clean (18 files)
+== step 4 unit tests
+sentinel: inside stack's environment, claude codex resolve to the shims
+lockstep> test (suite: lockstep-unit)
+
+lockstep-unit
+  Cli
+    serve with no options binds loopback on the documented default port:                                                     OK
+    the documented default port is 8000:                                                                                     OK
+    --port N sets the port:                                                                                                  OK
+    --port=N sets the port:                                                                                                  OK
+    port bounds 1 and 65535 are accepted:                                                                                    OK
+    --port with no value is a typed error, not the default:                                                                  OK
+    --port= with an empty value is a typed error:                                                                            OK
+    a non-numeric port is rejected:                                                                                          OK
+    a negative port is rejected:                                                                                             OK
+    port 0 is out of range:                                                                                                  OK
+    port 65536 is out of range:                                                                                              OK
+    a repeated --port is refused:                                                                                            OK
+    there is no option to bind a public interface:                                                                           OK
+    an unknown option is refused:                                                                                            OK
+    an extra positional argument is refused:                                                                                 OK
+    an unknown subcommand is refused:                                                                                        OK
+    no subcommand is refused:                                                                                                OK
+    mkPort rejects 0 and 65536 and accepts 8000:                                                                             OK
+  Server
+    the default configuration binds 127.0.0.1 only:                                                                          OK
+    a configured port keeps the loopback host:                                                                               OK
+  Application
+    health
+      GET /api/health_check answers 204 with an empty body:                                                                  OK
+      POST /api/health_check is not a route:                                                                                 OK
+    liveness
+      GET / renders an HTML liveness page:                                                                                   OK
+      the page states liveness only and that database readiness is not checked:                                              OK
+      the page links the Lockstep stylesheet:                                                                                OK
+      the page carries no Pico, hyperscript or Rollbar reference:                                                            OK
+    removed template routes
+      /app is not a route:                                                                                                   OK (0.01s)
+      /app/login is not a route:                                                                                             OK
+      /app/logout is not a route:                                                                                            OK
+      /app/signup is not a route:                                                                                            OK
+      /app/admin/users is not a route:                                                                                       OK
+      /app/account/profile is not a route:                                                                                   OK
+      /api/docs is not a route:                                                                                              OK
+      /api/test_authentication is not a route:                                                                               OK
+      /mobile is not a route:                                                                                                OK
+    static assets
+      /static/lockstep.css is served as CSS:                                                                                 OK
+      the Pico stylesheet is not shipped:                                                                                    OK
+      the hyperscript bundle is not shipped:                                                                                 OK
+      a path outside the asset allowlist is not served:                                                                      OK
+      an unlisted asset name is not served:                                                                                  OK
+  SystemConfig
+    a valid configuration decodes:                                                                                           OK
+    a missing database block is invalid:                                                                                     OK
+    a missing database field is invalid:                                                                                     OK
+    a leftover rollbar block is refused as an unknown key:                                                                   OK
+    an unknown key inside the database block is refused:                                                                     OK
+    port 0 is invalid:                                                                                                       OK
+    port 70000 is invalid:                                                                                                   OK
+    showing a decoded configuration never reveals the password:                                                              OK
+  Cli db
+    db migrate defaults to requiring a backup when migrations are applied:                                                   OK
+    db migrate --backup FILE:                                                                                                OK
+    db migrate --backup=FILE:                                                                                                OK
+    db migrate --no-backup:                                                                                                  OK
+    db migrate --backup without a value is a typed error:                                                                    OK
+    --backup and --no-backup conflict:                                                                                       OK
+    a repeated --backup is refused:                                                                                          OK
+    an unknown db migrate option is refused:                                                                                 OK
+    db status:                                                                                                               OK
+    db status takes no arguments:                                                                                            OK
+    db without a subcommand is refused:                                                                                      OK
+    an unknown db subcommand is refused:                                                                                     OK
+  Migration plan
+    an empty ledger plans every migration in order:                                                                          OK
+    a full ledger plans nothing:                                                                                             OK
+    a ledger prefix plans the remainder:                                                                                     OK
+    a changed applied migration is a checksum mismatch:                                                                      OK
+    an applied id the binary does not know means the database is ahead:                                                      OK
+    a gap in the ledger is refused:                                                                                          OK
+    a list with duplicate ids is invalid:                                                                                    OK
+    a list with decreasing ids is invalid:                                                                                   OK
+    the checksum is the SHA-256 of the SQL text:                                                                             OK
+    mkMigrationId rejects 0 and negatives:                                                                                   OK
+    the production migration list is valid and starts at 1:                                                                  OK
+  Readiness
+    libpq failure classification
+      connection refused is unreachable:                                                                                     OK
+      an unknown host is unreachable:                                                                                        OK
+      a connect timeout is unreachable:                                                                                      OK
+      a password failure is an authentication failure:                                                                       OK
+      a missing database is reported as missing:                                                                             OK
+      anything else is a database error:                                                                                     OK
+    readiness codes
+      ready carries the revision:                                                                                            OK
+      every not-ready reason has its own code:                                                                               OK
+      no not-ready code can be read as ready:                                                                                OK
+  Liveness page readiness
+    not configured says readiness is not checked:                                                                            OK
+    every not-ready reason
+      unreachable:                                                                                                           OK
+      authentication:                                                                                                        OK
+      missing:                                                                                                               OK
+      schema behind:                                                                                                         OK
+      schema invalid:                                                                                                        OK
+      other error:                                                                                                           OK
+    ready shows the revision and the persisted start count:                                                                  OK
+  Readiness route (no database configured)
+    GET /api/readiness answers 503 database_not_configured:                                                                  OK
+    GET /api/health_check still answers 204:                                                                                 OK
+  OperatorToken
+    token
+      a generated token encodes as 43 base64url characters and decodes back:                                                 OK
+      two generated tokens differ:                                                                                           OK
+      decoding a known token gives its 32 bytes (digest vector):                                                             OK
+      the digest is SHA-256 of the raw bytes (all-zero vector):                                                              OK
+      encode is the inverse of decode for a known token:                                                                     OK
+      malformed text is refused
+        empty:                                                                                                               OK
+        42 characters:                                                                                                       OK
+        44 characters:                                                                                                       OK
+        padded:                                                                                                              OK
+        standard base64 '+':                                                                                                 OK
+        standard base64 '/':                                                                                                 OK
+        non-ASCII:                                                                                                           OK
+        space:                                                                                                               OK
+        non-canonical final character:                                                                                       OK
+      show never reveals the token:                                                                                          OK
+    csrf
+      matches a known HMAC-SHA256 vector (all-zero session):                                                                 OK
+      matches a known HMAC-SHA256 vector (counting session):                                                                 OK
+      is deterministic per session and accepted for it:                                                                      OK
+      differs between sessions; another session's value is refused:                                                          OK
+      a wrong, empty, truncated or extended value is refused:                                                                OK
+  RequestGuard
+    Host
+      the exact loopback authority is accepted:                                                                              OK
+      localhost is refused:                                                                                                  OK
+      another port is refused:                                                                                               OK
+      another host is refused (DNS rebinding):                                                                               OK
+      the address without a port is refused when the port is not 80:                                                         OK
+      a trailing-dot form is refused:                                                                                        OK
+      two Host headers are refused:                                                                                          OK
+      a missing Host is tolerated on a public GET [D-1a]:                                                                    OK
+      a missing Host is tolerated on a public HEAD [D-1a]:                                                                   OK
+      a missing Host is refused on an operator route [D-1a]:                                                                 OK
+      a missing Host is refused on a POST, even with the exact Origin [D-1a]:                                                OK
+      a missing Host is refused on a public-class POST [D-1a]:                                                               OK
+      a wrong Host is refused before the Origin is considered:                                                               OK
+    Origin on mutating requests [D-2d]
+      the exact Origin is accepted:                                                                                          OK
+      a missing Origin is refused:                                                                                           OK
+      a foreign Origin is refused:                                                                                           OK
+      another port is refused:                                                                                               OK
+      localhost is refused:                                                                                                  OK
+      https is refused:                                                                                                      OK
+      a trailing slash is refused:                                                                                           OK
+      Origin: null is refused:                                                                                               OK
+      Origin: null is refused even with Sec-Fetch-Site: same-origin (no exception):                                          OK
+      two Origin headers are refused:                                                                                        OK
+      DELETE needs the Origin too:                                                                                           OK
+      a GET needs no Origin:                                                                                                 OK
+      a GET with a foreign Origin is not refused for it (Host decides):                                                      OK
+    port 80 uses the default-port forms [D-1a]
+      Host 127.0.0.1 and Origin http://127.0.0.1 are accepted:                                                               OK
+      Host 127.0.0.1:80 is refused:                                                                                          OK
+      Origin http://127.0.0.1:80 is refused:                                                                                 OK
+  Cli operator
+    operator sign-in defaults to the serve default port:                                                                     OK
+    operator sign-in --port N:                                                                                               OK
+    operator sign-in --port=N:                                                                                               OK
+    operator sign-in validates the port like serve:                                                                          OK
+    there is no option that takes a token:                                                                                   OK
+    operator sign-in takes no positional argument:                                                                           OK
+    operator sign-out-all:                                                                                                   OK
+    operator sign-out-all takes no arguments:                                                                                OK
+    operator without a subcommand is refused:                                                                                OK
+    an unknown operator subcommand is refused:                                                                               OK
+    the P1.1 and P1.2 commands are unchanged:                                                                                OK
+  Operator routes (no database)
+    protected routes
+      GET /operator without a session answers 401 and says how to sign in:                                                   OK
+      POST /operator/sign-out with exact Host and Origin but no session answers 401:                                         OK
+      a malformed Cookie header counts as no session (401, not 500):                                                         OK
+      a session cookie that is not a token counts as no session (401):                                                       OK
+    request guard over the application
+      a foreign Host on GET / answers 403:                                                                                   OK
+      Host: localhost on GET /operator answers 403:                                                                          OK
+      a missing Host on GET /operator answers 403 [D-1a]:                                                                    OK
+      a missing Origin on POST /operator/sign-out answers 403:                                                               OK
+      Origin: null on POST /operator/sign-in answers 403, even with Sec-Fetch-Site: same-origin [D-2d]:                      OK
+      an unrouted operator path answers 404 whatever its headers:                                                            OK
+    sign-in confirm page
+      GET /operator/sign-in with a well-formed token renders a confirm form (200):                                           OK
+      the confirm page is no-store with Referrer-Policy: origin [D-2d] and the E3 CSP:                                       OK
+      the token appears exactly once, in a hidden input named token:                                                         OK
+      the confirm form posts to /operator/sign-in:                                                                           OK
+      the confirm page loads nothing external and links nowhere external:                                                    OK
+      the token is in no response header:                                                                                    OK
+      a malformed token answers 400 without echoing it:                                                                      OK
+      a missing token answers 400:                                                                                           OK
+      POST /operator/sign-in without a database answers 503 without echoing the token:                                       OK
+    P1.1 and P1.2 routes with a browser Host
+      GET / answers 200:                                                                                                     OK
+      GET /api/health_check answers 204:                                                                                     OK
+      GET /static/lockstep.css answers 200:                                                                                  OK
+  Command
+    validation
+      a workspace name is trimmed:                                                                                           OK
+      an empty or whitespace-only name is NameEmpty:                                                                         OK
+      80 characters are accepted, 81 are NameTooLong (characters, not bytes):                                                OK
+      control characters inside the name are NameHasControl:                                                                 OK
+      keys of 16 and 64 base64url characters are accepted:                                                                   OK
+      malformed keys are KeyMalformed:                                                                                       OK
+      a generated key is valid, 22 characters, and two differ:                                                               OK
+    payload digest
+      matches the known vector:                                                                                              OK
+      is 32 bytes and ignores the actor and the key:                                                                         OK
+      differs by name and by expected revision:                                                                              OK
+      the envelope version is 1:                                                                                             OK
+    decide
+      a fresh command at the current revision applies and returns current + 1:                                               OK
+      a fresh command at another revision is refused as stale with the current one:                                          OK
+      the same key and payload replays the prior receipt:                                                                    OK
+      a replay wins over a now-stale revision:                                                                               OK
+      the same key with another payload is a key conflict, even at the current revision:                                     OK
+  Cli workspace
+    workspace show:                                                                                                          OK
+    workspace show takes no arguments:                                                                                       OK
+    workspace rename --expected-revision N NAME:                                                                             OK
+    the = forms and an option after the name:                                                                                OK
+    --idempotency-key K:                                                                                                     OK
+    a missing expected revision is refused:                                                                                  OK
+    a non-numeric expected revision is refused:                                                                              OK
+    a negative expected revision is refused by the parser:                                                                   OK
+    an option without its value is refused:                                                                                  OK
+    a missing name is refused:                                                                                               OK
+    two names are refused:                                                                                                   OK
+    a repeated option is refused:                                                                                            OK
+    an unknown option is refused:                                                                                            OK
+    workspace without a subcommand is refused:                                                                               OK
+    an unknown workspace subcommand is refused:                                                                              OK
+    earlier commands are unchanged:                                                                                          OK
+  Command routes (no database)
+    POST /operator/commands/rename-workspace without a session answers 401:                                                  OK
+    POST /operator/commands/rename-workspace with a missing Origin answers 403:                                              OK
+    POST /operator/commands/rename-workspace with a foreign Host answers 403:                                                OK
+    GET /operator/receipts/1 without a session answers 401:                                                                  OK
+    GET /operator/commands/rename-workspace is not a route:                                                                  OK
+    POST /operator/receipts/1 is not a route:                                                                                OK
+  Queue no-op command
+    spec bounds
+      1 and 20 steps are accepted; 0 and 21 are StepsOutOfRange:                                                             OK
+      0 and 5000 ms are accepted; -1 and 5001 are StepMillisOutOfRange:                                                      OK
+      a failure step must be within 1..steps:                                                                                OK
+      the spec keeps its fields:                                                                                             OK
+    digest
+      differs by each spec field and from a rename:                                                                          OK
+      is equal for equal specs:                                                                                              OK
+    decide
+      queueing at the current revision applies without changing the revision:                                                OK
+      queueing at another revision is refused as stale:                                                                      OK
+  Cli job
+    job queue with defaults: 3 steps, 100 ms, no failure:                                                                    OK
+    job queue with every option, = forms mixed:                                                                              OK
+    a missing expected revision is refused:                                                                                  OK
+    non-numeric values are refused:                                                                                          OK
+    a repeated option is refused:                                                                                            OK
+    job queue takes no positional argument:                                                                                  OK
+    an unknown option is refused:                                                                                            OK
+    job show J:                                                                                                              OK
+    job show needs exactly one numeric id:                                                                                   OK
+    job without a subcommand is refused:                                                                                     OK
+    an unknown job subcommand is refused:                                                                                    OK
+    workspace rename is unchanged:                                                                                           OK
+  EvidenceModel
+    rules
+      a complete, current, matching PASSED stays PASSED:                                                                     OK
+      PASSED without an actual observation is incomplete:                                                                    OK
+      PASSED without evidence is incomplete:                                                                                 OK
+      PASSED without a tested revision is incomplete:                                                                        OK
+      PASSED from a dirty tree is incomplete:                                                                                OK
+      an unavailable evidence locator makes PASSED inconclusive:                                                             OK
+      a changed evidence digest makes PASSED inconclusive:                                                                   OK
+      a stale PASSED is inconclusive:                                                                                        OK
+      a stale FAILED stays FAILED:                                                                                           OK
+      non-PASSED claims keep their claim:                                                                                    OK
+    exhaustive: effective PASSED iff claim PASSED, actual, matching evidence, clean current revision:                        OK
+    aggregate
+      worst required wins: FAILED > BLOCKED > INCONCLUSIVE > NOT_RUN > PASSED:                                               OK
+      non-required rows do not count:                                                                                        OK
+      no required rows is NOT_RUN, never a vacuous PASSED:                                                                   OK
+    labels
+      only PASSED has the PASSED label and class:                                                                            OK
+      labels carry the reason:                                                                                               OK
+      classes:                                                                                                               OK
+  Command center view
+    matrix rendering
+      a non-PASSED effective row never renders the PASSED label or class:                                                    OK
+      a PASSED row renders the PASSED label and class:                                                                       OK
+      a claimed PASSED shown as INCONCLUSIVE is rendered by its effective disposition:                                       OK
+      every row shows criterion, method, expected, actual, label and locator:                                                OK
+      a missing actual observation renders as an em dash:                                                                    OK
+      the matrix is a table with column headers:                                                                             OK
+      rows carry machine-readable criterion and disposition attributes:                                                      OK
+    stylesheet (NFR-12)
+      every disposition class is defined:                                                                                    OK
+      NOT_RUN has a dashed outline:                                                                                          OK
+      each disposition's colors reach 4.5:1 in light and dark themes:                                                        OK
+      the passed (green) tokens are used only by the .ls-passed rule:                                                        OK
+    GET /operator/center without a session answers 401:                                                                      OK
+  Kernel identity (C-P2.1 I1)
+    a canonical lowercase UUID parses and round-trips:                                                                       OK
+    an all-zero UUID is canonical:                                                                                           OK
+    uppercase hex is refused (one canonical spelling):                                                                       OK
+    missing hyphens are refused:                                                                                             OK
+    wrong group lengths are refused:                                                                                         OK
+    non-hex characters are refused:                                                                                          OK
+    empty and surrounding whitespace are refused:                                                                            OK
+    16 bytes render as 36 characters and parse back:                                                                         OK
+    15 and 17 bytes are UuidWrongLength:                                                                                     OK
+    uuidFromWords is total and big-endian:                                                                                   OK
+    identities of one kind compare by their UUID:                                                                            OK
+  Kernel remotes (C-P2.1 I4, I5)
+    parsing and normalization
+      scp, ssh, git+ssh, git and https forms of one GitHub repository are one identity:                                      OK
+      GitLab and Bitbucket paths are lowercased:                                                                             OK
+      another host's path case is kept (no blind case-folding):                                                              OK
+      a different owner or name is a different identity:                                                                     OK
+      file URLs and plain paths are local:                                                                                   OK
+      helpers, unknown schemes, foreign file hosts and empty paths are unsupported:                                          OK
+    authoritative remote selection
+      no remotes: no authoritative remote:                                                                                   OK
+      one remote: it is authoritative:                                                                                       OK
+      two remotes without a choice: ambiguous, names sorted:                                                                 OK
+      a chosen existing remote is authoritative; the others are not identity:                                                OK
+      a chosen missing remote: unknown:                                                                                      OK
+      an unparseable URL of the authoritative remote: unsupported:                                                           OK
+      a remote with no URL at all: unsupported:                                                                              OK
+      fetch and push URLs in different forms of one identity settle:                                                         OK
+      fetch and push to different repositories: inconsistent:                                                                OK
+      two local spellings with one physical identity settle:                                                                 OK
+      local identities compare by physical identity only:                                                                    OK
+      selection refusals have their codes:                                                                                   OK
+  Kernel repository registration (C-P2.1 I6, DG-03 D-3.3d/D-3.5a)
+    an unrelated repository is accepted for an Engineer without one:                                                         OK
+    duplicate physical identity, same Engineer: repository-already-owned:                                                    OK
+    duplicate physical identity, other Engineer: repository-already-owned:                                                   OK
+    symlink or case alias (other display path, same physical identity): repository-already-owned:                            OK
+    same canonical path with a new physical identity (device renumbered): repository-already-owned:                          OK
+    case-sensitive filesystem: Proj and proj are different repositories:                                                     OK
+    duplicate clone (other directory, same authoritative network remote): authoritative-remote-owned:                        OK
+    a clone pushing into the owned repository's common directory: remote-is-owned-repository:                                OK
+    an owned repository pushing into the candidate: owned-repository-pushes-here:                                            OK
+    two clones of one local bare repository: authoritative-remote-owned:                                                     OK
+    a fork (own authoritative remote; owned upstream only as another remote) is eligible:                                    OK
+    shared ancestry alone (remote-less clone in another directory) is eligible:                                              OK
+    a template-derived project is eligible:                                                                                  OK
+    an Engineer who already owns a repository: engineer-already-owns-repository:                                             OK
+    a repository conflict is reported before the Engineer conflict:                                                          OK
+    a reused RepositoryId: repository-id-in-use:                                                                             OK
+    the result does not depend on the order of the owned list:                                                               OK
+    the identity carried by an accepted registration is the requested RepositoryId:                                          OK
+    the observation rendering is deterministic and covers every field:                                                       OK
+    decision refusal codes:                                                                                                  OK
+    observation refusal codes:                                                                                               OK
+  Kernel Work Unit identity (C-P2.1 I7, FR-WRK-01)
+    a Ticket-originated Work Unit with no plan reference is admitted with the owning Engineer:                               OK
+    a plan reference is optional ancestry and is kept when given:                                                            OK
+    a Work Unit for a repository without an active owner is refused:                                                         OK
+    another repository's ownership does not admit it:                                                                        OK
+    plan references: empty, control characters and 201 characters are refused; 200 accepted:                                 OK
+  Cli engineer and repository (C-P2.1 I10)
+    engineer add NAME:                                                                                                       OK
+    engineer add needs exactly one name:                                                                                     OK
+    engineer alone or unknown:                                                                                               OK
+    repository register --engineer E PATH:                                                                                   OK
+    the = forms, an option after the path, and --authoritative-remote:                                                       OK
+    --authoritative-remote R as two words:                                                                                   OK
+    a path that looks like a relative path is kept as given:                                                                 OK
+    a missing --engineer is refused:                                                                                         OK
+    a missing path is refused:                                                                                               OK
+    two paths are refused:                                                                                                   OK
+    a duplicate option is refused:                                                                                           OK
+    an option without its value is refused:                                                                                  OK
+    an unknown option is refused:                                                                                            OK
+    repository list takes no arguments:                                                                                      OK
+    repository alone or unknown:                                                                                             OK
+    earlier commands are unchanged:                                                                                          OK
+  Kernel transitions, replay and evidence (C-P2.2 T2, T3, T8)
+    refusal codes:                                                                                                           OK
+    replay stops at the first refusal and reports its index:                                                                 OK
+    replayTrace continues from the unchanged state after a refusal:                                                          OK
+    replaying the same commands twice gives equal results:                                                                   OK
+    commit ids: 40 lowercase hex only:                                                                                       OK
+    human signoffs: non-empty, no control characters:                                                                        OK
+    end to end: Ticket → Work Order → Work Unit → Delivery → Ready for Signoff → human Done:                                 OK
+    an Agent can never advance any domain, even with valid evidence:                                                         OK
+  Kernel Ticket lifecycle (C-P2.2 §3.1)
+    exhaustive: every state × input × principal matches the table:                                                           OK
+    Done is reachable only by a human signoff from ready-for-signoff:                                                        OK
+    unblock returns to the exact prior state, with its evidence:                                                             OK
+    integration evidence must cover every accepted Work Unit of the Ticket:                                                  OK
+    refusal codes name the reason:                                                                                           OK
+  Kernel Work Order lifecycle (C-P2.2 §3.2)
+    exhaustive: every state × input × principal matches the table (Engineering):                                             OK
+    only Engineering and PR rework may complete with Work Units:                                                             OK
+    non-code kinds must complete with no Work Units:                                                                         OK
+    a claim must match exactly: engineer and generation:                                                                     OK
+    an active or claimed order cannot be canceled before it is halted:                                                       OK
+    a new Work Order is pending and keeps its identity and kind through transitions:                                         OK
+  Kernel Work Unit lifecycle (C-P2.2 §3.3)
+    exhaustive: every state × input × principal matches the table:                                                           OK
+    a full happy path with a gate reaches Accepted and yields accepted evidence:                                             OK
+    a failed check with attempts left goes to rework; at the budget it halts:                                                OK
+    NotRun or Unknown without a failure halts as inconclusive; never Verified:                                               OK
+    a verification of another commit is basis-mismatch:                                                                      OK
+    starting past the attempt budget is attempt-budget-exhausted:                                                            OK
+    review changes requested: rework within the budget:                                                                      OK
+    gates pass one at a time and in any order:                                                                               OK
+    frozen contract validation:                                                                                              OK
+    accepted evidence exists only for an Accepted Work Unit:                                                                 OK
+  Kernel Delivery lifecycle (C-P2.2 §3.4)
+    exhaustive: every state × input × principal matches the table (both modes):                                              OK
+    integration evidence exists only for an Integrated delivery and names its Work Units and commit:                         OK
+    PullRequest mode: integrating without approval is illegal; a push after approval makes it stale:                         OK
+    reconciliation returns to the exact prior state:                                                                         OK
+    pull request references are non-empty:                                                                                   OK
+  Kernel lifecycle properties (C-P2.2 §6; seed 20261018, 2000 cases)
+    Ticket: general invariants; Done only by a human signoff from ready-for-signoff:                                         OK (0.03s)
+      +++ OK, passed 2000 tests.
+    Work Order: general invariants; Completed only from Active; claims always match:                                         OK (0.06s)
+      +++ OK, passed 2000 tests.
+    Work Unit: general invariants; Accepted only with no pending gates; attempts within budget; inconclusive never Verified: OK (0.07s)
+      +++ OK, passed 2000 tests.
+    Delivery: general invariants; PullRequest integration only from Approved with the same commit:                           OK (0.04s)
+      +++ OK, passed 2000 tests.
+  Kernel Profile policy (C-P2.3, DG-05)
+    definitions (F1-F4, D-5.1a, D-5.2)
+      a valid definition is accepted with its gates:                                                                         OK
+      invalid ids, versions and vocabulary are invalid-profile:                                                              OK
+      an invariant exception is refused, including protected-frozen-tests:                                                   OK
+      a gate claiming an invariant id is refused:                                                                            OK
+      clarification 1: a before-execution gate cannot require execution-time evidence:                                       OK
+      artifact kinds are split by when they can be produced:                                                                 OK
+      kind and path-class names:                                                                                             OK
+    canonical rendering and digests (F11)
+      the golden rendering of a definition:                                                                                  OK
+      an absent permission renders as inherit:                                                                               OK
+      a permuted equivalent definition has the same rendering and digest:                                                    OK
+      profileRef carries the hash of the rendering:                                                                          OK
+      sha256Hasher is SHA-256 in lowercase hex:                                                                              OK
+      content digests are 64 lowercase hex characters:                                                                       OK
+      the installation baseline:                                                                                             OK
+    precedence (F5, D-5.3a, clarification 2)
+      a specialization adds a gate and strengthens one on every axis:                                                        OK
+      each single-axis weakening is weakens-gate naming the axis:                                                            OK
+      a weakening is refused even when another axis is strengthened:                                                         OK
+      a stage change cannot be proved stronger:                                                                              OK
+      an identical redefinition is accepted:                                                                                 OK
+      two matching specializations disagreeing on a gate conflict in every order:                                            OK
+      two overrides disagreeing on a gate conflict in both orders:                                                           OK
+      agreeing overrides and a stricter override are accepted:                                                               OK
+      an override weaker than the default is weakens-gate:                                                                   OK
+      overrides are human-approved records:                                                                                  OK
+      re-permitting the non-behavioural path is weakens-profile; forbidding it is accepted:                                  OK
+      an override cannot re-permit the non-behavioural path:                                                                 OK
+      a declared specialization that is not registered is profile-unavailable:                                               OK
+      a specialization that declares specializations is invalid-profile:                                                     OK
+      a specialization that does not match the facts contributes nothing:                                                    OK
+      the latest registered version of a specialization is used:                                                             OK
+      every effective Profile has the nine invariants and the baseline first:                                                OK
+      both matching specializations are sources, by id:                                                                      OK
+      the effective digest is the hash of the rendering and is deterministic:                                                OK
+    facts, trusted origin and non-behavioural work (F6, F7, D-5.6, clarification 4)
+      only a human sets the work facts:                                                                                      OK
+      a non-behavioural basis needs a rationale and an approver:                                                             OK
+      non-behavioural work must be declared docs-only:                                                                       OK
+      a Profile that forbids the path refuses non-behavioural work:                                                          OK
+      permitted non-behavioural work does not require frozen tests, and is checked against observed paths:                   OK
+      behaviour-changing work requires frozen tests and has no path restriction:                                             OK
+      applicability by kind, class and path class:                                                                           OK
+    exceptions (F8, D-5.4)
+      a human receipt for an applicable gate with an exception path excepts it:                                              OK
+      a strengthened gate loses its exception path:                                                                          OK
+      receipts come from a human with a rationale and an approver:                                                           OK
+      scope, digest, gate, applicability and exception path are checked in that order:                                       OK
+      two receipts for one gate are invalid-record:                                                                          OK
+      a Work Unit receipt is admitted only for a unit of the bound order:                                                    OK
+    binding and provenance (F9, D-5.5)
+      a human or the Supervisor binds; the Agent and the Scheduler cannot:                                                   OK
+      the binding records the order, the effective Profile and its digests:                                                  OK
+      receipts are rendered in the binding:                                                                                  OK
+      provenance reproduces from the definitions and nothing else:                                                           OK
+      quoted text is escaped:                                                                                                OK
+    mid-flight Profile change (F10, D-5.5)
+      unchanged sources are fresh:                                                                                           OK
+      a new default version, a new specialization version or another default is profile-changed:                             OK
+      a human confirmation of exactly the current sources restores freshness:                                                OK
+      a confirmation of another binding does not apply:                                                                      OK
+      only a human confirms:                                                                                                 OK
+      a frozen Work Unit Contract built from the old binding is unchanged:                                                   OK
+    gate evaluation and execution prerequisites (F2, F3, clarification 1)
+      review: satisfied, missing, ambiguous, unverified, needs approval:                                                     OK
+      a gate needing two artifacts reports the first missing one:                                                            OK
+      a gate that does not apply is not applicable:                                                                          OK
+      execution prerequisites are the applicable before-execution gates only:                                                OK
+      an execution prerequisite never needs execution-time evidence:                                                         OK
+  Profile documents (C-P2.3 F12, §4)
+    the §4 example decodes:                                                                                                  OK
+    absent optional keys take their defaults:                                                                                OK
+    invariant exceptions are carried to the Kernel, which refuses them:                                                      OK
+    an unknown top-level key is refused:                                                                                     OK
+    an unknown gate key is refused:                                                                                          OK
+    an unknown specialization key is refused:                                                                                OK
+    missing required keys are refused:                                                                                       OK
+    wrong types are refused:                                                                                                 OK
+    invalid JSON is refused:                                                                                                 OK
+  Cli Profile commands (C-P2.3 F14)
+    profile add FILE and profile add -:                                                                                      OK
+    profile add needs exactly one file:                                                                                      OK
+    profile list takes no arguments:                                                                                         OK
+    profile show ID [--version N]:                                                                                           OK
+    profile show refusals:                                                                                                   OK
+    repository set-profile --engineer NAME PROFILE:                                                                          OK
+    repository set-profile refusals:                                                                                         OK
+    profile resolve with every option:                                                                                       OK
+    profile resolve with the minimum:                                                                                        OK
+    profile resolve refusals:                                                                                                OK
+    profile alone or unknown:                                                                                                OK
+    earlier commands are unchanged:                                                                                          OK
+  Work Order scheduler (C-P2.4)
+    fixtures (exercised on their own before the freeze)
+      the fixture world builds:                                                                                              OK
+    priority and resource names (S2, S6)
+      a human sets 0 to 999:                                                                                                 OK
+      only a human sets a priority:                                                                                          OK
+      out-of-range priorities are invalid-priority:                                                                          OK
+      resource names:                                                                                                        OK
+    selection and ordering (S7, D-5.8)
+      one eligible order is selected with its repository's owner:                                                            OK
+      no candidates selects none:                                                                                            OK
+      a blocked highest-priority order is excluded; the eligible lower one is selected:                                      OK
+      higher priority first:                                                                                                 OK
+      equal priority: the oldest admission first:                                                                            OK
+      equal priority and admission: the smallest Work Order id first:                                                        OK
+      the decision is the same for every permutation of every input list:                                                    OK
+    eligibility reasons (S3, D-5.7)
+      an otherwise eligible order has no reasons:                                                                            OK
+      binding-mismatch reports no Profile reasons:                                                                           OK
+      profile-default-unset:                                                                                                 OK
+      profile-changed names the changed Profile; a human confirmation makes it eligible:                                     OK
+      prerequisite-blocked: missing, ambiguous, unverified and under-approved evidence:                                      OK
+      dependencies: completed is satisfied; superseded and canceled are unsatisfiable; others incomplete; absent unknown:    OK
+      repository-not-owned:                                                                                                  OK
+      resources: absent and reported unknown are resource-unknown; unavailable; available:                                   OK
+      source-unknown and source-stale:                                                                                       OK
+      every reason is reported, in the S3 order:                                                                             OK
+      reason and refusal codes:                                                                                              OK
+    DG-05 clarifications 1 and 3 (S4, S5)
+      an unsatisfied before-acceptance gate never blocks scheduling:                                                         OK
+      an excepted before-execution gate does not block:                                                                      OK
+      two queued orders for one repository are both eligible; only the first is selected:                                    OK
+      a claimed, active or waiting order reserves its repository:                                                            OK
+      halted, completed, superseded and canceled orders reserve nothing:                                                     OK
+    context orders (S1, S9)
+      orders in non-candidate states never appear in the decision:                                                           OK
+    input integrity (S8)
+      every duplicate input is conflicting-input:                                                                            OK
+    scheduling commands (S10)
+      mark-eligible for eligible pending, mark-ineligible for ineligible eligible, nothing else:                             OK
+    rendering and digest (S11, §3)
+      the golden rendering of a mixed decision; the digest is its SHA-256:                                                   OK
+      deciding twice gives the same rendering:                                                                               OK
+  Work Order scheduler properties (C-P2.4 §6; seed 20261019, 1000 cases)
+    replay: deciding twice gives the same rendering and digest:                                                              OK (0.05s)
+      +++ OK, passed 1000 tests.
+    permutation: shuffling every input list gives the same rendering:                                                        OK (0.02s)
+      +++ OK, passed 1000 tests.
+    soundness: candidates are eligible xor reasoned; ranking sorted; selection is the head:                                  OK
+      +++ OK, passed 1000 tests.
+    oracle: eligible exactly when an independent predicate says so:                                                          OK
+      +++ OK, passed 1000 tests.
+    commands: each is accepted and leaves exactly the eligible candidates eligible:                                          OK
+      +++ OK, passed 1000 tests.
+  Effect intents (C-P2.5)
+    fixtures (exercised on their own before the freeze)
+      the fixture specs, keys and pending intent build:                                                                      OK
+    effect specs (E1)
+      each class is accepted with budget 0 to 3, D only with 0:                                                              OK
+      budgets outside 0 to 3 are invalid; D with a budget is unsafe:                                                         OK
+      class B needs a positive key lifetime and refusal of changed parameters:                                               OK
+      bad names are invalid:                                                                                                 OK
+      class names:                                                                                                           OK
+    stable intent identity (E2, requirement 1)
+      new intents are pending with the parameters' SHA-256; two keys at one revision stay distinct:                          OK
+      one key twice in a decision is duplicate-effect-key:                                                                   OK
+      parameters: 1 to 4096 characters, no control characters:                                                               OK
+      bad effect keys are invalid-effect-key:                                                                                OK
+    intent lifecycle table (§3, E3)
+      every cell for a repeatable spec:                                                                                      OK
+      a claim records the owner, the next generation and the lease end; a dispatch counts:                                   OK
+      Agent is refused in every state:                                                                                       OK
+      wrong principals are not-authorized; terminal states answer already-settled first:                                     OK
+      every stale generation is stale-claim:                                                                                 OK
+    fencing (E4)
+      a reclaim after the lease ends raises the generation; the old owner's writes are stale:                                OK
+      an observation from the current generation needs no live lease:                                                        OK
+      nothing is dispatched on an expired lease, even exactly at its end:                                                    OK
+    observations (E6)
+      applied, not applied and no answer:                                                                                    OK
+    retry budget (E7)
+      budget 1: one re-dispatch after not-applied, then retries-exhausted:                                                   OK
+      budget 0 is never reclaimed after not-applied, in any class:                                                           OK
+      reclaiming an expired, undispatched claim consumes no budget:                                                          OK
+      an unknown outcome is never claimable:                                                                                 OK
+    codes
+      refusal codes and state names:                                                                                         OK
+  Event codec (C-P2.5 E10, §4)
+    fixtures (exercised on their own before the freeze):                                                                     OK
+    every durable Work Order event round-trips:                                                                              OK
+    golden Work Order texts:                                                                                                 OK
+    complete with Work Units is not durable:                                                                                 OK
+    every durable Ticket event round-trips:                                                                                  OK
+    golden Ticket texts:                                                                                                     OK
+    work-accepted and integrated are not durable:                                                                            OK
+    malformed texts decode to Nothing:                                                                                       OK
+    principals round-trip; agent never parses:                                                                               OK
+  Dispatch recovery (C-P2.6)
+    fixtures
+      the fixtures build through the real C-P2.5 lifecycle:                                                                  OK
+    checks, in order
+      an Agent is agent-assertion, before anything else:                                                                     OK
+      settled and abandoned intents are already-settled, whoever asks:                                                       OK
+      only the Supervisor recovers:                                                                                          OK
+      an intent that is not dispatched has nothing to recover:                                                               OK
+      the lease end gates recovery: one second before is lease-active, equal recovers:                                       OK
+      the order's activity is checked after the lease:                                                                       OK
+    the recovery table (§3)
+      an order that is not active: unknown, for every class:                                                                 OK
+      repeatable and idempotent with a retry left: redispatch under generation + 1:                                          OK
+      repeatable and idempotent without a retry left: unknown:                                                               OK
+      queryable: unknown until a lookup exists (C-P2.7), whatever the budget:                                                OK
+      unqueryable: unknown, never redispatched:                                                                              OK
+      after a redispatch the new generation may dispatch and the old one is stale:                                           OK
+    canonical texts (§4)
+      a redispatch names the new generation and the owner, escaped:                                                          OK
+      an unknown result names its reason:                                                                                    OK
+      every refusal code:                                                                                                    OK
+  Effect adapters (C-P2.6)
+    fixtures
+      a hand-built adapter answers as written:                                                                               OK
+    invocation (X2)
+      valid answers become destination observations:                                                                         OK
+      an empty, control-character or over-long text is malformed-answer:                                                     OK
+      no answer within the timeout is timeout, and the call returns:                                                         OK (0.05s)
+      a throwing adapter is adapter-failed:                                                                                  OK
+      an outer cancellation is not turned into an observation:                                                               OK (0.10s)
+    scripted destinations (X3)
+      steps are taken in order, then every call applies "ok":                                                                OK
+      refuse, hang and fail record nothing:                                                                                  OK (0.10s)
+      apply-then-hang, apply-then-fail and malformed record the application:                                                 OK (0.10s)
+      idempotent: a repeat answers the first result and applies nothing; changed parameters are refused:                     OK
+      idempotent: an application whose answer was lost is deduplicated too:                                                  OK (0.10s)
+      repeatable: every applying call records, even for one operation:                                                       OK
+  Reconciliation and resolution (C-P2.7)
+    fixtures
+      every state of every class builds through the real C-P2.5 lifecycle:                                                   OK
+    reconcile checks, in order
+      an Agent is agent-assertion:                                                                                           OK
+      settled and abandoned intents are already-settled:                                                                     OK
+      only the Supervisor reconciles:                                                                                        OK
+      only a queryable effect is reconciled:                                                                                 OK
+      pending, claimed, confirmed-applied and confirmed-not-applied have nothing to reconcile:                               OK
+      a dispatched intent: one second before its lease end is lease-active, equal reconciles:                                OK
+    the reconciliation table (§3)
+      found: confirmed-applied with the destination's result, generation + 1:                                                OK
+      not found: confirmed-not-applied only when authoritative and excluding a late application:                             OK
+      failed: unknown with the failure, whatever the terms:                                                                  OK
+      the identity and dispatch count are kept, and the old generation is fenced out:                                        OK
+    human resolution (R5)
+      checks, in order: Agent, terminal, principal, generation, state:                                                       OK
+      attest applied: settled with a human-attested result:                                                                  OK
+      attest not applied: claimable with a retry left, settled without one:                                                  OK
+      retry: refused unless the duplication risk is acknowledged; then pending and claimable past the budget:                OK
+      evidence must be 1-4096 characters without control characters:                                                         OK
+    late applied observations (R7, §3)
+      repeatable and idempotent: conflict only where the state says not applied:                                             OK
+      queryable and unqueryable: conflict unless an application is already recorded:                                         OK
+      a late not-applied or no-answer observation never conflicts:                                                           OK
+    canonical texts (§4) and codes
+      lookup records:                                                                                                        OK
+      human records:                                                                                                         OK
+      every refusal code:                                                                                                    OK
+  Destination lookups (C-P2.7)
+    lookup invocation (R1)
+      found and absent:                                                                                                      OK
+      an invalid result text is malformed-answer:                                                                            OK
+      no answer in time is timeout, and the call returns:                                                                    OK (0.05s)
+      a throwing lookup is lookup-failed:                                                                                    OK
+      an outer cancellation is not turned into a result:                                                                     OK (0.11s)
+    scripted lookups (R2)
+      truthful: absent before an application, the recorded result after it:                                                  OK (0.10s)
+      hang and fail, then truthful after the script:                                                                         OK (0.11s)
+  Effect status (C-P2.8)
+    the status table (§3), row by row
+      1 abandoned:                                                                                                           OK
+      2 and 3: a settled application is ATTESTED when a human attested it, else PASSED:                                      OK
+      4 settled not applied:                                                                                                 OK
+      5 confirmed-applied, not yet settled:                                                                                  OK
+      6 and 7: an unknown outcome needs a lookup when queryable, else a human:                                               OK
+      8 and 9: dispatched; its lease end decides, whatever the order:                                                        OK
+      10 pending, claimed and not applied are BLOCKED when the order is not active:                                          OK
+      11 and 12: a claim before and after its lease end:                                                                     OK
+      13 pending:                                                                                                            OK
+      14 and 15: not applied, with and without a retry left:                                                                 OK
+    labels and classes
+      every status has its label and class:                                                                                  OK
+    PASSED (V1, requirement 6)
+      PASSED exactly for a settled application without attestation, in every state, class and fact:                          OK
+  Generated Kernel traces (C-P2.8)
+    the generator (checked before the freeze)
+      deterministic: the same seed gives the same traces:                                                                    OK (0.01s)
+      every trace renders and parses back to itself:                                                                         OK
+      the traces reach every intent state:                                                                                   OK
+      the first trace's rendering has a golden SHA-256:                                                                      OK
+    invariants after every step
+      300 traces, seed 20261019: authority, fencing, budgets and PASSED hold throughout:                                     OK
+    replay
+      each trace replayed from its rendered text ends in the same intent and status:                                         OK (0.01s)
+  Ledger projection rendering and page (C-P2.8)
+    the fixture builds through the real Kernel:                                                                              OK
+    renderProjection is the §4 canonical text:                                                                               OK
+    the page shows every status as text with its class, marks refusals, and has no form:                                     OK
+    the failure page says so and shows nothing partial:                                                                      OK
+  Operator ledger commands (C-P2.8)
+    ledger, ticket, schedule, sandbox
+      ledger show:                                                                                                           OK
+      ledger needs a subcommand:                                                                                             OK
+      ledger show takes no argument:                                                                                         OK
+      ticket create:                                                                                                         OK
+      ticket create needs a title:                                                                                           OK
+      ticket accept:                                                                                                         OK
+      ticket accept, option first:                                                                                           OK
+      ticket accept needs the revision:                                                                                      OK
+      ticket accept needs a number:                                                                                          OK
+      ticket accept needs the option's value:                                                                                OK
+      ticket accept needs the ticket:                                                                                        OK
+      an unknown option:                                                                                                     OK
+      schedule run-once:                                                                                                     OK
+      sandbox show:                                                                                                          OK
+    work orders and work units
+      work-order create with defaults:                                                                                       OK
+      work-order create with a kind and a rationale:                                                                         OK
+      work-order create needs a priority:                                                                                    OK
+      work-order create refuses a repeated ticket:                                                                           OK
+      work-order evidence:                                                                                                   OK
+      work-order evidence needs a verifier:                                                                                  OK
+      work-order halt:                                                                                                       OK
+      work-order requeue:                                                                                                    OK
+      work-unit admit:                                                                                                       OK
+      work-unit admit with a plan reference:                                                                                 OK
+    supervisor
+      supervisor start with effects, in order:                                                                               OK
+      supervisor start without effects:                                                                                      OK
+      supervisor execute-once defaults:                                                                                      OK
+      supervisor execute-once options:                                                                                       OK
+      supervisor reconcile-once:                                                                                             OK
+      supervisor needs a subcommand:                                                                                         OK
+    effects
+      effects resolve: attest applied:                                                                                       OK
+      effects resolve: attest not applied:                                                                                   OK
+      effects resolve: an acknowledged retry:                                                                                OK
+      effects resolve needs a choice:                                                                                        OK
+      effects resolve takes one choice:                                                                                      OK
+      a retry needs the acknowledgement:                                                                                     OK
+      the acknowledgement belongs to a retry:                                                                                OK
+      effects resolve needs the generation:                                                                                  OK
+      effects abandon:                                                                                                       OK
+  effects abandon and the acknowledgment (C-P2.9-R1 §4.7)
+    without the flag it is the plain abandonment:                                                                            OK
+    with the flag, in any position, it is acknowledged:                                                                      OK
+    the flag once, and a reason, are required:                                                                               OK
+  Gate B remediation (C-P2.9-R1)
+    key lifetime (M1)
+      the margin is max 30 s (lifetime / 10):                                                                                OK
+      an idempotent key holds until first dispatch + lifetime - margin, exclusive:                                           OK
+      without a first dispatch time the guarantee is unverifiable:                                                           OK
+      a lifetime no longer than the margin never holds:                                                                      OK
+      other classes are unaffected:                                                                                          OK
+    the carry decision (§2.1), in check order
+      an Agent is agent-assertion; a Supervisor or Scheduler is not-authorized:                                              OK
+      an order that is not active, or the same activation (a duplicate carry):                                               OK
+      settled, abandoned, unknown, dispatched, an active claim, confirmed applied:                                           OK
+      not applied: carried with a retry left, refused without one:                                                           OK
+      pending: carried; after a human retry an idempotent intent needs its key to hold:                                      OK
+      every refusal code:                                                                                                    OK
+    attested outcomes are ATTESTED (M4)
+      a human 'not applied' with a retry left is ATTESTED, not BLOCKED, even when the order is halted:                       OK
+      a human 'not applied' without a retry left is settled and ATTESTED:                                                    OK
+      a 'human-attested:' outcome is ATTESTED without the record (defence in depth):                                         OK
+      the attestation flag makes a settled not-applied outcome ATTESTED:                                                     OK
+      a destination's not-applied answer stays NOT_APPLIED:                                                                  OK
+  Gate B remediation, second review (C-P2.9-R1 §4.2)
+    the key check applies to every carryable state (N1)
+      a lapsed claim of an idempotent intent dispatched before needs its key to hold:                                        OK
+      a not-applied idempotent intent with a retry left needs its key to hold:                                               OK
+      other classes, and an idempotent intent never dispatched, need no key:                                                 OK
+      an exhausted budget is still retries-exhausted, not a key refusal:                                                     OK
+    the checked carry (N2-N4), in check order
+      it applies every check of the plain carry:                                                                             OK
+      the expected activations must be the current ones (stale-carry):                                                       OK
+      a duplicate carry is carry-not-needed before it is stale:                                                              OK
+      stale-carry comes before a state refusal:                                                                              OK
+      a human-attested 'not applied' needs the duplication-risk acknowledgment:                                              OK
+      the attestation record alone also needs it; a destination's own answer does not:                                       OK
+      the plain carry is the checked one without expectation or acknowledgment:                                              OK
+      a live intent with the same effect key in the target activation is carry-conflict:                                     OK
+      the new refusal codes:                                                                                                 OK
+    effects carry states the activations (N3, N4)
+      both activations are required:                                                                                         OK
+      the activations and the acknowledgment are parsed:                                                                     OK
+      an activation is a number:                                                                                             OK
+  Gate B remediation, third review (C-P2.9-R1 §4.5)
+    a lapsed claim after a human 'not applied' needs the acknowledgment:                                                     OK
+    a pending intent with an attestation record needs it too:                                                                OK
+    an attested claim still held is claim-held first:                                                                        OK
+  ControlProtocol (C-P3.1 §4)
+    keys, ids and the allowlist
+      a key is exactly 64 lower-case hex characters, with an optional final newline:                                         OK
+      the key is never shown:                                                                                                OK
+      a request id is exactly 32 lower-case hex characters:                                                                  OK
+      the allowlist is exactly status:                                                                                       OK
+      status accepts only expect any:                                                                                        OK
+      the sign-in file name is the SHA-256 of the token text:                                                                OK
+    requests
+      HMAC vector (computed with openssl):                                                                                   OK
+      encoding is exactly the documented file:                                                                               OK
+      the documented file decodes to the request:                                                                            OK
+      another key is a bad MAC:                                                                                              OK
+      a changed field with the old MAC is a bad MAC:                                                                         OK
+      a different version is refused as such:                                                                                OK
+      an unknown operation, correctly signed, is refused:                                                                    OK
+      a bad expect, correctly signed, is refused:                                                                            OK
+      malformed requests are refused, never partly read:                                                                     OK
+      a missing or extra mac line is malformed:                                                                              OK
+      more than 1024 bytes is too large:                                                                                     OK
+    results
+      HMAC vector (computed with openssl):                                                                                   OK
+      encoding is exactly the documented file:                                                                               OK
+      the documented file decodes to the result:                                                                             OK
+      another key is a bad MAC:                                                                                              OK
+      every outcome and a reason round-trip:                                                                                 OK
+      a field value outside [A-Za-z0-9._:-]{1,80} is malformed:                                                              OK
+      a detail with control characters or over 300 characters is malformed:                                                  OK
+      markup in detail is kept as plain text (escaping is the renderer's job):                                               OK
+  Cli control (C-P3.1)
+    the default control-pane port is 8100:                                                                                   OK
+    control serve --state DIR uses the default port:                                                                         OK
+    --port N and --state=DIR in either order:                                                                                OK
+    --state is required:                                                                                                     OK
+    an empty --state is a missing value:                                                                                     OK
+    a repeated option is refused:                                                                                            OK
+    a bad port is refused:                                                                                                   OK
+    there is no option to bind another interface or name a database:                                                         OK
+    extra arguments and unknown subcommands are refused:                                                                     OK
+  LifecycleProtocol (C-P3.2)
+    the allowlist is exactly the five lifecycle operations:                                                                  OK
+    each operation has exactly one expected state:                                                                           OK
+    names are exact:                                                                                                         OK
+    the status channel still refuses lifecycle names:                                                                        OK
+    HMAC vector (computed with openssl):                                                                                     OK
+    encoding is exactly the documented file, and it decodes back:                                                            OK
+    another key is a bad MAC:                                                                                                OK
+    an operation with the wrong expectation is refused, even when signed:                                                    OK
+    unknown operations, signed, are refused:                                                                                 OK
+    a status request is not a lifecycle request, and the reverse:                                                            OK
+    another version is refused as such:                                                                                      OK
+    malformed forms are refused:                                                                                             OK
+  InstallProtocol (C-P3.3 U1)
+    the allowlist is exactly prepare, apply and restore:                                                                     OK
+    expectations are parsed exactly:                                                                                         OK
+    each operation accepts only its own kind of expectation:                                                                 OK
+    the other kinds still refuse install names:                                                                              OK
+    unknown names are refused:                                                                                               OK
+    HMAC vector (computed with openssl):                                                                                     OK
+    encoding is exactly the documented file, and it decodes back:                                                            OK
+    another key is a bad MAC:                                                                                                OK
+    a mismatched expectation, unknown operation and other version are refused, even when signed:                             OK
+    kinds do not mix:                                                                                                        OK
+    malformed forms are refused:                                                                                             OK
+  SessionProtocol (C-P3.4 A3)
+    the allowlist is exactly open-application:                                                                               OK
+    names are exact and the other kinds refuse it:                                                                           OK
+    HMAC vector (computed with openssl):                                                                                     OK
+    encoding is exactly the documented file, and it decodes back:                                                            OK
+    a wrong expectation, unknown operation, bad MAC and other version are refused:                                           OK
+    kinds do not mix:                                                                                                        OK
+    malformed and oversized files are refused:                                                                               OK
+
+All 742 tests passed (1.26s)
+
+
+
+lockstep> Test suite lockstep-unit passed
+== step 5 no-live-model guard
+guard: (a) shims resolve: claude codex
+guard: (b) sentinel negative test: shim exit 97, one probe entry
+guard: (c) construction gate: 179 Haskell files scanned, no forbidden Provider.Live import
+guard: (d) fault plan refused (exit 78) by serve, db status, workspace show
+guard: (e) sentinel log empty
+guard self-test: 'missing claude shim' fails the guard: guard: FAILED: claude resolves to 'nothing', not the shim /tmp/tmp.9ZBoYLqdsw/missing/bin/claude
+guard self-test: 'shadowed claude' fails the guard: guard: FAILED: claude resolves to '/tmp/tmp.9ZBoYLqdsw/other/claude', not the shim /tmp/tmp.9ZBoYLqdsw/shadow/bin/claude
+guard self-test: 'forbidden Provider.Live import' fails the guard: guard: FAILED: Lockstep.Effects.Provider.Live imported by: test/Bad.hs test/Bad2.hs
+guard self-test: 'binary accepts a fault plan' fails the guard: guard: FAILED: lockstep serve --port 1 with a fault plan exited 0, expected 78
+guard self-test: 'non-empty sentinel log' fails the guard: guard: FAILED: the sentinel log is not empty (a provider CLI was invoked): claude -p hello;
+guard self-test: all 5 failure modes detected
+== disposable PostgreSQL postgres:17.11-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826
+== step 6 integration + backup/restore
+sentinel: inside stack's environment, claude codex resolve to the shims
+lockstep> test (suite: lockstep-integration)
+
+lockstep-integration
+  Process
+    serve with no --port answers health on 127.0.0.1:8000:                                                                                                                              Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:8000
+OK (0.45s)
+    serve --port P answers health and the liveness page on 127.0.0.1:P:                                                                                                                 Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:42087
+OK (0.45s)
+    serve is not reachable on a non-loopback interface:                                                                                                                                 Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:32809
+OK (0.43s)
+    serve --port without a value exits 64 with a typed error:                                                                                                                           OK (0.01s)
+    SIGTERM stops the server with exit 0 within 5 seconds:                                                                                                                              Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:37285
+OK (0.43s)
+  PostgreSQL migrations and readiness
+    fresh install: the production list applies, then is a no-op:                                                                                                                        OK (0.15s)
+    an ordered list applies in id order and the ledger records that order:                                                                                                              OK (0.21s)
+    after a partial run only the remainder applies:                                                                                                                                     OK (0.08s)
+    a failing migration leaves no DDL and no ledger row; earlier ones stay:                                                                                                             OK (0.18s)
+    a changed applied migration is refused before any SQL runs:                                                                                                                         OK (0.19s)
+    a database ahead of the binary is refused:                                                                                                                                          OK (0.09s)
+    a gap in the ledger is refused:                                                                                                                                                     OK (0.18s)
+    two concurrent runners apply each migration exactly once:                                                                                                                           OK (0.69s)
+    readiness: schema behind before migrate, ready after:                                                                                                                               OK (0.12s)
+    readiness: a wrong password is an authentication failure:                                                                                                                           OK (0.06s)
+    readiness: a missing database is reported as missing:                                                                                                                               OK (0.06s)
+    readiness: a closed port is unreachable:                                                                                                                                            OK (0.06s)
+    backup gate
+      an applied ledger with pending work and no backup is refused:                                                                                                                     OK (0.18s)
+      a missing backup file is refused:                                                                                                                                                 OK (0.21s)
+      a backup older than the last applied migration is refused:                                                                                                                        OK (0.20s)
+      a fresh backup file allows the migration:                                                                                                                                         OK (0.21s)
+      an explicit --no-backup allows the migration:                                                                                                                                     OK (0.20s)
+      an empty database needs no backup:                                                                                                                                                OK (0.21s)
+  lockstep process with PostgreSQL
+    db migrate installs a fresh database, then is a no-op; db status reports it:                                                                                                        OK (0.17s)
+    serve reports schema_behind truthfully, then ready after migrate; starts persist across restarts:                                                                                   OK (2.04s)
+    an invalid configuration file stops serve with exit 66:                                                                                                                             OK (0.01s)
+    a leftover rollbar block stops serve with exit 66 and names the key:                                                                                                                OK
+    a configuration readable by others stops serve with exit 66:                                                                                                                        OK
+    a missing configuration file stops serve with exit 66:                                                                                                                              OK
+  operator trust (PostgreSQL + real binary)
+    operator sign-in prints one loopback URL and stores only the token's SHA-256 digest:                                                                                                OK (0.27s)
+    operator sign-in refuses an unmigrated database (exit 69) and an unset config (exit 66):                                                                                            OK (0.10s)
+    happy path: confirm, exchange, operator page, sign-out with CSRF; bounded token exposure:                                                                                           OK (0.62s)
+    browser-shaped sign-in [D-2d]: Origin null is refused and does not consume the token:                                                                                               OK (0.61s)
+    token refusals: reused, expired and unknown tokens answer 403 and create no session:                                                                                                OK (0.74s)
+    two concurrent exchanges of one token: exactly one succeeds and one session exists:                                                                                                 OK (0.74s)
+    session refusals: expired session, sign-out-all, and missing or wrong CSRF:                                                                                                         OK (1.12s)
+    Host and Origin over HTTP: foreign or localhost Host and foreign or missing Origin answer 403:                                                                                      OK (0.76s)
+    malformed input answers 4xx, never 500:                                                                                                                                             OK (1.02s)
+    db migrate from revision 1 needs a backup decision for migration 0002 (exit 75, then --no-backup):                                                                                  OK (0.16s)
+  typed operator command (PostgreSQL + real binary)
+    CLI: show, rename, replay, key conflict, stale and its replay:                                                                                                                      OK (0.37s)
+    CLI: a generated key is printed; invalid input stores nothing:                                                                                                                      OK (0.27s)
+    CLI: not configured exits 66, an unmigrated database exits 69:                                                                                                                      OK (0.08s)
+    HTTP: operator page form, rename, receipt page, replay:                                                                                                                             OK (0.64s)
+    CLI and HTTP share one operation: one key, one receipt:                                                                                                                             OK (0.76s)
+    HTTP: stale, conflict and invalid input are refused without changing state:                                                                                                         OK (0.77s)
+    HTTP authority: no session, wrong CSRF and foreign Origin store nothing:                                                                                                            OK (0.91s)
+    concurrency: one key twice gives one receipt; two keys at one revision give one applied, one stale:                                                                                 OK (0.75s)
+    a client that disconnects right after sending does not undo the accepted command:                                                                                                   OK (0.75s)
+    db migrate from revision 2 needs a backup decision for migration 0003:                                                                                                              OK (0.17s)
+  background dispatcher (PostgreSQL + real binary)
+    the CLI only queues; a running service executes the job:                                                                                                                            OK (1.89s)
+    HTTP admission returns before the work and the job still completes:                                                                                                                 OK (6.65s)
+    a client that disconnects right after queueing does not lose the job:                                                                                                               OK (1.01s)
+    duplicate admission (CLI, then HTTP with the same key) creates one job:                                                                                                             OK (0.82s)
+    a deterministic failure stops the job at its step and is not retried:                                                                                                               OK (1.61s)
+    SIGTERM mid-job returns it to the queue; a restart resumes it from its last step:                                                                                                   OK (6.68s)
+    after SIGKILL the job stays running until its lease expires, then is reclaimed:                                                                                                     OK (8.90s)
+    two services on one database run every job exactly once:                                                                                                                            OK (1.36s)
+    db migrate from revision 3 needs a backup decision for migration 0004:                                                                                                              OK (0.18s)
+  command center (PostgreSQL + real binary)
+    the page projects canonical rows truthfully; tampered or missing evidence is never PASSED:                                                                                          OK (1.28s)
+    an operator action visibly changes the page:                                                                                                                                        OK (0.63s)
+    no session is 401; a database that stops being ready shows a notice and no evidence:                                                                                                OK (0.89s)
+    db migrate from revision 4 needs a backup decision for migration 0005:                                                                                                              OK (0.17s)
+  fault plans are refused by this build
+    serve with a fault plan exits 78 and never listens:                                                                                                                                 OK (0.31s)
+    every command refuses a fault plan before reading arguments or configuration:                                                                                                       OK (0.05s)
+    a fault plan is refused even when LOCKSTEP_CONFIG names a missing file:                                                                                                             OK
+    without a fault plan, serve answers health as before:                                                                                                                               OK (0.84s)
+  real browser (headless Chromium) against the real service
+    served forms work in a real browser; cross-origin, tampered-CSRF and null-Origin submissions are refused:                                                                           OK (65.73s)
+  repository identity and ownership (C-P2.1; real Git + PostgreSQL + binary)
+    engineers: add, duplicate name, invalid name; one decision per attempt:                                                                                                             OK (0.33s)
+    aliases, linked worktrees, subdirectories and unsupported shapes fail closed:                                                                                                       OK (0.84s)
+    duplicate clones are refused; forks, shared ancestry and templates stay eligible:                                                                                                   OK (0.75s)
+    case sensitivity: the system temporary directory and LOCKSTEP_TEST_CASE_DIR:                                                                                                        OK (0.82s)
+      system temporary directory: case-sensitive (Proj and proj are distinct repositories); LOCKSTEP_TEST_CASE_DIR: case-insensitive (ORIG refused as an alias of orig)
+    concurrent alias registrations leave exactly one owner (5 rounds):                                                                                                                  OK (0.55s)
+    db migrate from revision 5 needs a backup decision for migration 0006:                                                                                                              OK (0.14s)
+  Profile registry and resolution (C-P2.3; real PostgreSQL + binary)
+    add, unchanged, version rules, invalid and weakening documents, list and show:                                                                                                      OK (0.47s)
+    stored profiles and default assignments cannot be changed or deleted:                                                                                                               OK (0.36s)
+    repository set-profile records the default and refuses the unknown:                                                                                                                 OK (0.38s)
+    resolution: unset default, specialization, weakening, new version, invalid facts:                                                                                                   OK (0.41s)
+    a tampered stored document is an integrity failure, never used:                                                                                                                     OK (0.36s)
+    profile add - reads the document from standard input:                                                                                                                               OK (0.15s)
+  Durable ledger (C-P2.5; real PostgreSQL)
+    scenario setup: migrate, Engineer, repository, Profile and default through the binary:                                                                                              OK (0.44s)
+    tickets: create, accept, stale revision, illegal input, revise:                                                                                                                     OK (0.36s)
+    work order creation from a ready Ticket, and each refusal:                                                                                                                          OK (0.45s)
+    a decision commits its event and intents together; faults leave neither:                                                                                                            OK (0.40s)
+    intents with any input but start or resume are refused:                                                                                                                             OK (0.36s)
+    replay integrity: a tampered projection or Profile source is an integrity failure:                                                                                                  OK (0.40s)
+    scheduling claims an order with satisfied evidence; the decision is stored with its digest:                                                                                         OK (0.35s)
+    scheduling leaves an order missing evidence pending, with the reason:                                                                                                               OK (0.22s)
+    after a halt and requeue the next claim has generation 2:                                                                                                                           OK (0.35s)
+    a revised Ticket makes its order source-stale:                                                                                                                                      OK (0.23s)
+    work unit admission: plan-less for a claimed order; refused for a pending one:                                                                                                      OK (0.36s)
+    claims and fencing: one winner, reclaim after expiry, stale writes refused and stored, unknown blocks:                                                                              OK (0.40s)
+    retry budget 1: not applied twice, then retries-exhausted:                                                                                                                          OK (0.28s)
+    events, refusals, observations, evidence, schedule decisions and Profile sources are immutable:                                                                                     OK (0.46s)
+  Typed executor and dispatch recovery (C-P2.6; real PostgreSQL)
+    scenario setup: an active order with one intent of each class, through the real ledger:                                                                                             OK (0.43s)
+    each class applied: settled, generation 1, one dispatch, one application:                                                                                                           OK (0.30s)
+    refusals before any write: no adapter, adapter mismatch, invalid executor, unknown intent:                                                                                          OK (0.23s)
+    an order that is not active executes nothing, even when it halts after the claim:                                                                                                   OK (0.26s)
+    crash before dispatch: claimed, nothing applied; reclaimed after the lease and applied once:                                                                                        OK (0.29s)
+    crash after dispatch, repeatable: recovery redispatches under generation 2 and applies once:                                                                                        OK (0.39s)
+    crash after the effect, repeatable: recovery re-executes (class A permits it):                                                                                                      OK (0.40s)
+    crash after the effect, idempotent: the same operation id is deduplicated, one application:                                                                                         OK (0.40s)
+    crash after the effect, queryable and unqueryable: unknown, the order halted, never re-executed:                                                                                    OK (0.45s)
+    unqueryable crash after dispatch: unknown and never executed:                                                                                                                       OK (0.38s)
+    ambiguous answers are unknown, recorded, and halt the order:                                                                                                                        OK (1.00s)
+    not applied: retried within the budget; budget 0 settles not applied and halts:                                                                                                     OK (0.42s)
+    duplicate claim: a second executor is refused claim-held and nothing runs twice:                                                                                                    OK (0.30s)
+    delayed worker: fenced out after a recovery, its observation kept as evidence:                                                                                                      OK (0.40s)
+    abandoned mid-flight: the applied observation is kept, refused already-settled:                                                                                                     OK (0.24s)
+    restart pass: recover first, then execute, then nothing without an adapter:                                                                                                         OK (0.29s)
+    recovery records are immutable:                                                                                                                                                     OK (0.41s)
+  Reconciliation, resolution and cross-process contention (C-P2.7; real PostgreSQL)
+    contention worker role (the role of a child worker process; nothing to do in the suite itself):                                                                                     OK
+    scenario setup: six intents, the destination tables, a child worker process, restart and polling:                                                                                   OK (0.49s)
+    lookup found: settled with the recorded result; one lookup record; the order stays halted:                                                                                          OK (0.51s)
+    authoritative not found: confirmed not applied; after a restart it runs again only once a Human carries it, same operation id:                                                      OK (0.57s)
+    not found without authority or late exclusion stays unknown and is never re-executed:                                                                                               OK (0.79s)
+    lookup failures stay unknown, each under a new generation, each recorded:                                                                                                           OK (0.75s)
+    a dispatched queryable intent is reconciled directly once its lease ends:                                                                                                           OK (0.39s)
+    reconciliation refusals write nothing:                                                                                                                                              OK (0.40s)
+    human: attest applied, bound to the generation, recorded apart from observations:                                                                                                   OK (0.50s)
+    human: attest not applied, claimable with a retry left and settled without one:                                                                                                     OK (0.74s)
+    human: a retry needs the duplication risk acknowledged; after a restart and a Human carry, the same operation id runs again:                                                        OK (0.59s)
+    late application after an authoritative negative lookup: blocked, halted, recorded:                                                                                                 OK (0.40s)
+    abandoned, then applied: the abandonment halts the order and is recorded; the late application is still recorded:                                                                   OK (0.27s)
+    resolution records are immutable:                                                                                                                                                   OK (0.63s)
+    two processes drain one order: every intent applied exactly once:                                                                                                                   OK (1.52s)
+    two processes recover one crashed idempotent intent: one applies, one is refused:                                                                                                   OK (0.77s)
+    two processes recover one crashed unqueryable intent: unknown once, never re-executed:                                                                                              OK (0.43s)
+    a stalled process completes late: fenced by a reconciliation, its application recorded as a conflict:                                                                               OK (0.52s)
+  Operator ledger commands and page (C-P2.8; real binary, service and PostgreSQL)
+    scenario setup: the binary scenario, polling, killing a real process, signing in:                                                                                                   OK (1.02s)
+    operator flow: a ticket to four applied sandbox effects, PASSED in the ledger:                                                                                                      OK (0.54s)
+    a real crash: a killed process leaves an unqueryable effect UNKNOWN, applied once, then attested:                                                                                   OK (0.70s)
+    queryable fencing: an unknown outcome looked up absent is not applied, and fenced at the destination:                                                                               OK (2.07s)
+    idempotent crash: a killed process after its application, recovered, still one application:                                                                                         OK (0.66s)
+    refusals are visible: listed by the ledger, exit 65 or 64 at the command line:                                                                                                      OK (2.02s)
+    the ledger page: refused without a session; with one, every status as text, refusals marked, no form:                                                                               OK (2.53s)
+  Seeded database traces with crashes and restarts (C-P2.8; real PostgreSQL)
+    the scenario generator is deterministic and covers every class, script and crash point:                                                                                             OK
+    scenarios
+      scenario 1: alpha ScriptApplyThenHang CrashAfterClaim, bravo ScriptRefuse CrashAfterEffect, charlie ScriptHang CrashAfterDispatch, delta ScriptApply CrashAfterEffect:            OK (0.44s)
+      scenario 2: alpha ScriptApply CrashAfterDispatch, bravo ScriptRefuse CrashAfterEffect, charlie ScriptApplyThenHang NoCrash, delta ScriptApplyThenHang CrashAfterClaim:            OK (0.55s)
+      scenario 3: alpha ScriptApplyThenHang NoCrash, bravo ScriptApplyThenHang NoCrash, charlie ScriptHang NoCrash, delta ScriptRefuse CrashAfterDispatch:                              OK (0.63s)
+      scenario 4: alpha ScriptApplyThenHang CrashAfterEffect, bravo ScriptHang CrashAfterDispatch, charlie ScriptHang CrashAfterClaim, delta ScriptRefuse CrashAfterDispatch:           OK (0.88s)
+      scenario 5: alpha ScriptRefuse NoCrash, bravo ScriptApplyThenHang CrashAfterClaim, charlie ScriptRefuse CrashAfterDispatch, delta ScriptHang CrashAfterDispatch:                  OK (0.32s)
+      scenario 6: alpha ScriptHang NoCrash, bravo ScriptRefuse NoCrash, charlie ScriptApply CrashAfterEffect, delta ScriptHang CrashAfterEffect:                                        OK (0.62s)
+      scenario 7: alpha ScriptApply CrashAfterDispatch, bravo ScriptHang CrashAfterEffect, charlie ScriptApply CrashAfterEffect, delta ScriptHang NoCrash:                              OK (0.87s)
+      scenario 8: alpha ScriptHang NoCrash, bravo ScriptRefuse CrashAfterClaim, charlie ScriptRefuse CrashAfterClaim, delta ScriptRefuse CrashAfterDispatch:                            OK (0.54s)
+      scenario 9: alpha ScriptApply NoCrash, bravo ScriptRefuse CrashAfterEffect, charlie ScriptRefuse CrashAfterDispatch, delta ScriptApply CrashAfterClaim:                           OK (0.48s)
+      scenario 10: alpha ScriptHang CrashAfterEffect, bravo ScriptApplyThenHang CrashAfterClaim, charlie ScriptRefuse CrashAfterEffect, delta ScriptRefuse CrashAfterClaim:             OK (0.98s)
+      scenario 11: alpha ScriptApplyThenHang CrashAfterDispatch, bravo ScriptApplyThenHang NoCrash, charlie ScriptApplyThenHang CrashAfterEffect, delta ScriptApply CrashAfterDispatch: OK (0.70s)
+      scenario 12: alpha ScriptHang CrashAfterClaim, bravo ScriptHang CrashAfterClaim, charlie ScriptRefuse CrashAfterClaim, delta ScriptHang CrashAfterDispatch:                       OK (0.43s)
+  Gate B remediation (C-P2.9-R1; real PostgreSQL)
+    remediation worker role (the role of a child worker process; nothing to do in the suite itself):                                                                                    OK
+    scenario setup: five intents, restart, the expiring-key fixture, the destination tables, a child worker:                                                                            OK (0.42s)
+    expiring key: past the guarantee recovery gives unknown and no second application:                                                                                                  OK (0.39s)
+    expiring key: inside the guarantee recovery re-dispatches the same operation id; the destination deduplicates:                                                                      OK (0.40s)
+    activation fencing: after a restart an earlier intent is refused, skipped and kept, until a Human carries it:                                                                       OK (0.30s)
+    carry refusals: an inactive order, an unknown outcome until a retry is acknowledged, an expired key, an effect in flight:                                                           OK (0.86s)
+    late workers cannot bypass fencing: no dispatch after a restart; a late not-applied answer leaves the intent fenced:                                                                OK (0.33s)
+    a ledger read concurrent with decisions never reports an integrity failure:                                                                                                         OK (0.41s)
+    an integrity failure after a write rolls the write back:                                                                                                                            OK (0.32s)
+    abandonment halts the order and is recorded; an invalid reason is refused:                                                                                                          OK (0.24s)
+    a human 'not applied' is ATTESTED in the projection, not BLOCKED; an invalid halt reason is refused:                                                                                OK (0.51s)
+    dispatch renews the lease; execute-once leaves a queryable recovery to reconciliation:                                                                                              OK (1.85s)
+    two worker processes really overlap: the second is refused while the first's claim is active; one application:                                                                      OK (0.63s)
+  Gate B remediation, second review (C-P2.9-R1 §4.2; real PostgreSQL)
+    N1: a re-dispatch past the key guarantee is refused, unknown and halted; nothing is sent:                                                                                           OK (0.37s)
+    N1 control: inside the guarantee the retry is dispatched and applied once:                                                                                                          OK (0.26s)
+    N1: a recovery's claim that lapses is not re-dispatched once the key guarantee ends:                                                                                                OK (0.39s)
+    N1: a lapsed claim of an idempotent intent past its key guarantee is not carried:                                                                                                   OK (0.42s)
+    N2: a carry is refused while the target activation has a live intent with the same effect key:                                                                                      OK (0.29s)
+    N3: a carry naming other activations is stale-carry and writes nothing:                                                                                                             OK (0.28s)
+    N4: an attested 'not applied' is carried only with the duplication-risk acknowledgment, which is recorded:                                                                          OK (0.61s)
+    N6: recovering a superseded intent records 'activation superseded' and leaves the new activation running:                                                                           OK (0.39s)
+    N8: the abandonment halt is the Human's event:                                                                                                                                      OK (0.37s)
+  Gate B remediation, third review (C-P2.9-R1 §4.5; real PostgreSQL)
+    P1: a new intent is not dispatched while an earlier one with the same effect key may have applied:                                                                                  OK (0.41s)
+    P1: the same after the earlier intent's recovery makes it unknown (the reviewer's sequence):                                                                                        OK (0.40s)
+    P1 control: an abandoned earlier intent does not block the new one:                                                                                                                 OK (0.27s)
+    P1: a carry conflicts with a live same-key intent of any activation:                                                                                                                OK (0.28s)
+    P2: re-carrying an attested intent from a lapsed claim needs the acknowledgment again:                                                                                              OK (0.67s)
+    P3: a human retry is refused once the idempotency key's guarantee has ended:                                                                                                        OK (0.63s)
+  Gate B remediation, final review (C-P2.9-R1 §4.7; real PostgreSQL)
+    F1: an abandoned intent that was dispatched still holds its key; the new one is never sent:                                                                                         OK (0.28s)
+    F1: the same intent carried into a later activation is a carry conflict:                                                                                                            OK (0.29s)
+    F1: with the acknowledgment, which is recorded, the new intent runs once:                                                                                                           OK (0.29s)
+    F3: a settled-not-applied sibling does not hold the key:                                                                                                                            OK (0.32s)
+    F3: an idempotent retry inside its key guarantee is accepted:                                                                                                                       OK (0.48s)
+  control pane over HTTP (C-P3.1 §3)
+    health: 204 with the pane identity and no ambient headers; no database configuration needed:                                                                                        OK (3.13s)
+    the shell at / and /sign-in carries no state and the exact security headers:                                                                                                        OK (3.12s)
+    the page script and stylesheet are served as such:                                                                                                                                  OK (3.14s)
+    unknown routes are 404 for every method; OPTIONS never answers CORS:                                                                                                                OK (0.45s)
+    foreign Host is refused before anything runs (DNS rebinding); the token survives:                                                                                                   OK (0.44s)
+    missing, null, foreign and localhost Origins are refused; the token survives:                                                                                                       OK (0.45s)
+    a token works once: the file is consumed and a replay is refused:                                                                                                                   OK (0.43s)
+    unknown and malformed tokens are refused without effect:                                                                                                                            OK (0.53s)
+    an expired token is refused and its file removed:                                                                                                                                   OK (0.43s)
+    a sign-in file that is a symlink is refused and its target untouched:                                                                                                               OK (0.44s)
+    two simultaneous exchanges of one token: exactly one session:                                                                                                                       OK (0.44s)
+    API without a session, with a wrong one, and after sign-out is 401 with no data:                                                                                                    OK (0.58s)
+    a session cannot be used from another origin, even with the header:                                                                                                                 OK (0.44s)
+    an allowlisted request becomes one signed request file; an unknown one is refused:                                                                                                  OK (0.82s)
+    a result is shown only when its MAC verifies:                                                                                                                                       OK (0.45s)
+    a body over 4 KiB is refused:                                                                                                                                                       OK (0.45s)
+    without a channel key the pane still serves, and says the helper is unavailable:                                                                                                    OK (0.44s)
+    the pane ignores a database configuration it is given and needs none:                                                                                                               OK (0.44s)
+    a state directory others can read or write is refused at start:                                                                                                                     OK (0.02s)
+    a request id that is not one is 404; a request the helper has taken stays pending until its result:                                                                                 OK (0.49s)
+  control helper (C-P3.1 §4, L8, L9)
+    a valid status request gets a signed result with the status fields:                                                                                                                 OK (0.30s)
+    a forged MAC is refused and nothing runs:                                                                                                                                           OK (0.27s)
+    a replayed request file is refused and the first result is kept:                                                                                                                    OK (2.21s)
+    stale and future requests are refused:                                                                                                                                              OK (0.29s)
+    unknown operations, bad expect and malformed lines are refused, even when signed:                                                                                                   OK (0.33s)
+    a request whose name does not match its id is refused; other names are ignored:                                                                                                     OK (2.22s)
+    an oversized request is refused:                                                                                                                                                    OK (0.29s)
+    a symlinked request is refused without reading its target:                                                                                                                          OK (0.28s)
+    a request owned by another user or writable by others is refused:                                                                                                                   OK (0.29s)
+    a requests directory replaced by a symlink is not read:                                                                                                                             OK (3.03s)
+    a symlink planted at the result path is not followed:                                                                                                                               OK (6.16s)
+    two requests run one after the other:                                                                                                                                               OK (2.39s)
+    an operation over its time limit is stopped and reported timed-out:                                                                                                                 OK (3.17s)
+    an operation interrupted by a helper crash is reported interrupted after restart:                                                                                                   OK (0.37s)
+    a second helper on the same state refuses to start:                                                                                                                                 OK (1.13s)
+    markup in docker output reaches the result only as constrained text:                                                                                                                OK (0.30s)
+    missing containers and installation are reported, not invented:                                                                                                                     OK (0.30s)
+    the helper refuses a state directory others can write:                                                                                                                              OK (0.01s)
+  control pane in a real browser (headless Chromium)
+    fragment sign-in, status from the helper, hostile origins refused, markup shown as text, sign-out:                                                                                  OK (76.33s)
+  root launcher (C-P3.1 L16, L17)
+    help works through a symlink from another directory and names the checkout:                                                                                                         OK (0.01s)
+    setup-path for zsh: with consent, a symlink and one marked line in ~/.zprofile:                                                                                                     OK
+    setup-path for bash on Linux uses ~/.bashrc:                                                                                                                                        OK
+    declining changes nothing:                                                                                                                                                          OK
+    a symlink but no start-up change: the exact line is printed instead:                                                                                                                OK
+    another shell: the symlink with consent, start-up files untouched, instructions shown:                                                                                              OK
+    an existing ~/.local/bin/lockstep that Lockstep did not create is left alone:                                                                                                       OK
+    running setup-path again changes nothing:                                                                                                                                           OK
+    with ~/.local/bin already on PATH only the symlink is offered:                                                                                                                      OK
+    a bad instance name is a usage error:                                                                                                                                               OK
+  helper lifecycle operations (C-P3.2)
+    service-stop on a running service stops it and says ok:                                                                                                                             OK (0.28s)
+    service-start on an absent, compatible service starts it on the fixed port and observes it answer:                                                                                  OK (0.30s)
+    service-start on a stopped container restarts it:                                                                                                                                   OK (0.30s)
+    service-restart on a running service stops and starts it:                                                                                                                           OK (0.30s)
+    database-stop with the service stopped, then database-start:                                                                                                                        OK (0.57s)
+    an expected state that no longer holds is refused and nothing runs:                                                                                                                 OK (0.53s)
+    an incompatible installation is not started (upgrades are P3.3):                                                                                                                    OK (0.28s)
+    the database is not stopped under a running service:                                                                                                                                OK (0.29s)
+    an instance's database is not managed by its control pane:                                                                                                                          OK (0.55s)
+    a start that fails is failed, with the error as detail:                                                                                                                             OK (0.30s)
+    a start that never answers is failed, not ok:                                                                                                                                       OK (10.80s)
+    two stops sent together: one runs, the other is refused, never overlapping:                                                                                                         OK (0.31s)
+    forged, replayed, stale and wrongly expected lifecycle requests are refused:                                                                                                        OK (3.19s)
+    a lifecycle operation over its time limit is timed-out:                                                                                                                             OK (3.32s)
+    lifecycle content in a status-kind file is refused as malformed:                                                                                                                    OK (0.29s)
+    status still works and now reports health, Docker and Git:                                                                                                                          OK (0.31s)
+  pane lifecycle endpoint (C-P3.2 M6)
+    a lifecycle request needs a session and this pane's origin:                                                                                                                         OK (0.44s)
+    an allowlisted operation with its expectation becomes one signed lifecycle request:                                                                                                 OK (0.45s)
+    unknown operations, wrong expectations and extra words are 400 and write nothing:                                                                                                   OK (0.45s)
+    a second lifecycle request while one is pending is 409, and allowed once its result exists:                                                                                         OK (0.45s)
+    the status channel still refuses lifecycle names:                                                                                                                                   OK (0.43s)
+    a body over 4 KiB is refused:                                                                                                                                                       OK (0.45s)
+  control pane lifecycle in a real browser (C-P3.2)
+    the system view shows the state in words; Stop, Start and Restart change it; a double press is one operation:                                                                       OK (36.29s)
+  helper install and upgrade (C-P3.3)
+    prepare builds the clean checkout into staging; status shows the candidate:                                                                                                         OK (0.88s)
+    prepare refuses a checkout with uncommitted changes and builds nothing:                                                                                                             OK (0.29s)
+    prepare with an expectation that does not match the staging is refused:                                                                                                             OK (0.29s)
+    a failing build is failed and leaves no candidate:                                                                                                                                  OK (0.55s)
+    upgrade: back up and verify, stop, migrate with the backup, activate, start, verify:                                                                                                OK (1.24s)
+    a candidate other than the one the page showed is not applied:                                                                                                                      OK (0.84s)
+    a backup that cannot be created stops the upgrade before anything changes:                                                                                                          OK (1.12s)
+    a corrupt backup stops the upgrade before anything changes:                                                                                                                         OK (0.87s)
+    a failed migration needs recovery; restore-previous restores the backup and the previous version:                                                                                   OK (1.74s)
+    a service that does not start after the migration needs recovery, and recovers:                                                                                                     OK (1.44s)
+    recovery names the exact failed upgrade:                                                                                                                                            OK (1.15s)
+    a database ahead of the candidate is not downgraded; a newer candidate upgrades it:                                                                                                 OK (1.89s)
+    an upgrade interrupted by a helper crash is reported, and can be recovered:                                                                                                         OK (2.10s)
+    two upgrade requests for one candidate: one applies it, the other is refused:                                                                                                       OK (0.92s)
+    a first installation needs no backup of an empty database:                                                                                                                          OK (1.12s)
+    an instance upgrades only its own installation, staging and database:                                                                                                               OK (0.89s)
+    install requests are refused in the other kinds' files and unknown ones are refused:                                                                                                OK (0.28s)
+  pane install endpoint (C-P3.3 U1)
+    needs a session and this pane's origin:                                                                                                                                             OK (0.44s)
+    a valid request becomes one signed install request:                                                                                                                                 OK (0.44s)
+    paths, unknown operations and mismatched expectations are 400 and write nothing:                                                                                                    OK (0.45s)
+    an install request while a lifecycle request is pending is 409, and the reverse:                                                                                                    OK (0.45s)
+    a lifecycle request while an install request is pending is 409:                                                                                                                     OK (0.45s)
+    the other kinds still refuse install names:                                                                                                                                         OK (0.45s)
+  control pane install and upgrade in a real browser (C-P3.3)
+    prepare, review and upgrade; the page shows each step's outcome:                                                                                                                    OK (48.96s)
+    a failed upgrade is explained, and recovery from the page restores the previous version:                                                                                            OK (81.94s)
+  application shell over HTTP (C-P3.4)
+    every section address returns the same content-free shell with the exact CSP:                                                                                                       OK (0.61s)
+    the vendored htmx is the pinned file:                                                                                                                                               OK (0.63s)
+    anything else under /app is 404:                                                                                                                                                    OK (0.60s)
+    the one-time token works once, only from this service's origin:                                                                                                                     OK (0.60s)
+    fragments need the session header; a cookie carrying the session is ignored:                                                                                                        OK (0.60s)
+    Home shows the observed state, never invented progress:                                                                                                                             OK (0.61s)
+    text from the database is escaped in fragments:                                                                                                                                     OK (0.63s)
+    sections not built yet say so and offer no buttons:                                                                                                                                 OK (0.63s)
+    Advanced shows the exact facts:                                                                                                                                                     OK (0.73s)
+    sign-out ends the session:                                                                                                                                                          OK (0.61s)
+    the Phase 1/2 pages and the status page are unchanged:                                                                                                                              OK (0.57s)
+    a body over 4 KiB is refused:                                                                                                                                                       OK (0.63s)
+  hand-over from the control pane to the application (C-P3.4 A3)
+    the helper issues a one-time token into a private hand-over file, never into the result:                                                                                            OK (3.59s)
+    without a running service nothing is issued:                                                                                                                                        OK (0.84s)
+    the pane hands the address over once, to its own session:                                                                                                                           FAIL (34.74s)
+      test/integration/Lockstep/HandoverTest.hs:66:
+      no result within 30 s:
+      
+      Use -p '/the pane hands the address over once, to its own session/' to rerun this test only.
+    a forged hand-over file is not handed over:                                                                                                                                         FAIL (34.66s)
+      test/integration/Lockstep/HandoverTest.hs:66:
+      no result within 30 s:
+      
+      Use -p '/a forged hand-over file is not handed over/' to rerun this test only.
+    the whole journey in a real browser: pane, Open Lockstep, Home, keyboard, phone width, hostile page, sign-out:                                                                      OK (70.07s)
+
+2 out of 295 tests failed (657.07s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       
+guard: (e) sentinel log empty
+
+== summary (tested revision 75e1c54a1d801e2fe3e9a02feb745bb50af24973, DIRTY working tree)
+  1 format                     PASSED
+  2 lint and static checks     PASSED
+  3 build                      PASSED
+  4 unit tests                 PASSED
+  5 no-live-model guard        PASSED
+  6 integration + backup/restore FAILED

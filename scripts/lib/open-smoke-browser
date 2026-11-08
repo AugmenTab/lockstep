@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Browser stand-in for scripts/lib/check-open (C-OPEN §3). Called as a
+# launcher with the one-time sign-in link as its only argument, it drives a
+# real headless Chromium (test/browser/cdp.py in the dev image, host network):
+# load the link, press Sign in, then load the same link again and press Sign
+# in once more (a single-use token must now be refused).
+#
+# The link is passed to the driver on stdin, never as an argument, and is
+# never written anywhere: the summary in $LOCKSTEP_SMOKE_OUT holds only paths,
+# statuses and page markers.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+out=${LOCKSTEP_SMOKE_OUT:?LOCKSTEP_SMOKE_OUT must name the summary file}
+link=$1
+steps=$(printf '%s' "$link" | python3 -c '
+import json, sys
+link = sys.stdin.read()
+button = sys.argv[1]
+print(json.dumps([
+    {"op": "open", "label": "confirm", "url": link},
+    {"op": "click", "label": "signin", "selector": button},
+    {"op": "open", "label": "replay", "url": link},
+    {"op": "click", "label": "replaysignin", "selector": button},
+]))' "form[action=\"/operator/sign-in\"] button")
+raw=$(printf '%s' "$steps" | docker run -i --rm --network host --log-driver none \
+  --volume "$PWD/test/browser:/browser:ro" lockstep-dev:p1 python3 /browser/cdp.py) || {
+  printf 'driver failed\n' > "$out"
+  exit 1
+}
+value() { printf '%s\n' "$raw" | awk -F '\t' -v k="$1" '$1 == k { print $2; exit }'; }
+path_only() { printf '%s' "$1" | sed -E 's#^https?://[^/]*##; s#\?.*$##'; }
+marker() { case "$(value "$1.text")" in *"$2"*) echo yes ;; *) echo no ;; esac; }
+{
+  printf 'confirm.status=%s\n' "$(value confirm.status)"
+  printf 'confirm.path=%s\n' "$(path_only "$(value confirm.url)")"
+  printf 'signin.status=%s\n' "$(value signin.status)"
+  printf 'signin.path=%s\n' "$(path_only "$(value signin.url)")"
+  printf 'signin.signout=%s\n' "$(marker signin 'Sign out')"
+  printf 'replaysignin.status=%s\n' "$(value replaysignin.status)"
+  printf 'replaysignin.refused=%s\n' "$(marker replaysignin 'invalid, already used or expired')"
+} > "$out"

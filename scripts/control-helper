@@ -1,0 +1,1961 @@
+#!/usr/bin/env bash
+# The control pane's host helper (contract C-P3.1 L7-L9, §4).
+#
+#   scripts/control-helper --state DIR [--instance NAME]
+#
+# Started in the background by ./lockstep as the invoking user; stopped by
+# `lockstep stop` (SIGTERM). It reads signed requests that the control pane
+# writes to DIR/pane/requests/, runs at most one allowlisted operation at a
+# time, and writes signed results to DIR/pane/results/. It is the only part of
+# the control pane that may use Docker, and only through fixed commands: no
+# text from a request ever reaches a shell or a command line.
+#
+# Protocol version 1. Allowlist: status (expect any).
+# Journal: DIR/helper/journal ("<unix> start|end|refused <id> <op|outcome|reason>").
+#
+# With --runner it also serves the runner channel (C-P4.2 R3; DG-17 D-17.1(a)):
+# signed run requests from the Lockstep service in DIR/runner/requests/, each run
+# in a new container from a fixed table (pinned image, no network, read-only
+# root, no capabilities, bounded processes, memory, CPU, time and output), at
+# most one run at a time, results signed with the runner key in
+# DIR/runner/results/.
+set -u
+umask 077
+export LC_ALL=C
+
+here=$(cd "$(dirname "$0")" && pwd -P)
+root=$(dirname "$here")
+
+usage() {
+  echo "usage: scripts/control-helper --state DIR [--instance NAME] [--service-port N] [--projects DIR] [--runner]" >&2
+  exit 64
+}
+
+state=""
+instance=""
+service_port=8000
+projects=""
+runner_enabled=0
+provider_auth_action=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    --runner) runner_enabled=1; shift ;;
+    --state) [ $# -ge 2 ] || usage; state=$2; shift 2 ;;
+    --instance) [ $# -ge 2 ] || usage; instance=$2; shift 2 ;;
+    --service-port) [ $# -ge 2 ] || usage; service_port=$2; shift 2 ;;
+    --projects) [ $# -ge 2 ] || usage; projects=$2; shift 2 ;;
+    --provider-auth-init) provider_auth_action=init; shift ;;
+    --provider-auth-login) provider_auth_action=login; shift ;;
+    *) usage ;;
+  esac
+done
+case $projects in
+  "" | /*) ;;
+  *) echo "control-helper: --projects must be an absolute path" >&2; exit 64 ;;
+esac
+case $service_port in
+  "" | *[!0-9]*) usage ;;
+esac
+if [ "$service_port" -lt 1 ] || [ "$service_port" -gt 65535 ]; then usage; fi
+[ -n "$state" ] || usage
+case $state in
+  /*) ;;
+  *) echo "control-helper: --state must be an absolute path" >&2; exit 64 ;;
+esac
+if [ -n "$instance" ]; then
+  case $instance in
+    service | *[!abcdefghijklmnopqrstuvwxyz0123456789-]*) usage ;;
+  esac
+fi
+
+pane=$state/pane
+helper=$state/helper
+requests=$pane/requests
+results=$pane/results
+
+# C-P4.L.N: set up or sign in to the native auth volume, then exit. The owner runs these; the role
+# container never does. init owns an empty volume to the CLI identity; login runs the unmodified CLI's
+# own sign-in in a temporary container against that volume. Lockstep never reads or copies the token.
+if [ -n "$provider_auth_action" ]; then
+  auth_volume=lockstep-provider-auth-${instance:-main}
+  provider_tag=lockstep-provider:claude-2.1.312
+  cli_uid=2000000000
+  docker image inspect "$provider_tag" >/dev/null 2>&1 || { echo "control-helper: the image $provider_tag is missing (scripts/provider-image)" >&2; exit 69; }
+  case $provider_auth_action in
+    init)
+      docker volume create "$auth_volume" >/dev/null || exit 70
+      docker run --rm --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --security-opt no-new-privileges \
+        --network none --log-driver none --mount "type=volume,source=$auth_volume,target=/auth" \
+        "$provider_tag" sh -c "chown $cli_uid:$cli_uid /auth && chmod 700 /auth" || exit 70
+      echo "auth volume $auth_volume is ready (owned by the CLI identity $cli_uid); now: control-helper --state $state ${instance:+--instance $instance} --provider-auth-login"
+      exit 0 ;;
+    login)
+      docker volume inspect "$auth_volume" >/dev/null 2>&1 || { echo "control-helper: run --provider-auth-init first" >&2; exit 69; }
+      echo "Signing in to your Claude subscription in a temporary container (Anthropic's own flow). No repository is mounted; Lockstep does not see the token." >&2
+      exec docker run --rm -it --user "$cli_uid:$cli_uid" --read-only --tmpfs /tmp \
+        --cap-drop ALL --security-opt no-new-privileges \
+        --env HOME=/tmp --env CLAUDE_CONFIG_DIR=/auth --mount "type=volume,source=$auth_volume,target=/auth" \
+        "$provider_tag" claude auth login --claudeai ;;
+  esac
+fi
+
+mode_of() {
+  stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null
+}
+
+# A directory this user owns, that is not a symlink, and that no one else can use.
+private_dir() {
+  [ -d "$1" ] && [ ! -L "$1" ] && [ -O "$1" ] || return 1
+  case $(mode_of "$1") in
+    *00) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+fatal() {
+  echo "control-helper: $*" >&2
+  exit 66
+}
+
+private_dir "$state" || fatal "the state directory $state must be a directory owned by this user with mode 0700"
+private_dir "$helper" || fatal "$helper must be a directory owned by this user with mode 0700"
+private_dir "$pane" || fatal "$pane must be a directory owned by this user with mode 0700"
+
+log() {
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$helper/helper.log"
+}
+journal_file=$helper/journal
+journal() {
+  printf '%s %s\n' "$(date +%s)" "$*" >> "$journal_file"
+}
+
+# One helper per state directory: a lock directory holding the owner's PID.
+lock=$helper/lock
+take_lock() {
+  if mkdir "$lock" 2>/dev/null; then
+    echo $$ > "$lock/pid"
+    return 0
+  fi
+  local owner
+  owner=$(cat "$lock/pid" 2>/dev/null || true)
+  case $owner in
+    "" | *[!0-9]*) ;;
+    *)
+      if kill -0 "$owner" 2>/dev/null; then
+        echo "control-helper: already running for $state (pid $owner)" >&2
+        exit 75
+      fi
+      ;;
+  esac
+  rm -rf "$lock"
+  mkdir "$lock" 2>/dev/null || { echo "control-helper: already running for $state" >&2; exit 75; }
+  echo $$ > "$lock/pid"
+}
+take_lock
+release_lock() {
+  [ "$(cat "$lock/pid" 2>/dev/null)" = $$ ] && rm -rf "$lock"
+}
+trap release_lock EXIT
+
+# The channel key: 32 bytes as 64 lower-case hex characters.
+key_hex=$(head -c 64 "$helper/channel.key" 2>/dev/null || true)
+case $key_hex in
+  *[!0123456789abcdef]* | "") fatal "$helper/channel.key is missing or invalid" ;;
+esac
+[ ${#key_hex} -eq 64 ] || fatal "$helper/channel.key is missing or invalid"
+
+timeout=${LOCKSTEP_HELPER_TIMEOUT:-90}
+case $timeout in
+  "" | *[!0-9]*) timeout=90 ;;
+esac
+if [ "$timeout" -lt 1 ] || [ "$timeout" -gt 300 ]; then timeout=90; fi
+
+# HMAC-SHA256 (RFC 2104) with printf and the system's SHA-256 tool.
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256() { sha256sum | cut -d ' ' -f 1; }
+else
+  sha256() { shasum -a 256 | cut -d ' ' -f 1; }
+fi
+pads_for() { # KEY-HEX -> sets pad_in and pad_out
+  local key=$1 i=0 b
+  pad_in=""
+  pad_out=""
+  while [ $i -lt 64 ]; do
+    if [ $i -lt 32 ]; then b=$((16#${key:$((i * 2)):2})); else b=0; fi
+    pad_in="$pad_in$(printf '\\x%02x' $((b ^ 0x36)))"
+    pad_out="$pad_out$(printf '\\x%02x' $((b ^ 0x5c)))"
+    i=$((i + 1))
+  done
+}
+pads_for "$key_hex"
+ipad=$pad_in
+opad=$pad_out
+hex_escapes() {
+  local hex=$1 out="" j=0
+  while [ $j -lt ${#hex} ]; do
+    out="$out\\x${hex:$j:2}"
+    j=$((j + 2))
+  done
+  printf '%s' "$out"
+}
+hmac() { # the data on standard input
+  local inner
+  inner=$({ printf "$ipad"; cat; } | sha256)
+  { printf "$opad"; printf "$(hex_escapes "$inner")"; } | sha256
+}
+
+# Moves a file into place without following a symlink at the destination.
+if mv --version >/dev/null 2>&1; then
+  place() { mv -f -T "$1" "$2"; }
+else
+  place() { mv -f -h "$1" "$2"; }
+fi
+
+clean_detail() { # standard input -> one line of at most 300 printable ASCII characters
+  tr '\n\r\t' '   ' | tr -cd ' -~' | cut -c 1-300
+}
+
+# write_result ID OP OUTCOME REASON STARTED FINISHED DETAIL [FIELD...]
+# Never replaces an existing result, and never writes through a symlink.
+write_result() {
+  local id=$1 op=$2 outcome=$3 reason=$4 started=$5 finished=$6 detail=$7
+  shift 7
+  local dest=$results/$id.res tmp mac f
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    journal "refused $id result-exists"
+    return 1
+  fi
+  tmp=$(mktemp "$results/.res.XXXXXX") || return 1
+  {
+    printf 'lockstep-control-result 1\n'
+    printf 'id %s\n' "$id"
+    printf 'op %s\n' "$op"
+    printf 'outcome %s\n' "$outcome"
+    printf 'reason %s\n' "$reason"
+    printf 'started %s\n' "$started"
+    printf 'finished %s\n' "$finished"
+    for f in "$@"; do printf 'field %s\n' "$f"; done
+    printf 'detail %s\n' "$detail"
+  } > "$tmp"
+  mac=$(hmac < "$tmp")
+  printf 'mac %s\n' "$mac" >> "$tmp"
+  chmod 600 "$tmp"
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    rm -f "$tmp"
+    journal "refused $id result-exists"
+    return 1
+  fi
+  place "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
+}
+
+refuse() { # ID OP REASON
+  local now
+  now=$(date +%s)
+  journal "refused $1 $3"
+  log "refused $1: $3"
+  write_result "$1" "$2" refused "$3" "$now" "$now" "" || true
+}
+
+if [ -n "$instance" ]; then
+  install=$root/.local/$instance-install
+  service=lockstep-$instance
+  service_cmd=("$root/scripts/service" --instance "$instance")
+else
+  install=$root/.local/install
+  service=lockstep-service
+  service_cmd=("$root/scripts/service")
+fi
+
+service_state() { # running | stopped | absent | unknown
+  local s
+  if s=$(docker container inspect --format '{{.State.Status}}' "$service" 2>/dev/null); then
+    case $s in
+      running) echo running ;;
+      created | exited | dead | paused | restarting | removing) echo stopped ;;
+      *) echo unknown ;;
+    esac
+  else
+    echo absent
+  fi
+}
+
+database_state() { # running | stopped | absent | unknown | not-managed
+  local s
+  if [ -n "$instance" ]; then
+    echo not-managed
+  elif s=$(docker container inspect --format '{{.State.Running}}' lockstep-postgres 2>/dev/null); then
+    case $s in
+      true) echo running ;;
+      false) echo stopped ;;
+      *) echo unknown ;;
+    esac
+  else
+    echo absent
+  fi
+}
+
+db_status_output() { # the installed CLI's `db status`, stdout and stderr
+  "${service_cmd[@]}" cli db status < /dev/null 2>&1
+}
+
+answers_on() { # PORT
+  curl -s -o /dev/null --max-time 3 "http://127.0.0.1:$1/api/health_check" 2>/dev/null
+}
+
+# The status operation (C-P3.1 L9, C-P3.2 M7). Its standard output is the result's
+# field lines, one "name value" per line, then "detail TEXT" if there is something to say.
+op_status() {
+  local present=no commit=unknown dirty=unknown state server readiness=unknown
+  local reason=unknown revision=unknown pending=unknown out code first word
+  local health=no-answer port=unknown exit_code=none docker_server=unknown git_present=no
+  [ -x "$install/bin/lockstep" ] && present=yes
+  if [ -f "$install/VERSION" ]; then
+    word=$(grep -E '^commit [0-9a-f]{40}$' "$install/VERSION" | head -n 1 | cut -d ' ' -f 2)
+    [ -n "$word" ] && commit=$word
+    if grep -qx 'dirty true' "$install/VERSION"; then dirty=true; fi
+    if grep -qx 'dirty false' "$install/VERSION"; then dirty=false; fi
+  fi
+  state=$(service_state)
+  server=$(database_state)
+  if [ "$state" = running ]; then
+    word=$(docker container inspect --format '{{range .Args}}{{.}} {{end}}' "$service" 2>/dev/null | sed -n 's/.*--port \([0-9][0-9]*\).*/\1/p')
+    port=${word:-unknown}
+    if answers_on "${word:-$service_port}"; then health=answers; fi
+  elif [ "$state" = stopped ]; then
+    word=$(docker container inspect --format '{{.State.ExitCode}}' "$service" 2>/dev/null)
+    case $word in
+      "" | *[!0-9]*) exit_code=unknown ;;
+      *) exit_code=$word ;;
+    esac
+  fi
+  word=$(docker version --format '{{.Server.Version}}' 2>/dev/null | head -n 1)
+  case $word in
+    "" | *[!A-Za-z0-9.:-]*) ;;
+    *) [ ${#word} -le 40 ] && docker_server=$word ;;
+  esac
+  command -v git >/dev/null 2>&1 && git_present=yes
+  if [ "$present" = yes ]; then
+    out=$(db_status_output)
+    code=$?
+    first=$(printf '%s\n' "$out" | head -n 1)
+    case $first in
+      "readiness ready "[0-9]*) readiness=ready; reason=none ;;
+      "readiness not_ready "*)
+        readiness=not-ready
+        word=$(printf '%s\n' "$first" | cut -d ' ' -f 3)
+        case $word in
+          "" | *[!abcdefghijklmnopqrstuvwxyz_]*) reason=unknown ;;
+          *) reason=$word ;;
+        esac
+        ;;
+    esac
+    word=$(printf '%s\n' "$out" | grep -E '^revision ([0-9]{1,18}|none)$' | head -n 1 | cut -d ' ' -f 2)
+    [ -n "$word" ] && revision=$word
+    word=$(printf '%s\n' "$out" | grep -E '^pending [0-9]{1,18}$' | head -n 1 | cut -d ' ' -f 2)
+    [ -n "$word" ] && pending=$word
+    if [ "$readiness" = unknown ]; then
+      printf 'detail %s\n' "$(printf '%s' "$out" | clean_detail)"
+      [ "$code" = 0 ] || reason=unknown
+    fi
+  else
+    reason=not-installed
+  fi
+  printf 'install.present %s\ninstall.commit %s\ninstall.dirty %s\n' "$present" "$commit" "$dirty"
+  printf 'service.state %s\ndatabase.server %s\n' "$state" "$server"
+  printf 'database.readiness %s\ndatabase.reason %s\n' "$readiness" "$reason"
+  printf 'database.revision %s\ndatabase.pending %s\n' "$revision" "$pending"
+  printf 'service.health %s\nservice.port %s\nservice.exitcode %s\n' "$health" "$port" "$exit_code"
+  printf 'docker.server %s\ngit.present %s\n' "$docker_server" "$git_present"
+  install_status_fields
+  printf 'helper.protocol 1\n'
+}
+
+# ---------------------------------------------------------------- lifecycle (C-P3.2)
+
+compatible() { # the installation is present and the schema matches it
+  [ -x "$install/bin/lockstep" ] || return 1
+  case $(db_status_output | head -n 1) in
+    "readiness ready "[0-9]*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Checks the expected state (M2, M4). Prints a refusal code, or nothing if the operation may run.
+lifecycle_refusal() { # OP
+  local svc db
+  svc=$(service_state)
+  case $1 in
+    service-start)
+      case $svc in stopped | absent) ;; *) echo state-changed; return ;; esac
+      compatible || echo not-compatible
+      ;;
+    service-stop)
+      [ "$svc" = running ] || echo state-changed
+      ;;
+    service-restart)
+      [ "$svc" = running ] || { echo state-changed; return; }
+      compatible || echo not-compatible
+      ;;
+    database-start)
+      [ -z "$instance" ] || { echo not-managed; return; }
+      db=$(database_state)
+      case $db in stopped | absent) ;; *) echo state-changed ;; esac
+      ;;
+    database-stop)
+      [ -z "$instance" ] || { echo not-managed; return; }
+      db=$(database_state)
+      if [ "$svc" = running ] || [ "$db" != running ]; then echo state-changed; fi
+      ;;
+  esac
+}
+
+# The fixed commands (M3). Everything they print goes to standard output.
+lifecycle_action() {
+  case $lifecycle_op in
+    service-start)
+      if [ "$(service_state)" = stopped ]; then
+        "${service_cmd[@]}" restart --port "$service_port" < /dev/null 2>&1
+      else
+        "${service_cmd[@]}" start --port "$service_port" < /dev/null 2>&1
+      fi
+      ;;
+    service-stop) "${service_cmd[@]}" stop < /dev/null 2>&1 ;;
+    service-restart) "${service_cmd[@]}" restart --port "$service_port" < /dev/null 2>&1 ;;
+    database-start) "$root/scripts/db" up < /dev/null 2>&1 ;;
+    database-stop) "$root/scripts/db" down < /dev/null 2>&1 ;;
+  esac
+}
+
+# Observes the result again (M4): ok only if the intended state now holds.
+lifecycle_holds() { # OP
+  case $1 in
+    service-start | service-restart) [ "$(service_state)" = running ] && answers_on "$service_port" ;;
+    service-stop) [ "$(service_state)" != running ] ;;
+    database-start) [ "$(database_state)" = running ] ;;
+    database-stop) [ "$(database_state)" != running ] ;;
+  esac
+}
+
+execute_lifecycle() { # ID OP
+  local id=$1 op=$2 started finished out detail refusal
+  refusal=$(lifecycle_refusal "$op")
+  if [ -n "$refusal" ]; then
+    refuse "$id" "$op" "$refusal"
+    return
+  fi
+  started=$(date +%s)
+  journal "start $id $op"
+  out=$helper/.out.$id
+  lifecycle_op=$op
+  run_bounded "$out" lifecycle_action
+  if [ "$run_outcome" = ok ] && ! lifecycle_holds "$op"; then
+    run_outcome=failed
+  fi
+  finished=$(date +%s)
+  detail=""
+  if [ "$run_outcome" != ok ]; then
+    detail=$(cat "$out" "$out.err" 2>/dev/null | tail -c 600 | clean_detail)
+    [ -n "$detail" ] || detail="the operation did not reach the intended state"
+  fi
+  rm -f "$out" "$out.err"
+  write_result "$id" "$op" "$run_outcome" - "$started" "$finished" "$detail" || true
+  journal "end $id $run_outcome"
+  log "$op $id: $run_outcome"
+}
+
+stopping=0
+trap 'stopping=1' TERM INT
+
+# Runs one operation in its own process group, bounded by the timeout.
+# Sets run_outcome to ok, failed or timed-out; the output is in $1.
+run_bounded() { # OUTPUT-FILE FUNCTION [LIMIT-SECONDS]
+  local out=$1 fn=$2 limit=${3:-$timeout} pid watchdog marker rc
+  marker=$helper/.timeout.$$
+  rm -f "$marker"
+  set -m
+  ( "$fn" ) > "$out" 2> "$out.err" &
+  pid=$!
+  set +m
+  (
+    sleep "$limit"
+    : > "$marker"
+    kill -TERM -- "-$pid" 2>/dev/null
+    sleep 2
+    kill -KILL -- "-$pid" 2>/dev/null
+  ) &
+  watchdog=$!
+  while :; do
+    wait "$pid"
+    rc=$?
+    if [ "$rc" -gt 128 ] && kill -0 "$pid" 2>/dev/null; then continue; fi
+    break
+  done
+  kill "$watchdog" 2>/dev/null
+  pkill -P "$watchdog" 2>/dev/null
+  wait "$watchdog" 2>/dev/null
+  if [ -e "$marker" ]; then
+    rm -f "$marker"
+    run_outcome=timed-out
+  elif [ "$rc" = 0 ]; then
+    run_outcome=ok
+  else
+    run_outcome=failed
+  fi
+}
+
+execute() { # ID OP
+  local id=$1 op=$2 started finished out fields detail line
+  started=$(date +%s)
+  journal "start $id $op"
+  out=$helper/.out.$id
+  case $op in
+    status) run_bounded "$out" op_status ;;
+  esac
+  finished=$(date +%s)
+  fields=()
+  detail=""
+  if [ "$run_outcome" = ok ]; then
+    while IFS= read -r line; do
+      case $line in
+        "detail "*) detail=${line#detail } ;;
+        *) fields+=("$line") ;;
+      esac
+    done < "$out"
+  else
+    detail=$(clean_detail < "$out.err")
+  fi
+  rm -f "$out" "$out.err"
+  if [ ${#fields[@]} -gt 0 ]; then
+    write_result "$id" "$op" "$run_outcome" - "$started" "$finished" "$detail" "${fields[@]}" || true
+  else
+    write_result "$id" "$op" "$run_outcome" - "$started" "$finished" "$detail" || true
+  fi
+  journal "end $id $run_outcome"
+  log "$op $id: $run_outcome"
+}
+
+# ---------------------------------------------------------------- install and upgrade (C-P3.3)
+
+if [ -n "$instance" ]; then
+  staging_rel=.local/$instance-staging-install
+  backups=$root/.local/$instance-backups
+  config_file=$root/.local/config/lockstep-$instance.json
+  host_config=$config_file
+else
+  staging_rel=.local/staging-install
+  backups=$root/.local/backups
+  config_file=$root/.local/config/lockstep.json
+  host_config=$root/.local/config/lockstep-host.json
+fi
+staging=$root/$staging_rel
+record=$helper/upgrade.current
+
+config_value() { # KEY -> the value of "KEY":"..." in the database configuration, if plain
+  local v
+  v=$(sed -n "s/.*\"$1\":\"\\([^\"]*\\)\".*/\\1/p" "$config_file" 2>/dev/null | head -n 1)
+  case $v in
+    "" | *[!abcdefghijklmnopqrstuvwxyz0123456789_]*) echo "" ;;
+    *) echo "$v" ;;
+  esac
+}
+db_name=$(config_value name)
+db_name=${db_name:-lockstep}
+db_user=$(config_value username)
+db_user=${db_user:-lockstep}
+
+long_timeout=${LOCKSTEP_HELPER_LONG_TIMEOUT:-1800}
+case $long_timeout in
+  "" | *[!0-9]*) long_timeout=1800 ;;
+esac
+if [ "$long_timeout" -lt 1 ] || [ "$long_timeout" -gt 7200 ]; then long_timeout=1800; fi
+
+# The scripts/service command for the staged candidate (the same instance's config).
+staged_service() {
+  if [ -n "$instance" ]; then
+    LOCKSTEP_SERVICE_INSTALL_DIR=$staging_rel LOCKSTEP_SERVICE_CONFIG=.local/config/lockstep-$instance.json \
+      LOCKSTEP_SERVICE_NAME=lockstep-$instance "$root/scripts/service" "$@"
+  else
+    LOCKSTEP_SERVICE_INSTALL_DIR=$staging_rel "$root/scripts/service" "$@"
+  fi
+}
+
+candidate_digest() { # 16 hex characters of the staged binary's SHA-256, or nothing
+  [ -x "$staging/bin/lockstep" ] || return 0
+  sha256 < "$staging/bin/lockstep" | cut -c 1-16
+}
+
+# The upgrade record: key/value lines, rewritten whole (U3, U6).
+record_get() { # KEY
+  sed -n "s/^$1 //p" "$record" 2>/dev/null | head -n 1
+}
+record_set() { # KEY VALUE ... (all other keys kept)
+  local tmp key
+  tmp=$(mktemp "$helper/.record.XXXXXX")
+  if [ -f "$record" ]; then cp "$record" "$tmp"; fi
+  while [ $# -ge 2 ]; do
+    key=$1
+    grep -v "^$key " "$tmp" > "$tmp.new" || true
+    printf '%s %s\n' "$key" "$2" >> "$tmp.new"
+    mv "$tmp.new" "$tmp"
+    shift 2
+  done
+  mv -f "$tmp" "$record"
+}
+upgrade_state() { # none | recovery-needed | interrupted
+  case $(record_get status) in
+    recovery-needed) echo recovery-needed ;;
+    interrupted) echo interrupted ;;
+    *) echo none ;;
+  esac
+}
+
+# Fields for the status operation (U8).
+install_status_fields() {
+  local digest commit pending=unknown out word
+  digest=$(candidate_digest)
+  if [ -n "$digest" ]; then
+    commit=$(grep -E '^commit [0-9a-f]{40}$' "$staging/VERSION" 2>/dev/null | head -n 1 | cut -d ' ' -f 2)
+    out=$(staged_service cli db status < /dev/null 2>&1)
+    word=$(printf '%s\n' "$out" | grep -E '^pending [0-9]{1,18}$' | head -n 1 | cut -d ' ' -f 2)
+    [ -n "$word" ] && pending=$word
+    printf 'candidate.present yes\ncandidate.commit %s\ncandidate.digest %s\ncandidate.pending %s\n' "${commit:-unknown}" "$digest" "$pending"
+  else
+    printf 'candidate.present no\n'
+  fi
+  printf 'upgrade.state %s\n' "$(upgrade_state)"
+  if [ "$(upgrade_state)" != none ]; then
+    printf 'upgrade.id %s\nupgrade.step %s\n' "$(record_get id)" "$(record_get step)"
+  fi
+  if [ -x "$install.previous/bin/lockstep" ]; then printf 'previous.present yes\n'; else printf 'previous.present no\n'; fi
+}
+
+install_refusal() { # OP EXPECT
+  local digest
+  digest=$(candidate_digest)
+  case $1 in
+    prepare-candidate)
+      case $2 in
+        candidate-none) [ -z "$digest" ] || { echo state-changed; return; } ;;
+        *) [ "$2" = "candidate-$digest" ] || { echo state-changed; return; } ;;
+      esac
+      if ! command -v git >/dev/null 2>&1 || [ -n "$(git -C "$root" status --porcelain 2>/dev/null)" ]; then
+        echo dirty-checkout
+      fi
+      ;;
+    apply-candidate)
+      [ -n "$digest" ] && [ "$2" = "candidate-$digest" ] || { echo state-changed; return; }
+      [ "$(upgrade_state)" = none ] || { echo recovery-needed; return; }
+      case $(staged_service cli db status < /dev/null 2>&1 | head -n 1) in
+        "readiness not_ready schema_invalid unknown_applied_migration"*) echo database-ahead ;;
+      esac
+      ;;
+    restore-previous)
+      [ "$(upgrade_state)" != none ] && [ "$2" = "recovery-$(record_get id)" ] || echo state-changed
+      ;;
+  esac
+}
+
+prepare_action() {
+  rm -rf "$staging"
+  if ! LOCKSTEP_SERVICE_INSTALL_DIR=$staging_rel "$root/scripts/service" install < /dev/null 2>&1; then
+    rm -rf "$staging"
+    return 1
+  fi
+  [ -x "$staging/bin/lockstep" ] || { rm -rf "$staging"; return 1; }
+}
+
+verify_backup() { # FILE
+  local file=$1 want got
+  [ -s "$file" ] || { echo "the backup file is empty or missing"; return 1; }
+  want=$(cut -d ' ' -f 1 "$file.sha256" 2>/dev/null)
+  got=$(sha256 < "$file")
+  [ -n "$want" ] && [ "$want" = "$got" ] || { echo "the backup's digest does not match"; return 1; }
+  docker exec -i lockstep-postgres pg_restore --list < "$file" > /dev/null 2>&1 || { echo "the backup cannot be read back"; return 1; }
+}
+
+# The migration with the candidate binary, the verified backup mounted read-only at a fixed path.
+migrate_with_candidate() { # BACKUP-FILE (empty: none needed)
+  local -a args=(--network host
+    --volume "$staging:/opt/lockstep:ro"
+    --volume "$host_config:/etc/lockstep/lockstep.json:ro"
+    --env LOCKSTEP_CONFIG=/etc/lockstep/lockstep.json)
+  if [ -n "$1" ]; then
+    args+=(--volume "$1:/backup/$(basename "$1"):ro")
+    docker run --rm "${args[@]}" lockstep-dev:p1 /opt/lockstep/bin/lockstep db migrate --backup "/backup/$(basename "$1")" < /dev/null 2>&1
+  else
+    docker run --rm "${args[@]}" lockstep-dev:p1 /opt/lockstep/bin/lockstep db migrate < /dev/null 2>&1
+  fi
+}
+
+ready_and_answering() {
+  case $(db_status_output | head -n 1) in
+    "readiness ready "[0-9]*) answers_on "$service_port" ;;
+    *) return 1 ;;
+  esac
+}
+
+# U3: the upgrade, step by step; each step is in the record before it starts.
+apply_action() {
+  local backup="" status_line
+  status_line=$(staged_service cli db status < /dev/null 2>&1 | grep -E '^revision ' | head -n 1)
+  if [ -x "$install/bin/lockstep" ] || [ "$status_line" != "revision none" ]; then
+    record_set step backup
+    mkdir -p "$backups"
+    backup=$(LOCKSTEP_DB_NAME=$db_name LOCKSTEP_DB_USER=$db_user LOCKSTEP_BACKUP_DIR=$backups "$root/scripts/db" backup < /dev/null 2>&1 | tail -n 1)
+    case $backup in
+      /*) ;;
+      *) echo "the backup could not be created: $backup"; record_set status failed; return 1 ;;
+    esac
+    verify_backup "$backup" || { record_set status failed; return 1; }
+    record_set backup "$backup"
+  fi
+  record_set step stop
+  if [ "$(service_state)" != absent ]; then
+    "${service_cmd[@]}" stop < /dev/null 2>&1 || { record_set status failed; "${service_cmd[@]}" start --port "$service_port" < /dev/null 2>&1; return 1; }
+  fi
+  record_set step migrate migrated attempted
+  if ! migrate_with_candidate "$backup"; then
+    record_set status recovery-needed
+    return 1
+  fi
+  record_set step activate migrated yes
+  rm -rf "$install.previous"
+  if [ -d "$install" ]; then mv "$install" "$install.previous" || { record_set status recovery-needed; return 1; }; fi
+  mv "$staging" "$install" || { record_set status recovery-needed; return 1; }
+  record_set activated yes step start
+  "${service_cmd[@]}" start --port "$service_port" < /dev/null 2>&1 || { record_set status recovery-needed; return 1; }
+  record_set step verify
+  ready_and_answering || { echo "the new version did not become ready and answer"; record_set status recovery-needed; return 1; }
+  record_set status done step done
+}
+
+# U4: put the database and the previous version back.
+restore_action() {
+  local backup migrated activated
+  backup=$(record_get backup)
+  migrated=$(record_get migrated)
+  activated=$(record_get activated)
+  if [ "$(service_state)" != absent ]; then "${service_cmd[@]}" stop < /dev/null 2>&1 || true; fi
+  if [ -n "$migrated" ]; then
+    [ -n "$backup" ] || { echo "there is no backup to restore"; return 1; }
+    verify_backup "$backup" || return 1
+    docker exec lockstep-postgres psql -q -U "$db_user" -d "$db_name" -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;' < /dev/null 2>&1 || return 1
+    LOCKSTEP_DB_NAME=$db_name LOCKSTEP_DB_USER=$db_user "$root/scripts/db" restore "$backup" < /dev/null 2>&1 || return 1
+  fi
+  if [ "$activated" = yes ] && [ -x "$install.previous/bin/lockstep" ]; then
+    rm -rf "$install"
+    mv "$install.previous" "$install" || return 1
+  fi
+  "${service_cmd[@]}" start --port "$service_port" < /dev/null 2>&1 || return 1
+  ready_and_answering || { echo "the previous version did not become ready and answer"; return 1; }
+}
+
+execute_install() { # ID OP EXPECT
+  local id=$1 op=$2 expect=$3 started finished out detail refusal
+  refusal=$(install_refusal "$op" "$expect")
+  if [ -n "$refusal" ]; then
+    refuse "$id" "$op" "$refusal"
+    return
+  fi
+  started=$(date +%s)
+  journal "start $id $op"
+  out=$helper/.out.$id
+  case $op in
+    prepare-candidate) run_bounded "$out" prepare_action "$long_timeout" ;;
+    apply-candidate)
+      printf 'id %s\nstatus running\nstep check\n' "$id" > "$record"
+      run_bounded "$out" apply_action "$long_timeout"
+      if [ "$run_outcome" != ok ]; then
+        case $(record_get status) in
+          running) [ "$(record_get migrated)" = "" ] && record_set status failed || record_set status recovery-needed ;;
+        esac
+      fi
+      ;;
+    restore-previous)
+      run_bounded "$out" restore_action "$long_timeout"
+      [ "$run_outcome" = ok ] && record_set status restored step done
+      ;;
+  esac
+  finished=$(date +%s)
+  detail=""
+  if [ "$run_outcome" != ok ]; then
+    detail=$(cat "$out" "$out.err" 2>/dev/null | tail -c 600 | clean_detail)
+    [ -n "$detail" ] || detail="the operation did not reach the intended state"
+  fi
+  rm -f "$out" "$out.err"
+  write_result "$id" "$op" "$run_outcome" - "$started" "$finished" "$detail" || true
+  journal "end $id $run_outcome"
+  log "$op $id: $run_outcome"
+}
+
+# ---------------------------------------------------------------- hand-over (C-P3.4 A3)
+
+running_port() { # the port the running service was started with, else the fixed one
+  local p
+  p=$(docker container inspect --format '{{range .Args}}{{.}} {{end}}' "$service" 2>/dev/null | sed -n 's/.*--port \([0-9][0-9]*\).*/\1/p')
+  echo "${p:-$service_port}"
+}
+
+# Issues a one-time application sign-in with the fixed CLI command and leaves it
+# only in pane/handover/<id> (0600). Nothing it prints contains the token.
+session_action() {
+  local port out token tmp dest re
+  port=$(running_port)
+  out=$("${service_cmd[@]}" cli operator sign-in --port "$port" < /dev/null 2>/dev/null) || { echo "the sign-in could not be issued"; return 1; }
+  re='^http://127\.0\.0\.1:[0-9]+/operator/sign-in\?token=([A-Za-z0-9_-]{43})$'
+  [[ $out =~ $re ]] || { out=""; echo "the sign-in command answered unexpectedly"; return 1; }
+  token=${BASH_REMATCH[1]}
+  out=""
+  dest=$pane/handover/$session_id
+  mkdir -p "$pane/handover"
+  chmod 700 "$pane/handover"
+  if [ -e "$dest" ] || [ -L "$dest" ]; then token=""; echo "a hand-over already exists"; return 1; fi
+  tmp=$(mktemp "$pane/handover/.h.XXXXXX")
+  printf 'port %s\ntoken %s\n' "$port" "$token" > "$tmp"
+  token=""
+  chmod 600 "$tmp"
+  place "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
+}
+
+execute_session() { # ID
+  local id=$1 started finished out detail
+  if [ "$(service_state)" != running ] || ! answers_on "$(running_port)"; then
+    refuse "$id" open-application state-changed
+    return
+  fi
+  started=$(date +%s)
+  journal "start $id open-application"
+  out=$helper/.out.$id
+  session_id=$id
+  run_bounded "$out" session_action
+  finished=$(date +%s)
+  detail=""
+  [ "$run_outcome" = ok ] || detail=$(cat "$out" "$out.err" 2>/dev/null | tail -c 300 | clean_detail)
+  rm -f "$out" "$out.err"
+  write_result "$id" open-application "$run_outcome" - "$started" "$finished" "$detail" "service.port $(running_port)" || true
+  journal "end $id $run_outcome"
+  log "open-application $id: $run_outcome"
+}
+
+# ---------------------------------------------------------------- project folders (C-P3.5 J5, J6)
+
+# The folders the service may see: "rw PATH" (the projects folder, first, only
+# with --projects) and up to 15 "ro PATH" lines, canonical absolute paths. The
+# pane gets a copy to show; scripts/service mounts what the list names.
+folders_file=$helper/folders
+export LOCKSTEP_SERVICE_FOLDERS=$folders_file
+home_real=$(cd -P -- "${HOME:-/nonexistent}" 2>/dev/null && pwd -P || true)
+
+plain_path() { # PATH: absolute, printable ASCII, no ':' or ',', no empty, '.' or '..' segment
+  case $1 in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  case $1 in
+    / | *:* | *,* | */ | *//* | */./* | */../* | */. | */..) return 1 ;;
+  esac
+  [[ ! $1 =~ [^\ -~] ]]
+}
+
+publish_folders() { # [SOURCE]: the list to copy, the kept list by default
+  local tmp
+  tmp=$(mktemp "$pane/.folders.XXXXXX") || return 1
+  cat "${1:-$folders_file}" > "$tmp"
+  chmod 600 "$tmp"
+  place "$tmp" "$pane/folders" || rm -f "$tmp"
+}
+
+# Writes the list at start: the projects folder (made if missing) and the added folders kept.
+init_folders() {
+  local tmp line real=""
+  if [ -n "$projects" ]; then
+    mkdir -p -- "$projects" 2>/dev/null
+    real=$(cd -P -- "$projects" 2>/dev/null && pwd -P || true)
+    if [ -z "$real" ] || ! plain_path "$real"; then
+      log "the projects folder $projects cannot be used; no folder for new projects"
+      real=""
+    fi
+  fi
+  tmp=$(mktemp "$helper/.folders.XXXXXX") || fatal "the folder list cannot be written"
+  {
+    [ -n "$real" ] && printf 'rw %s\n' "$real"
+    if [ -f "$folders_file" ]; then
+      while IFS= read -r line; do
+        case $line in
+          "ro /"*) plain_path "${line#ro }" && printf '%s\n' "$line" ;;
+        esac
+      done < "$folders_file"
+    fi
+  } > "$tmp"
+  chmod 600 "$tmp"
+  # The pane's copy first: the kept list appearing is the sign the helper has started.
+  publish_folders "$tmp" || log "the folder list could not be given to the pane"
+  place "$tmp" "$folders_file" || fatal "the folder list cannot be written"
+}
+
+folders_digest() {
+  printf 'folders-%s' "$(sha256 < "$folders_file" | cut -c 1-16)"
+}
+
+# Checks the folder once, in this shell (C-C.R1 R6): sets folder_refusal_code (empty
+# when the folder may be added) and folder_real (the one resolution that is written).
+check_folder() { # PATH
+  local path=$1 line listed added=0
+  folder_refusal_code=""
+  folder_real=""
+  plain_path "$path" || { folder_refusal_code=unusable-path; return; }
+  [ -e "$path" ] || { folder_refusal_code=folder-missing; return; }
+  [ -d "$path" ] || { folder_refusal_code=not-a-folder; return; }
+  folder_real=$(cd -P -- "$path" 2>/dev/null && pwd -P || true)
+  [ -n "$folder_real" ] || { folder_refusal_code=folder-missing; return; }
+  plain_path "$folder_real" || { folder_refusal_code=unusable-path; return; }
+  [ -n "$home_real" ] || { folder_refusal_code=outside-home; return; }
+  [ "$folder_real" != "$home_real" ] || { folder_refusal_code=home-folder; return; }
+  case $folder_real in
+    "$home_real"/*) ;;
+    *) folder_refusal_code=outside-home; return ;;
+  esac
+  case "$folder_real/" in
+    "$root"/*) folder_refusal_code=inside-lockstep; return ;;
+  esac
+  case "$root/" in
+    "$folder_real"/*) folder_refusal_code=inside-lockstep; return ;;
+  esac
+  while IFS= read -r line; do
+    listed=${line#* }
+    [ "${line%% *}" = ro ] && added=$((added + 1))
+    [ "$folder_real" != "$listed" ] || { folder_refusal_code=already-listed; return; }
+    case $folder_real in "$listed"/*) folder_refusal_code=overlaps-listed; return ;; esac
+    case $listed in "$folder_real"/*) folder_refusal_code=overlaps-listed; return ;; esac
+  done < "$folders_file"
+  [ "$added" -lt 15 ] || folder_refusal_code=list-full
+}
+
+folder_restart() {
+  "${service_cmd[@]}" restart --port "$(running_port)" < /dev/null 2>&1
+}
+
+execute_folder() { # ID EXPECT PATH
+  local id=$1 expect=$2 path=$3 started finished refusal tmp restart=not-needed out
+  if [ "$expect" != "$(folders_digest)" ]; then
+    refuse "$id" add-folder state-changed
+    return
+  fi
+  check_folder "$path"
+  refusal=$folder_refusal_code
+  if [ -n "$refusal" ]; then
+    refuse "$id" add-folder "$refusal"
+    return
+  fi
+  started=$(date +%s)
+  journal "start $id add-folder"
+  tmp=$(mktemp "$helper/.folders.XXXXXX")
+  { cat "$folders_file"; printf 'ro %s\n' "$folder_real"; } > "$tmp"
+  chmod 600 "$tmp"
+  place "$tmp" "$folders_file" || { rm -f "$tmp"; refuse "$id" add-folder unusable-path; return; }
+  publish_folders || log "the folder list could not be given to the pane"
+  log "added the folder $folder_real"
+  if [ "$(service_state)" = running ]; then
+    out=$helper/.out.$id
+    run_bounded "$out" folder_restart
+    if [ "$run_outcome" = ok ] && [ "$(service_state)" = running ] && answers_on "$(running_port)"; then restart=ok; else restart=failed; fi
+    rm -f "$out" "$out.err"
+  fi
+  finished=$(date +%s)
+  write_result "$id" add-folder ok - "$started" "$finished" "" "service.restart $restart" || true
+  journal "end $id ok"
+  log "add-folder $id: ok (restart $restart)"
+}
+
+re_folder_header='^lockstep-folder-request ([^ ]+)$'
+re_path='^path (/.*)$'
+re_header='^lockstep-control-request ([^ ]+)$'
+re_session_header='^lockstep-session-request ([^ ]+)$'
+re_install_header='^lockstep-install-request ([^ ]+)$'
+re_lifecycle_header='^lockstep-lifecycle-request ([^ ]+)$'
+re_id='^id ([0-9a-f]{32})$'
+re_issued='^issued ([0-9]{1,18})$'
+re_op='^op ([^ ].*)$'
+re_expect='^expect ([^ ].*)$'
+re_mac='^mac ([0-9a-f]{64})$'
+
+# Checks one request file (C-P3.1 §4, C-P3.2 §3) and runs it if every check passes.
+# A .req file is a status request; a .lreq file is a lifecycle request.
+handle() { # NAME
+  local name=$1 path=$requests/$1 id kind size lines line mac version issued op expect now header count folder_path=""
+  case $name in
+    .*) return ;;
+  esac
+  if [[ $name =~ ^[0-9a-f]{32}\.req$ ]]; then
+    kind=status
+    id=${name%.req}
+    header=$re_header
+  elif [[ $name =~ ^[0-9a-f]{32}\.lreq$ ]]; then
+    kind=lifecycle
+    id=${name%.lreq}
+    header=$re_lifecycle_header
+  elif [[ $name =~ ^[0-9a-f]{32}\.ireq$ ]]; then
+    kind=install
+    id=${name%.ireq}
+    header=$re_install_header
+  elif [[ $name =~ ^[0-9a-f]{32}\.sreq$ ]]; then
+    kind=session
+    id=${name%.sreq}
+    header=$re_session_header
+  elif [[ $name =~ ^[0-9a-f]{32}\.freq$ ]]; then
+    kind=folder
+    id=${name%.freq}
+    header=$re_folder_header
+  else
+    rm -f -- "$path"
+    log "removed a file that is not a request: name not allowed"
+    return
+  fi
+  if [ -L "$path" ]; then rm -f -- "$path"; refuse "$id" unknown not-regular-file; return; fi
+  if [ ! -f "$path" ]; then rmdir -- "$path" 2>/dev/null; refuse "$id" unknown not-regular-file; return; fi
+  if [ ! -O "$path" ]; then rm -f -- "$path"; refuse "$id" unknown not-owner; return; fi
+  case $(mode_of "$path") in
+    *00) ;;
+    *) rm -f -- "$path"; refuse "$id" unknown bad-permissions; return ;;
+  esac
+  size=$(wc -c < "$path" | tr -d ' ')
+  if [ "$size" -gt 1024 ]; then rm -f -- "$path"; refuse "$id" unknown too-large; return; fi
+  # Printable ASCII lines, each ending in a newline, exactly six of them (seven for a
+  # folder request, whose last body line is the path), the MAC last.
+  if grep -q '[^ -~]' "$path" || [ "$(tail -c 1 "$path" | wc -l | tr -d ' ')" != 1 ]; then
+    rm -f -- "$path"; refuse "$id" unknown malformed; return
+  fi
+  count=6
+  [ "$kind" = folder ] && count=7
+  lines=()
+  while IFS= read -r line; do lines+=("$line"); done < "$path"
+  if [ ${#lines[@]} -ne $count ] || [[ ! ${lines[$((count - 1))]} =~ $re_mac ]]; then
+    rm -f -- "$path"; refuse "$id" unknown malformed; return
+  fi
+  mac=${BASH_REMATCH[1]}
+  if [ "$(head -n $((count - 1)) "$path" | hmac)" != "$mac" ]; then
+    rm -f -- "$path"; refuse "$id" unknown bad-mac; return
+  fi
+  rm -f -- "$path"
+  if [[ ! ${lines[0]} =~ $header ]]; then refuse "$id" unknown malformed; return; fi
+  version=${BASH_REMATCH[1]}
+  [ "$version" = 1 ] || { refuse "$id" unknown bad-version; return; }
+  if [[ ! ${lines[1]} =~ $re_id ]] || [ "${BASH_REMATCH[1]}" != "$id" ]; then refuse "$id" unknown malformed; return; fi
+  if [[ ! ${lines[2]} =~ $re_issued ]]; then refuse "$id" unknown malformed; return; fi
+  issued=${BASH_REMATCH[1]}
+  if [[ ! ${lines[3]} =~ $re_op ]]; then refuse "$id" unknown malformed; return; fi
+  op=${BASH_REMATCH[1]}
+  if [[ ! ${lines[4]} =~ $re_expect ]]; then refuse "$id" unknown malformed; return; fi
+  expect=${BASH_REMATCH[1]}
+  if [ "$kind" = status ]; then
+    case $op in
+      status) ;;
+      *) refuse "$id" unknown unknown-op; return ;;
+    esac
+    case "$op $expect" in
+      "status any") ;;
+      *) refuse "$id" "$op" bad-expect; return ;;
+    esac
+  elif [ "$kind" = lifecycle ]; then
+    case $op in
+      service-start | service-stop | service-restart | database-start | database-stop) ;;
+      *) refuse "$id" unknown unknown-op; return ;;
+    esac
+    case "$op $expect" in
+      "service-start not-running" | "service-stop running" | "service-restart running" | \
+        "database-start not-running" | "database-stop service-not-running") ;;
+      *) refuse "$id" "$op" bad-expect; return ;;
+    esac
+  elif [ "$kind" = session ]; then
+    [ "$op" = open-application ] || { refuse "$id" unknown unknown-op; return; }
+    [ "$expect" = service-running ] || { refuse "$id" "$op" bad-expect; return; }
+  elif [ "$kind" = folder ]; then
+    [ "$op" = add-folder ] || { refuse "$id" unknown unknown-op; return; }
+    [[ $expect =~ ^folders-[0-9a-f]{16}$ ]] || { refuse "$id" "$op" bad-expect; return; }
+    if [[ ! ${lines[5]} =~ $re_path ]]; then refuse "$id" "$op" unusable-path; return; fi
+    folder_path=${BASH_REMATCH[1]}
+  else
+    case $op in
+      prepare-candidate | apply-candidate | restore-previous) ;;
+      *) refuse "$id" unknown unknown-op; return ;;
+    esac
+    if [[ ! "$op $expect" =~ ^(prepare-candidate\ candidate-(none|[0-9a-f]{16})|apply-candidate\ candidate-[0-9a-f]{16}|restore-previous\ recovery-[0-9a-f]{32})$ ]]; then
+      refuse "$id" "$op" bad-expect
+      return
+    fi
+  fi
+  if grep -qxF "$id" "$helper/seen" 2>/dev/null; then
+    journal "refused $id replayed"
+    log "refused $id: replayed"
+    return
+  fi
+  now=$(date +%s)
+  if [ "$issued" -lt $((now - 120)) ] || [ "$issued" -gt $((now + 10)) ]; then
+    refuse "$id" "$op" stale
+    return
+  fi
+  echo "$id" >> "$helper/seen"
+  case $kind in
+    status) execute "$id" "$op" ;;
+    lifecycle) execute_lifecycle "$id" "$op" ;;
+    install) execute_install "$id" "$op" "$expect" ;;
+    session) execute_session "$id" ;;
+    folder) execute_folder "$id" "$expect" "$folder_path" ;;
+  esac
+}
+
+# ---------------------------------------------------------------- the runner channel (C-P4.2 R3)
+#
+# DIR/runner (0700): channel.key (the runner key, made here, 0600; the service signs
+# with it), requests/, results/, work/<run>/ (made by the service: tree/, input/,
+# output/, argv (NUL-separated), protected (optional, one relative path per line)).
+# A request (.rreq) has seven printable lines:
+#   lockstep-runner-request 1 | id <32 hex> | issued <unix> | op run-readonly|run-write|
+#   run-verify|run-live-readonly|run-live-write|cancel-run | expect run-<32 hex> |
+#   argv <64 hex: SHA-256 of the argv file,
+#   or "none" for cancel-run> | mac <64 hex>
+# Nothing a request names reaches a host command line except the run directory's
+# name (32 hex) and the argument vector, which is only ever given to the program
+# inside the container. Image, mounts, options, network and limits come from here.
+
+runner=$state/runner
+runner_requests=$runner/requests
+runner_results=$runner/results
+runner_work=$runner/work
+runner_tag=${LOCKSTEP_RUNNER_IMAGE:-lockstep-dev:p1}
+runner_image=""
+runner_name_prefix=lockstep-run-${instance:-main}-
+active_pid=""
+active_run=""
+
+# Live role runs (C-P4.L L2-L4; DG-17): run-live-readonly and run-live-write run the
+# provider image with no network but the run's own internal one, whose only other member
+# is the egress proxy (scripts/runner/provider/egress-proxy) holding the credential and
+# the budget. Only with an owner-made DIR/provider (0700): config (the provider, model,
+# effort, prices and limits) and credential (0600, the API key). The service sees only
+# DIR/runner/provider ("lockstep-provider 1 claude-code MODEL EFFORT"), never a secret.
+# In the role's container the CLI and its tools are two identities (C-P4.L.R3): every tool
+# call runs as this user with no capabilities; the CLI as uid 2000000000, not dumpable, so
+# no tool process can read its memory, descriptors or files (agent-entry, tool-shell).
+#
+# Two modes (C-P4.L.R2 H3), decided once at start:
+#   production    no DIR/provider/offline-test: the upstream is api.anthropic.com:443 with the
+#                 system's CAs, the egress network is Docker's bridge, the key is
+#                 DIR/provider/credential.
+#   offline test  an owner-made DIR/provider/offline-test (0600) naming a local upstream, its CA
+#                 and an egress network that Docker reports internal (no route out at all); the
+#                 key is DIR/provider/offline-credential (synthetic). Refused if
+#                 DIR/provider/credential is there too.
+# A test override in the environment (LOCKSTEP_RUNNER_TEST_UPSTREAM, ..._UPSTREAM_CA,
+# ..._EGRESS_NETWORK, the earlier mechanism) is never honoured: its presence turns live runs off.
+provider_dir=$state/provider
+provider_tag=lockstep-provider:claude-2.1.312
+provider_image=""
+live_ready=0
+live_max_tokens=0
+live_billing=""
+# C-P4.L.N: native subscription auth. The CLI holds its own token in this Docker named volume (owned by
+# the CLI identity, set up by the helper's provider-auth-init/login, never by the role container); the
+# passthrough filter reaches only the hosts in provider/egress-hosts.
+live_native=0
+auth_volume=lockstep-provider-auth-${instance:-main}
+egress_hosts=""
+live_net_prefix=lockstep-live-${instance:-main}-
+egress_prefix=lockstep-egress-${instance:-main}-
+egress_network=bridge
+test_upstream=""
+test_ca=""
+credential_name=credential
+env_override=""
+# The CLI/tools isolation the image must have (agent-entry --check; C-P4.L.R3).
+isolation_version=2
+[ -n "${LOCKSTEP_RUNNER_TEST_UPSTREAM+set}${LOCKSTEP_RUNNER_TEST_UPSTREAM_CA+set}${LOCKSTEP_RUNNER_TEST_EGRESS_NETWORK+set}" ] && env_override=yes
+
+re_runner_header='^lockstep-runner-request ([^ ]+)$'
+re_argv='^argv ([0-9a-f]{64}|none)$'
+re_protected='^[A-Za-z0-9._+@-][A-Za-z0-9._+@/-]*$'
+
+# Limits (DG-17 D-17.7): wall seconds, stdout bytes, stderr bytes. LOCKSTEP_RUNNER_TEST_LIMITS=1
+# at helper start (the host check only) shortens them; a request cannot choose them.
+runner_limits() { # OP -> "WALL STDOUT STDERR"
+  if [ "${LOCKSTEP_RUNNER_TEST_LIMITS:-0}" = 1 ]; then
+    echo "6 65536 16384"
+    return
+  fi
+  case $1 in
+    run-write | run-live-write) echo "1200 8388608 2097152" ;;
+    *) echo "600 8388608 2097152" ;;
+  esac
+}
+
+init_runner() {
+  local d
+  for d in "$runner" "$runner_requests" "$runner_results" "$runner_work"; do
+    [ -L "$d" ] && fatal "$d must not be a symlink"
+    [ -d "$d" ] || mkdir -m 700 "$d" || fatal "cannot make $d"
+    private_dir "$d" || fatal "$d must be a directory owned by this user with mode 0700"
+  done
+  case $runner in
+    *,* | *:*) fatal "the state directory must not contain ',' or ':' to serve the runner" ;;
+  esac
+  if [ ! -f "$runner/channel.key" ] || [ -L "$runner/channel.key" ]; then
+    rm -f "$runner/channel.key"
+    head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$runner/channel.key"
+  fi
+  chmod 600 "$runner/channel.key"
+  runner_key=$(head -c 64 "$runner/channel.key")
+  case $runner_key in
+    *[!0123456789abcdef]* | "") fatal "$runner/channel.key is invalid" ;;
+  esac
+  [ ${#runner_key} -eq 64 ] || fatal "$runner/channel.key is invalid"
+  pads_for "$runner_key"
+  ripad=$pad_in
+  ropad=$pad_out
+  runner_image=$(docker image inspect --format '{{.Id}}' "$runner_tag" 2>/dev/null || true)
+  # Containers of an earlier helper that stopped while a run went on, its live runs'
+  # proxies and their networks (a reservation such a proxy made stays charged).
+  docker ps -aq --filter "name=^$runner_name_prefix" 2>/dev/null | while read -r c; do
+    docker rm -f "$c" >/dev/null 2>&1 || true
+  done
+  docker ps -aq --filter "name=^$egress_prefix" 2>/dev/null | while read -r c; do
+    docker rm -f "$c" >/dev/null 2>&1 || true
+  done
+  docker network ls -q --filter "name=^$live_net_prefix" 2>/dev/null | while read -r n; do
+    docker network rm "$n" >/dev/null 2>&1 || true
+  done
+  init_provider
+  export LOCKSTEP_SERVICE_RUNNER=$runner
+}
+
+# C-P4.L.N: the CLI's identity inside the role container (C-P4.L.R3), which owns the auth volume.
+provider_cli_uid=2000000000
+
+# The egress allowlist (provider/egress-hosts): exact hostnames, one a line, no wildcard. Prints them
+# comma-joined for the filter; fails if missing, empty or malformed.
+read_egress_hosts() {
+  local file=$provider_dir/egress-hosts line out="" n=0
+  [ -f "$file" ] && [ ! -L "$file" ] || return 1
+  [ "$(wc -c < "$file" | tr -d ' ')" -le 4096 ] || return 1
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    [[ $line =~ ^[a-z0-9.-]{1,253}$ ]] || return 1
+    out="$out${out:+,}$line"
+    n=$((n + 1))
+  done < "$file"
+  [ "$n" -ge 1 ] || return 1
+  printf '%s' "$out"
+}
+
+# The auth volume is set up when it exists and its root is owned by the CLI identity with mode 0700
+# (the helper's provider-auth-init does this; the role container never changes it).
+auth_ready() {
+  docker volume inspect "$auth_volume" >/dev/null 2>&1 || return 1
+  local out
+  out=$(docker run --rm --user "$provider_cli_uid:$provider_cli_uid" --read-only --tmpfs /tmp --network none \
+    --cap-drop ALL --security-opt no-new-privileges --log-driver none \
+    --mount "type=volume,source=$auth_volume,target=/auth" "$provider_image" \
+    sh -c '[ -O /auth ] && [ "$(stat -c %a /auth)" = 700 ] && echo ready' 2>/dev/null) || return 1
+  [ "$out" = ready ]
+}
+
+# The provider, if the owner configured one: the image present, the configuration
+# accepted by the proxy's own check; then the service is told the model and effort.
+init_provider() {
+  local out tmp
+  rm -f "$runner/provider"
+  [ -e "$provider_dir" ] || [ -L "$provider_dir" ] || return 0
+  private_dir "$provider_dir" || { log "live runs off: $provider_dir must be a directory owned by this user with mode 0700"; return 0; }
+  [ -f "$provider_dir/config" ] && [ ! -L "$provider_dir/config" ] || { log "live runs off: $provider_dir/config is missing"; return 0; }
+  # C-P4.L.R2 H3: the mode, before anything else; no key is read here in either mode.
+  if [ -n "$env_override" ]; then
+    log "live runs off: test-override-refused (a test override in the environment; offline tests use $provider_dir/offline-test)"
+    return 0
+  fi
+  choose_mode || { log "live runs off: $mode_refusal"; return 0; }
+  provider_image=$(docker image inspect --format '{{.Id}}' "$provider_tag" 2>/dev/null || true)
+  [ -n "$provider_image" ] || { log "live runs off: the image $provider_tag is missing (scripts/provider-image)"; return 0; }
+  # C-P4.L.R3 R3-L5, R3-L6: the image's isolation must be this version, and the host must keep the CLI
+  # not dumpable; otherwise every live role would fail, so live runs are off.
+  out=$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+    --user "$(id -u):$(id -g)" --log-driver none "$provider_image" /opt/lockstep/agent-entry --check \
+    < /dev/null 2>/dev/null) || out="exit $?"
+  case $out in
+    "lockstep-isolation $isolation_version ok") ;;
+    "lockstep-isolation $isolation_version refused "*)
+      log "live runs off: the CLI/tools isolation cannot hold on this host ($(printf '%s' "${out#lockstep-isolation "$isolation_version" refused }" | clean_detail))"
+      return 0
+      ;;
+    "lockstep-isolation "*)
+      log "live runs off: the image $provider_tag has another version of the CLI/tools isolation; rebuild it (scripts/provider-image)"
+      return 0
+      ;;
+    *)
+      log "live runs off: the image $provider_tag could not report its CLI/tools isolation ($(printf '%s' "$out" | clean_detail)); rebuild it (scripts/provider-image) or check Docker"
+      return 0
+      ;;
+  esac
+  if [ ! -d "$provider_dir/ledger" ]; then
+    mkdir -m 700 "$provider_dir/ledger" || { log "live runs off: the ledger cannot be made"; return 0; }
+  fi
+  private_dir "$provider_dir/ledger" || { log "live runs off: the ledger must be a private directory"; return 0; }
+  out=$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+    --user "$(id -u):$(id -g)" --log-driver none \
+    --mount "type=bind,source=$provider_dir/config,target=/etc/lockstep/provider,readonly" \
+    "$provider_image" python3 /opt/lockstep/egress-proxy describe --config /etc/lockstep/provider 2>/dev/null < /dev/null)
+  if [[ ! $out =~ ^ok\ (claude-code\ [a-z0-9.-]+\ [a-z]+)\ ([0-9]{1,7})(\ subscription)?$ ]]; then
+    log "live runs off: the provider configuration was refused ($(printf '%s' "$out" | clean_detail))"
+    return 0
+  fi
+  # The CLI asks for at most this many output tokens per request (the proxy's own limit).
+  live_max_tokens=${BASH_REMATCH[2]}
+  # The owner's subscription (native), or an API key; named in the log, never assumed.
+  live_billing="API key (charged at the configured prices)"
+  live_native=0
+  if [ -n "${BASH_REMATCH[3]}" ]; then
+    # C-P4.L.N: native subscription. No credential is read here or ever by Lockstep; the CLI holds its
+    # own token in the auth volume. Require the volume to be set up and the egress allowlist present.
+    live_native=1
+    live_billing="subscription, native (usage in tokens)"
+    egress_hosts=$(read_egress_hosts) || { log "live runs off: $provider_dir/egress-hosts is missing or invalid (one hostname a line)"; return 0; }
+    auth_ready || { log "live runs off: the auth volume $auth_volume is not set up; run 'control-helper provider-auth-init' then 'provider-auth-login'"; return 0; }
+    if [ -e "$provider_dir/credential" ] || [ -L "$provider_dir/credential" ]; then
+      log "live runs off: native subscription uses no credential file; remove $provider_dir/credential"
+      return 0
+    fi
+  fi
+  tmp=$(mktemp "$runner/.provider.XXXXXX") || return 0
+  printf 'lockstep-provider 1 %s\n' "${BASH_REMATCH[1]}" > "$tmp"
+  chmod 600 "$tmp"
+  place "$tmp" "$runner/provider" || { rm -f "$tmp"; return 0; }
+  live_ready=1
+  if [ "$credential_name" = offline-credential ]; then
+    log "live runs on (OFFLINE TEST: upstream $test_upstream, CA $test_ca, internal network $egress_network, key offline-credential): ${BASH_REMATCH[1]}, $live_billing, at most $live_max_tokens output tokens a request (image $provider_image)"
+  else
+    log "live runs on: ${BASH_REMATCH[1]}, $live_billing, at most $live_max_tokens output tokens a request (image $provider_image)"
+  fi
+}
+
+# Sets the mode's upstream, CA, egress network and key file (C-P4.L.R2 H3); false with
+# mode_refusal set when the configuration may not be used.
+choose_mode() {
+  local file=$provider_dir/offline-test line upstream="" ca="" network="" n=0 internal
+  mode_refusal=""
+  egress_network=bridge
+  test_upstream=""
+  test_ca=""
+  credential_name=credential
+  if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+    return 0
+  fi
+  if [ -L "$file" ] || [ ! -f "$file" ] || [ ! -O "$file" ]; then mode_refusal=offline-test-invalid; return 1; fi
+  case $(mode_of "$file") in *00) ;; *) mode_refusal=offline-test-invalid; return 1 ;; esac
+  if grep -q '[^ -~]' "$file" || [ "$(wc -c < "$file" | tr -d ' ')" -gt 1024 ]; then mode_refusal=offline-test-invalid; return 1; fi
+  while IFS= read -r line; do
+    n=$((n + 1))
+    case $n:$line in
+      "1:lockstep-offline-test 1") ;;
+      2:upstream\ *) upstream=${line#upstream } ;;
+      3:ca\ *) ca=${line#ca } ;;
+      4:egress-network\ *) network=${line#egress-network } ;;
+      *) mode_refusal=offline-test-invalid; return 1 ;;
+    esac
+  done < "$file"
+  [ "$n" = 4 ] || { mode_refusal=offline-test-invalid; return 1; }
+  [[ $upstream =~ ^[a-z0-9.-]{1,253}:[0-9]{1,5}$ ]] || { mode_refusal=offline-test-invalid; return 1; }
+  case $ca in /*) ;; *) mode_refusal=offline-test-invalid; return 1 ;; esac
+  [ -f "$ca" ] && [ ! -L "$ca" ] || { mode_refusal=offline-test-invalid; return 1; }
+  [[ $network =~ ^[a-z0-9][a-z0-9_.-]{0,62}$ ]] || { mode_refusal=offline-test-invalid; return 1; }
+  # The production key's file must not be there at all in offline mode.
+  if [ -e "$provider_dir/credential" ] || [ -L "$provider_dir/credential" ]; then
+    mode_refusal="offline-test-with-credential (remove $provider_dir/credential or the offline-test file)"
+    return 1
+  fi
+  # Offline means no route out: Docker must report the egress network internal.
+  internal=$(docker network inspect --format '{{.Internal}}' "$network" 2>/dev/null || true)
+  [ "$internal" = true ] || { mode_refusal="offline-network-not-internal ($network)"; return 1; }
+  egress_network=$network
+  test_upstream=$upstream
+  test_ca=$ca
+  credential_name=offline-credential
+}
+
+# A directory under work/ that this user owns and that is not a symlink.
+plain_dir() {
+  [ -d "$1" ] && [ ! -L "$1" ] && [ -O "$1" ]
+}
+
+# Checks the run directory; prints a refusal code, or nothing.
+run_refusal() { # OP RUN ARGV-SHA
+  local op=$1 dir=$runner_work/$2 sha=$3 p part walk n=0
+  plain_dir "$dir" || { echo run-missing; return; }
+  for p in tree input output; do
+    plain_dir "$dir/$p" || { echo run-missing; return; }
+  done
+  [ -f "$dir/argv" ] && [ ! -L "$dir/argv" ] || { echo argv-missing; return; }
+  [ "$(wc -c < "$dir/argv" | tr -d ' ')" -le 300000 ] || { echo argv-too-large; return; }
+  [ "$(sha256 < "$dir/argv")" = "$sha" ] || { echo argv-mismatch; return; }
+  [ "$(tail -c 1 "$dir/argv" | od -An -tx1 | tr -d ' \n')" = 00 ] || { echo argv-malformed; return; }
+  [ "$(head -c 1 "$dir/argv" | od -An -tx1 | tr -d ' \n')" != 00 ] || { echo argv-malformed; return; }
+  if [ -e "$dir/protected" ] || [ -L "$dir/protected" ]; then
+    [ -f "$dir/protected" ] && [ ! -L "$dir/protected" ] || { echo protected-invalid; return; }
+    if grep -q '[^ -~]' "$dir/protected"; then echo protected-invalid; return; fi
+    while IFS= read -r p; do
+      n=$((n + 1))
+      [ $n -le 200 ] || { echo protected-invalid; return; }
+      [[ $p =~ $re_protected ]] || { echo protected-invalid; return; }
+      walk=$dir/tree
+      IFS=/ read -r -a parts <<< "$p"
+      for part in "${parts[@]}"; do
+        case $part in "" | . | ..) echo protected-invalid; return ;; esac
+        walk=$walk/$part
+        [ -L "$walk" ] && { echo protected-invalid; return; }
+      done
+      [ -f "$walk" ] || { echo protected-invalid; return; }
+    done < "$dir/protected"
+  fi
+  [ -n "$runner_image" ] || runner_image=$(docker image inspect --format '{{.Id}}' "$runner_tag" 2>/dev/null || true)
+  [ -n "$runner_image" ] || { echo runner-image-missing; return; }
+  : "$op"
+}
+
+# Runs one container and writes the signed result. Runs in the background.
+execute_run() { # ID OP RUN
+  local id=$1 op=$2 run=$3 dir=$runner_work/$3 name=$runner_name_prefix$3 wall outlim errlim lim
+  local ipad=$ripad opad=$ropad results=$runner_results journal_file=$helper/runner-journal
+  local started finished rc outcome marker=$runner_work/$3/.timed-out watchdog p out_bytes err_bytes
+  local -a argv=() args=()
+  read -r wall outlim errlim <<< "$(runner_limits "$op")"
+  while IFS= read -r -d '' p; do argv+=("$p"); done < "$dir/argv"
+  local tree_mount="type=bind,source=$dir/tree,target=/work/tree"
+  [ "$op" = run-write ] || tree_mount="$tree_mount,readonly"
+  args=(run --rm --name "$name" --network none --read-only
+    --tmpfs /tmp:rw,nosuid,nodev,size=268435456
+    --cap-drop ALL --security-opt no-new-privileges
+    --pids-limit 256 --memory 4g --memory-swap 4g --cpus 2
+    --user "$(id -u):$(id -g)"
+    --env HOME=/tmp --env PATH=/usr/local/bin:/usr/bin:/bin --env LANG=C.UTF-8 --env LC_ALL=C.UTF-8 --env TZ=UTC
+    --log-driver none --workdir /work/tree
+    --mount "$tree_mount"
+    --mount "type=bind,source=$dir/input,target=/input,readonly"
+    --mount "type=bind,source=$dir/output,target=/output")
+  if [ -f "$dir/protected" ]; then
+    while IFS= read -r p; do
+      args+=(--mount "type=bind,source=$dir/tree/$p,target=/work/tree/$p,readonly")
+    done < "$dir/protected"
+  fi
+  args+=("$runner_image" "${argv[@]}")
+  started=$(date +%s)
+  journal "start $id $op"
+  rm -f "$marker"
+  (
+    sleep "$wall"
+    : > "$marker"
+    docker kill "$name" >/dev/null 2>&1
+  ) &
+  watchdog=$!
+  docker "${args[@]}" < /dev/null 2> >(head -c $((errlim + 1)) > "$dir/stderr") | head -c $((outlim + 1)) > "$dir/stdout"
+  rc=${PIPESTATUS[0]}
+  kill "$watchdog" 2>/dev/null
+  pkill -P "$watchdog" 2>/dev/null
+  wait "$watchdog" 2>/dev/null
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  sleep 0.2
+  finished=$(date +%s)
+  out_bytes=$(wc -c < "$dir/stdout" | tr -d ' ')
+  err_bytes=$(wc -c < "$dir/stderr" | tr -d ' ')
+  if [ -e "$runner_work/$run/.cancelled" ]; then
+    outcome=cancelled
+  elif [ -e "$marker" ]; then
+    outcome=timed-out
+  elif [ "$out_bytes" -gt "$outlim" ] || [ "$err_bytes" -gt "$errlim" ]; then
+    outcome=output-limit
+  elif [ "$rc" = 125 ]; then
+    outcome=launch-failed
+  else
+    outcome=exited
+  fi
+  for p in stdout stderr; do
+    lim=$outlim
+    [ $p = stderr ] && lim=$errlim
+    if [ "$(wc -c < "$dir/$p" | tr -d ' ')" -gt "$lim" ]; then
+      head -c "$lim" "$dir/$p" > "$dir/.$p.cut" && place "$dir/.$p.cut" "$dir/$p"
+    fi
+  done
+  rm -f "$marker" "$runner_work/$run/.cancelled"
+  write_result "$id" "$op" "$outcome" - "$started" "$finished" "" \
+    "exit $rc" "run $run" "image $runner_image" \
+    "stdout-bytes $out_bytes" "stderr-bytes $err_bytes" \
+    "stdout-sha256 $(sha256 < "$dir/stdout")" "stderr-sha256 $(sha256 < "$dir/stderr")" \
+    "limits $wall $outlim $errlim" || true
+  journal "end $id $outcome"
+  log "$op $id: $outcome (exit $rc)"
+}
+
+# One native subscription live role run (C-P4.L.N): the CLI authenticates itself from the auth
+# volume and reaches the provider through the passthrough filter (no proxy injection, no credential
+# read by Lockstep). Preflight the sign-in; start the filter; run the role's two-identity container
+# with the auth volume mounted to the CLI; record usage in tokens from the CLI's own output.
+execute_native_run() { # ID OP RUN
+  local id=$1 op=$2 run=$3 dir=$runner_work/$3 name=$runner_name_prefix$3 wall outlim errlim
+  local results=$runner_results journal_file=$helper/runner-journal
+  local net=$live_net_prefix$3 filter=$egress_prefix$3 role=readonly summary=$provider_dir/ledger/runs/$3
+  local started finished rc=125 outcome marker=$runner_work/$3/.timed-out failed=$runner_work/$3/.egress-failed
+  local watchdog p out_bytes err_bytes n status tokens
+  local -a argv=() args=() filter_args=()
+  [ "$op" = run-live-write ] && role=write
+  read -r wall outlim errlim <<< "$(runner_limits "$op")"
+  while IFS= read -r -d '' p; do argv+=("$p"); done < "$dir/argv"
+  case "$(id -u) $(id -g)" in
+    "0 "* | "$provider_cli_uid "* | *" $provider_cli_uid") refuse "$id" "$op" isolation-unavailable; return ;;
+  esac
+  # Preflight (C-P4.L.N N4): the CLI's own auth status against the mounted volume, no network. Not
+  # authenticated → refuse; the engine halts for the operator and nothing is retried by itself.
+  status=$(docker run --rm --user "$provider_cli_uid:$provider_cli_uid" --read-only --tmpfs /tmp --network none \
+    --cap-drop ALL --security-opt no-new-privileges --log-driver none \
+    --env HOME=/tmp --env CLAUDE_CONFIG_DIR=/auth --mount "type=volume,source=$auth_volume,target=/auth" \
+    "$provider_image" claude auth status --json 2>/dev/null < /dev/null || true)
+  case $status in
+    *'"loggedIn": true'*) ;;
+    *) refuse "$id" "$op" not-authenticated; return ;;
+  esac
+  started=$(date +%s)
+  journal "start $id $op"
+  rm -f "$marker" "$failed" "$summary" "$summary.ready"
+  mkdir -p "$provider_dir/ledger/runs" 2>/dev/null || true
+  # The filter allows only the configured hosts; offline-test maps the real host to the stand-in.
+  filter_args=(--run "$run" --ledger /ledger --allow "$egress_hosts")
+  [ -n "$test_upstream" ] && filter_args+=(--map "api.anthropic.com=$test_upstream")
+  if docker network create --internal "$net" >/dev/null 2>&1 &&
+    docker run -d --name "$filter" --network "$net" --network-alias lockstep-egress --read-only \
+      --tmpfs /tmp:rw,nosuid,nodev,size=16777216 --cap-drop ALL --security-opt no-new-privileges \
+      --pids-limit 64 --memory 256m --memory-swap 256m --cpus 1 --user "$(id -u):$(id -g)" --log-driver none \
+      --env HOME=/tmp --env PATH=/usr/local/bin:/usr/bin:/bin --env LANG=C.UTF-8 --env TZ=UTC \
+      --mount "type=bind,source=$provider_dir/ledger,target=/ledger" \
+      "$provider_image" python3 /opt/lockstep/egress-proxy passthrough "${filter_args[@]}" < /dev/null >/dev/null 2>&1; then
+    n=0
+    while [ ! -f "$summary.ready" ] && [ $n -lt 150 ]; do sleep 0.1; n=$((n + 1)); done
+    if [ -f "$summary.ready" ] && docker network connect "$egress_network" "$filter" >/dev/null 2>&1; then
+      args=(run --rm --name "$name" --network "$net" --read-only
+        --tmpfs /tmp:rw,nosuid,nodev,size=268435456
+        --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add DAC_OVERRIDE --cap-add KILL
+        --security-opt no-new-privileges
+        --pids-limit 256 --memory 4g --memory-swap 4g --cpus 2
+        --user 0:0
+        --env HOME=/tmp --env PATH=/usr/local/bin:/usr/bin:/bin --env LANG=C.UTF-8 --env LC_ALL=C.UTF-8 --env TZ=UTC
+        --env HTTPS_PROXY=http://lockstep-egress:8080 --env HTTP_PROXY=http://lockstep-egress:8080
+        --env NO_PROXY= --env no_proxy=
+        --env CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 --env DISABLE_AUTOUPDATER=1
+        --env DISABLE_TELEMETRY=1 --env DISABLE_ERROR_REPORTING=1
+        --env "CLAUDE_CODE_MAX_OUTPUT_TOKENS=$live_max_tokens"
+        --env CLAUDE_CONFIG_DIR=/auth
+        --mount "type=volume,source=$auth_volume,target=/auth"
+        --log-driver none --workdir /work/tree
+        --mount "type=bind,source=$dir/tree,target=/work/tree$([ "$role" = write ] || printf ',readonly')"
+        --mount "type=bind,source=$dir/input,target=/input,readonly"
+        --mount "type=bind,source=$dir/output,target=/output")
+      # Offline test only: trust the stand-in's CA so the CLI's TLS to the mapped host verifies.
+      [ -n "$test_ca" ] && args+=(--env NODE_EXTRA_CA_CERTS=/etc/lockstep/ca.pem
+        --mount "type=bind,source=$test_ca,target=/etc/lockstep/ca.pem,readonly")
+      if [ -f "$dir/protected" ]; then
+        while IFS= read -r p; do
+          args+=(--mount "type=bind,source=$dir/tree/$p,target=/work/tree/$p,readonly")
+        done < "$dir/protected"
+      fi
+      args+=("$provider_image" /opt/lockstep/agent-entry "$(id -u)" "$(id -g)" "${argv[@]}")
+      (
+        deadline=$(($(date +%s) + wall))
+        while [ "$(date +%s)" -lt "$deadline" ]; do
+          sleep 1
+          if [ "$(docker container inspect --format '{{.State.Running}}' "$filter" 2>/dev/null)" != true ]; then
+            : > "$failed"; docker kill "$name" >/dev/null 2>&1; exit 0
+          fi
+        done
+        : > "$marker"; docker kill "$name" >/dev/null 2>&1
+      ) &
+      watchdog=$!
+      docker "${args[@]}" < /dev/null 2> >(head -c $((errlim + 1)) > "$dir/stderr") | head -c $((outlim + 1)) > "$dir/stdout"
+      rc=${PIPESTATUS[0]}
+      kill "$watchdog" 2>/dev/null
+      pkill -P "$watchdog" 2>/dev/null
+      wait "$watchdog" 2>/dev/null
+      [ "$(docker container inspect --format '{{.State.Running}}' "$filter" 2>/dev/null)" = true ] || : > "$failed"
+    else
+      : > "$failed"
+    fi
+  else
+    : > "$failed"
+  fi
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  docker stop --time 3 "$filter" >/dev/null 2>&1 || true
+  docker rm -f "$filter" >/dev/null 2>&1 || true
+  docker network rm "$net" >/dev/null 2>&1 || true
+  sleep 0.2
+  finished=$(date +%s)
+  touch "$dir/stdout" "$dir/stderr"
+  out_bytes=$(wc -c < "$dir/stdout" | tr -d ' ')
+  err_bytes=$(wc -c < "$dir/stderr" | tr -d ' ')
+  # Usage in tokens (C-P4.L.N N5), from the CLI's own JSON result on stdout; no dollars.
+  tokens=$(native_tokens "$dir/stdout")
+  if [ -e "$runner_work/$run/.cancelled" ]; then outcome=cancelled
+  elif [ -e "$marker" ]; then outcome=timed-out
+  elif [ -e "$failed" ]; then outcome=provider-stopped
+  elif [ "$out_bytes" -gt "$outlim" ] || [ "$err_bytes" -gt "$errlim" ]; then outcome=output-limit
+  elif [ "$rc" = 125 ]; then outcome=launch-failed
+  else outcome=exited
+  fi
+  rm -f "$marker" "$runner_work/$run/.cancelled"
+  if [ "$outcome" = provider-stopped ]; then
+    write_result "$id" "$op" provider-stopped - "$started" "$finished" "" \
+      "exit $rc" "run $run" "image $runner_image" "provider-stop egress-failed" \
+      "egress.micro 0" "egress.tokens $tokens" || true
+  else
+    write_result "$id" "$op" "$outcome" - "$started" "$finished" "" \
+      "exit $rc" "run $run" "image $runner_image" \
+      "stdout-bytes $out_bytes" "stderr-bytes $err_bytes" \
+      "stdout-sha256 $(sha256 < "$dir/stdout")" "stderr-sha256 $(sha256 < "$dir/stderr")" \
+      "limits $wall $outlim $errlim" "egress.micro 0" "egress.tokens $tokens" || true
+  fi
+  journal "end $id $outcome"
+  log "$op $id: $outcome (exit $rc, $tokens tokens)"
+}
+
+# The run's token usage from the CLI's JSON result (stdout): input + output + cache, in the image's
+# python (an internal tool); 0 if the result cannot be read.
+native_tokens() { # STDOUT-FILE
+  local t
+  t=$(docker run --rm --network none --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+    --user "$(id -u):$(id -g)" --log-driver none \
+    --mount "type=bind,source=$1,target=/r.json,readonly" "$provider_image" python3 -c '
+import json, sys
+try:
+    u = json.load(open("/r.json")).get("usage", {})
+    print(sum(int(u.get(k, 0) or 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")))
+except Exception:
+    print(0)
+' 2>/dev/null < /dev/null || true)
+  case $t in ''|*[!0-9]*) echo 0 ;; *) echo "$t" ;; esac
+}
+
+# One live role run (C-P4.L L2-L4): admission, the run's internal network, the proxy,
+# the role's container, then everything removed; the signed result carries the proxy's
+# summary. Runs in the background, like execute_run.
+execute_live_run() { # ID OP RUN
+  if [ "$live_native" = 1 ]; then execute_native_run "$@"; return; fi
+  local id=$1 op=$2 run=$3 dir=$runner_work/$3 name=$runner_name_prefix$3 wall outlim errlim lim
+  local ipad=$ripad opad=$ropad results=$runner_results journal_file=$helper/runner-journal
+  local net=$live_net_prefix$3 proxy=$egress_prefix$3 role=readonly summary=$provider_dir/ledger/runs/$3
+  local started finished rc=125 outcome marker=$runner_work/$3/.timed-out failed=$runner_work/$3/.egress-failed
+  local watchdog p out_bytes err_bytes out n stop key value
+  local -a argv=() args=() proxy_args=() fields=()
+  [ "$op" = run-live-write ] && role=write
+  read -r wall outlim errlim <<< "$(runner_limits "$op")"
+  while IFS= read -r -d '' p; do argv+=("$p"); done < "$dir/argv"
+  local secrets=(--mount "type=bind,source=$provider_dir/config,target=/etc/lockstep/provider,readonly"
+    --mount "type=bind,source=$provider_dir/$credential_name,target=/run/lockstep/credential,readonly")
+  # C-P4.L.R3 I6: the tools run as this user, the CLI as uid 2000000000 (agent-entry); both must differ.
+  case "$(id -u) $(id -g)" in
+    "0 "* | "2000000000 "* | *" 2000000000")
+      refuse "$id" "$op" isolation-unavailable
+      return
+      ;;
+  esac
+  # Admission first: nothing is started for a run the budget, the limits or the credential refuse.
+  if [ ! -f "$provider_dir/$credential_name" ] || [ -L "$provider_dir/$credential_name" ] || [ ! -O "$provider_dir/$credential_name" ]; then
+    refuse "$id" "$op" credential-missing
+    return
+  fi
+  out=$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+    --user "$(id -u):$(id -g)" --log-driver none "${secrets[@]}" \
+    --mount "type=bind,source=$provider_dir/ledger,target=/ledger,readonly" \
+    "$provider_image" python3 /opt/lockstep/egress-proxy admit --config /etc/lockstep/provider \
+    --credential /run/lockstep/credential --ledger /ledger 2>/dev/null < /dev/null)
+  case $out in
+    ok) ;;
+    "refuse "*) refuse "$id" "$op" "$(printf '%s' "${out#refuse }" | tr -cd 'a-z-' | cut -c 1-40)"; return ;;
+    *) refuse "$id" "$op" provider-unavailable; return ;;
+  esac
+  started=$(date +%s)
+  journal "start $id $op"
+  rm -f "$marker" "$failed" "$summary" "$summary.ready"
+  proxy_args=(--config /etc/lockstep/provider --credential /run/lockstep/credential --ledger /ledger --run "$run" --role "$role")
+  [ -n "$test_upstream" ] && proxy_args+=(--upstream "$test_upstream")
+  [ -n "$test_ca" ] && { secrets+=(--mount "type=bind,source=$test_ca,target=/etc/lockstep/ca.pem,readonly"); proxy_args+=(--ca /etc/lockstep/ca.pem); }
+  if docker network create --internal "$net" >/dev/null 2>&1 &&
+    docker run -d --name "$proxy" --network "$net" --network-alias lockstep-egress --read-only \
+      --tmpfs /tmp:rw,nosuid,nodev,size=16777216 --cap-drop ALL --security-opt no-new-privileges \
+      --pids-limit 64 --memory 256m --memory-swap 256m --cpus 1 --user "$(id -u):$(id -g)" --log-driver none \
+      --env HOME=/tmp --env PATH=/usr/local/bin:/usr/bin:/bin --env LANG=C.UTF-8 --env TZ=UTC \
+      "${secrets[@]}" --mount "type=bind,source=$provider_dir/ledger,target=/ledger" \
+      "$provider_image" python3 /opt/lockstep/egress-proxy serve "${proxy_args[@]}" < /dev/null >/dev/null 2>&1; then
+    n=0
+    while [ ! -f "$summary.ready" ] && [ $n -lt 150 ]; do sleep 0.1; n=$((n + 1)); done
+    # The proxy reaches out only once it listens on the run's network alone.
+    if [ -f "$summary.ready" ] && docker network connect "$egress_network" "$proxy" >/dev/null 2>&1; then
+      # C-P4.L.R3: two identities. The container starts as root with only the four capabilities
+      # agent-entry needs to run the CLI as its own, not dumpable identity, every tool call
+      # (tool-shell) as this user with none, and to let the CLI end its tools; no-new-privileges.
+      args=(run --rm --name "$name" --network "$net" --read-only
+        --tmpfs /tmp:rw,nosuid,nodev,size=268435456
+        --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add DAC_OVERRIDE --cap-add KILL
+        --security-opt no-new-privileges
+        --pids-limit 256 --memory 4g --memory-swap 4g --cpus 2
+        --user 0:0
+        --env HOME=/tmp --env PATH=/usr/local/bin:/usr/bin:/bin --env LANG=C.UTF-8 --env LC_ALL=C.UTF-8 --env TZ=UTC
+        --env ANTHROPIC_BASE_URL=http://lockstep-egress:8080
+        --env CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 --env DISABLE_AUTOUPDATER=1
+        --env DISABLE_TELEMETRY=1 --env DISABLE_ERROR_REPORTING=1
+        --env "CLAUDE_CODE_MAX_OUTPUT_TOKENS=$live_max_tokens"
+        --log-driver none --workdir /work/tree
+        --mount "type=bind,source=$dir/tree,target=/work/tree$([ "$role" = write ] || printf ',readonly')"
+        --mount "type=bind,source=$dir/input,target=/input,readonly"
+        --mount "type=bind,source=$dir/output,target=/output")
+      # API-key mode only (native subscription runs through execute_native_run, never here): a
+      # placeholder key the role sends and the proxy drops, injecting the owner's key.
+      args+=(--env ANTHROPIC_API_KEY=lockstep-placeholder-the-proxy-holds-the-key)
+      if [ -f "$dir/protected" ]; then
+        while IFS= read -r p; do
+          args+=(--mount "type=bind,source=$dir/tree/$p,target=/work/tree/$p,readonly")
+        done < "$dir/protected"
+      fi
+      args+=("$provider_image" /opt/lockstep/agent-entry "$(id -u)" "$(id -g)" "${argv[@]}")
+      # The wall clock, and the proxy: a run whose proxy is gone is stopped at once.
+      # The wall clock is a deadline in seconds (C-P4.L.R1 R1-L3), whatever each check costs.
+      (
+        deadline=$(($(date +%s) + wall))
+        while [ "$(date +%s)" -lt "$deadline" ]; do
+          sleep 1
+          if [ "$(docker container inspect --format '{{.State.Running}}' "$proxy" 2>/dev/null)" != true ]; then
+            : > "$failed"
+            docker kill "$name" >/dev/null 2>&1
+            exit 0
+          fi
+        done
+        : > "$marker"
+        docker kill "$name" >/dev/null 2>&1
+      ) &
+      watchdog=$!
+      docker "${args[@]}" < /dev/null 2> >(head -c $((errlim + 1)) > "$dir/stderr") | head -c $((outlim + 1)) > "$dir/stdout"
+      rc=${PIPESTATUS[0]}
+      kill "$watchdog" 2>/dev/null
+      pkill -P "$watchdog" 2>/dev/null
+      wait "$watchdog" 2>/dev/null
+      # A proxy that went before the run ended, even one the run outlived, failed it.
+      [ "$(docker container inspect --format '{{.State.Running}}' "$proxy" 2>/dev/null)" = true ] || : > "$failed"
+    else
+      : > "$failed"
+    fi
+  else
+    : > "$failed"
+  fi
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  docker stop --time 3 "$proxy" >/dev/null 2>&1 || true
+  docker rm -f "$proxy" >/dev/null 2>&1 || true
+  docker network rm "$net" >/dev/null 2>&1 || true
+  sleep 0.2
+  finished=$(date +%s)
+  touch "$dir/stdout" "$dir/stderr"
+  out_bytes=$(wc -c < "$dir/stdout" | tr -d ' ')
+  err_bytes=$(wc -c < "$dir/stderr" | tr -d ' ')
+  stop=-
+  if [ -f "$summary" ]; then
+    local admitted=0 settled=0
+    while IFS=' ' read -r key value; do
+      case $key in
+        model | effort | pricing | requests | denied | forwarded | known | unknown | errors | in | out | cw5 | cw1h | cr | micro | spent | tokens | statuses | betas | paths)
+          fields+=("egress.$key $(printf '%s' "$value" | tr -cd 'A-Za-z0-9,:._/?=-' | cut -c 1-200)") ;;
+        stop) stop=$(printf '%s' "$value" | tr -cd 'a-z-' | cut -c 1-40) ;;
+      esac
+      case $key in
+        requests) [[ $value =~ ^[0-9]{1,9}$ ]] && admitted=$value ;;
+        known | unknown | errors) [[ $value =~ ^[0-9]{1,9}$ ]] && settled=$((settled + value)) ;;
+      esac
+    done < "$summary"
+    # A request admitted and never settled has no known usage (it stays charged at its reservation).
+    if [ "$admitted" != "$settled" ] && { [ -z "$stop" ] || [ "$stop" = - ]; }; then stop=usage-unknown; fi
+  else
+    [ -e "$failed" ] || : > "$failed"
+  fi
+  if [ -e "$runner_work/$run/.cancelled" ]; then
+    outcome=cancelled
+  elif [ -e "$marker" ]; then
+    outcome=timed-out
+  elif [ "$out_bytes" -gt "$outlim" ] || [ "$err_bytes" -gt "$errlim" ]; then
+    outcome=output-limit
+  elif [ -e "$failed" ]; then
+    outcome=provider-stopped
+    stop=egress-failed
+  elif [ -n "$stop" ] && [ "$stop" != - ]; then
+    outcome=provider-stopped
+  elif [ "$rc" = 125 ]; then
+    outcome=launch-failed
+  else
+    outcome=exited
+  fi
+  for p in stdout stderr; do
+    lim=$outlim
+    [ $p = stderr ] && lim=$errlim
+    if [ "$(wc -c < "$dir/$p" | tr -d ' ')" -gt "$lim" ]; then
+      head -c "$lim" "$dir/$p" > "$dir/.$p.cut" && place "$dir/.$p.cut" "$dir/$p"
+    fi
+  done
+  [ "$outcome" = provider-stopped ] && fields+=("provider-stop $stop")
+  rm -f "$marker" "$failed" "$runner_work/$run/.cancelled" "$summary.ready"
+  write_result "$id" "$op" "$outcome" - "$started" "$finished" "" \
+    "exit $rc" "run $run" "image $provider_image" \
+    "stdout-bytes $out_bytes" "stderr-bytes $err_bytes" \
+    "stdout-sha256 $(sha256 < "$dir/stdout")" "stderr-sha256 $(sha256 < "$dir/stderr")" \
+    "limits $wall $outlim $errlim" ${fields[@]+"${fields[@]}"} || true
+  journal "end $id $outcome"
+  log "$op $id: $outcome (exit $rc${stop:+, stop $stop})"
+}
+
+handle_runner() { # NAME
+  local name=$1 path=$runner_requests/$1 id size lines line mac op run sha issued now
+  local ipad=$ripad opad=$ropad results=$runner_results journal_file=$helper/runner-journal
+  case $name in .*) return ;; esac
+  if [[ ! $name =~ ^[0-9a-f]{32}\.rreq$ ]]; then
+    rm -f -- "$path"
+    log "removed a runner file that is not a request: name not allowed"
+    return
+  fi
+  id=${name%.rreq}
+  if [ -L "$path" ] || [ ! -f "$path" ]; then rm -f -- "$path"; refuse "$id" unknown not-regular-file; return; fi
+  if [ ! -O "$path" ]; then rm -f -- "$path"; refuse "$id" unknown not-owner; return; fi
+  size=$(wc -c < "$path" | tr -d ' ')
+  if [ "$size" -gt 1024 ]; then rm -f -- "$path"; refuse "$id" unknown too-large; return; fi
+  if grep -q '[^ -~]' "$path" || [ "$(tail -c 1 "$path" | wc -l | tr -d ' ')" != 1 ]; then
+    rm -f -- "$path"; refuse "$id" unknown malformed; return
+  fi
+  lines=()
+  while IFS= read -r line; do lines+=("$line"); done < "$path"
+  if [ ${#lines[@]} -ne 7 ] || [[ ! ${lines[6]} =~ $re_mac ]]; then
+    rm -f -- "$path"; refuse "$id" unknown malformed; return
+  fi
+  mac=${BASH_REMATCH[1]}
+  if [ "$(head -n 6 "$path" | hmac)" != "$mac" ]; then
+    rm -f -- "$path"; refuse "$id" unknown bad-mac; return
+  fi
+  rm -f -- "$path"
+  [[ ${lines[0]} =~ $re_runner_header ]] || { refuse "$id" unknown malformed; return; }
+  [ "${BASH_REMATCH[1]}" = 1 ] || { refuse "$id" unknown bad-version; return; }
+  if [[ ! ${lines[1]} =~ $re_id ]] || [ "${BASH_REMATCH[1]}" != "$id" ]; then refuse "$id" unknown malformed; return; fi
+  [[ ${lines[2]} =~ $re_issued ]] || { refuse "$id" unknown malformed; return; }
+  issued=${BASH_REMATCH[1]}
+  [[ ${lines[3]} =~ $re_op ]] || { refuse "$id" unknown malformed; return; }
+  op=${BASH_REMATCH[1]}
+  case $op in
+    run-readonly | run-write | run-verify | run-live-readonly | run-live-write | cancel-run) ;;
+    *) refuse "$id" unknown unknown-op; return ;;
+  esac
+  [[ ${lines[4]} =~ ^expect\ run-([0-9a-f]{32})$ ]] || { refuse "$id" "$op" bad-expect; return; }
+  run=${BASH_REMATCH[1]}
+  [[ ${lines[5]} =~ $re_argv ]] || { refuse "$id" "$op" malformed; return; }
+  sha=${BASH_REMATCH[1]}
+  if grep -qxF "$id" "$helper/runner-seen" 2>/dev/null; then
+    journal "refused $id replayed"
+    log "refused $id: replayed"
+    return
+  fi
+  now=$(date +%s)
+  if [ "$issued" -lt $((now - 120)) ] || [ "$issued" -gt $((now + 10)) ]; then
+    refuse "$id" "$op" stale
+    return
+  fi
+  echo "$id" >> "$helper/runner-seen"
+  if [ "$op" = cancel-run ]; then
+    if [ -n "$active_pid" ] && [ "$active_run" = "$run" ]; then
+      : > "$runner_work/$run/.cancelled"
+      docker kill "$runner_name_prefix$run" >/dev/null 2>&1 || true
+      now=$(date +%s)
+      write_result "$id" "$op" ok - "$now" "$now" "" "run $run" || true
+    else
+      refuse "$id" "$op" not-running
+    fi
+    return
+  fi
+  [ "$sha" != none ] || { refuse "$id" "$op" malformed; return; }
+  if [ -n "$active_pid" ]; then refuse "$id" "$op" busy; return; fi
+  local refusal
+  refusal=$(run_refusal "$op" "$run" "$sha")
+  if [ -n "$refusal" ]; then refuse "$id" "$op" "$refusal"; return; fi
+  case $op in
+    run-live-*)
+      [ "$live_ready" = 1 ] || { refuse "$id" "$op" provider-not-configured; return; }
+      execute_live_run "$id" "$op" "$run" < /dev/null > /dev/null 2>&1 &
+      ;;
+    *) execute_run "$id" "$op" "$run" < /dev/null > /dev/null 2>&1 & ;;
+  esac
+  active_pid=$!
+  active_run=$run
+}
+
+runner_tick() {
+  if [ -n "$active_pid" ] && ! kill -0 "$active_pid" 2>/dev/null; then
+    wait "$active_pid" 2>/dev/null
+    active_pid=""
+    active_run=""
+  fi
+  private_dir "$runner_requests" || return 0
+  while IFS= read -r name; do
+    [ "$stopping" = 0 ] || break
+    [ -n "$name" ] && handle_runner "$name"
+  done <<EOF
+$(ls -1tr "$runner_requests" 2>/dev/null)
+EOF
+}
+
+# An upgrade that was running when the helper stopped is interrupted at its step (U6).
+if [ "$(record_get status)" = running ]; then
+  record_set status interrupted
+  log "the upgrade $(record_get id) was interrupted at step $(record_get step)"
+fi
+
+# An operation that started and never ended was interrupted (the helper stopped).
+if [ -f "$helper/journal" ]; then
+  awk '$2 == "start" { open[$3] = $4 } $2 == "end" { delete open[$3] } END { for (id in open) print id, open[id] }' "$helper/journal" |
+    while read -r id op; do
+      case $id in *[!0123456789abcdef]*) continue ;; esac
+      now=$(date +%s)
+      write_result "$id" "$op" interrupted - "$now" "$now" "the helper stopped while this ran" || true
+      journal "end $id interrupted"
+      log "$op $id: interrupted"
+    done
+fi
+
+init_folders
+if [ "$runner_enabled" = 1 ]; then
+  init_runner
+  # A run that started and never ended was interrupted (the helper stopped).
+  if [ -f "$helper/runner-journal" ]; then
+    awk '$2 == "start" { open[$3] = $4 } $2 == "end" { delete open[$3] } END { for (id in open) print id, open[id] }' "$helper/runner-journal" |
+      while read -r id op; do
+        case $id in *[!0123456789abcdef]*) continue ;; esac
+        now=$(date +%s)
+        ipad=$ripad opad=$ropad results=$runner_results write_result "$id" "$op" interrupted - "$now" "$now" "the helper stopped while this ran" || true
+        journal_file=$helper/runner-journal journal "end $id interrupted"
+      done
+  fi
+fi
+log "started (pid $$, protocol 1, timeout ${timeout}s${instance:+, instance $instance}${runner_image:+, runner image $runner_image})"
+warned=""
+while [ "$stopping" = 0 ]; do
+  [ "$runner_enabled" = 1 ] && runner_tick
+  if private_dir "$pane" && private_dir "$requests" && [ -d "$results" ] && [ ! -L "$results" ]; then
+    warned=""
+    while IFS= read -r name; do
+      [ "$stopping" = 0 ] || break
+      [ -n "$name" ] && handle "$name"
+    done <<EOF
+$(ls -1tr "$requests" 2>/dev/null)
+EOF
+  elif [ -z "$warned" ]; then
+    warned=yes
+    log "the request or result directory is missing, a symlink or not private; nothing is read"
+  fi
+  sleep 0.2
+done
+if [ -n "$active_pid" ]; then
+  docker rm -f "$runner_name_prefix$active_run" >/dev/null 2>&1 || true
+  wait "$active_pid" 2>/dev/null
+fi
+log "stopped"

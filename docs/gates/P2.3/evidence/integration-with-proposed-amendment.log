@@ -1,0 +1,34 @@
+lockstep-0.2.0.0: unregistering (local file changes:
+test/integration/Lockstep/ProfileRegistryTest.hs)
+lockstep> configure (lib + test)
+Configuring lockstep-0.2.0.0...
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[ 8 of 15] Compiling Lockstep.ProfileRegistryTest [Source file changed]
+[15 of 15] Compiling Main [Lockstep.ProfileRegistryTest changed]
+[16 of 16] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-integration/lockstep-integration [Objects changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-6ggF0AiJnRUCIB81Gsi4xx
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-integration, args: -p "Profile registry")
+
+lockstep-integration
+  Profile registry and resolution (C-P2.3; real PostgreSQL + binary)
+    add, unchanged, version rules, invalid and weakening documents, list and show:    OK (0.49s)
+    stored profiles and default assignments cannot be changed or deleted:             OK (0.37s)
+    repository set-profile records the default and refuses the unknown:               OK (0.35s)
+    resolution: unset default, specialization, weakening, new version, invalid facts: OK (0.38s)
+    a tampered stored document is an integrity failure, never used:                   OK (0.33s)
+    profile add - reads the document from standard input:                             OK (0.12s)
+
+All 6 tests passed (2.04s)
+
+
+
+lockstep> Test suite lockstep-integration passed
+Completed 2 action(s).

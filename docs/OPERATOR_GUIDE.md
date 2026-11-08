@@ -1,0 +1,381 @@
+# Lockstep v2 — Operator guide
+
+For the single local operator of this machine. Every procedure here was exercised on macOS
+(arm64) with OrbStack (Docker Engine 29.4.0) during P1.7 (`docs/gates/A/evidence/a1/`). Lockstep is private
+and not distributed.
+
+## 1. What runs where
+
+| Part | Where | Notes |
+|---|---|---|
+| Build and tests | Docker image `lockstep-dev:p1` (GHC 9.10.3, Stack) | The host needs only Docker and Git. |
+| PostgreSQL 17 | Container `lockstep-postgres`, volume `lockstep-pgdata`, `127.0.0.1:5433` | Managed by `scripts/db` (ADR-0002). |
+| The service | Container `lockstep-service` running the installed binary | Binds `127.0.0.1` only; host networking forwards it to this machine's `127.0.0.1:8000` only (measured on OrbStack; re-run `scripts/a1` if you change the Docker runtime). |
+| Secrets | `.local/config/lockstep.json` (mode 0600, gitignored) | Database password. Never printed. Whoever can read it is the operator. |
+| Backups | `.local/backups/` | `pg_dump` custom format with a `.sha256` file. |
+
+The service needs no Node or Python runtime; its stylesheet is embedded in the binary.
+
+## 1a. Opening Lockstep: `lockstep` (C-P3.1)
+
+Run `./lockstep` in the checkout (or `lockstep` from any folder after `lockstep setup-path`). It
+opens the **control pane** in your default browser, already signed in, and works even when the
+database or the service is down: the pane then says what is missing, in plain words.
+
+| What happens | Details |
+|---|---|
+| First run only | "Preparing Lockstep for first use": the pane is built once into `.local/control/install` (a few minutes; log in `build.log` there). Later runs never rebuild. `lockstep rebuild-pane` rebuilds on request. |
+| Already-compatible services | If the installed application (`.local/install`) and the database schema match, PostgreSQL and the service are started. Nothing is ever installed, upgraded or migrated by `lockstep`. |
+| Control pane | Container `lockstep-control` on `127.0.0.1:8100` (the next free port if 8100 is taken by something else). It has no Docker socket, no database password and no source tree: it mounts only `.local/control/pane` and its own build, read-only root, all capabilities dropped, your user id. |
+| Helper | `scripts/control-helper`, a background process of your user, the only part allowed to use Docker, and only for the fixed operation `status`. It talks to the pane through signed files in `.local/control/pane/`. Journal: `.local/control/helper/journal`; log: `helper.log`. |
+| Sign-in | A one-time token in the address's `#fragment` (never sent to a server, removed from the address bar at once, valid 5 minutes, usable once). The session lives only in that browser tab's origin storage, is sent as a header, never as a cookie, and ends after 12 hours, on **Sign out**, on `lockstep stop`, or when the pane restarts. |
+| Second run | Reuses the running pane and helper and opens a new signed-in window. Two runs at once wait for each other. |
+| `lockstep stop` | Stops the pane and the helper and removes their keys. The service and database keep running. |
+| `lockstep ARGS…` | Anything else goes to `scripts/lockstep` (the Lockstep command line), unchanged. |
+
+**Start, Stop and Restart (C-P3.2).** The pane's "This computer" view shows the application
+version, whether the service runs and answers, the database, Docker, and the last exit code of a
+stopped service. Its buttons start, stop and restart the service and start or stop the database
+server (the database only while the service is stopped). Each press sends one signed lifecycle
+request naming the operation and the state the page showed; the helper refuses ("the state had
+already changed") if that is no longer true, starts the service only when the installation and
+database schema match, runs one operation at a time, and reports "Done" only after it has seen
+the result.
+
+**Install, upgrade and recovery (C-P3.3).** The pane's "Version" section prepares a new version
+from this checkout's committed HEAD (refused if the checkout has uncommitted changes) into
+`.local/staging-install`, and shows it: its commit and how many database upgrades it applies.
+**Review and upgrade** shows the plan; **Upgrade now** then backs up the database into
+`.local/backups` and checks the backup (digest and a read-back), stops the service, migrates with
+the candidate binary and that backup, activates it (the old version moves to
+`.local/install.previous`), starts it and checks it is ready and answers. If a step fails before
+the migration, nothing has changed. If it fails at or after the migration, the pane says "The
+upgrade needs your attention" and offers **Review recovery → Restore now**: it empties the
+database schema, restores the verified backup taken just before the upgrade, puts the previous
+version back and starts it. The pane never starts the previous version on a database the new one
+has migrated, and never installs a version older than the database. An instance
+(`--instance NAME`) uses only `.local/NAME-staging-install`, `.local/NAME-install`,
+`.local/NAME-backups` and its own database.
+
+`lockstep setup-path` asks before each change: a link `~/.local/bin/lockstep`, then one marked line
+in your shell's start-up file (`~/.zprofile` for zsh; `~/.bash_profile` for bash on macOS,
+`~/.bashrc` on Linux). For other shells it prints the line to add and changes nothing. The first
+interactive `lockstep` offers this once.
+
+If another program called `lockstep` comes first on your `PATH` (for example an active Python
+virtual environment's `.venv/bin/lockstep`), typing `lockstep` runs that program, not Lockstep.
+`lockstep setup-path` and every interactive `./lockstep` then name it and say how to run Lockstep
+instead (C-C.R1 R12): `./lockstep` in the checkout, or the checkout's full path, e.g.
+`~/personal/lockstep/lockstep stop`. Lockstep never changes or removes the other program; to make
+`lockstep` find Lockstep again, `deactivate` the virtual environment (or open a new terminal), or
+move `~/.local/bin` earlier on your `PATH`. `command -v lockstep` shows which one a terminal runs.
+
+What the sign-in does not protect against (C-P3.1 §6): anyone running as your user (or root) can
+read `.local/control` and your browser profile; while the browser is being opened, the address
+with its one-time token is briefly visible in the process list, on macOS also to other local
+accounts.
+
+The Phase 1/2 operator pages (`/operator…` on the service, cookie sign-in via
+`scripts/lockstep open`) are unchanged and remain available; the control pane does not use them.
+
+## 2. Fresh install
+
+```sh
+git clone <repository> lockstep && cd lockstep && git checkout v2
+scripts/check --integration        # builds the dev image; all six steps must say PASSED
+scripts/db up                      # creates PostgreSQL and .local/config/lockstep.json
+scripts/service install            # builds the release binary into .local/install
+scripts/service cli db migrate     # an empty database needs no backup
+scripts/service start              # http://127.0.0.1:8000/
+```
+
+`scripts/service install` records the commit, a dirty flag and the binary's SHA-256 in
+`.local/install/VERSION`. Install from a clean checkout of the commit you mean to run.
+
+## 3. Database operations (ADR-0002)
+
+| Task | Command |
+|---|---|
+| Start / stop PostgreSQL | `scripts/db up` / `scripts/db down` (data stays in the volume) |
+| State and schema revision | `scripts/db status`, `scripts/service cli db status` |
+| Back up | `scripts/db backup` (prints the file path) |
+| Migrate | `scripts/service cli db migrate --backup .local/backups/<file>.dump` |
+| Migrate without a backup (recorded opt-out) | `scripts/service cli db migrate --no-backup` |
+| Restore | `scripts/service stop`, then `scripts/db restore .local/backups/<file>.dump` |
+
+Once any migration is applied, `db migrate` refuses (exit 75) without a backup newer than the
+last applied migration, or an explicit `--no-backup`. Migrations are forward-only; recovery from
+a bad migration is a restore of the pre-migration backup. `lockstep serve` never migrates: with a
+schema behind the binary, `/api/readiness` answers 503 and the status page says so.
+
+Migration 0008 (C-P2.5) adds the durable ledger: Tickets, Work Orders, their events, effect
+intents and observations, gate evidence, schedule decisions and Work Units. It only adds tables;
+events, refusals, observations, evidence, schedule decisions and Profile sources can never be
+updated or deleted. It changes nothing in the Phase 1 job tables. No command uses these tables
+yet (operator commands arrive with C-P2.8); migrate with a backup as usual.
+
+Migration 0009 (C-P2.6) adds one append-only table, `lockstep_effect_recoveries`: the record of
+each recovery of an interrupted effect dispatch. It changes no existing table. As with 0008, no
+command uses it yet; migrate with a backup as usual.
+
+Migration 0010 (C-P2.7) adds one append-only table, `lockstep_effect_resolutions`. It records
+how an uncertain effect outcome was resolved: by a destination lookup, by a human attestation
+or retry, or as a late observation that conflicted with the durable state. It changes no
+existing table. Migrate with a backup as usual.
+
+Migration 0011 (C-P2.8) adds the sandbox destination: three tables
+(`lockstep_sandbox_applications`, `lockstep_sandbox_keys`, `lockstep_sandbox_queryable`) that stand
+for the external world of the model-free sandbox effects. They are not evidence. It changes no
+existing table. Migrate with a backup as usual.
+
+Migration 0012 (C-P2.9-R1) adds two columns to `lockstep_effect_intents`: the first dispatch
+time and the activation that authorized the intent. It also allows two more kinds of resolution
+record: a human abandonment and a human carry. Migrate with a backup as usual.
+
+## 4. The service
+
+| Task | Command |
+|---|---|
+| Start (default port 8000) | `scripts/service start [--port N]` |
+| Stop (SIGTERM; running jobs return to the queue) | `scripts/service stop` |
+| Clean restart | `scripts/service restart` |
+| State | `scripts/service status` |
+| Log | `scripts/service logs` (the last run's log is kept in `.local/install/last-run.log`) |
+| Any CLI command against the same database | `scripts/service cli <command…>` |
+| The same for a qualification install (e.g. B1's) | `scripts/lockstep --instance b1 open`, `scripts/service --instance b1 <command…>` |
+
+Health: `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/api/health_check` → `204`.
+Readiness: `curl -s http://127.0.0.1:8000/api/readiness` → `ready 5`.
+
+**Start the service after migrating.** The background dispatcher starts only if the database is
+ready when the service starts; after a migration, restart the service.
+
+## 5. Signing in
+
+```sh
+scripts/lockstep open [--port N]            # start if needed, open the sign-in page in your browser
+```
+
+`scripts/lockstep open` checks that the database is ready, starts the service if it is not
+running (with a running service it uses that service's port), asks the installed CLI for a
+one-time sign-in link and hands it to this machine's browser (`open` on macOS, `xdg-open` on
+Linux, or the command in `LOCKSTEP_BROWSER`). Press **Sign in**. The link is never printed. While
+the launcher runs it is visible in the process list to your OS user and root, and the browser
+keeps it in its history, but it is single-use and expires within 5 minutes. Failures exit with a
+reason: 69 not ready or not running, 75 a running service on another port, 70 no link or no
+working browser launcher. Tip: `alias lockstep=<checkout>/scripts/lockstep`; every other
+`lockstep …` command then runs the installed binary, like `scripts/service cli`.
+
+By hand, without opening a browser:
+
+```sh
+scripts/service cli operator sign-in        # prints a one-time link, valid 5 minutes
+```
+
+Open the link in a browser on this machine and press **Sign in**. The browser gets a 12-hour
+session. Use `http://127.0.0.1:8000`, not `localhost` (refused by design). Sign out from
+`/operator`; `scripts/service cli operator sign-out-all` revokes every session.
+
+## 6. Commands, jobs and evidence
+
+| Task | Browser | CLI |
+|---|---|---|
+| Rename the workspace | `/operator` form | `scripts/service cli workspace rename --expected-revision N NAME` |
+| Queue a model-free no-op job | `/operator/jobs/new` | `scripts/service cli job queue --expected-revision N [--steps S] [--step-ms M] [--fail-at-step K]` |
+| A receipt | `/operator/receipts/<id>` | printed by the command |
+| A job | its receipt page | `scripts/service cli job show <id>` |
+| Status, activity, evidence | `/operator/center` | — |
+
+Every command has an idempotency key (the browser form makes one; the CLI generates one unless
+`--idempotency-key` is given). Each time the form page loads, it gets a fresh key, so going Back
+and submitting again counts as a new command. To repeat a command deliberately, reuse the key
+with the CLI. Repeating a command with the same key and the same payload returns the same receipt;
+reusing a key for a different command is refused; a command whose expected revision is stale is
+recorded as `refused_stale`. Jobs run only in the service; closing the browser does not cancel
+them. In the command center, a job shows `PASSED` only when it succeeded and its recorded outcome
+still matches its row.
+
+### Engineers and repositories (Phase 2, C-P2.1)
+
+`lockstep engineer add NAME` and `lockstep repository register --engineer NAME
+[--authoritative-remote REMOTE] PATH` give one Engineer exclusive ownership of one repository;
+`lockstep repository list` shows them. A refusal prints `refused <code> decision <n>` (exit 65)
+and is recorded with its reason in `lockstep_identity_decisions`. There is no release or
+relocation command yet (DG-03 D-3.6). Registration reads the repository through Git in the
+filesystem of the process that runs `lockstep`; the installed container mounts no host
+repositories, so through `scripts/service cli` a host path is `path-not-found`. Known limits:
+SSH host aliases from `~/.ssh/config` are not resolved, and only GitHub, GitLab and Bitbucket
+remote paths compare case-insensitively (C-P2.1 §9).
+
+### SDLC Profiles (Phase 2, C-P2.3)
+
+`lockstep profile add FILE` (or `-` for standard input; through the installed service,
+`scripts/lockstep profile add - < team.json`) registers the next version of a Profile and prints
+its digest; adding the same version again with the same content prints `unchanged`. `profile list`
+and `profile show ID [--version N]` print what is registered. `repository set-profile --engineer
+NAME PROFILE` sets the repository's default Profile, and `profile resolve --engineer NAME --kind
+KIND …` prints the effective Profile it would bind. Every `profile add` and `set-profile` attempt
+is recorded in `lockstep_profile_decisions`; Profile rows and default assignments cannot be
+updated or deleted (database triggers). A stored document that no longer reproduces its digest is
+an integrity failure (exit 70) and is never used: restore the database from a backup.
+
+### The ledger: tickets, work orders and sandbox effects (Phase 2, C-P2.8)
+
+| Task | Command |
+|---|---|
+| Show everything, with each effect's status | `lockstep ledger show` (browser: `/operator/ledger`) |
+| A ticket | `lockstep ticket create TITLE`, then `ticket accept TICKET --expected-revision N` |
+| A work order and its gate evidence | `lockstep work-order create --ticket T --engineer NAME --priority N --path-class CLASS`, then `work-order evidence WO --artifact A --digest HEX --verifier V --approval none\|supervisor\|human` |
+| Schedule and claim | `lockstep schedule run-once` |
+| Start with sandbox effects | `lockstep supervisor start WO --expected-revision N --effect sandbox-repeatable[:MODE] …` |
+| Execute or recover one effect | `lockstep supervisor execute-once [--lease-seconds N] [--timeout-ms N]` |
+| Look one uncertain effect up | `lockstep supervisor reconcile-once` |
+| Resolve an unknown outcome | `lockstep effects resolve OP --generation G --attest-applied E` (or `--attest-not-applied E`, or `--retry --acknowledge-duplication-risk`) |
+| Halt, requeue, abandon | `lockstep work-order halt WO --expected-revision N --reason R`, `work-order requeue …`, `effects abandon OP --reason R` |
+| The sandbox world | `lockstep sandbox show` |
+
+The sandbox effects (`sandbox-repeatable`, `-idempotent`, `-queryable`, `-unqueryable`, one per
+effect class) are model-free. Modes `apply` (default), `refuse`, `hang` and `apply-then-hang` let
+you produce every outcome. A `hang` lasts until the timeout, or until you kill the process: a
+killed `execute-once` is a real crash, and the next `execute-once` recovers by the effect's
+class. An effect shows `PASSED` only when its destination answered that it applied; a human
+attestation shows `ATTESTED`. The `supervisor` commands run Lockstep's own deterministic steps
+once, on your request. There is no supervisor daemon.
+
+After a halt and a requeue, the order's earlier effects do not run again by themselves (they
+show `BLOCKED` or are refused `activation-superseded`). To let one run again under its original
+operation id, carry it into the new activation yourself:
+`lockstep effects carry OP --from-activation S --to-activation T`. S and T are the activations
+you expect it to move between. If either has changed, the carry is refused `stale-carry`. A carry
+is refused for an unknown outcome (resolve it first; a retry needs
+`--acknowledge-duplication-risk`), for an effect still in flight, for an idempotent effect whose
+key may have expired, and while the new activation has its own live effect with the same key
+(`carry-conflict`; abandon one of them first). An effect you attested as not applied is carried
+only with `--acknowledge-duplication-risk`, and the acknowledgment is recorded.
+Abandoning an effect (`effects abandon`) also halts its work order, and both are recorded as
+yours. An idempotent effect that was sent before is never sent again once its key may have
+expired, whether by recovery or by a retry: it becomes `UNKNOWN` and its order halts. A human
+retry of such an effect is refused with `idempotency-key-expired`. Attest that it applied, or
+abandon it with `--acknowledge-duplication-risk`. Attesting "not applied" only leads to another
+refusal at dispatch.
+
+If a restart created a new effect with the same key as an earlier one that is still live, the
+new one is never sent, and its order halts with `effect-key-in-use`. The refusal names the
+holding effect. To go on:
+1. Abandon one of the two. If the one you abandon was ever sent, add
+   `--acknowledge-duplication-risk` in the same command. You cannot add it later: a sent effect
+   abandoned without it holds its key on that work order for good, and the work has to move to
+   a new work order.
+2. Requeue without declaring that key again.
+3. Carry the other one.
+
+A key belongs to one logical effect per work order. A
+queryable effect interrupted in flight waits for `supervisor reconcile-once`.
+
+### Fixing bugs: allowing Lockstep to work in a project (Phase 4, C-P4.1)
+
+A project with a folder is *organized*, not *executable*. On the project's page, **Fixing bugs** →
+**Let Lockstep fix bugs here** allows it, once. This is refused unless:
+
+- the project's folder is directly inside Lockstep's projects folder (`~/lockstep-projects`). A folder
+  added from elsewhere in the control pane is mounted read-only, so Lockstep only reads it;
+- the folder's `.git` is still the one registered, owned by the project's own Engineer only;
+- the project's checks contain the five checks of the built-in **Bug Profile** (`lockstep-bug-fix`
+  version 1: reproduction, impact and requirements, frozen regression tests, verification, independent
+  review). With nothing chosen, or only the always-on rules, allowing switches the project to
+  `lockstep-bug-fix`. Lockstep never removes a check you chose: with other checks lacking these, it is
+  refused and nothing changes.
+
+Then, on a task that is **Ready to work on**, **Ask Lockstep to fix this bug** creates one engineering
+work order classed `bug` for the project's Engineer, at the task's priority, with no plan reference. Both
+records are immutable (`lockstep_execution_enablements`, `lockstep_bug_admissions`, migration 18).
+
+### The engine: who moves a handed-over bug (Phase 4, C-P4.15, C-P4.17 Q5)
+
+The engine worker runs **inside the service** (`lockstep serve`), and only when the service has the host
+helper's **runner channel**: the helper started with `--runner` makes `.local/control/runner` (its own key,
+requests, results, run folders) and exports it to every service start it performs; `scripts/service` then
+mounts it and sets `LOCKSTEP_RUNNER_DIR`. Every role and every check then runs in a fresh container launched
+by the helper (DG-17: pinned image, no network, read-only root, your user id, dropped capabilities, limits).
+The service log says which it is:
+
+- `Engine worker: on (roles run in the host helper's container; no live provider is configured)` — each
+  handed-over bug is started (one at a time per Engineer), its basis taken (the folder must be clean) and its
+  branch `lockstep/<work order>` made; it moves one step every 2 s and acts on your answers and your Done.
+- `Engine worker: on (live provider claude-code, model M, effort E)` — the same, and every role runs the
+  Claude Code CLI live (below).
+- `Engine worker: off (…)` — no channel (nothing is started and the pages keep saying nothing runs yet), or a
+  provider line the service cannot use (`provider-model-unsupported`, `provider-effort-unsupported`,
+  `provider-file-invalid`): it never falls back to another model or effort.
+
+**A live provider (C-P4.L; separately authorized, not set up for you).** With an owner-made
+`.local/control/provider/` (0700) holding `config` (provider, model, effort, the pricing basis and the limits) and
+`credential` (0600, the API key), a helper started with `--runner` and the image `scripts/provider-image` builds,
+the helper tells the service the model and effort (`runner/provider`, nothing secret) and runs each role as a
+*live run*: the pinned Claude Code CLI in its container on a network of its own, whose only other member is the
+run's egress proxy. The proxy alone holds the key, sends only Messages API requests and only to
+`api.anthropic.com`, refuses any other model, effort, tool, beta feature, image or path, and reserves each
+request's largest possible charge in the ledger (`provider/ledger/ledger`) before sending it: the budget, the token
+limit and the run limits are hard caps (`docs/gates/P4.L/budget-report.md`). A run the proxy stops, or whose
+proxy goes away, halts the bug for you (`provider-stopped <reason>`); nothing is run again by itself. Checks and
+commands keep running with no network. The helper's log says `live runs on: …` or why they are off. Verified
+offline only (`scripts/lib/check-live-runner`, against a local stand-in; no provider contacted).
+
+The proxy's first refusal ends the run: nothing more of it reaches the provider (`run-stopped`). It admits **one
+conversation a run**: the CLI's own; a second agent started inside the role's container (another `claude`, a script
+calling the API) is refused and ends the run (`conversation-refused`). In the role's container the CLI and its tools
+are **two identities** (C-P4.L.R3): every command the CLI runs (so all your repository's code) runs as your user with
+no privileges, the CLI as a separate user that cannot be traced or read, with its own private files and settings; your
+repository's `.claude` settings are not read. So no program in the container can learn the run's conversation and
+continue it in the CLI's place (`docs/gates/P4.L.R3/contract.md`, its limitations in §7). Files the CLI itself creates
+belong to that separate user on a Linux host (group-writable for you). Rebuild the image after updating
+(`scripts/provider-image`): an image from before the two identities turns live runs off.
+
+**Two modes, decided when the helper starts.** *Production*: `provider/config` and `provider/credential`; the proxy
+goes only to `api.anthropic.com` with the system's certificates. *Offline test* (the host checks only): an owner-made
+`provider/offline-test` naming a local upstream, its CA and a Docker network that is internal, with a synthetic key in
+`provider/offline-credential`; refused if `provider/credential` is also there. The old `LOCKSTEP_RUNNER_TEST_*`
+variables are never honoured: their presence turns live runs off (`test-override-refused`).
+
+**Filters.** Lockstep never runs a content filter your repository configures (for example Git LFS) when it
+looks at your folder: it compares raw bytes. A file such a filter would have cleaned therefore counts as a
+change, and the fix stops at *looking at the project's files* until the folder is clean that way.
+
+**Without a live provider** a bug stops at its first role step, *finding the cause*, with "No coding helper is
+set up for Lockstep."; **Try this step again** stops there again, **Stop fixing this bug** ends it. Nothing is
+ever pushed; only the work branch moves, and only by compare-and-swap.
+
+**Turning it on** (not done for you): the `lockstep` launcher starts the helper without `--runner`, and no
+provider is configured. Both, with the image and the credential, are steps the owner authorizes with the first
+real-provider smoke (`docs/gates/P4.L/real-provider-smoke-proposal.md`); until then the engine is exercised by the
+integration suite (`ServeWorkerTest`, `EndToEndTest`, `LiveAdapterTest`) and the helper's runners by
+`scripts/lib/check-runner`, `scripts/lib/check-runner-paths` and `scripts/lib/check-live-runner`.
+
+**Stopping and restarts.** As the service starts to shut down it asks the worker to stop; after the web
+server has closed (at most 3 s) it waits at most 4 s more, then stops the worker's thread (2 s at most), all
+inside `scripts/service`'s 10 s (C-P4.R2 R2-W): a role still running is
+killed with its container, its run stays unfinished, and after the restart it is marked *not known* and the
+bug waits for you — Lockstep never runs it again by itself (C-P4.R1). A database failure in the middle of a
+step leaves nothing half-recorded; the step is taken again, or waits for you, after the database is back.
+
+## 7. Troubleshooting
+
+| Symptom | Cause / action |
+|---|---|
+| `403` in the browser | Not `127.0.0.1:<port>`, or a form from another origin. Use the exact address. |
+| `401` on `/operator` | No session: run `scripts/service cli operator sign-in`. |
+| Sign-in link refused | Used, expired (5 min) or malformed: issue a new one. |
+| Jobs stay `queued` | The service was started before the database was ready: `scripts/service restart`. |
+| `exit 69` from a CLI command | The database is not ready: `scripts/service cli db status`. |
+| `exit 75` from `db migrate` | Take `scripts/db backup` and pass `--backup FILE`. |
+| `exit 78` | `LOCKSTEP_FAULT_PLAN` is set; this build refuses fault plans. Unset it. |
+| `refused authoritative-remote-ambiguous` | Several remotes: name the repository's own with `--authoritative-remote`. |
+| `refused weakens-gate` / `profile-conflict` from `profile resolve` | A specialization or override weakens or contradicts a gate; publish a stronger next version. |
+| `exit 70` with "integrity failure" | A stored Profile was changed outside Lockstep; restore from backup. |
+
+## 8. Verification and evidence
+
+`scripts/check [--integration]` is the single verification command: format, lint and static
+checks, build, unit tests, the no-live-model guard (provider-CLI sentinels, construction gate,
+fault-plan refusal) and, with `--integration`, the real PostgreSQL/process suite. Gate records and
+evidence live under `docs/gates/`; larger local evidence under `.local/evidence/`.

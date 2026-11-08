@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# Verification of install, upgrade and recovery from the control pane on the
+# host (C-P3.3 §3), with real Docker, a real build, a real backup, a real
+# migration and a real restore. Needs the operator PostgreSQL server
+# (scripts/db up), the operator's installation (its binary is copied, never
+# changed) and a clean checkout (an upgrade builds the committed HEAD).
+#
+# Instance p33c: state .local/control-p33c, install .local/p33c-install (a copy
+# of .local/install, an older version), staging .local/p33c-staging-install,
+# config .local/config/lockstep-p33c.json, database lockstep_p33c_<stamp>,
+# containers lockstep-control-p33c and lockstep-p33c, pane port 18300, service
+# port 18310 (the helper's), old service first on 18311. All removed at the end.
+#
+#   1. a failed upgrade: a squatter holds 18310, so the new version cannot start
+#      after the migration -> "needs your attention", recovery-needed
+#   2. recovery from the page: the backup is restored and the old version runs
+#   3. the upgrade again, without the squatter -> the new version runs
+# Results: .local/evidence/upgrade-<stamp>/results.txt
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+
+instance=p33c
+state=.local/control-$instance
+install=.local/$instance-install
+staging=.local/$instance-staging-install
+config=.local/config/lockstep-$instance.json
+pane=lockstep-control-$instance
+service=lockstep-$instance
+squatter=lockstep-upgrade-squatter-$instance
+pane_port=18300
+service_port=18310
+old_port=18311
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+db=lockstep_${instance}_$stamp
+work=.local/evidence/upgrade-$stamp
+mkdir -p "$work"
+results=$work/results.txt
+: > "$results"
+failures=0
+record() { printf '%s %s\n' "$1" "$2" | tee -a "$results"; if [ "$1" != PASS ]; then failures=$((failures + 1)); fi; }
+expect() { local d=$1; shift; if "$@"; then record PASS "$d"; else record FAIL "$d"; fi; }
+
+if ! docker container inspect --format '{{.State.Running}}' lockstep-postgres 2>/dev/null | grep -q true; then
+  echo "NOT_RUN: the operator PostgreSQL (lockstep-postgres) is not running; run scripts/db up" >&2; exit 2
+fi
+[ -x .local/install/bin/lockstep ] || { echo "NOT_RUN: no operator installation to copy as the older version" >&2; exit 2; }
+[ -z "$(git status --porcelain)" ] || { echo "NOT_RUN: the checkout has uncommitted changes; an upgrade builds the committed HEAD" >&2; exit 2; }
+for p in $pane_port $service_port $old_port; do
+  if curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$p/"; then echo "NOT_RUN: something answers on 127.0.0.1:$p" >&2; exit 2; fi
+done
+backups_before=$(ls .local/backups 2>/dev/null | wc -l | tr -d ' ')
+for p in "$state" "$install" "$staging" "$install.previous" "$config" ".local/$instance-backups"; do
+  [ ! -e "$p" ] || { echo "NOT_RUN: $p already exists" >&2; exit 2; }
+done
+
+started_at() { docker container inspect --format '{{.State.StartedAt}}' "$1" 2>/dev/null || echo none; }
+operator_before="$(started_at lockstep-service) $(started_at lockstep-control) $(started_at lockstep-postgres) $(shasum -a 256 .local/install/bin/lockstep | cut -c1-64)"
+revision() { docker exec lockstep-postgres psql -X -q -t -A -U lockstep -d "$db" -c "SELECT COALESCE(max(id), 0) FROM lockstep_schema_migrations" 2>/dev/null | tr -d ' '; }
+version_commit() { sed -n 's/^commit //p' "$1/VERSION" 2>/dev/null; }
+
+cleanup() {
+  LOCKSTEP_CONTROL_PORT=$pane_port ./lockstep --instance $instance stop >/dev/null 2>&1 || true
+  docker rm -f "$pane" "$service" "$squatter" >/dev/null 2>&1 || true
+  docker exec lockstep-postgres psql -q -U lockstep -d lockstep -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" >/dev/null 2>&1 || true
+  rm -rf "$state" "$install" "$staging" "$install.previous" ".local/$instance-backups"
+  rm -f "$config"
+}
+trap cleanup EXIT
+
+# The older version, running, with its database at its own schema.
+docker exec lockstep-postgres psql -q -U lockstep -d lockstep -c "CREATE DATABASE $db" >/dev/null
+(
+  umask 077
+  sed -E -e 's/"host":"[^"]*"/"host":"127.0.0.1"/' -e 's/"port":[0-9]+/"port":5433/' \
+    -e "s/\"name\":\"[^\"]*\"/\"name\":\"$db\"/" .local/config/lockstep.json > "$config"
+)
+cp -R .local/install "$install"
+scripts/service --instance $instance cli db migrate > "$work/migrate-old.out" 2>&1
+old_revision=$(revision)
+old_commit=$(version_commit "$install")
+scripts/service --instance $instance start --port $old_port > "$work/start-old.out" 2>&1
+head_commit=$(git rev-parse HEAD)
+record PASS "setup: the older version ($old_commit, schema $old_revision) runs on $old_port; HEAD is $head_commit"
+
+launch() { # FLOW SMOKE-FILE
+  set +e
+  LOCKSTEP_CONTROL_PORT=$pane_port LOCKSTEP_SERVICE_PORT=$service_port LOCKSTEP_SMOKE_FLOW=$1 \
+    LOCKSTEP_BROWSER=scripts/lib/upgrade-smoke-browser LOCKSTEP_SMOKE_OUT=$2 \
+    ./lockstep --instance $instance > "$2.out" 2>&1 < /dev/null
+  code=$?
+  set -e
+}
+
+# 1. A failed upgrade: the new version cannot start (a squatter holds its port).
+docker run -d --name "$squatter" --network host lockstep-dev:p1 python3 -m http.server $service_port --bind 127.0.0.1 >/dev/null
+for _ in $(seq 1 50); do curl -s -o /dev/null "http://127.0.0.1:$service_port/" && break; sleep 0.2; done
+launch fail "$work/smoke-fail"
+expect "1: the page offered a new version and its review" bash -c "grep -q candidate.found=yes '$work/smoke-fail' && grep -q review.found=yes '$work/smoke-fail'"
+expect "1: the page said the upgrade needs attention" grep -q finished.found=yes "$work/smoke-fail"
+expect "1: the database was migrated to the new schema before the failure" bash -c "[ \"\$(docker exec lockstep-postgres psql -X -q -t -A -U lockstep -d $db -c 'SELECT COALESCE(max(id), 0) FROM lockstep_schema_migrations' | tr -d ' ')\" -gt $old_revision ]"
+backup=$(ls -t .local/$instance-backups/*.dump 2>/dev/null | head -n 1 || true)
+expect "1: a backup was taken into the instance's own backup folder, with its digest file" test -n "$backup" -a -f "$backup.sha256"
+expect "1: the backup's digest verifies" bash -c "cd .local/$instance-backups && shasum -a 256 -c \"\$(basename '$backup').sha256\" >/dev/null"
+expect "1: the helper recorded recovery-needed" grep -q "^status recovery-needed" "$state/helper/upgrade.current"
+docker rm -f "$squatter" >/dev/null 2>&1 || true
+
+# 2. Recovery from the page.
+launch recover "$work/smoke-recover"
+expect "2: the page said the previous version is back" grep -q finished.found=yes "$work/smoke-recover"
+expect "2: the database is back at the old schema" test "$(revision)" = "$old_revision"
+expect "2: the old version is the active installation" test "$(version_commit "$install")" = "$old_commit"
+expect "2: the service runs and answers" curl -s -o /dev/null --max-time 5 "http://127.0.0.1:$service_port/api/health_check"
+
+# 3. The upgrade again, with nothing in the way.
+launch upgrade "$work/smoke-upgrade"
+expect "3: the page said Lockstep was upgraded" grep -q finished.found=yes "$work/smoke-upgrade"
+expect "3: the active installation is HEAD" test "$(version_commit "$install")" = "$head_commit"
+expect "3: the database is at the new schema" bash -c "[ \"\$(docker exec lockstep-postgres psql -X -q -t -A -U lockstep -d $db -c 'SELECT COALESCE(max(id), 0) FROM lockstep_schema_migrations' | tr -d ' ')\" -gt $old_revision ]"
+expect "3: the new version is ready" bash -c "scripts/service --instance $instance cli db status 2>/dev/null | head -n 1 | grep -q '^readiness ready'"
+expect "3: the service runs and answers" curl -s -o /dev/null --max-time 5 "http://127.0.0.1:$service_port/api/health_check"
+
+operator_after="$(started_at lockstep-service) $(started_at lockstep-control) $(started_at lockstep-postgres) $(shasum -a 256 .local/install/bin/lockstep | cut -c1-64)"
+expect "the operator's installation, service, control pane and database were not touched" test "$operator_before" = "$operator_after"
+expect "nothing was added to the operator's backup folder" test "$(ls .local/backups 2>/dev/null | wc -l | tr -d ' ')" = "$backups_before"
+expect "no output contains a sign-in link" bash -c "! cat '$work'/smoke-* | grep -q 'sign-in#'"
+
+echo
+echo "check-upgrade: $failures failure(s); results in $results"
+[ "$failures" -eq 0 ]

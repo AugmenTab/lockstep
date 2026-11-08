@@ -1,0 +1,493 @@
+#!/usr/bin/env bash
+# Verification of live role runs on the host (contract C-P4.L §3; DG-17). Needs
+# Docker and the provider image (scripts/provider-image). Starts the real
+# scripts/control-helper with --runner on a disposable state directory
+# (.local/live-check-<stamp>, instance p4lv, test limits: 6 s, 64 KiB, 16 KiB),
+# with a synthetic provider configuration and a synthetic credential, in the
+# helper's explicit offline-test mode (DIR/provider/offline-test, the key in
+# DIR/provider/offline-credential; A-P4.L-1, C-P4.L.R2 H3): the egress proxy's
+# upstream is a local stand-in (scripts/lib/live-standin, HTTPS with a certificate
+# made here) on an internal network: nothing here can reach the internet, and no
+# model provider is ever contacted. Runs the real
+# Claude Code CLI of the provider image with the live adapter's argument vector
+# (test/fixtures/live/claude-argv). Touches nothing of the operator's
+# installation; removes its state, containers and networks at the end.
+# Results: .local/evidence/live-<stamp>/results.txt
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+root=$PWD
+
+instance=p4lv
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+state=$root/.local/live-check-$stamp
+work=$root/.local/evidence/live-$stamp
+mkdir -p "$work/standin"
+results=$work/results.txt
+: > "$results"
+failures=0
+run_prefix=lockstep-run-$instance-
+egress_prefix=lockstep-egress-$instance-
+net_prefix=lockstep-live-$instance-
+upnet=lockstep-livecheck-up-$stamp
+standin=lockstep-livecheck-standin-$stamp
+image=lockstep-provider:claude-2.1.312
+model=claude-sonnet-5-5
+effort=medium
+
+record() { # STATUS DESCRIPTION
+  printf '%s %s\n' "$1" "$2" | tee -a "$results"
+  if [ "$1" != PASS ]; then failures=$((failures + 1)); fi
+}
+expect() { # DESCRIPTION CONDITION...
+  local description=$1
+  shift
+  if "$@"; then record PASS "$description"; else record FAIL "$description"; fi
+}
+
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  echo "NOT_RUN: the image $image is missing; run scripts/provider-image first" >&2
+  exit 2
+fi
+image_id=$(docker image inspect --format '{{.Id}}' "$image")
+# The synthetic credential: the shape of a key, never a real one.
+secret=sk-ant-test-$(head -c 20 /dev/urandom | od -An -tx1 | tr -d ' \n')
+
+helper_pid=""
+stop_helper() {
+  if [ -n "$helper_pid" ]; then
+    kill "$helper_pid" 2>/dev/null || true
+    wait "$helper_pid" 2>/dev/null || true
+    helper_pid=""
+  fi
+}
+cleanup() {
+  stop_helper
+  docker rm -f "$standin" >/dev/null 2>&1 || true
+  docker ps -aq --filter "name=^$run_prefix" | while read -r c; do docker rm -f "$c" >/dev/null 2>&1 || true; done
+  docker ps -aq --filter "name=^$egress_prefix" | while read -r c; do docker rm -f "$c" >/dev/null 2>&1 || true; done
+  docker network ls -q --filter "name=^$net_prefix" | while read -r n; do docker network rm "$n" >/dev/null 2>&1 || true; done
+  docker network rm "$upnet" >/dev/null 2>&1 || true
+  if [ -d "$state/helper" ]; then
+    cp "$state/helper/helper.log" "$work/helper.log" 2>/dev/null || true
+    cp "$state/helper/runner-journal" "$work/runner-journal" 2>/dev/null || true
+  fi
+  [ -f "$state/provider/ledger/ledger" ] && cp "$state/provider/ledger/ledger" "$work/ledger"
+  rm -rf "$state" "$work/standin.key"
+}
+trap cleanup EXIT
+
+umask 077
+mkdir -p "$state/helper" "$state/pane"
+chmod 700 "$state" "$state/helper" "$state/pane"
+head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$state/helper/channel.key"
+
+# The stand-in upstream: its own certificate, its own internal network.
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$work/standin.key" -out "$work/standin.pem" -days 2 \
+  -subj /CN=standin -addext subjectAltName=DNS:standin >/dev/null 2>&1
+chmod 644 "$work/standin.pem" "$work/standin.key"
+docker network create --internal "$upnet" >/dev/null
+printf '{"kind":"review","verdict":"approve","reasons":["The change adds."]}' > "$work/standin/answer.json"
+chmod 777 "$work/standin"
+start_standin() { # MODE
+  docker rm -f "$standin" >/dev/null 2>&1 || true
+  docker run -d --name "$standin" --network "$upnet" --network-alias standin --read-only \
+    --user "$(id -u):$(id -g)" --cap-drop ALL \
+    --mount "type=bind,source=$root/scripts/lib/live-standin,target=/opt/standin,readonly" \
+    --mount "type=bind,source=$work/standin.pem,target=/etc/standin.pem,readonly" \
+    --mount "type=bind,source=$work/standin.key,target=/etc/standin.key,readonly" \
+    --mount "type=bind,source=$work/standin,target=/log" \
+    "$image" python3 /opt/standin --cert /etc/standin.pem --key /etc/standin.key \
+    --log /log/requests.jsonl --mode "$1" --answer /log/answer.json --expect-key "$secret" >/dev/null
+  sleep 1.5
+}
+standin_lines() { [ -f "$work/standin/requests.jsonl" ] && wc -l < "$work/standin/requests.jsonl" | tr -d ' ' || echo 0; }
+
+start_helper() {
+  LOCKSTEP_RUNNER_TEST_LIMITS=1 \
+    "$root/scripts/control-helper" --state "$state" --instance "$instance" --runner \
+    < /dev/null >> "$work/helper.out" 2>&1 &
+  helper_pid=$!
+  for _ in $(seq 1 150); do
+    [ -s "$state/runner/channel.key" ] && grep -q "started (pid $helper_pid" "$state/helper/helper.log" 2>/dev/null && break
+    sleep 0.1
+  done
+  [ -s "$state/runner/channel.key" ] || { echo "the helper did not make the runner key" >&2; exit 1; }
+  key=$(head -c 64 "$state/runner/channel.key")
+  ipad=""
+  opad=""
+  local i=0 b
+  while [ $i -lt 64 ]; do
+    if [ $i -lt 32 ]; then b=$((16#${key:$((i * 2)):2})); else b=0; fi
+    ipad="$ipad$(printf '\\x%02x' $((b ^ 0x36)))"
+    opad="$opad$(printf '\\x%02x' $((b ^ 0x5c)))"
+    i=$((i + 1))
+  done
+}
+
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256() { sha256sum | cut -d ' ' -f 1; }
+else
+  sha256() { shasum -a 256 | cut -d ' ' -f 1; }
+fi
+hex_escapes() {
+  local hex=$1 out="" j=0
+  while [ $j -lt ${#hex} ]; do out="$out\\x${hex:$j:2}"; j=$((j + 2)); done
+  printf '%s' "$out"
+}
+hmac() {
+  local inner
+  inner=$({ printf "$ipad"; cat; } | sha256)
+  { printf "$opad"; printf "$(hex_escapes "$inner")"; } | sha256
+}
+new_id() { head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+
+# prepare RUN ARGV... : a run directory with a small tree and the argument vector
+prepare() {
+  local run=$1 dir
+  shift
+  dir=$state/runner/work/$run
+  mkdir -p "$dir/tree" "$dir/input" "$dir/output"
+  printf 'def add(a, b):\n    return a - b\n' > "$dir/tree/calc.py"
+  printf '{"role":"reviewer","answer":{"file":"result.json","kind":"review"}}\n' > "$dir/input/context.json"
+  printf 'Review the change; answer in /output/result.json.\n' > "$dir/input/role.md"
+  cp "$root/scripts/lib/live-probe-client" "$dir/input/probe"
+  : > "$dir/argv"
+  for a in "$@"; do printf '%s\0' "$a" >> "$dir/argv"; done
+}
+# prepare_cli RUN: the live adapter's argument vector, from the fixture
+prepare_cli() {
+  local run=$1 session line
+  local -a argv=()
+  session="${run:0:8}-${run:8:4}-${run:12:4}-${run:16:4}-${run:20:12}"
+  while IFS= read -r line; do
+    line=${line//\{MODEL\}/$model}
+    line=${line//\{EFFORT\}/$effort}
+    line=${line//\{SESSION\}/$session}
+    line=${line//\{INPUT\}//input}
+    argv+=("$line")
+  done < "$root/test/fixtures/live/claude-argv"
+  prepare "$run" "${argv[@]}"
+}
+request() { # ID OP RUN [ARGV-SHA]
+  local id=$1 op=$2 run=$3 sha=${4:-} body tmp
+  if [ -z "$sha" ]; then sha=$(sha256 < "$state/runner/work/$run/argv"); fi
+  body=$(printf 'lockstep-runner-request 1\nid %s\nissued %s\nop %s\nexpect run-%s\nargv %s\n' "$id" "$(date +%s)" "$op" "$run" "$sha")
+  tmp=$state/runner/requests/.$id
+  printf '%s\n' "$body" > "$tmp"
+  printf 'mac %s\n' "$(printf '%s\n' "$body" | hmac)" >> "$tmp"
+  mv "$tmp" "$state/runner/requests/$id.rreq"
+}
+wait_result() { # ID [SECONDS]
+  local id=$1 limit=${2:-60} n=0
+  res=$state/runner/results/$id.res
+  while [ ! -f "$res" ] && [ $n -lt $((limit * 10)) ]; do sleep 0.1; n=$((n + 1)); done
+  [ -f "$res" ]
+}
+field() { sed -n "s/^$1 //p" "$res" | head -n 1; }
+fieldline() { sed -n "s/^field $1 //p" "$res" | head -n 1; }
+out_of() { cat "$state/runner/work/$1/stdout"; }
+probe_line() { sed -n "s/^$2 //p" "$state/runner/work/$1/stdout" | head -n 1; }
+# go OP ARGV... : prepares, requests and waits; sets run, id, res
+go() {
+  local op=$1
+  shift
+  run=$(new_id)
+  id=$(new_id)
+  prepare "$run" "$@"
+  request "$id" "$op" "$run"
+  wait_result "$id" 90
+}
+go_cli() { # OP
+  run=$(new_id)
+  id=$(new_id)
+  prepare_cli "$run"
+  request "$id" "$1" "$run"
+  wait_result "$id" 90
+}
+nothing_left() {
+  [ -z "$(docker ps -aq --filter "name=^$run_prefix")" ] &&
+    [ -z "$(docker ps -aq --filter "name=^$egress_prefix")" ] &&
+    [ -z "$(docker network ls -q --filter "name=^$net_prefix")" ]
+}
+refused_with() { [ "$(field outcome) $(field reason)" = "refused $1" ]; }
+ledger_count() { # KIND RUN
+  grep -c "^$1 $2 " "$state/provider/ledger/ledger" 2>/dev/null || true
+}
+spent() { # the ledger's charge so far: settled, and reservations never settled
+  awk '$1 == "reserve" { r[$2 " " $3] = $4 } $1 == "settle" { delete r[$2 " " $3]; s += $4 } END { for (k in r) s += r[k]; print s + 0 }' "$state/provider/ledger/ledger"
+}
+set_config() { # KEY VALUE
+  local tmp=$state/provider/.config
+  sed "s/^$1 .*/$1 $2/" "$state/provider/config" > "$tmp"
+  mv "$tmp" "$state/provider/config"
+  chmod 600 "$state/provider/config"
+}
+
+# 1 without a provider: no live runs, the service is told nothing
+start_standin answer
+start_helper
+expect "without a provider the service is told nothing" test ! -e "$state/runner/provider"
+go run-live-readonly /bin/true
+expect "a live run without a provider is refused: provider-not-configured" refused_with provider-not-configured
+stop_helper
+
+# The owner's provider: a configuration and a credential, both private.
+mkdir -m 700 "$state/provider"
+cat > "$state/provider/config" <<EOF
+lockstep-provider 1
+provider claude-code
+model $model
+effort $effort
+pricing synthetic-test-1
+price-input 3000000
+price-output 15000000
+price-cache-write-5m 3750000
+price-cache-write-1h 6000000
+price-cache-read 300000
+long-context-tokens 200000
+long-context-input-percent 200
+long-context-output-percent 150
+budget-micro-usd 50000000
+token-limit 100000000
+invocation-limit 1000
+request-max-tokens 16000
+invocation-output-tokens 60000
+invocation-requests 50
+EOF
+chmod 600 "$state/provider/config"
+# A-P4.L-1: the helper's explicit offline-test mode (its upstream, CA and internal network) and its key.
+printf 'lockstep-offline-test 1\nupstream standin:8443\nca %s\negress-network %s\n' "$work/standin.pem" "$upnet" \
+  > "$state/provider/offline-test"
+chmod 600 "$state/provider/offline-test"
+printf '%s\n' "$secret" > "$state/provider/offline-credential"
+chmod 600 "$state/provider/offline-credential"
+
+# 2 an unsupported model is refused, not replaced
+set_config model claude-3-opus
+start_helper
+expect "an unsupported model turns live runs off (no provider line)" test ! -e "$state/runner/provider"
+expect "the helper says why" grep -q "provider-model-unsupported" "$state/helper/helper.log"
+stop_helper
+set_config model "$model"
+set_config effort turbo
+start_helper
+expect "an unsupported effort turns live runs off too" test ! -e "$state/runner/provider"
+expect "the helper says why: provider-effort-unsupported" grep -q "provider-effort-unsupported" "$state/helper/helper.log"
+stop_helper
+set_config effort "$effort"
+
+# 3 the provider line: model and effort, nothing secret anywhere the service can see
+start_helper
+expect "the service is told the provider, model and effort" test "$(cat "$state/runner/provider" 2>/dev/null)" = "lockstep-provider 1 claude-code $model $effort"
+
+# 4 the real CLI answers through the proxy: the answer in result.json, the usage accounted
+go_cli run-live-readonly
+expect "the CLI run exits 0 (outcome: $(field outcome) $(fieldline exit))" test "$(field outcome) $(fieldline exit)" = "exited 0"
+expect "the role's answer is the result.json it wrote" test "$(cat "$state/runner/work/$run/output/result.json" 2>/dev/null)" = "$(cat "$work/standin/answer.json")"
+expect "the run's image is the provider image" test "$(fieldline image)" = "$image_id"
+expect "every request was forwarded and its usage known ($(fieldline egress.forwarded) forwarded, $(fieldline egress.known) known)" \
+  test "$(fieldline egress.forwarded)" -ge 1 -a "$(fieldline egress.forwarded)" = "$(fieldline egress.known)" -a "$(fieldline egress.unknown)" = 0
+expect "the model and effort the proxy enforced are reported" test "$(fieldline egress.model) $(fieldline egress.effort)" = "$model $effort"
+expect "the only endpoint used is the Messages API ($(fieldline egress.paths))" test "$(fieldline egress.paths)" = "/v1/messages?beta=true"
+expect "the upstream received the owner's key on every request" test -z "$(grep '"key_ok": false' "$work/standin/requests.jsonl" || true)"
+expect "the CLI asked only for Read, Edit and Bash" test -z "$(grep -v '"tools": \["Bash", "Edit", "Read"\]' "$work/standin/requests.jsonl" || true)"
+expect "the ledger reserved and settled each request" test "$(ledger_count reserve "$run")" = "$(ledger_count settle "$run")" -a "$(ledger_count settle "$run")" -ge 1
+expect "the charge is reported ($(fieldline egress.micro) micro-USD)" test "$(fieldline egress.micro)" -gt 0
+expect "nothing of the run is left" nothing_left
+
+# 4b a provider CLI that is not there: the run fails, and says so with its exit
+go run-live-readonly claude-not-installed -p
+expect "a missing CLI is a failed run: exited 127 ($(field outcome) $(fieldline exit))" test "$(field outcome) $(fieldline exit)" = "exited 127"
+expect "nothing of it is left" nothing_left
+
+# 5 the network of a live run: the proxy only
+go run-live-readonly python3 /input/probe "$model" "$effort" network
+expect "one interface besides loopback ($(probe_line "$run" interfaces))" test "$(probe_line "$run" interfaces)" = "eth0,lo"
+expect "an outside address cannot be reached" test "$(probe_line "$run" outside-address)" = failed
+expect "the upstream cannot be reached directly" test "$(probe_line "$run" upstream-by-name)" = failed
+expect "an outside name does not resolve" test "$(probe_line "$run" outside-name)" = failed
+expect "the host does not resolve" test "$(probe_line "$run" host-name)" = failed
+expect "the proxy's other ports are closed" test "$(probe_line "$run" proxy-other-port) $(probe_line "$run" proxy-upstream-port)" = "failed failed"
+
+# 6 what the proxy refuses, and that a refusal stops the run
+before=$(standin_lines)
+go run-live-readonly python3 /input/probe "$model" "$effort" refusals
+for probe in get:path-refused other-path:path-refused absolute-url:path-refused connect:path-refused \
+  model:model-refused effort:effort-refused max-tokens:max-tokens-refused agent-tool:tool-refused \
+  server-tool:tool-refused mcp:tool-refused image:content-refused beta:beta-refused; do
+  expect "refused: ${probe%%:*} (${probe#*:})" test "$(probe_line "$run" "${probe%%:*}")" = "403 ${probe#*:}"
+done
+expect "nothing refused reached the upstream" test "$(standin_lines)" = "$before"
+expect "a run with a refused request is provider-stopped" test "$(field outcome) $(fieldline provider-stop)" = "provider-stopped path-refused"
+expect "every refusal is counted ($(fieldline egress.denied))" test "$(fieldline egress.denied)" = 12
+
+# 7 a Host header cannot send a request elsewhere: it reaches the one upstream
+before=$(standin_lines)
+go run-live-readonly python3 /input/probe "$model" "$effort" valid
+expect "a request naming another host is answered by the fixed upstream" test "$(probe_line "$run" valid-other-host)" = "200 -"
+expect "the upstream saw it" test "$(standin_lines)" = $((before + 1))
+
+# 8 a redirect is never followed or passed on
+start_standin redirect
+before=$(standin_lines)
+go run-live-readonly python3 /input/probe "$model" "$effort" valid
+expect "a redirect is refused: 502 redirect-refused" test "$(probe_line "$run" valid-other-host)" = "502 redirect-refused"
+expect "only the one request reached the upstream" test "$(standin_lines)" = $((before + 1))
+expect "the run is provider-stopped redirect-refused" test "$(field outcome) $(fieldline provider-stop)" = "provider-stopped redirect-refused"
+
+# 9 usage that cannot be read: charged at its reservation, and the run stopped
+start_standin no-usage
+go_cli run-live-readonly
+expect "a response without usage stops the run: usage-unknown" test "$(field outcome) $(fieldline provider-stop)" = "provider-stopped usage-unknown"
+expect "it is charged at its reservation" grep -q "^settle $run 1 [0-9]* [0-9]* [0-9]* unknown " "$state/provider/ledger/ledger"
+
+# 10 the provider refuses the credential: stopped auth-refused
+start_standin unauthorized
+go_cli run-live-readonly
+expect "a refused credential stops the run: auth-refused" test "$(field outcome) $(fieldline provider-stop)" = "provider-stopped auth-refused"
+
+# 11 an agent asked for by the provider has no tool to run as; no request carries one
+start_standin agent
+go_cli run-live-readonly
+expect "no request ever offered an agent tool" test -z "$(grep -E '"tools": \[[^]]*"(Task|Agent)"' "$work/standin/requests.jsonl" || true)"
+expect "the CLI started no agent" grep -q '"spawned":0' "$state/runner/work/$run/stdout"
+
+# 12 one run's request limit
+start_standin loop
+set_config invocation-requests 3
+go_cli run-live-readonly
+expect "a run past its request limit is stopped: requests-exhausted" test "$(field outcome) $(fieldline provider-stop)" = "provider-stopped requests-exhausted"
+expect "it made exactly 3 requests upstream" test "$(fieldline egress.forwarded)" = 3
+set_config invocation-requests 50
+
+# 13 the budget: a request that could cost more than is left is never sent
+start_standin answer
+total=$(spent)
+set_config budget-micro-usd $((total + 1000))
+before=$(standin_lines)
+go_cli run-live-readonly
+expect "admitted, then the first request refused: budget-exhausted" test "$(field outcome) $(fieldline provider-stop)" = "provider-stopped budget-exhausted"
+expect "nothing reached the upstream" test "$(standin_lines)" = "$before"
+set_config budget-micro-usd "$total"
+go_cli run-live-readonly
+expect "a budget used up refuses the run before anything starts: budget-exhausted" refused_with budget-exhausted
+stop_helper
+start_helper
+go_cli run-live-readonly
+expect "after the helper restarts the budget is still used up" refused_with budget-exhausted
+set_config budget-micro-usd 50000000
+
+# 14 the token limit and the invocation limit
+used=$(awk '$1 == "reserve" { r[$2 " " $3] = $5 } $1 == "settle" { delete r[$2 " " $3]; s += $5 } END { for (k in r) s += r[k]; print s + 0 }' "$state/provider/ledger/ledger")
+set_config token-limit $((used + 5000))
+go_cli run-live-readonly
+expect "a request that could pass the token limit is refused: token-limit-reached" test "$(field outcome) $(fieldline provider-stop)" = "provider-stopped token-limit-reached"
+set_config token-limit 100000000
+set_config invocation-limit "$(grep -c '^invocation ' "$state/provider/ledger/ledger")"
+go_cli run-live-readonly
+expect "past the invocation limit nothing starts: invocation-limit-reached" refused_with invocation-limit-reached
+set_config invocation-limit 1000
+
+# 15 the credential: never in the run, its environment, its files or anything kept
+go run-live-readonly /bin/sh -c 'env; ls -a /run /etc/lockstep 2>&1; cat /proc/1/environ 2>/dev/null | tr "\0" "\n"'
+expect "the role's container has no credential: environment and files" test -z "$(grep -F "$secret" "$state/runner/work/$run/stdout" || true)"
+expect "the role's container sees only the placeholder key" grep -qx 'ANTHROPIC_API_KEY=lockstep-placeholder-the-proxy-holds-the-key' "$state/runner/work/$run/stdout"
+expect "nothing the service can read holds the credential" test -z "$(grep -r -l -F "$secret" "$state/runner" || true)"
+expect "the helper's log and journals do not hold it" test -z "$(grep -r -l -F "$secret" "$state/helper" || true)"
+expect "the ledger and run summaries do not hold it" test -z "$(grep -r -l -F "$secret" "$state/provider/ledger" || true)"
+expect "the upstream's record does not hold it" test -z "$(grep -r -l -F "$secret" "$work/standin" || true)"
+
+# 16 a missing credential, or one others can read, refuses the run before anything starts
+# A change to a host file can reach a container a moment late through the Mac's file sharing
+# (each case fails closed either way); each change is given time to arrive.
+settle() { sleep 3; }
+chmod 644 "$state/provider/offline-credential"
+settle
+go_cli run-live-readonly
+expect "a credential others can read is refused: credential-unusable" refused_with credential-unusable
+chmod 600 "$state/provider/offline-credential"
+printf 'not-a-key\n' > "$state/provider/offline-credential"
+settle
+go_cli run-live-readonly
+expect "a malformed credential is refused: credential-malformed" refused_with credential-malformed
+rm -f "$state/provider/offline-credential"
+settle
+go_cli run-live-readonly
+expect "a missing credential is refused: credential-missing" refused_with credential-missing
+printf '%s\n' "$secret" > "$state/provider/offline-credential"
+chmod 600 "$state/provider/offline-credential"
+settle
+
+# 17 the tree: read-only for a read-only role, writable for the Implementer, protected files never
+run=$(new_id); id=$(new_id)
+prepare "$run" /bin/sh -c 'echo changed > calc.py 2>/dev/null && echo wrote || echo refused'
+request "$id" run-live-readonly "$run"; wait_result "$id" 60
+expect "a live read-only role cannot change the tree" test "$(out_of "$run")" = refused
+run=$(new_id); id=$(new_id)
+prepare "$run" /bin/sh -c 'echo changed > calc.py && echo wrote; echo forged > test_calc.py 2>/dev/null && echo forged || echo kept'
+printf 'frozen\n' > "$state/runner/work/$run/tree/test_calc.py"
+printf 'test_calc.py\n' > "$state/runner/work/$run/protected"
+request "$id" run-live-write "$run"; wait_result "$id" 60
+expect "the live Implementer changes the tree, never a protected test" test "$(out_of "$run" | tr '\n' ' ')" = "wrote kept "
+expect "the protected test is unchanged on the host" test "$(cat "$state/runner/work/$run/tree/test_calc.py")" = frozen
+
+# 18 one run at a time: no second writer while a live run goes on
+run=$(new_id); id=$(new_id)
+prepare "$run" /bin/sleep 5
+request "$id" run-live-write "$run"
+sleep 2
+busy_run=$(new_id); busy_id=$(new_id)
+prepare "$busy_run" /bin/true
+request "$busy_id" run-live-write "$busy_run"
+wait_result "$busy_id" 10 && expect "a second live run while one runs is refused: busy" refused_with busy
+wait_result "$id" 30
+
+# 19 scripted and verification runs keep no network on a helper with a provider
+go run-verify /bin/sh -c 'ls /sys/class/net'
+expect "a verification run has only loopback" test "$(out_of "$run")" = lo
+go run-readonly /bin/sh -c 'ls /sys/class/net'
+expect "a scripted role's run has only loopback" test "$(out_of "$run")" = lo
+
+# 20 the end of a run: timeout, cancellation and the proxy gone all leave nothing running
+t0=$(date +%s)
+go run-live-readonly /bin/sleep 60
+expect "a live run past its wall clock is timed-out within 20 s ($(($(date +%s) - t0)) s)" test "$(field outcome)" = timed-out -a $(($(date +%s) - t0)) -lt 20
+expect "nothing of it is left" nothing_left
+run=$(new_id); id=$(new_id)
+prepare "$run" /bin/sleep 60
+request "$id" run-live-readonly "$run"
+sleep 3
+cancel_id=$(new_id)
+request "$cancel_id" cancel-run "$run" none
+wait_result "$id" 20 && expect "a cancelled live run reports cancelled" test "$(field outcome)" = cancelled
+expect "nothing of the cancelled run is left" nothing_left
+start_standin slow
+run=$(new_id); id=$(new_id)
+prepare "$run" python3 /input/probe "$model" "$effort" slow
+request "$id" run-live-readonly "$run"
+for _ in $(seq 1 50); do [ "$(ledger_count reserve "$run")" = 1 ] && break; sleep 0.1; done
+docker kill "$egress_prefix$run" >/dev/null 2>&1 || true
+t0=$(date +%s)
+wait_result "$id" 20 && expect "a run whose proxy is gone is stopped: egress-failed" test "$(field outcome) $(fieldline provider-stop)" = "provider-stopped egress-failed"
+expect "it stopped within 5 s ($(($(date +%s) - t0)) s)" test $(($(date +%s) - t0)) -le 5
+expect "nothing of it is left" nothing_left
+expect "its request in flight stays charged (reserved, never settled)" test "$(ledger_count reserve "$run") $(ledger_count settle "$run")" = "1 0"
+
+# 21 a helper killed mid-run: the next one removes what was left, and the run is interrupted
+start_standin answer
+run=$(new_id); id=$(new_id)
+prepare "$run" /bin/sleep 60
+request "$id" run-live-readonly "$run"
+for _ in $(seq 1 100); do [ -n "$(docker ps -q --filter "name=^$run_prefix$run")" ] && break; sleep 0.1; done
+# The helper and the process running the live run go at once, with no word.
+pkill -9 -P "$helper_pid" 2>/dev/null || true
+kill -9 "$helper_pid" 2>/dev/null || true
+wait "$helper_pid" 2>/dev/null || true
+helper_pid=""
+start_helper
+wait_result "$id" 10 && expect "the run is reported interrupted" test "$(field outcome)" = interrupted
+expect "the restarted helper removed the run, its proxy and its network" nothing_left
+
+stop_helper
+echo "check-live-runner: $failures failure(s); results in $results"
+[ "$failures" = 0 ]

@@ -1,0 +1,52 @@
+3cb9b1fabafa66d4acc7518530b4bf4e31e781de
+Application
+Effects
+Foundation
+Kernel
+Persistence
+Web
+format PASSED
+lint PASSED
+build PASSED
+unit PASSED
+integration FAILED
+    cancel stops the work for good:                                                                                                                                                     OK (0.36s)
+    it happened: a person's attestation is recorded, and the decision closes:                                                                                                           OK (0.38s)
+    try again needs the duplication risk accepted:                                                                                                                                      OK (0.26s)
+    give up abandons the step, and its work then waits for a person:                                                                                                                    OK (0.25s)
+    text rules come first and leave no receipt:                                                                                                                                         OK (0.36s)
+    receipts cannot be changed or deleted:                                                                                                                                              OK (0.38s)
+  human decisions over HTTP (C-P3.8)
+    the Decisions section lists each open decision as a link and says what arrives later:                                                                                               OK (3.45s)
+    a decision page says what it is about, how it stands, and what each choice will do:                                                                                                 OK (3.43s)
+    deciding needs the session and this origin; the answer is Done, and a replay returns the same receipt:                                                                              OK (3.44s)
+    a stale page and a missing acknowledgment are explained in words and change nothing:                                                                                                OK (3.47s)
+    typed text is escaped, and the ordinary text has no internal words:                                                                                                                 OK (3.46s)
+    unknown decisions and other addresses are 404; bodies over 16 KiB are refused:                                                                                                      OK (3.41s)
+  a human decision in a real browser (C-P3.8)
+    Home → Decisions → the stopped work → Put it back in line with the keyboard → Done → no longer open:                                                                                OK (49.50s)
+  activity and evidence over HTTP (C-P3.9)
+    with no work, Activity says nothing has happened yet:                                                                                                                               OK (3.40s)
+    each status is shown with its label and meaning; only PASSED looks passed; attention first:                                                                                         OK (3.52s)
+    work with no recorded step is never shown as passed:                                                                                                                                OK (3.38s)
+    the raw evidence is under Technical details, and the page is the same after a restart:                                                                                              OK (6.61s)
+    no form or button; typed text is escaped; no internal words outside Technical details:                                                                                              OK (3.49s)
+  activity in a real browser (C-P3.9)
+    Home → Activity → the step that needs a person → its decision:                                                                                                                      OK (33.03s)
+
+2 out of 381 tests failed (1311.79s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

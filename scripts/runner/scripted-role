@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+# The model-free scripted role (contract C-P4.5 A4): a stand-in for a model
+# that follows a script, step by step, inside whatever runner it is given. It
+# is used by the deterministic suite for honest roles and for hostile ones
+# (writing tests, making links or a .git, reaching the network, reading
+# variables, lingering, flooding output, malformed results). It has no more
+# authority than the runner gives it, which is the point.
+#
+#   scripted-role SCRIPT TREE OUTPUT
+#
+# SCRIPT is JSON: {"steps": [STEP, ...]}. Each step is an object with one action:
+#   write {path, content}        write a file (relative to TREE, or absolute)
+#   append {path, content}       append to a file
+#   delete {path}                remove a file
+#   symlink {path, target}       make a symbolic link
+#   chmod {path, mode}           change a mode ("755")
+#   mkdir {path}                 make a directory (and its parents)
+#   result {...}                 write OUTPUT/result.json with this JSON value
+#   result_raw TEXT              write OUTPUT/result.json with exactly this text
+#   stdout TEXT [repeat N]       print to standard output (N times)
+#   stderr TEXT                  print to standard error
+#   sleep SECONDS                wait
+#   linger SECONDS               leave a child process sleeping, and go on
+#   connect {host, port}         try a TCP connection; print what happened
+#   run [ARGV]                   run a program; print its exit code
+#   env NAME                     print a variable's value, or <unset>
+#   read PATH                    print a file's first line, or <unreadable>
+#   copy_context PATH            copy the context.json given to this role to PATH
+#   exit CODE                    stop with this exit code
+# A step that fails prints "scripted: <action> failed: <reason>" on standard
+# error and the script goes on.
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+
+
+def resolve(tree, path):
+    return path if path.startswith("/") else os.path.join(tree, path)
+
+
+def main():
+    if len(sys.argv) != 4:
+        print("usage: scripted-role SCRIPT TREE OUTPUT", file=sys.stderr)
+        return 64
+    script_path, tree, output = sys.argv[1:4]
+    with open(script_path, encoding="utf-8") as f:
+        script = json.load(f)
+    for step in script.get("steps", []):
+        action = next(iter(step))
+        value = step[action]
+        try:
+            if action in ("write", "append"):
+                target = resolve(tree, value["path"])
+                with open(target, "a" if action == "append" else "w", encoding="utf-8") as f:
+                    f.write(value["content"])
+            elif action == "delete":
+                os.remove(resolve(tree, value["path"]))
+            elif action == "symlink":
+                os.symlink(value["target"], resolve(tree, value["path"]))
+            elif action == "chmod":
+                os.chmod(resolve(tree, value["path"]), int(value["mode"], 8))
+            elif action == "mkdir":
+                os.makedirs(resolve(tree, value["path"]), exist_ok=True)
+            elif action == "result":
+                with open(os.path.join(output, "result.json"), "w", encoding="utf-8") as f:
+                    json.dump(value, f)
+            elif action == "result_raw":
+                with open(os.path.join(output, "result.json"), "w", encoding="utf-8") as f:
+                    f.write(value)
+            elif action == "stdout":
+                text = value if isinstance(value, str) else value["text"]
+                repeat = 1 if isinstance(value, str) else int(value.get("repeat", 1))
+                for _ in range(repeat):
+                    sys.stdout.write(text)
+                sys.stdout.flush()
+            elif action == "stderr":
+                sys.stderr.write(value)
+                sys.stderr.flush()
+            elif action == "sleep":
+                time.sleep(float(value))
+            elif action == "linger":
+                subprocess.Popen(["sleep", str(value)])
+            elif action == "connect":
+                with socket.create_connection((value["host"], int(value["port"])), timeout=3):
+                    print("connect: connected", flush=True)
+            elif action == "run":
+                code = subprocess.call(value, cwd=tree)
+                print("run: exit %d" % code, flush=True)
+            elif action == "env":
+                print("env %s: %s" % (value, os.environ.get(value, "<unset>")), flush=True)
+            elif action == "read":
+                try:
+                    with open(value, encoding="utf-8", errors="replace") as f:
+                        print("read: " + f.readline().rstrip("\n"), flush=True)
+                except OSError:
+                    print("read: <unreadable>", flush=True)
+            elif action == "copy_context":
+                source = os.path.join(os.path.dirname(script_path), "context.json")
+                with open(source, encoding="utf-8") as f, open(value, "w", encoding="utf-8") as g:
+                    g.write(f.read())
+            elif action == "exit":
+                sys.stdout.flush()
+                return int(value)
+            else:
+                print("scripted: unknown action %s" % action, file=sys.stderr, flush=True)
+        except Exception as e:  # noqa: BLE001 - a hostile step may fail in any way
+            print("scripted: %s failed: %s" % (action, e), file=sys.stderr, flush=True)
+            if action == "connect":
+                print("connect: refused", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

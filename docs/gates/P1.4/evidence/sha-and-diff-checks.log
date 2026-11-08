@@ -1,0 +1,47 @@
+== shasum -a 256 -c frozen-SHA256SUMS (P1.1-P1.3 frozen files minus the runners, which P1.4 extends additively; C-P1.4 §8 including the runners) at 75cc8623e7880c83a14ffe6dff08e7466d03a3b6
+test/unit/Lockstep/Foundation/SystemConfigTest.hs: OK
+test/unit/Lockstep/Foundation/CliDbTest.hs: OK
+test/unit/Lockstep/Persistence/MigrationTest.hs: OK
+test/unit/Lockstep/Application/ReadinessTest.hs: OK
+test/unit/Lockstep/Web/LivenessPageTest.hs: OK
+test/unit/Lockstep/Web/ReadinessRouteTest.hs: OK
+test/integration/Lockstep/Support/Postgres.hs: OK
+test/integration/Lockstep/Support/Process.hs: OK
+test/integration/Lockstep/MigrationDbTest.hs: OK
+test/integration/Lockstep/ServiceDbTest.hs: OK
+scripts/lib/check-db-backup-restore: OK
+test/unit/Lockstep/Foundation/CliTest.hs: OK
+test/unit/Lockstep/Web/ServerTest.hs: OK
+test/unit/Lockstep/Web/ApplicationTest.hs: OK
+test/integration/Lockstep/ProcessTest.hs: OK
+test/fixtures/lint/PartialFunctions.hs: OK
+test/fixtures/boundary/violation/Lockstep/Foundation/BoundaryViolation.hs: OK
+test/fixtures/boundary/control/Lockstep/Web/BoundaryControl.hs: OK
+test/unit/Lockstep/Foundation/OperatorTokenTest.hs: OK
+test/unit/Lockstep/Foundation/CliOperatorTest.hs: OK
+test/unit/Lockstep/Web/RequestGuardTest.hs: OK
+test/unit/Lockstep/Web/OperatorRoutesTest.hs: OK
+test/integration/Lockstep/OperatorTrustTest.hs: OK
+test/integration/Lockstep/Support/Http.hs: OK
+test/unit/Lockstep/Application/CommandTest.hs: OK
+test/unit/Lockstep/Foundation/CliWorkspaceTest.hs: OK
+test/unit/Lockstep/Web/CommandRoutesTest.hs: OK
+test/integration/Lockstep/OperatorCommandTest.hs: OK
+test/unit/Main.hs: OK
+test/integration/Main.hs: OK
+exit=0
+
+== removed runner lines since the P1.3 freeze (1f2445b)
+0
+== test changes since the P1.4 freeze (5122880)
+(empty = none)
+== files changed by the implementation commit
+ README.md                              |  13 ++
+ app/lockstep/Main.hs                   |  78 ++++++-
+ lockstep.cabal                         |   6 +
+ src/Lockstep/Application/Command.hs    | 379 +++++++++++++++++++++++++++++++++
+ src/Lockstep/Foundation/Cli.hs         |  95 +++++++++
+ src/Lockstep/Persistence/Commands.hs   | 156 ++++++++++++++
+ src/Lockstep/Persistence/Migrations.hs |  24 +++
+ src/Lockstep/Web/Operator.hs           | 179 +++++++++++++++-
+ 8 files changed, 923 insertions(+), 7 deletions(-)

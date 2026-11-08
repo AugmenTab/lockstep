@@ -1,0 +1,258 @@
+lockstep-0.2.0.0: unregistering (components added: test:lockstep-integration)
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+[2 of 2] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep/lockstep [Library changed]
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[16 of 30] Compiling Lockstep.Support.Control [Lockstep.Foundation.ControlProtocol changed]
+[17 of 30] Compiling Lockstep.ControlHelperTest [Lockstep.Foundation.ControlProtocol changed]
+[26 of 30] Compiling Lockstep.ControlPaneTest [Lockstep.Foundation.ControlProtocol changed]
+[30 of 30] Compiling Main [Lockstep.ControlHelperTest changed]
+[31 of 31] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-integration/lockstep-integration [Objects changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-6ggF0AiJnRUCIB81Gsi4xx
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-integration, args: -p /C-P3.1/||/control.pane.in/)
+
+lockstep-integration
+  control pane over HTTP (C-P3.1 §3)
+    health: 204 with the pane identity and no ambient headers; no database configuration needed:        OK (0.44s)
+    the shell at / and /sign-in carries no state and the exact security headers:                        FAIL (0.43s)
+      test/integration/Lockstep/ControlPaneTest.hs:191:
+      expected: 200
+       but got: 404
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/the shell at \/ and \/sign-in carries no state and the exact security headers/' to rerun this test only.
+    the page script and stylesheet are served as such:                                                  FAIL (0.43s)
+      test/integration/Lockstep/ControlPaneTest.hs:204:
+      expected: 200
+       but got: 404
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/the page script and stylesheet are served as such/' to rerun this test only.
+    unknown routes are 404 for every method; OPTIONS never answers CORS:                                OK (0.43s)
+    foreign Host is refused before anything runs (DNS rebinding); the token survives:                   FAIL (0.44s)
+      test/integration/Lockstep/ControlPaneTest.hs:243:
+      Host "attacker.example:35671" gave 404
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/foreign Host is refused before anything runs (DNS rebinding); the token survives/' to rerun this test only.
+    missing, null, foreign and localhost Origins are refused; the token survives:                       FAIL (0.43s)
+      test/integration/Lockstep/ControlPaneTest.hs:254:
+      [] gave 404
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/missing, null, foreign and localhost Origins are refused; the token survives/' to rerun this test only.
+    a token works once: the file is consumed and a replay is refused:                                   FAIL (0.44s)
+      test/integration/Lockstep/ControlPaneTest.hs:269:
+      expected: 200
+       but got: 404
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/a token works once: the file is consumed and a replay is refused/' to rerun this test only.
+    unknown and malformed tokens are refused without effect:                                            FAIL (0.43s)
+      test/integration/Lockstep/ControlPaneTest.hs:282:
+      "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" gave 404
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/unknown and malformed tokens are refused without effect/' to rerun this test only.
+    an expired token is refused and its file removed:                                                   FAIL (0.43s)
+      test/integration/Lockstep/ControlPaneTest.hs:298:
+      expected: 403
+       but got: 404
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/an expired token is refused and its file removed/' to rerun this test only.
+    a sign-in file that is a symlink is refused and its target untouched:                               FAIL (0.42s)
+      test/integration/Lockstep/ControlPaneTest.hs:310:
+      expected: 403
+       but got: 404
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/a sign-in file that is a symlink is refused and its target untouched/' to rerun this test only.
+    two simultaneous exchanges of one token: exactly one session:                                       FAIL (0.44s)
+      test/integration/Lockstep/ControlPaneTest.hs:322:
+      expected: [200,403]
+       but got: [404,404]
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/two simultaneous exchanges of one token: exactly one session/' to rerun this test only.
+    API without a session, with a wrong one, and after sign-out is 401 with no data:                    FAIL (0.67s)
+      test/integration/Lockstep/ControlPaneTest.hs:113:
+      expected: 200
+       but got: 404
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/API without a session, with a wrong one, and after sign-out is 401 with no data/' to rerun this test only.
+    a session cannot be used from another origin, even with the header:                                 FAIL (0.44s)
+      test/integration/Lockstep/ControlPaneTest.hs:113:
+      expected: 200
+       but got: 404
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/a session cannot be used from another origin, even with the header/' to rerun this test only.
+    an allowlisted request becomes one signed request file; an unknown one is refused:                  FAIL (0.84s)
+      test/integration/Lockstep/ControlPaneTest.hs:113:
+      expected: 200
+       but got: 404
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/an allowlisted request becomes one signed request file; an unknown one is refused/' to rerun this test only.
+    a result is shown only when its MAC verifies:                                                       FAIL (0.44s)
+      test/integration/Lockstep/ControlPaneTest.hs:113:
+      expected: 200
+       but got: 404
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/a result is shown only when its MAC verifies/' to rerun this test only.
+    a body over 4 KiB is refused:                                                                       FAIL (0.45s)
+      test/integration/Lockstep/ControlPaneTest.hs:405:
+      expected: 413
+       but got: 404
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/a body over 4 KiB is refused/' to rerun this test only.
+    without a channel key the pane still serves, and says the helper is unavailable:                    FAIL (0.43s)
+      test/integration/Lockstep/ControlPaneTest.hs:113:
+      expected: 200
+       but got: 404
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/without a channel key the pane still serves, and says the helper is unavailable/' to rerun this test only.
+    the pane ignores a database configuration it is given and needs none:                               FAIL (0.44s)
+      test/integration/Lockstep/ControlPaneTest.hs:421:
+      expected: 200
+       but got: 404
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/the pane ignores a database configuration it is given and needs none/' to rerun this test only.
+    a state directory others can read or write is refused at start:                                     FAIL (20.02s)
+      test/integration/Lockstep/ControlPaneTest.hs:437:
+      the pane started with a group-accessible state directory
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/a state directory others can read or write is refused at start/' to rerun this test only.
+    a request id that is not one is 404; a request the helper has taken stays pending until its result: FAIL (0.44s)
+      test/integration/Lockstep/ControlPaneTest.hs:113:
+      expected: 200
+       but got: 404
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/a request id that is not one is 404; a request the helper has taken stays pending until its result/' to rerun this test only.
+  control helper (C-P3.1 §4, L8, L9)
+    a valid status request gets a signed result with the status fields:                                 FAIL (20.53s)
+      test/integration/Lockstep/ControlHelperTest.hs:115:
+      no result for 000000006ade93e00000000000000001 within 20 s; helper output:
+      
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/a valid status request gets a signed result with the status fields/' to rerun this test only.
+    a forged MAC is refused and nothing runs:                                                           FAIL (10.25s)
+      test/integration/Lockstep/ControlHelperTest.hs:115:
+      no result for 000000006ade93f40000000000000002 within 10 s; helper output:
+      
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/a forged MAC is refused and nothing runs/' to rerun this test only.
+    a replayed request file is refused and the first result is kept:                                    FAIL (20.53s)
+      test/integration/Lockstep/ControlHelperTest.hs:115:
+      no result for 000000006ade93ff0000000000000003 within 20 s; helper output:
+      
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/a replayed request file is refused and the first result is kept/' to rerun this test only.
+    stale and future requests are refused:                                                              FAIL (10.28s)
+      test/integration/Lockstep/ControlHelperTest.hs:115:
+      no result for 000000006ade94130000000000000004 within 10 s; helper output:
+      
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/stale and future requests are refused/' to rerun this test only.
+    unknown operations, bad expect and malformed lines are refused, even when signed:                   FAIL (10.28s)
+      test/integration/Lockstep/ControlHelperTest.hs:115:
+      no result for 000000006ade941d0000000000000006 within 10 s; helper output:
+      
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/unknown operations, bad expect and malformed lines are refused, even when signed/' to rerun this test only.
+    a request whose name does not match its id is refused; other names are ignored:                     FAIL (10.27s)
+      test/integration/Lockstep/ControlHelperTest.hs:115:
+      no result for 000000006ade9428000000000000000c within 10 s; helper output:
+      
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/a request whose name does not match its id is refused; other names are ignored/' to rerun this test only.
+    an oversized request is refused:                                                                    FAIL (10.31s)
+      test/integration/Lockstep/ControlHelperTest.hs:115:
+      no result for 000000006ade9432000000000000000d within 10 s; helper output:
+      
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/an oversized request is refused/' to rerun this test only.
+    a symlinked request is refused without reading its target:                                          FAIL (10.30s)
+      test/integration/Lockstep/ControlHelperTest.hs:115:
+      no result for 000000006ade943c000000000000000e within 10 s; helper output:
+      
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/a symlinked request is refused without reading its target/' to rerun this test only.
+    a request owned by another user or writable by others is refused:                                   FAIL (10.26s)
+      test/integration/Lockstep/ControlHelperTest.hs:115:
+      no result for 000000006ade9446000000000000000f within 10 s; helper output:
+      
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/a request owned by another user or writable by others is refused/' to rerun this test only.
+    a requests directory replaced by a symlink is not read:                                             OK (3.03s)
+    a symlink planted at the result path is not followed:                                               OK (6.02s)
+    two requests run one after the other:                                                               FAIL (30.62s)
+      test/integration/Lockstep/ControlHelperTest.hs:115:
+      no result for 000000006ade945a0000000000000014 within 30 s; helper output:
+      
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/two requests run one after the other/' to rerun this test only.
+    an operation over its time limit is stopped and reported timed-out:                                 FAIL (15.37s)
+      test/integration/Lockstep/ControlHelperTest.hs:115:
+      no result for 000000006ade94780000000000000016 within 15 s; helper output:
+      
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/an operation over its time limit is stopped and reported timed-out/' to rerun this test only.
+    an operation interrupted by a helper crash is reported interrupted after restart:                   FAIL (10.29s)
+      test/integration/Lockstep/ControlHelperTest.hs:439:
+      condition not reached within 10 s
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/an operation interrupted by a helper crash is reported interrupted after restart/' to rerun this test only.
+    a second helper on the same state refuses to start:                                                 FAIL (11.02s)
+      test/integration/Lockstep/ControlHelperTest.hs:387:
+      the second helper kept running
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/a second helper on the same state refuses to start/' to rerun this test only.
+    markup in docker output reaches the result only as constrained text:                                FAIL (20.45s)
+      test/integration/Lockstep/ControlHelperTest.hs:115:
+      no result for 000000006ade949d0000000000000018 within 20 s; helper output:
+      
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/markup in docker output reaches the result only as constrained text/' to rerun this test only.
+    missing containers and installation are reported, not invented:                                     FAIL (20.36s)
+      test/integration/Lockstep/ControlHelperTest.hs:115:
+      no result for 000000006ade94b20000000000000019 within 20 s; helper output:
+      
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/missing containers and installation are reported, not invented/' to rerun this test only.
+    the helper refuses a state directory others can write:                                              FAIL (10.01s)
+      test/integration/Lockstep/ControlHelperTest.hs:419:
+      the helper ran with a world-writable state directory
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/the helper refuses a state directory others can write/' to rerun this test only.
+  root launcher (C-P3.1 L16, L17)
+    help works through a symlink from another directory and names the checkout:                         FAIL
+      test/integration/Lockstep/LauncherTest.hs:71:
+      expected: ExitSuccess
+       but got: ExitFailure 1
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/help works through a symlink from another directory and names the checkout/' to rerun this test only.
+    setup-path for zsh: with consent, a symlink and one marked line in ~/.zprofile:                     FAIL
+      test/integration/Lockstep/LauncherTest.hs:78:
+      expected: ExitSuccess
+       but got: ExitFailure 1
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/setup-path for zsh: with consent, a symlink and one marked line in ~\/.zprofile/' to rerun this test only.
+    setup-path for bash on Linux uses ~/.bashrc:                                                        FAIL
+      test/integration/Lockstep/LauncherTest.hs:88:
+      expected: ExitSuccess
+       but got: ExitFailure 1
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/setup-path for bash on Linux uses ~\/.bashrc/' to rerun this test only.
+    declining changes nothing:                                                                          FAIL
+      test/integration/Lockstep/LauncherTest.hs:96:
+      expected: ExitSuccess
+       but got: ExitFailure 1
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/declining changes nothing/' to rerun this test only.
+    a symlink but no start-up change: the exact line is printed instead:                                FAIL
+      test/integration/Lockstep/LauncherTest.hs:102:
+      expected: ExitSuccess
+       but got: ExitFailure 1
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/a symlink but no start-up change: the exact line is printed instead/' to rerun this test only.
+    another shell: the symlink with consent, start-up files untouched, instructions shown:              FAIL
+      test/integration/Lockstep/LauncherTest.hs:111:
+      expected: ExitSuccess
+       but got: ExitFailure 1
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/another shell: the symlink with consent, start-up files untouched, instructions shown/' to rerun this test only.
+    an existing ~/.local/bin/lockstep that Lockstep did not create is left alone:                       FAIL
+      test/integration/Lockstep/LauncherTest.hs:122:
+      expected: ExitFailure 73
+       but got: ExitFailure 1
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/an existing ~\/.local\/bin\/lockstep that Lockstep did not create is left alone/' to rerun this test only.
+    running setup-path again changes nothing:                                                           FAIL
+      test/integration/Lockstep/LauncherTest.hs:131:
+      expected: ExitSuccess
+       but got: ExitFailure 1
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/running setup-path again changes nothing/' to rerun this test only.
+    with ~/.local/bin already on PATH only the symlink is offered:                                      FAIL
+      test/integration/Lockstep/LauncherTest.hs:138:
+      expected: ExitSuccess
+       but got: ExitFailure 1
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/with ~\/.local\/bin already on PATH only the symlink is offered/' to rerun this test only.
+    a bad instance name is a usage error:                                                               FAIL
+      test/integration/Lockstep/LauncherTest.hs:146:
+      expected: ExitFailure 64
+       but got: ExitFailure 1
+      Use -p '(/C-P3.1/||/control.pane.in/)&&/a bad instance name is a usage error/' to rerun this test only.
+
+44 out of 48 tests failed (269.18s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+Completed 2 action(s).
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

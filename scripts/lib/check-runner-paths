@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# Protected test paths through the real container runner on the host (C-P4.R1 R-P1, R-P2).
+# Needs Docker and the dev image (lockstep-dev:p1). Starts the real scripts/control-helper with
+# --runner on a disposable state directory (.local/runner-paths-<stamp>, instance p4r1r, test
+# limits), signs requests as the service would, and checks that a protected path of every
+# character the Kernel allows is mounted read-only into the real container, and that the paths it
+# refuses are refused by the helper too, before any container starts. Touches nothing of the
+# operator's installation; removes its state and containers at the end.
+# Results: .local/evidence/runner-paths-<stamp>/results.txt
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+root=$PWD
+
+instance=p4r1r
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+state=$root/.local/runner-paths-$stamp
+work=.local/evidence/runner-paths-$stamp
+mkdir -p "$work"
+results=$work/results.txt
+: > "$results"
+failures=0
+prefix=lockstep-run-$instance-
+
+record() { # STATUS DESCRIPTION
+  printf '%s %s\n' "$1" "$2" | tee -a "$results"
+  if [ "$1" != PASS ]; then failures=$((failures + 1)); fi
+}
+
+if ! docker image inspect lockstep-dev:p1 >/dev/null 2>&1; then
+  echo "NOT_RUN: the image lockstep-dev:p1 is missing; run scripts/check first" >&2
+  exit 2
+fi
+
+helper_pid=""
+cleanup() {
+  [ -n "$helper_pid" ] && kill "$helper_pid" 2>/dev/null && wait "$helper_pid" 2>/dev/null
+  docker ps -aq --filter "name=^$prefix" | while read -r c; do docker rm -f "$c" >/dev/null 2>&1 || true; done
+  [ -d "$state/helper" ] && cp "$state/helper/helper.log" "$work/helper.log" 2>/dev/null
+  rm -rf "$state"
+}
+trap cleanup EXIT
+
+umask 077
+mkdir -p "$state/helper" "$state/pane"
+chmod 700 "$state" "$state/helper" "$state/pane"
+head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$state/helper/channel.key"
+LOCKSTEP_RUNNER_TEST_LIMITS=1 "$root/scripts/control-helper" --state "$state" --instance "$instance" --runner \
+  < /dev/null > "$work/helper.out" 2>&1 &
+helper_pid=$!
+for _ in $(seq 1 100); do
+  [ -s "$state/runner/channel.key" ] && break
+  sleep 0.1
+done
+[ -s "$state/runner/channel.key" ] || { echo "the helper did not make the runner key" >&2; cat "$work/helper.out" >&2; exit 1; }
+key=$(head -c 64 "$state/runner/channel.key")
+
+# HMAC-SHA256 exactly as the helper computes it.
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256() { sha256sum | cut -d ' ' -f 1; }
+else
+  sha256() { shasum -a 256 | cut -d ' ' -f 1; }
+fi
+ipad=""
+opad=""
+i=0
+while [ $i -lt 64 ]; do
+  if [ $i -lt 32 ]; then b=$((16#${key:$((i * 2)):2})); else b=0; fi
+  ipad="$ipad$(printf '\\x%02x' $((b ^ 0x36)))"
+  opad="$opad$(printf '\\x%02x' $((b ^ 0x5c)))"
+  i=$((i + 1))
+done
+hex_escapes() {
+  local hex=$1 out="" j=0
+  while [ $j -lt ${#hex} ]; do out="$out\\x${hex:$j:2}"; j=$((j + 2)); done
+  printf '%s' "$out"
+}
+hmac() {
+  local inner
+  inner=$({ printf "$ipad"; cat; } | sha256)
+  { printf "$opad"; printf "$(hex_escapes "$inner")"; } | sha256
+}
+new_id() { head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+
+# probe PATH: a run-write whose program tries to change the protected file at PATH and reads it.
+# Sets res (the result file) and out (the run's standard output).
+probe() {
+  local p=$1 run id dir body tmp n=0
+  run=$(new_id)
+  id=$(new_id)
+  dir=$state/runner/work/$run
+  mkdir -p "$dir/tree" "$dir/input" "$dir/output"
+  mkdir -p "$dir/tree/$(dirname -- "$p")"
+  printf 'frozen\n' > "$dir/tree/$p"
+  printf '%s\n' "$p" > "$dir/protected"
+  : > "$dir/argv"
+  for a in /bin/sh -c 'echo forged > "$1" 2>/dev/null && echo wrote || echo refused; cat "$1"' probe "$p"; do printf '%s\0' "$a" >> "$dir/argv"; done
+  body=$(printf 'lockstep-runner-request 1\nid %s\nissued %s\nop run-write\nexpect run-%s\nargv %s\n' "$id" "$(date +%s)" "$run" "$(sha256 < "$dir/argv")")
+  tmp=$state/runner/requests/.$id
+  printf '%s\n' "$body" > "$tmp"
+  printf 'mac %s\n' "$(printf '%s\n' "$body" | hmac)" >> "$tmp"
+  mv "$tmp" "$state/runner/requests/$id.rreq"
+  res=$state/runner/results/$id.res
+  while [ ! -f "$res" ] && [ $n -lt 400 ]; do sleep 0.1; n=$((n + 1)); done
+  out=$(cat "$dir/stdout" 2>/dev/null || true)
+  host=$(cat "$dir/tree/$p" 2>/dev/null || true)
+}
+field() { sed -n "s/^$1 //p" "$res" | head -n 1; }
+
+# Every character the Kernel's rule allows (C-P4.R1 R-P1), in a real bind mount.
+for p in 'tests/test_calc.py' 'test_add+v1.2@x-y.py' 'a/b/C_d-e.f+g@h.py'; do
+  probe "$p"
+  if [ -f "$res" ] && [ "$(field outcome)" = exited ] && [ "$(echo "$out" | tr '\n' ' ')" = "refused frozen " ] && [ "$host" = frozen ]; then
+    record PASS "allowed path $p: mounted read-only in the container, readable, unchanged on the host"
+  else
+    record FAIL "allowed path $p: outcome $( [ -f "$res" ] && field outcome || echo none ), output '$out', host '$host'"
+  fi
+done
+
+# Paths the Kernel refuses: the helper refuses them too, and no container starts.
+for p in 'tests/test bug.py' 'tests/a,b.py' 'tests/a=b.py' 'tests/x:y.py'; do
+  probe "$p"
+  if [ -f "$res" ] && [ "$(field outcome) $(field reason)" = "refused protected-invalid" ]; then
+    record PASS "refused path '$p': the helper refuses it (protected-invalid)"
+  else
+    record FAIL "refused path '$p': outcome $( [ -f "$res" ] && field outcome || echo none ) $( [ -f "$res" ] && field reason || true )"
+  fi
+done
+
+echo "check-runner-paths: $failures failure(s); results in $results"
+[ "$failures" = 0 ]

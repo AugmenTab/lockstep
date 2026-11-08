@@ -1,0 +1,52 @@
+3adc064e6be97ab02fb403e62243024de7a6e43e
+Application
+Effects
+Foundation
+Kernel
+Persistence
+Web
+format PASSED
+lint PASSED
+build PASSED
+unit PASSED
+integration FAILED
+    the pane shows the list and sends add-folder for its own session only:                                                                                                              OK (0.70s)
+  guided project setup in a real browser (C-P3.5)
+    pane: add a folder → Open Lockstep → Projects → a project in a new folder, then one in the added folder:                                                                            OK (100.65s)
+  tasks in projects (C-P3.6; real PostgreSQL)
+    a task is a proposed Ticket with one event, in a project that has no folder:                                                                                                        OK (0.31s)
+    rules come first, and a refused task creates nothing:                                                                                                                               OK (0.26s)
+    a repeated creation key returns the first task and creates nothing:                                                                                                                 OK (0.27s)
+    an edit changes the task, a new title is a revision event, and a stale edit changes nothing:                                                                                        OK (0.26s)
+    dependencies stay inside the project and never loop:                                                                                                                                OK (0.17s)
+    ready, block, unblock and cancel are Ticket decisions with their revision; stale and illegal ones are refused:                                                                      OK (0.34s)
+    readiness comes from stored facts: waiting, cannot start, and the most important ready task:                                                                                        OK (0.35s)
+    tasks of other projects are not listed, and unknown tasks are refused:                                                                                                              OK (0.16s)
+  task pages over HTTP (C-P3.6)
+    the new-task form asks what needs doing, what done looks like, priority and what comes first:                                                                                       OK (0.92s)
+    creating needs the session and this origin; the answer is the task page, and nothing runs it:                                                                                       OK (0.65s)
+    the project page lists its tasks, most important first, and names the most important ready one:                                                                                     OK (0.72s)
+    an edit with an old revision is explained and changes nothing:                                                                                                                      OK (0.68s)
+    the actions follow the task's state:                                                                                                                                                OK (0.75s)
+    text people typed is escaped on the task and project pages:                                                                                                                         OK (0.64s)
+    the Tasks section lists tasks as links, with no form or button:                                                                                                                     OK (0.61s)
+    unknown tasks and other addresses are 404; bodies over 16 KiB are refused:                                                                                                          OK (0.66s)
+  tasks in a real browser across a restart (C-P3.6)
+    a project, two tasks, a dependency, ready, a blocked high-priority task, a restart, the same words; a keyboard-only form:                                                           OK (242.64s)
+
+2 out of 343 tests failed (980.90s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

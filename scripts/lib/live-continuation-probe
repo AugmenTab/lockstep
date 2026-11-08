@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+# Conversation requests to the egress proxy for scripts/lib/check-live-concurrency
+# (contract C-P4.L.R2 §11; test only), written with a JSON serializer. Answers
+# come from scripts/lib/live-upstream-tools (one tool call each).
+#
+#   live-continuation-probe MODEL EFFORT ACTION [ARG]
+#
+#   opening            one opening;                      prints "opening STATUS ID"
+#   open-pair          two identical openings at once;   prints "open-pair STATUS STATUS" (sorted)
+#   chain ID N         N continuations one after another, each answering the last answer's tool call;
+#                      prints "chain STATUS... LAST-ID"
+#   again ID           one continuation answering ID;    prints "again STATUS ID"
+#   pair ID            two continuations answering ID at once; prints "pair STATUS STATUS" (sorted)
+#   forged             a continuation answering a tool call never issued; prints "forged STATUS"
+import http.client
+import json
+import sys
+import threading
+
+
+def post(model, effort, messages):
+    """The status and the tool-call id of the answer (or "-")."""
+    body = json.dumps({"model": model, "max_tokens": 100, "stream": True, "output_config": {"effort": effort},
+                       "messages": messages}).encode()
+    try:
+        c = http.client.HTTPConnection("lockstep-egress", 8080, timeout=30)
+        c.request("POST", "/v1/messages?beta=true", body, {"content-type": "application/json"})
+        r = c.getresponse()
+        text = r.read().decode("utf-8", "replace")
+    except OSError:
+        return "error", "-"
+    tool = "-"
+    for line in text.split("\n"):
+        if line.startswith("data:"):
+            try:
+                event = json.loads(line[5:])
+            except ValueError:
+                continue
+            block = event.get("content_block") if isinstance(event, dict) else None
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                tool = block.get("id", "-")
+    return str(r.status), tool
+
+
+def opening():
+    return [{"role": "user", "content": "fix the bug"}]
+
+
+def answering(tool):
+    return [{"role": "user", "content": "fix the bug"},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": tool, "name": "Bash",
+                                               "input": {"command": "true"}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool, "content": "ok"}]}]
+
+
+def at_once(model, effort, messages):
+    results = []
+    lock = threading.Lock()
+
+    def one():
+        status, _ = post(model, effort, messages)
+        with lock:
+            results.append(status)
+
+    threads = [threading.Thread(target=one) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return sorted(results)
+
+
+def main():
+    model, effort, action = sys.argv[1], sys.argv[2], sys.argv[3]
+    if action == "opening":
+        print("opening", *post(model, effort, opening()))
+    elif action == "open-pair":
+        print("open-pair", *at_once(model, effort, opening()))
+    elif action == "chain":
+        tool, statuses = sys.argv[4], []
+        for _ in range(int(sys.argv[5])):
+            status, tool = post(model, effort, answering(tool))
+            statuses.append(status)
+        print("chain", *statuses, tool)
+    elif action == "again":
+        print("again", *post(model, effort, answering(sys.argv[4])))
+    elif action == "pair":
+        print("pair", *at_once(model, effort, answering(sys.argv[4])))
+    elif action == "forged":
+        print("forged", post(model, effort, answering("toolu_never"))[0])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

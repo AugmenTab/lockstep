@@ -1,0 +1,116 @@
+All test running disabled by --no-run-tests flag. To mute this message in future, set
+notify-if-no-run-tests: false in Stack's configuration.
+lockstep> configure (lib + exe + test)
+Configuring lockstep-0.2.0.0...
+lockstep> build (lib + exe + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+[ 1 of 28] Compiling Lockstep.Foundation.Config
+[ 2 of 28] Compiling Lockstep.Foundation.Cli
+[ 3 of 28] Compiling Lockstep.Foundation.OperatorToken
+[ 4 of 28] Compiling Lockstep.Foundation.SystemConfig
+[ 5 of 28] Compiling Lockstep.Persistence.Connection
+[ 6 of 28] Compiling Lockstep.Persistence.Migration
+[ 7 of 28] Compiling Lockstep.Persistence.Migrate
+[ 8 of 28] Compiling Lockstep.Persistence.Migrations
+[ 9 of 28] Compiling Lockstep.Persistence.OperatorSessions
+[10 of 28] Compiling Lockstep.Persistence.Queries
+[11 of 28] Compiling Lockstep.Application.Database
+[12 of 28] Compiling Lockstep.Application.OperatorTrust
+[13 of 28] Compiling Lockstep.Web.Common
+[14 of 28] Compiling Lockstep.Web.Handler.NoUser
+[15 of 28] Compiling Lockstep.Web.RequestGuard
+[16 of 28] Compiling Lockstep.Web.Server
+[17 of 28] Compiling Lockstep.Web.Static
+[18 of 28] Compiling Lockstep.Web.Components.Page
+[19 of 28] Compiling Lockstep.Web.Operator
+[20 of 28] Compiling Lockstep.Web.Components.Page404
+[21 of 28] Compiling Lockstep.Web.Types
+[22 of 28] Compiling Lockstep.Web.Handler.NoPermissionError
+[23 of 28] Compiling Lockstep.Web.Readiness
+[24 of 28] Compiling Lockstep.Web.Liveness
+[25 of 28] Compiling Lockstep.Web.Health
+[26 of 28] Compiling Lockstep.Web.Routes
+[27 of 28] Compiling Lockstep.Web.Application
+[28 of 28] Compiling Paths_lockstep
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+[1 of 1] Compiling Main
+[2 of 2] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep/lockstep
+Preprocessing test suite 'lockstep-unit' for lockstep-0.2.0.0...
+Building test suite 'lockstep-unit' for lockstep-0.2.0.0...
+[ 1 of 17] Compiling Lockstep.Application.CommandTest
+[ 2 of 17] Compiling Lockstep.Application.ReadinessTest
+/work/test/unit/Lockstep/Application/CommandTest.hs:18:1: error: [GHC-61948]
+    Could not find module ‘Lockstep.Application.Command’.
+    Perhaps you meant
+      Lockstep.Application.Database (from lockstep-0.2.0.0)
+    Use -v to see a list of the files searched for.
+   |
+18 | import Lockstep.Application.Command
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^...
+
+[ 3 of 17] Compiling Lockstep.Foundation.CliDbTest
+[ 4 of 17] Compiling Lockstep.Foundation.CliOperatorTest
+[ 5 of 17] Compiling Lockstep.Foundation.CliTest
+[ 6 of 17] Compiling Lockstep.Foundation.CliWorkspaceTest
+[ 7 of 17] Compiling Lockstep.Foundation.OperatorTokenTest
+/work/test/unit/Lockstep/Foundation/CliWorkspaceTest.hs:9:81: error: [GHC-61689]
+    Module ‘Lockstep.Foundation.Cli’ does not export ‘RenameArgs(..)’.
+  |
+9 | import Lockstep.Foundation.Cli (BackupPolicy (..), CliError (..), Command (..), RenameArgs (..), parseArgs)
+  |                                                                                 ^^^^^^^^^^^^^^^
+
+[ 8 of 17] Compiling Lockstep.Foundation.SystemConfigTest
+[ 9 of 17] Compiling Lockstep.Persistence.MigrationTest
+[10 of 17] Compiling Lockstep.Web.ApplicationTest
+[11 of 17] Compiling Lockstep.Web.CommandRoutesTest
+[12 of 17] Compiling Lockstep.Web.LivenessPageTest
+[13 of 17] Compiling Lockstep.Web.OperatorRoutesTest
+[14 of 17] Compiling Lockstep.Web.ReadinessRouteTest
+[15 of 17] Compiling Lockstep.Web.RequestGuardTest
+[16 of 17] Compiling Lockstep.Web.ServerTest
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       [S-7011]
+       While building package lockstep-0.2.0.0 (scroll up to its section to see the error) using:
+       /stack-root/setup-exe-cache/aarch64-linux/Cabal-simple_w2MFVN35_3.12.1.0_ghc-9.10.3 --verbose=1 --builddir=.stack-work/dist/aarch64-linux/ghc-9.10.3 build lib:lockstep exe:lockstep test:lockstep-integration test:lockstep-unit --ghc-options ""
+       Process exited with code: ExitFailure 1 
+All test running disabled by --no-run-tests flag. To mute this message in future, set
+notify-if-no-run-tests: false in Stack's configuration.
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+Preprocessing test suite 'lockstep-unit' for lockstep-0.2.0.0...
+Building test suite 'lockstep-unit' for lockstep-0.2.0.0...
+[ 1 of 17] Compiling Lockstep.Application.CommandTest
+/work/test/unit/Lockstep/Application/CommandTest.hs:18:1: error: [GHC-61948]
+    Could not find module ‘Lockstep.Application.Command’.
+    Perhaps you meant
+      Lockstep.Application.Database (from lockstep-0.2.0.0)
+    Use -v to see a list of the files searched for.
+   |
+18 | import Lockstep.Application.Command
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^...
+
+[ 6 of 17] Compiling Lockstep.Foundation.CliWorkspaceTest
+/work/test/unit/Lockstep/Foundation/CliWorkspaceTest.hs:9:81: error: [GHC-61689]
+    Module ‘Lockstep.Foundation.Cli’ does not export ‘RenameArgs(..)’.
+  |
+9 | import Lockstep.Foundation.Cli (BackupPolicy (..), CliError (..), Command (..), RenameArgs (..), parseArgs)
+  |                                                                                 ^^^^^^^^^^^^^^^
+
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       [S-7011]
+       While building package lockstep-0.2.0.0 (scroll up to its section to see the error) using:
+       /stack-root/setup-exe-cache/aarch64-linux/Cabal-simple_w2MFVN35_3.12.1.0_ghc-9.10.3 --verbose=1 --builddir=.stack-work/dist/aarch64-linux/ghc-9.10.3 build lib:lockstep test:lockstep-unit --ghc-options ""
+       Process exited with code: ExitFailure 1 
