@@ -28,7 +28,9 @@ import Lockstep.Application.ProjectChecks (Standing (..))
 import Lockstep.Application.Projects (ProjectView (..))
 import Lockstep.Application.Tasks (TaskView (..))
 import Lockstep.Kernel.Execution (executionRefusalWords)
+import Lockstep.Kernel.Identity (InvocationId (..), RepositoryId (..), identityText)
 import Lockstep.Kernel.Policy (ineligibilityWords)
+import Lockstep.Kernel.Profile (profileIdText)
 import Lockstep.Kernel.Roles (CandidateTest (..), Criterion (..))
 import Lockstep.Kernel.Task (TaskReadiness (..))
 import Lockstep.Web.Fragment (attr, cls)
@@ -67,7 +69,7 @@ projectExecutionSection project status started key =
       , E.form
           [attr "id" "enable-form", A.method B.FormPOST, A.action (B.mkRawURL ("/app/api/projects/" <> projectId project <> "/execution"))]
           [ hidden "key" key
-          , hidden "expected" (fromMaybe "none" current)
+          , hidden "expected" (maybe "none" profileIdText current)
           , hidden "expected_set" (maybe "no" (const "yes") current)
           , E.button [attr "id" "enable-execution", attr "type" "submit", cls "ls-primary"] [E.text "Let Lockstep fix bugs here"]
           ]
@@ -84,7 +86,7 @@ projectExecutionSection project status started key =
           , E.dl
               [cls "ls-facts"]
               ( fact "Engineer" (enablementEngineer e)
-                  <> fact "Repository" (enablementRepository e)
+                  <> fact "Repository" (identityText (enablementRepository e))
                   <> fact "Checks in force" (enablementChecks e <> " version " <> T.pack (show (enablementChecksVersion e)) <> " " <> enablementChecksDigest e)
                   <> fact "Allowed" (enablementAt e <> " by " <> enablementActor e)
               )
@@ -306,7 +308,7 @@ transactionSection a tx request key =
               <> fact "Verified commit" (maybe "none" fst (evidencePassed ev))
               <> fact "Reviewed commit" (maybe "none" reviewCommit (evidenceReview ev))
               <> fact "Unreadable records" (if L.null (evidenceUnreadable ev) then "none" else T.unwords (fmap (T.pack . show) (evidenceUnreadable ev)))
-              <> L.concat [fact ("Run " <> invocationWhat i) (invocationStage i <> " " <> fromMaybe "unfinished" (invocationOutcome i) <> " " <> invocationId i) | i <- viewInvocations tx]
+              <> L.concat [fact ("Run " <> invocationWhat i) (invocationStage i <> " " <> fromMaybe "unfinished" (invocationOutcome i) <> " " <> identityText (invocationId i)) | i <- viewInvocations tx]
           )
       ]
 

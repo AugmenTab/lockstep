@@ -126,7 +126,8 @@ import Lockstep.Foundation.SystemConfig
   , renderConfigError
   )
 import Lockstep.Kernel.Effect (Intent (..), IntentRequest (..), OperationId (..), effectKeyText, intentStateName)
-import Lockstep.Kernel.Identity (EngineerId (..), RepositoryId (..), TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..), identityText, parseUuid, uuidText)
+import Lockstep.Kernel.Identity (EngineerId (..), JobId (..), ReceiptId (..), RepositoryId (..), TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..), identityText, jobIdNumber, parseUuid, uuidText)
+import Lockstep.Kernel.Profile (profileIdText)
 import Lockstep.Kernel.Reconciliation (Resolution (..))
 import Lockstep.Kernel.Ticket qualified as Ticket
 import Lockstep.Kernel.Transition qualified as K
@@ -407,14 +408,14 @@ jobQueue args runtime = do
 
 jobShow :: Integer -> DatabaseRuntime -> IO ()
 jobShow ident runtime = do
-  found <- findJob runtime (fromInteger ident)
+  found <- findJob runtime (JobId (fromInteger ident))
   case found of
     Nothing ->
       refuse ("no job " <> show ident)
     Just job -> do
       putStrLn
         ( "job "
-            <> show (jobId job)
+            <> show (jobIdNumber (jobId job))
             <> " "
             <> T.unpack (jobStateCode (jobState job))
             <> " steps "
@@ -434,7 +435,8 @@ submitAndReport runtime envelope expected = do
     Right receipt -> do
       suffix <-
         case receiptOutcome receipt of
-          Queued -> maybe "" (\job -> " job " <> show (jobId job)) <$> findJobForReceipt runtime (receiptId receipt)
+          -- The receipt carries its id as a number (a frozen-test boundary); it is a receipt's id.
+          Queued -> maybe "" (\job -> " job " <> show (jobIdNumber (jobId job))) <$> findJobForReceipt runtime (ReceiptId (receiptId receipt))
           _ -> pure ""
       putStrLn (receiptLine receipt suffix)
       case receiptOutcome receipt of
@@ -512,7 +514,7 @@ repositoryList runtime = do
 repositoryLine :: RepositoryRecord -> String
 repositoryLine repository =
   "repository "
-    <> T.unpack (repositoryRecordId repository)
+    <> T.unpack (identityText (repositoryRecordId repository))
     <> " owner "
     <> T.unpack (repositoryRecordOwner repository)
     <> " authoritative "
@@ -539,7 +541,7 @@ profileFailure failure =
 
 storedLine :: StoredProfile -> String
 storedLine stored =
-  "profile " <> T.unpack (storedId stored) <> " version " <> show (storedVersion stored) <> " digest " <> T.unpack (storedDigest stored)
+  "profile " <> T.unpack (profileIdText (storedId stored)) <> " version " <> show (storedVersion stored) <> " digest " <> T.unpack (storedDigest stored)
 
 profileAdd :: String -> DatabaseRuntime -> IO ()
 profileAdd file runtime = do

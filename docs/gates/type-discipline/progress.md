@@ -89,6 +89,25 @@ lockstep-compliance **34/34** (`.local/td-compliance-2.log`).
 - Qualification (`scripts/check --integration`, working tree over `5947b7b`, `.local/td-check-B.log`): format, lint,
   build, unit **870/870**, guard, integration **571/571**, backup/restore — all PASSED; compliance **38/38**.
 
+### Independent review of `5947b7b` + `cd2aea5` and resolutions
+
+| Finding | Resolution |
+|---|---|
+| H1 JobId, ReceiptId, ProfileId missing | `JobId`/`ReceiptId` (Int64 newtypes, `Show` = the bare number, so no rendered byte changes) key `lockstep_command_receipts`/`lockstep_jobs` (`Entity.serialKeyField`; `jobs.receipt_id` derived with `foreignKeyTo`), carried through CommandCenter, Dispatcher, Command, Web/Operator, Web/CommandCenter, Main. The Kernel's `ProfileId` is a typed column (`codeField` over `mkProfileId`) through Profiles, repository profiles, Ledger sources, enablements |
+| M1 pinned list inaccurate | Unpinned fields typed (`InvocationView.invocationId`, `RepositoryRecord.repositoryRecordId`, `Enablement.enablementRepository`, `StoredMessage.messageRequest`, `TransactionView.viewTask`); `projectStarted :: ProjectId`, `haltRequest :: TransactionId`; `listTasks` added to the list; `Command.Receipt.receiptId` (Int64) pinned by `CommandTest` |
+| M2 render-then-parse | `Conversation.openRequestAbout` (typed `WorkOrderId`) used by the Engine; the pinned `openRequest` parses and delegates. The project page shows "could not read whether it has started work" on a failure (was `fromRight False`) |
+| M3 untested behaviour change | `decidedReceipt` treats non-canonical text as no such receipt (`Right Nothing`), not `unavailable`; compliance test |
+| M4 negative fixture not in qualification | compliance `NegativeTypesTest` with `should-not-typecheck` (compliance suite only): a `WorkOrderId` where a `ProjectId` is required, and a `TaskId` as the project table's key, do not typecheck; a control does |
+| L1 hand-formatted UUIDs | Not changed: frozen `ClaudeAdapterTest` pins `sessionIdOf` (derived from the 32-hex workspace name) |
+| L2 `foreignKeyTo` takes the key field separately | Recorded |
+| L3 undocumented FK omissions | Comments added (tickets/work orders → subjects; tasks.ticket_id → tickets: key types differ) |
+| L4–L7 | Recorded for Increments C (`DecisionSubject` sum), E (Web `validId`, two-kind route) and F |
+| (found while fixing) `Web/Operator.parseReceiptId` wrapped a large URL number with `fromInteger` | `toIntegralSized`: out of range is no receipt |
+
+Qualification after the fixes (`.local/td-check-B2.log`, over `cd2aea5`): format, lint, build, unit **870/870**, guard
+PASSED; integration **570/571**, the one failure again the `LifecycleHelperTest` journal race (owner item above;
+group re-run 16/16, `.local/td-lifecycle-rerun-2.log`); compliance **42/42**.
+
 Behavioural differences (deliberate): an expected revision above `Int64` is refused (was wrapped); a Ledger revision
 or generation above `Int32` is refused before anything is written (was wrapped into a refusal or observation row); a
 corrupt setup or stage column is a read failure (was shown as organized / basis); `lockstep db migrate` prints

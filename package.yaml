@@ -158,6 +158,7 @@ tests:
       - json-fleece-aeson
       - memory
       - orville-postgresql
+      - should-not-typecheck
       - tasty
       - tasty-hunit
       - text

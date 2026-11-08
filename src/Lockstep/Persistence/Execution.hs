@@ -32,9 +32,11 @@ import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
 
 import Lockstep.Kernel.Identity (ProjectId, RepositoryId, TaskId, WorkOrderId)
+import Lockstep.Kernel.Profile (ProfileId)
 import Lockstep.Persistence.Entity (foreignKeyTo)
 import Lockstep.Persistence.Fields (headMay, selectJoined, tableReference)
 import Lockstep.Persistence.Ledger (WorkOrderRow (..), workOrderIdField, workOrderTable)
+import Lockstep.Persistence.Profiles (profileIdColumn)
 import Lockstep.Persistence.Projects (projectIdField, projectRepositoryField, projectTable)
 import Lockstep.Persistence.Repositories (repositoryIdField, repositoryTable)
 import Lockstep.Persistence.Tasks (taskIdField, taskTable)
@@ -47,7 +49,7 @@ data EnablementRow
   , enablementRowRepository :: RepositoryId
   , enablementRowEngineer :: T.Text
   , enablementRowFolder :: T.Text
-  , enablementRowProfile :: T.Text
+  , enablementRowProfile :: ProfileId
   , enablementRowProfileVersion :: Int32
   , enablementRowProfileDigest :: T.Text
   , enablementRowActor :: T.Text
@@ -86,7 +88,7 @@ enablementTable =
       <*> O.marshallField enablementRowRepository enablementRepositoryField
       <*> O.marshallField enablementRowEngineer enablementEngineerField
       <*> O.marshallField enablementRowFolder enablementFolderField
-      <*> O.marshallField enablementRowProfile (O.unboundedTextField "profile_id")
+      <*> O.marshallField enablementRowProfile (profileIdColumn "profile_id")
       <*> O.marshallField enablementRowProfileVersion (O.integerField "profile_version")
       <*> O.marshallField enablementRowProfileDigest (O.unboundedTextField "profile_digest")
       <*> O.marshallField enablementRowActor (O.unboundedTextField "actor")

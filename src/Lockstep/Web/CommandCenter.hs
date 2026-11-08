@@ -38,6 +38,7 @@ import Lockstep.Foundation.EvidenceModel
   , dispositionClass
   , dispositionLabel
   )
+import Lockstep.Kernel.Identity (receiptIdNumber)
 import Lockstep.Web.Components.Page (page)
 
 data MatrixRow
@@ -184,7 +185,7 @@ activityTable rows =
             []
             [ E.th
                 [custom "scope" (txt "row")]
-                [E.a [A.href (B.mkRawURL (T.pack ("/operator/receipts/" <> show (activityReceipt r))))] [E.text (T.pack (show (activityReceipt r)))]]
+                [E.a [A.href (B.mkRawURL (T.pack ("/operator/receipts/" <> show (receiptIdNumber (activityReceipt r)))))] [E.text (T.pack (show (receiptIdNumber (activityReceipt r))))]]
             , E.td [] [E.text (activityKind r)]
             , E.td [] [E.code [] [E.text (activityOutcome r)]]
             , E.td [] [E.text (T.pack (show (activityRevision r)))]

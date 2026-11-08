@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeFamilies #-}
+
 {- | Storage for the workspace and command receipts (contract C-P1.4 E5, E7).
 Callers run these inside one transaction; 'lockWorkspace' takes the row lock
 that serializes every command.
@@ -27,11 +29,13 @@ import Data.Time qualified as Time
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
 
+import Lockstep.Kernel.Identity (ReceiptId (..))
+import Lockstep.Persistence.Entity (EntityKey, serialKeyField)
 import Lockstep.Persistence.Fields (digestField, forUpdate, headMay, hexDigest, setNow)
 
 data ReceiptRow
   = ReceiptRow
-  { rowId :: Int64
+  { rowId :: ReceiptId
   , rowKey :: T.Text
   , rowKind :: T.Text
   , rowDigestHex :: T.Text
@@ -41,6 +45,8 @@ data ReceiptRow
   , rowRevision :: Int64
   , rowAcceptedAt :: Time.UTCTime
   }
+
+type instance EntityKey ReceiptRow = ReceiptId
 
 data NewReceipt
   = NewReceipt
@@ -101,9 +107,11 @@ updateWorkspace name revision =
 
 {- | A receipt is written as a 'NewReceipt' and read back as a 'ReceiptRow'
 with its id, its payload digest as lowercase hex, and the time the database
-accepted it.
+accepted it. Its key is the database's, so the write type differs from the
+read type and it has no 'Lockstep.Persistence.Entity.mkEntityTable' marshaller
+of its own; the key is still 'ReceiptRow''s ('EntityKey').
 -}
-receiptTable :: O.TableDefinition (O.HasKey Int64) NewReceipt ReceiptRow
+receiptTable :: O.TableDefinition (O.HasKey (EntityKey ReceiptRow)) NewReceipt ReceiptRow
 receiptTable =
   O.mkTableDefinition "lockstep_command_receipts" (O.primaryKey receiptIdField) $
     (\receiptId key _version kind digest actor expected outcome revision acceptedAt -> ReceiptRow receiptId key kind (hexDigest digest) actor expected outcome revision acceptedAt)
@@ -118,9 +126,9 @@ receiptTable =
       <*> O.marshallField newRevision receiptRevisionField
       <*> O.marshallReadOnlyField receiptAcceptedAtField
 
-receiptIdField :: O.FieldDefinition O.NotNull Int64
+receiptIdField :: O.FieldDefinition O.NotNull ReceiptId
 receiptIdField =
-  O.bigIntegerField "id"
+  serialKeyField "id"
 
 receiptKindField :: O.FieldDefinition O.NotNull T.Text
 receiptKindField =
@@ -150,11 +158,11 @@ findReceiptByKey :: O.MonadOrville m => T.Text -> m (Maybe ReceiptRow)
 findReceiptByKey key =
   O.findFirstEntityBy receiptTable (O.where_ (O.fieldEquals receiptKeyField key))
 
-findReceiptById :: O.MonadOrville m => Int64 -> m (Maybe ReceiptRow)
+findReceiptById :: O.MonadOrville m => ReceiptId -> m (Maybe ReceiptRow)
 findReceiptById =
   O.findEntity receiptTable
 
 -- | Inserts a receipt; returns its id and acceptance time.
-insertReceipt :: O.MonadOrville m => NewReceipt -> m (Maybe (Int64, Time.UTCTime))
+insertReceipt :: O.MonadOrville m => NewReceipt -> m (Maybe (ReceiptId, Time.UTCTime))
 insertReceipt receipt =
   fmap (\row -> (rowId row, rowAcceptedAt row)) . headMay <$> O.insertAndReturnEntities receiptTable (receipt :| [])

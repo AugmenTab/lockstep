@@ -16,6 +16,7 @@ module Lockstep.Application.Tasks
   , listTasks
   , listAllTasks
   , findTask
+  , findTaskById
   , findTaskIn
   , findTaskWithProjectIn
   , mostImportantReadyTask
@@ -323,14 +324,16 @@ replayed row =
 
 findTask :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe TaskView))
 findTask runtime rawId =
-  case parseIdentity rawId of
-    Nothing -> pure (Right Nothing)
-    Just tid ->
-      whenReady runtime . withDatabase runtime $ do
-        found <- Store.findTaskRow tid
-        case found of
-          Nothing -> pure Nothing
-          Just row -> Just <$> replayed row
+  maybe (pure (Right Nothing)) (findTaskById runtime) (parseIdentity rawId)
+
+-- | 'findTask' for a task identity.
+findTaskById :: DatabaseRuntime -> TaskId -> IO (Either NotReadyReason (Maybe TaskView))
+findTaskById runtime tid =
+  whenReady runtime . withDatabase runtime $ do
+    found <- Store.findTaskRow tid
+    case found of
+      Nothing -> pure Nothing
+      Just row -> Just <$> replayed row
 
 -- | A task as it stands, inside the caller's transaction (C-P4.1 X6); a Ticket that does not replay is its code.
 findTaskIn :: TaskId -> O.Orville (Maybe (Either T.Text TaskView))

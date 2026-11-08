@@ -18,8 +18,9 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, testCase, (@?=))
 import Text.Show (Show)
 
+import Lockstep.Application.Decisions (DecisionReceipt (..), decidedReceipt)
 import Lockstep.Application.Identity (newIdentity)
-import Lockstep.Compliance.Support (identity, textQuery, withMigrated)
+import Lockstep.Compliance.Support (identity, textQuery, withMigrated, withMigratedRuntime)
 import Lockstep.Kernel.Effect (OperationId (..))
 import Lockstep.Kernel.Identity
   ( AttemptId (..)
@@ -40,6 +41,7 @@ import Lockstep.Kernel.Identity
   , parseUuid
   , uuidText
   )
+import Lockstep.Persistence.DecisionReceipts qualified as Receipts
 import Lockstep.Persistence.Ledger (TicketRow (..), findTicket, insertSubject, insertTicket)
 import Lockstep.Persistence.Projects (ProjectRow (..), findProjectById, insertProject)
 
@@ -116,4 +118,29 @@ tests =
           run (insertTicket ticket "A ticket")
           stored' <- run (findTicket ticket)
           fmap ticketRowId stored' @?= Just ticket
+    , testCase "a decision receipt asked for by non-canonical text is no receipt (not 'unavailable'); by its canonical id it is found" $
+        withMigratedRuntime $ \runtime run -> do
+          subject <- identity "0b1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+          inserted <-
+            run
+              ( Receipts.insertReceipt
+                  Receipts.ReceiptRow
+                    { Receipts.receiptRowKey = "compliance-receipt-0001"
+                    , Receipts.receiptRowDigest = T.replicate 64 "a"
+                    , Receipts.receiptRowSubject = subject
+                    , Receipts.receiptRowChoice = "cancel"
+                    , Receipts.receiptRowExpected = 1
+                    , Receipts.receiptRowOutcome = "applied"
+                    , Receipts.receiptRowRefusal = Nothing
+                    , Receipts.receiptRowActor = "application-session"
+                    , Receipts.receiptRowBasis = Nothing
+                    }
+              )
+          assertBool "the receipt was inserted" inserted
+          found <- decidedReceipt runtime (uuidText subject)
+          fmap (fmap receiptSubject) found @?= Right (Just (uuidText subject))
+          upper <- decidedReceipt runtime (T.toUpper (uuidText subject))
+          fmap (fmap receiptSubject) upper @?= Right Nothing
+          malformed <- decidedReceipt runtime "not-a-uuid"
+          fmap (fmap receiptSubject) malformed @?= Right Nothing
     ]

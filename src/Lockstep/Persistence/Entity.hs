@@ -29,6 +29,7 @@ module Lockstep.Persistence.Entity
   , foreignKeyTo
   , nullableForeignKeyTo
   , identityField
+  , serialKeyField
   ) where
 
 import Data.Coerce (Coercible)
@@ -57,6 +58,14 @@ keyField =
 identityField :: Coercible UUID key => String -> O.FieldDefinition O.NotNull key
 identityField =
   O.coerceField . O.uuidField
+
+{- | The key of one of the command tables that predate the UUID identities
+(C-P1.4, C-P1.5): a @bigserial@ the database assigns, so it is only ever read
+('O.marshallReadOnlyField'), typed as its identity.
+-}
+serialKeyField :: Coercible Int64 key => String -> O.FieldDefinition O.NotNull key
+serialKeyField =
+  O.coerceField . O.bigIntegerField
 
 {- | A column referencing another table's key: the referenced key's type, and
 the foreign-key constraint to it, taken from that table's definition.

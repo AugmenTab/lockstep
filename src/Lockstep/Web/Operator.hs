@@ -21,6 +21,7 @@ import Brigid.HTML.Render.ByteString (renderLazyHTML)
 import Brigid.HTML.Types qualified as HTML
 import Brigid.Types qualified as B
 import Control.Monad (unless)
+import Data.Bits (toIntegralSized)
 import Data.ByteString qualified as BS
 import Data.List qualified as L
 import Data.Maybe (fromMaybe)
@@ -64,6 +65,7 @@ import Lockstep.Application.OperatorTrust
   , revokeSession
   )
 import Lockstep.Foundation.OperatorToken (RawToken, csrfFor, csrfMatches, decodeToken, encodeToken)
+import Lockstep.Kernel.Identity (ReceiptId (..), jobIdNumber)
 import Lockstep.Web.CommandCenter (commandCenterPage)
 import Lockstep.Web.Components.Page (page)
 import Lockstep.Web.LedgerPage (ledgerFailurePage, ledgerPage)
@@ -328,9 +330,10 @@ decimal bytes =
     then Just (BS.foldl' (\acc w -> acc * 10 + toInteger (w - 48)) 0 bytes)
     else Nothing
 
-parseReceiptId :: T.Text -> Maybe Int64
+-- | A receipt number from the URL; one outside the key's range is no receipt (it never wraps to another).
+parseReceiptId :: T.Text -> Maybe ReceiptId
 parseReceiptId text =
-  fromInteger <$> decimal (TE.encodeUtf8 text)
+  ReceiptId <$> (toIntegralSized =<< decimal (TE.encodeUtf8 text))
 
 decodeText :: BS.ByteString -> Maybe RawToken
 decodeText bytes =
@@ -580,7 +583,7 @@ receiptPage receipt job =
  where
   jobFacts j =
     [ E.dt [] [E.text [Interpolate.i|Job|]]
-    , E.dd [] [E.code [] [E.text (T.pack (show (jobId j)))]]
+    , E.dd [] [E.code [] [E.text (T.pack (show (jobIdNumber (jobId j))))]]
     , E.dt [] [E.text [Interpolate.i|Job state|]]
     , E.dd [] [E.code [] [E.text (jobStateCode (jobState j))]]
     , E.dt [] [E.text [Interpolate.i|Steps|]]

@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeFamilies #-}
+
 {- | Storage for background jobs (contract C-P1.5 E2–E5). Every update after
 the claim is conditional on the claiming owner, so a process that lost its
 lease cannot overwrite another's progress.
@@ -33,12 +35,15 @@ import Orville.PostgreSQL.Execution.SelectOptions qualified as SelectOptions
 import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
 
+import Lockstep.Kernel.Identity (JobId (..), ReceiptId)
+import Lockstep.Persistence.Commands (receiptIdField, receiptTable)
+import Lockstep.Persistence.Entity (EntityKey, foreignKeyTo, serialKeyField)
 import Lockstep.Persistence.Fields (digestField, forUpdateSkipLocked, headMay, increment, setExpression, setNow, tableReference)
 
 data JobRow
   = JobRow
-  { jobRowId :: Int64
-  , jobRowReceipt :: Int64
+  { jobRowId :: JobId
+  , jobRowReceipt :: ReceiptId
   , jobRowState :: T.Text
   , jobRowStepsTotal :: Int32
   , jobRowStepMillis :: Int32
@@ -49,16 +54,19 @@ data JobRow
   , jobRowError :: Maybe T.Text
   }
 
+type instance EntityKey JobRow = JobId
+
 -- | What a no-op job is queued with; its progress columns start at their defaults.
 data NewJob
   = NewJob
-  { newJobReceipt :: Int64
+  { newJobReceipt :: ReceiptId
   , newJobSteps :: Int32
   , newJobMillis :: Int32
   , newJobFailAt :: Maybe Int32
   }
 
-jobTable :: O.TableDefinition (O.HasKey Int64) NewJob JobRow
+-- | Its key is the database's (read only), so it is built with 'O.mkTableDefinition'; the key is 'JobRow''s.
+jobTable :: O.TableDefinition (O.HasKey (EntityKey JobRow)) NewJob JobRow
 jobTable =
   O.mkTableDefinition "lockstep_jobs" (O.primaryKey jobIdField) $
     (\jobId receipt _kind state total millis failAt done attempts recovered lastError -> JobRow jobId receipt state total millis failAt done attempts recovered lastError)
@@ -74,13 +82,13 @@ jobTable =
       <*> O.marshallReadOnlyField jobRecoveredField
       <*> O.marshallReadOnlyField jobErrorField
 
-jobIdField :: O.FieldDefinition O.NotNull Int64
+jobIdField :: O.FieldDefinition O.NotNull JobId
 jobIdField =
-  O.bigIntegerField "id"
+  serialKeyField "id"
 
-jobReceiptField :: O.FieldDefinition O.NotNull Int64
+jobReceiptField :: O.FieldDefinition O.NotNull ReceiptId
 jobReceiptField =
-  O.bigIntegerField "receipt_id"
+  foreignKeyTo receiptTable receiptIdField "receipt_id"
 
 jobStateField :: O.FieldDefinition O.NotNull T.Text
 jobStateField =
@@ -131,15 +139,15 @@ jobOutcomeDigestField =
   O.nullableField (digestField "outcome_digest")
 
 -- | Queues a no-op job for an admitted receipt (inside the admission transaction).
-insertNoopJob :: O.MonadOrville m => Int64 -> Int32 -> Int32 -> Maybe Int32 -> m ()
+insertNoopJob :: O.MonadOrville m => ReceiptId -> Int32 -> Int32 -> Maybe Int32 -> m ()
 insertNoopJob receiptId steps millis failAt =
   O.insertEntity jobTable (NewJob receiptId steps millis failAt)
 
-findJobById :: O.MonadOrville m => Int64 -> m (Maybe JobRow)
+findJobById :: O.MonadOrville m => JobId -> m (Maybe JobRow)
 findJobById =
   O.findEntity jobTable
 
-findJobByReceipt :: O.MonadOrville m => Int64 -> m (Maybe JobRow)
+findJobByReceipt :: O.MonadOrville m => ReceiptId -> m (Maybe JobRow)
 findJobByReceipt receiptId =
   O.findFirstEntityBy jobTable (O.where_ (O.fieldEquals jobReceiptField receiptId))
 
@@ -205,24 +213,24 @@ claimJob owner =
         (Just (Expr.inSubquery (O.fieldColumnReference jobIdField) oldestClaimable))
 
 -- | The job is still running and held by this owner.
-ownedBy :: Int64 -> T.Text -> Expr.BooleanExpr
+ownedBy :: JobId -> T.Text -> Expr.BooleanExpr
 ownedBy jobId owner =
   O.fieldEquals jobIdField jobId
     `O.andExpr` O.fieldEquals jobOwnerField (Just owner)
     `O.andExpr` O.fieldEquals jobStateField (T.pack "running")
 
 -- | Applies the changes if this owner still holds the running job; 'False' if the lease was lost.
-whileOwned :: O.MonadOrville m => Int64 -> T.Text -> NonEmpty Expr.SetClause -> m Bool
+whileOwned :: O.MonadOrville m => JobId -> T.Text -> NonEmpty Expr.SetClause -> m Bool
 whileOwned jobId owner changes =
   not . null <$> O.updateFieldsAndReturnEntities jobTable changes (Just (ownedBy jobId owner))
 
 -- | Records a completed step and renews the lease; 'False' if the lease was lost.
-recordStep :: O.MonadOrville m => Int64 -> T.Text -> Int32 -> m Bool
+recordStep :: O.MonadOrville m => JobId -> T.Text -> Int32 -> m Bool
 recordStep jobId owner step =
   whileOwned jobId owner (O.setField jobStepsDoneField step :| [setExpression jobLeaseUntilField lease])
 
 -- | Sets a terminal state ('succeeded' or 'failed') with an optional error.
-finishJob :: O.MonadOrville m => Int64 -> T.Text -> T.Text -> Maybe T.Text -> m Bool
+finishJob :: O.MonadOrville m => JobId -> T.Text -> T.Text -> Maybe T.Text -> m Bool
 finishJob jobId owner state lastError =
   whileOwned
     jobId
@@ -267,6 +275,6 @@ outcomeDigest state lastError =
       [Expr.functionCall (Expr.functionName "convert_to") [concatenated, Expr.valueExpression (SqlValue.fromText (T.pack "UTF8"))]]
 
 -- | Returns a running job to the queue (graceful shutdown).
-releaseJob :: O.MonadOrville m => Int64 -> T.Text -> m Bool
+releaseJob :: O.MonadOrville m => JobId -> T.Text -> m Bool
 releaseJob jobId owner =
   whileOwned jobId owner (O.setField jobStateField (T.pack "queued") :| [O.setField jobOwnerField Nothing, O.setField jobLeaseUntilField Nothing])

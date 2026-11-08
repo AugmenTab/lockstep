@@ -37,6 +37,12 @@ module Lockstep.Kernel.Identity
     -- * Parsing and rendering any of them
   , parseIdentity
   , identityText
+
+    -- * Identities numbered by the database
+  , JobId (..)
+  , jobIdNumber
+  , ReceiptId (..)
+  , receiptIdNumber
   ) where
 
 import Data.ByteString qualified as BS
@@ -45,7 +51,7 @@ import Data.Coerce (Coercible, coerce)
 import Data.Text qualified as T
 import Data.UUID.Types qualified as UUID
 import Flipstone.Prelude
-import Text.Show (Show)
+import Text.Show (Show (showsPrec))
 
 -- | A 128-bit identifier: the library's type.
 type Uuid = UUID.UUID
@@ -107,6 +113,37 @@ newtype InvocationId
 newtype HumanRequestId
   = HumanRequestId Uuid
   deriving (Eq, Ord, Show)
+
+{- | A background job (C-P1.5): the number its row was given by the database
+(@lockstep_jobs.id@, a @bigserial@). Shown and rendered as that number alone
+('jobIdNumber'), never with its constructor.
+-}
+newtype JobId
+  = JobId Int64
+  deriving (Eq, Ord)
+
+-- | The number alone, as the job was always shown (log lines, pages, evidence rows).
+instance Show JobId where
+  showsPrec d =
+    showsPrec d . jobIdNumber
+
+jobIdNumber :: JobId -> Int64
+jobIdNumber (JobId n) =
+  n
+
+-- | A command receipt (C-P1.4 E7): @lockstep_command_receipts.id@, numbered by the database.
+newtype ReceiptId
+  = ReceiptId Int64
+  deriving (Eq, Ord)
+
+-- | The number alone, as the receipt was always shown.
+instance Show ReceiptId where
+  showsPrec d =
+    showsPrec d . receiptIdNumber
+
+receiptIdNumber :: ReceiptId -> Int64
+receiptIdNumber (ReceiptId n) =
+  n
 
 -- | The big-endian halves, as 'UUID.fromWords64'.
 uuidFromWords :: Word64 -> Word64 -> Uuid

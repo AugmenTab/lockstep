@@ -153,7 +153,6 @@ import Lockstep.Kernel.Profile
   , mkNonBehaviouralBasis
   , mkWorkFacts
   , parsePathClass
-  , profileIdText
   , profileRef
   , profileRefusalCode
   , renderProfileRefusal
@@ -632,7 +631,7 @@ createWorkOrderIn u request = do
                       }
                   _ <- Store.insertEvent u (Store.EventRow 1 (principalName Human) workOrderCreatedText state)
                   traverse_
-                    (\(position, (level, ref)) -> Store.insertSource w position (Store.SourceRow level (profileIdText (refId ref)) (int32 (refVersion ref)) (contentDigestText (refDigest ref))))
+                    (\(position, (level, ref)) -> Store.insertSource w position (Store.SourceRow level (refId ref) (int32 (refVersion ref)) (contentDigestText (refDigest ref))))
                     (L.zip [1 ..] sources)
                   traverse_ (Store.insertDependency w) (L.nub (newDependencies request))
                   pure (Right w)
@@ -720,7 +719,7 @@ loadBinding w row = do
         (resolveFor kind (splitNames (Store.workOrderRowClasses row)) (splitNames (Store.workOrderRowPathClasses row)) (Store.workOrderRowNonBehavioural row) defaultDefinition specializations)
     stored <- storedSources effective
     unless
-      (fmap (\(level, ref) -> (level, profileIdText (refId ref), refVersion ref, contentDigestText (refDigest ref))) stored == fmap sourceKey sources)
+      (fmap (\(level, ref) -> (level, refId ref, refVersion ref, contentDigestText (refDigest ref))) stored == fmap sourceKey sources)
       (integrity "a work order's profile sources do not reproduce")
     unless (contentDigestText (effectiveDigest effective) == Store.workOrderRowEffectiveDigest row) (integrity "a work order's effective profile digest does not reproduce")
     binding <- either (const (integrity "a work order's binding does not reproduce")) Right (bindingFor w effective)

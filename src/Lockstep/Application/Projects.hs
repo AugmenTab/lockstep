@@ -38,7 +38,7 @@ import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
 import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason, Readiness (..), SessionLock (..), checkReadiness, withDatabase, withSessionLock)
 import Lockstep.Application.Identity (newEngineerId, newIdentity)
 import Lockstep.Application.Profiles (sha256Hasher)
-import Lockstep.Application.Repositories (Observed, Refused (..), addEngineerIn, observeRegistration, observedIdentity, registerObservedIn)
+import Lockstep.Application.Repositories (Observed, Refused (..), RepositoryRecord (..), addEngineerIn, observeRegistration, observedIdentity, registerObservedIn)
 import Lockstep.Effects.ProjectFolders (childFolders, gitIdentity, isProjectFolder, makeProjectFolder)
 import Lockstep.Foundation.FolderProtocol (validFolderPath)
 import Lockstep.Kernel.Identity (ProjectId (..), RepositoryId, identityText, parseIdentity)
@@ -366,7 +366,7 @@ registerIn engineer path first fallback = do
     other -> pure (codeOf other)
  where
   codeOf =
-    either (Left . either id refusedCode) (Right . fst)
+    either (Left . either id refusedCode) (Right . repositoryRecordId)
   registerSame observed =
     case observedIdentity observed of
       Nothing -> either (Left . Right) Right <$> registerObservedIn engineer observed

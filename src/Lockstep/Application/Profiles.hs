@@ -45,6 +45,7 @@ import Lockstep.Kernel.Profile
   ( Behaviour (..)
   , Hasher (..)
   , ProfileDefinition
+  , ProfileId
   , ProfileRef (..)
   , ResolutionInput (..)
   , contentDigestFromBytes
@@ -55,6 +56,7 @@ import Lockstep.Kernel.Profile
   , mkClassTag
   , mkNonBehaviouralBasis
   , mkProfileDefinition
+  , mkProfileId
   , mkWorkFacts
   , parsePathClass
   , profileIdText
@@ -89,7 +91,7 @@ data AddOutcome
 
 data StoredProfile
   = StoredProfile
-  { storedId :: T.Text
+  { storedId :: ProfileId
   , storedVersion :: Int
   , storedDigest :: T.Text
   }
@@ -165,12 +167,12 @@ addProfile runtime bytes =
           Right definition -> do
             let
               ref = profileRef sha256Hasher definition
-              profileId = profileIdText (definitionId definition)
+              profileId = definitionId definition
               version = definitionVersion definition
               digest = contentDigestText (refDigest ref)
               decision =
                 addDecision
-                  { Store.profileDecisionProfile = Just profileId
+                  { Store.profileDecisionProfile = Just (profileIdText profileId)
                   , Store.profileDecisionVersion = Just (fromIntegral version)
                   , Store.profileDecisionDigest = Just digest
                   }
@@ -205,7 +207,7 @@ listProfiles runtime =
 loadStoredDefinition :: Store.ProfileRow -> Either ProfileFailure ProfileDefinition
 loadStoredDefinition row =
   let
-    failure = Left (ProfileIntegrity (T.pack "stored profile " <> Store.profileRowId row <> T.pack " version " <> T.pack (show (Store.profileRowVersion row)) <> T.pack " fails its integrity check"))
+    failure = Left (ProfileIntegrity (T.pack "stored profile " <> profileIdText (Store.profileRowId row) <> T.pack " version " <> T.pack (show (Store.profileRowVersion row)) <> T.pack " fails its integrity check"))
   in
     case decodeProfileDocument (LBS.fromStrict (TE.encodeUtf8 (Store.profileRowDocument row))) of
       Left _ -> failure
@@ -213,7 +215,7 @@ loadStoredDefinition row =
         case mkProfileDefinition raw of
           Left _ -> failure
           Right definition
-            | profileIdText (definitionId definition) /= Store.profileRowId row -> failure
+            | definitionId definition /= Store.profileRowId row -> failure
             | fromIntegral (definitionVersion definition) /= Store.profileRowVersion row -> failure
             | contentDigestText (refDigest (profileRef sha256Hasher definition)) /= Store.profileRowDigest row -> failure
             | otherwise -> Right definition
@@ -230,11 +232,13 @@ storedDefinition row =
     Left (ProfileRefused code message _) -> integrityViolation (T.unpack (code <> T.pack ": " <> message))
 
 showProfile :: DatabaseRuntime -> T.Text -> Maybe Integer -> IO (Either NotReadyReason (Either ProfileFailure (T.Text, T.Text)))
-showProfile runtime profileId version =
+showProfile runtime rawId version =
   whenReady runtime . withDatabase runtime $
-    case version of
-      Just v | v < 1 || v > 2147483647 -> pure unknownProfile
-      _ -> do
+    case (version, mkProfileId rawId) of
+      (Just v, _) | v < 1 || v > 2147483647 -> pure unknownProfile
+      -- Text that is no Profile id names no stored Profile.
+      (_, Nothing) -> pure unknownProfile
+      (_, Just profileId) -> do
         found <- Store.findProfile profileId (fmap fromInteger version)
         pure $
           case found of
@@ -249,13 +253,13 @@ unknownProfile =
 
 -- | Records a new default for the Engineer's repository.
 setRepositoryProfile :: DatabaseRuntime -> T.Text -> T.Text -> IO (Either NotReadyReason (Either ProfileFailure RepositoryId))
-setRepositoryProfile runtime engineer profileId =
+setRepositoryProfile runtime engineer rawProfile =
   whenReady runtime . withDatabase runtime . O.withTransaction $ do
     let
       decision =
         Store.NewProfileDecision
           { Store.profileDecisionOperation = T.pack "repository-set-profile"
-          , Store.profileDecisionProfile = Just profileId
+          , Store.profileDecisionProfile = Just rawProfile
           , Store.profileDecisionVersion = Nothing
           , Store.profileDecisionDigest = Nothing
           , Store.profileDecisionEngineer = Just engineer
@@ -270,11 +274,12 @@ setRepositoryProfile runtime engineer profileId =
       Just (Store.EngineerRepository _ Nothing) ->
         recordRefusal decision (T.pack "engineer-has-no-repository") (T.pack "the Engineer owns no repository")
       Just (Store.EngineerRepository _ (Just repositoryId)) -> do
-        found <- Store.findProfile profileId Nothing
+        -- Text that is no Profile id names no registered Profile: the same refusal.
+        found <- maybe (pure Nothing) (\p -> fmap ((,) p) <$> Store.findProfile p Nothing) (mkProfileId rawProfile)
         case found of
           Nothing ->
             recordRefusal decision {Store.profileDecisionRepository = Just repositoryId} (T.pack "profile-unknown") (T.pack "there is no such profile")
-          Just _ -> do
+          Just (profileId, _) -> do
             Store.insertRepositoryProfile repositoryId profileId
             _ <- record decision {Store.profileDecisionRepository = Just repositoryId}
             pure (Right repositoryId)

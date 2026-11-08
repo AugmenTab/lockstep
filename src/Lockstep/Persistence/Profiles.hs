@@ -16,6 +16,7 @@ module Lockstep.Persistence.Profiles
   , insertRepositoryProfile
   , repositoryDefault
   , insertProfileDecision
+  , profileIdColumn
   ) where
 
 import Data.List qualified as L
@@ -28,9 +29,11 @@ import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
 
 import Lockstep.Kernel.Identity (EngineerId, RepositoryId (..))
+import Lockstep.Kernel.Profile (ProfileId, mkProfileId, profileIdText)
 import Lockstep.Persistence.Entity (foreignKeyTo, identityField)
 import Lockstep.Persistence.Fields
-  ( headMay
+  ( codeField
+  , headMay
   , joinedOn
   , qualified
   , qualifiedEquals
@@ -50,12 +53,16 @@ import Lockstep.Persistence.Repositories
 
 data ProfileRow
   = ProfileRow
-  { profileRowId :: T.Text
+  { profileRowId :: ProfileId
   , profileRowVersion :: Int32
   , profileRowDigest :: T.Text
   , profileRowDocument :: T.Text
   }
 
+{- | A Profile decision as recorded. Its profile is the one the request named,
+as given: a refused request may name text that is no Profile id (the decision
+log keeps it so), so the column stays text here.
+-}
 data NewProfileDecision
   = NewProfileDecision
   { profileDecisionOperation :: T.Text
@@ -87,9 +94,15 @@ profileTable =
       <*> O.marshallField profileRowDigest (O.unboundedTextField "digest")
       <*> O.marshallField profileRowDocument (O.unboundedTextField "document")
 
-profileIdField :: O.FieldDefinition O.NotNull T.Text
+-- | A Profile id column: a stored text that is not a valid Profile id fails to decode.
+profileIdField :: O.FieldDefinition O.NotNull ProfileId
 profileIdField =
-  O.unboundedTextField "profile_id"
+  profileIdColumn "profile_id"
+
+-- | Any @profile_id@ column, typed as the Kernel's 'ProfileId' (its smart constructor decides).
+profileIdColumn :: String -> O.FieldDefinition O.NotNull ProfileId
+profileIdColumn =
+  codeField "profile id" profileIdText mkProfileId
 
 profileVersionField :: O.FieldDefinition O.NotNull Int32
 profileVersionField =
@@ -107,7 +120,7 @@ insertProfile =
   O.insertEntity profileTable
 
 -- | Every stored version of one Profile, oldest first.
-profileVersions :: O.MonadOrville m => T.Text -> m [ProfileRow]
+profileVersions :: O.MonadOrville m => ProfileId -> m [ProfileRow]
 profileVersions profileId =
   O.findEntitiesBy
     profileTable
@@ -118,7 +131,7 @@ allProfiles =
   O.findEntitiesBy profileTable (O.orderBy (O.orderByField profileIdField O.ascendingOrder <> O.orderByField profileVersionField O.ascendingOrder))
 
 -- | One version, or the latest when none is given.
-findProfile :: O.MonadOrville m => T.Text -> Maybe Int32 -> m (Maybe ProfileRow)
+findProfile :: O.MonadOrville m => ProfileId -> Maybe Int32 -> m (Maybe ProfileRow)
 findProfile profileId version =
   O.findFirstEntityBy
     profileTable
@@ -165,7 +178,7 @@ engineerRepository name =
 -- lockstep_repository_profiles -------------------------------------------------------
 
 -- | (repository, Profile id): every assignment, newest last.
-repositoryProfileTable :: O.TableDefinition O.NoKey (RepositoryId, T.Text) (RepositoryId, T.Text)
+repositoryProfileTable :: O.TableDefinition O.NoKey (RepositoryId, ProfileId) (RepositoryId, ProfileId)
 repositoryProfileTable =
   O.mkTableDefinitionWithoutKey "lockstep_repository_profiles" $
     (,)
@@ -176,12 +189,12 @@ repositoryProfileRepositoryField :: O.FieldDefinition O.NotNull RepositoryId
 repositoryProfileRepositoryField =
   foreignKeyTo repositoryTable repositoryIdField "repository_id"
 
-insertRepositoryProfile :: O.MonadOrville m => RepositoryId -> T.Text -> m ()
+insertRepositoryProfile :: O.MonadOrville m => RepositoryId -> ProfileId -> m ()
 insertRepositoryProfile repositoryId profileId =
   O.insertEntity repositoryProfileTable (repositoryId, profileId)
 
 -- | The repository's current default Profile id: the latest assignment.
-repositoryDefault :: O.MonadOrville m => RepositoryId -> m (Maybe T.Text)
+repositoryDefault :: O.MonadOrville m => RepositoryId -> m (Maybe ProfileId)
 repositoryDefault repositoryId =
   fmap snd
     <$> O.findFirstEntityBy
@@ -196,7 +209,7 @@ profileDecisionTable =
   O.mkTableDefinitionWithoutKey "lockstep_profile_decisions" $
     O.marshallReadOnlyField (O.bigIntegerField "id")
       <* O.marshallField profileDecisionOperation (O.unboundedTextField "operation")
-      <* O.marshallField profileDecisionProfile (O.nullableField profileIdField)
+      <* O.marshallField profileDecisionProfile (O.nullableField (O.unboundedTextField "profile_id"))
       <* O.marshallField profileDecisionVersion (O.nullableField profileVersionField)
       <* O.marshallField profileDecisionDigest (O.nullableField (O.unboundedTextField "digest"))
       <* O.marshallField profileDecisionEngineer (O.nullableField (O.unboundedTextField "engineer_name"))

@@ -49,7 +49,7 @@ import System.IO (FilePath)
 import Text.Show (Show, show)
 
 import Lockstep.Application.Command (IdempotencyKey, mkIdempotencyKey)
-import Lockstep.Application.Conversation (NewHumanRequest (..), Sender (..), StoredRequest (..), openRequest, requestByKey, senderChannel, senderEvidence)
+import Lockstep.Application.Conversation (RequestDetails (..), Sender (..), StoredRequest (..), openRequestAbout, requestByKey, senderChannel, senderEvidence)
 import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason (DatabaseCorrupt), Readiness (..), SessionLock (..), checkReadiness, withDatabase, withSessionLock)
 import Lockstep.Application.EngineCandidate (baselineJson, candidateJson, findingJson, frozenContract, recordedCandidate, testFiles, unchangedAtBasis)
 import Lockstep.Application.EngineRecords
@@ -166,7 +166,7 @@ data RecordView
 
 data InvocationView
   = InvocationView
-  { invocationId :: T.Text
+  { invocationId :: InvocationId
   , invocationStage :: T.Text
   , invocationWhat :: T.Text
   , invocationRunner :: T.Text
@@ -181,7 +181,7 @@ data TransactionView
   = TransactionView
   { viewId :: T.Text
   , viewWorkOrder :: T.Text
-  , viewTask :: T.Text
+  , viewTask :: TaskId
   , viewEngineer :: T.Text
   , viewFolder :: T.Text
   , viewState :: T.Text
@@ -245,7 +245,7 @@ viewOf row records invocations =
   TransactionView
     { viewId = identityText (Store.txRowId row)
     , viewWorkOrder = identityText (Store.txRowWorkOrder row)
-    , viewTask = identityText (Store.txRowTask row)
+    , viewTask = Store.txRowTask row
     , viewEngineer = Store.txRowEngineer row
     , viewFolder = Store.txRowFolder row
     , viewState = Store.txRowState row
@@ -261,7 +261,7 @@ viewOf row records invocations =
         ]
     , viewInvocations =
         [ InvocationView
-            (identityText (Store.invocationRowId i))
+            (Store.invocationRowId i)
             (Store.invocationRowStage i)
             (Store.invocationRowWhat i)
             (Store.invocationRowRunner i)
@@ -308,12 +308,9 @@ activeTransactionIds runtime =
   whenReady runtime (withDatabase runtime (fmap Store.txRowId <$> Store.activeTransactions))
 
 -- | C-P4.16: whether Lockstep has started on any bug of the project.
-projectStarted :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason Bool)
-projectStarted runtime raw =
-  whenReady runtime $
-    case parseIdentity raw of
-      Nothing -> pure (Right False)
-      Just project -> withDatabase runtime (Store.projectStarted project)
+projectStarted :: DatabaseRuntime -> ProjectId -> IO (Either NotReadyReason Bool)
+projectStarted runtime project =
+  whenReady runtime (withDatabase runtime (Store.projectStarted project))
 
 -- | C-P4.15 W1: the handed-over bug Work Orders with no transaction yet, in hand-over order.
 pendingWorkOrders :: DatabaseRuntime -> IO (Either NotReadyReason [WorkOrderId])
@@ -1634,19 +1631,18 @@ ensureRequest runtime row stage code = do
         Left c -> pure (Left c)
         Right (key, h) -> do
           opened <-
-            openRequest
+            openRequestAbout
               runtime
               key
               SenderSupervisor
-              NewHumanRequest
-                { -- NewHumanRequest is a frozen-test boundary record: its Work Order is text.
-                  newRequestWorkOrder = identityText (Store.txRowWorkOrder row)
-                , newRequestEngineer = Store.txRowEngineer row
-                , newRequestContract = Store.txRowContract row
-                , newRequestChoices = Just (haltChoices stage code)
-                , newRequestQuestion = haltQuestion stage code
-                , newRequestEvidence = T.pack "Transaction " <> identityText (Store.txRowId row) <> T.pack ", record " <> T.pack (show (Store.recordRowSequence h)) <> T.pack ": " <> code
-                , newRequestAuthority = T.pack "Whether Lockstep tries this step again, accepts it as it is, or stops this bug fix."
+              (Store.txRowWorkOrder row)
+              RequestDetails
+                { detailsEngineer = Store.txRowEngineer row
+                , detailsContract = Store.txRowContract row
+                , detailsChoices = Just (haltChoices stage code)
+                , detailsQuestion = haltQuestion stage code
+                , detailsEvidence = T.pack "Transaction " <> identityText (Store.txRowId row) <> T.pack ", record " <> T.pack (show (Store.recordRowSequence h)) <> T.pack ": " <> code
+                , detailsAuthority = T.pack "Whether Lockstep tries this step again, accepts it as it is, or stops this bug fix."
                 }
           pure $ case opened of
             Left _ -> Left (T.pack "database-unavailable")
@@ -1668,23 +1664,20 @@ haltKey row rs =
 stands (open or answered); Nothing when the transaction is not halted or
 the request is not opened yet. Reads only.
 -}
-haltRequest :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe StoredRequest))
-haltRequest runtime raw =
-  whenReady runtime $
-    case parseIdentity raw of
-      Nothing -> pure (Right Nothing)
-      Just txId -> do
-        found <- withDatabase runtime $ do
-          row <- Store.findTransaction txId
-          records <- Store.transactionRecords txId
-          pure ((,) records <$> row)
-        case found of
-          Left reason -> pure (Left reason)
-          Right (Just (rs, row))
-            | Store.txRowState row == T.pack "halted"
-            , Right (key, _) <- haltKey row rs ->
-                requestByKey runtime key
-          Right _ -> pure (Right Nothing)
+haltRequest :: DatabaseRuntime -> TransactionId -> IO (Either NotReadyReason (Maybe StoredRequest))
+haltRequest runtime txId =
+  whenReady runtime $ do
+    found <- withDatabase runtime $ do
+      row <- Store.findTransaction txId
+      records <- Store.transactionRecords txId
+      pure ((,) records <$> row)
+    case found of
+      Left reason -> pure (Left reason)
+      Right (Just (rs, row))
+        | Store.txRowState row == T.pack "halted"
+        , Right (key, _) <- haltKey row rs ->
+            requestByKey runtime key
+      Right _ -> pure (Right Nothing)
 
 {- | C-P4.15 H1: a person's binding answer to the current halt's own request
 and the input it gives. Only an answered request carries one; C-P4.3 lets

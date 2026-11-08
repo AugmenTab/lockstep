@@ -17,6 +17,7 @@ import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
 import Orville.PostgreSQL.Expr qualified as Expr
 
+import Lockstep.Kernel.Identity (JobId, ReceiptId)
 import Lockstep.Persistence.Commands
   ( receiptAcceptedAtField
   , receiptActorField
@@ -40,7 +41,7 @@ import Lockstep.Persistence.Jobs
 
 data ActivityRow
   = ActivityRow
-  { activityId :: Int64
+  { activityId :: ReceiptId
   , activityKind :: T.Text
   , activityOutcome :: T.Text
   , activityActor :: T.Text
@@ -51,8 +52,8 @@ data ActivityRow
 
 data JobEvidenceRow
   = JobEvidenceRow
-  { evidenceJobId :: Int64
-  , evidenceReceiptId :: Int64
+  { evidenceJobId :: JobId
+  , evidenceReceiptId :: ReceiptId
   , evidenceState :: T.Text
   , evidenceStepsDone :: Int32
   , evidenceStepsTotal :: Int32

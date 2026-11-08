@@ -84,6 +84,7 @@ import System.IO.Error (userError)
 
 import Lockstep.Kernel.Effect (OperationId (..))
 import Lockstep.Kernel.Identity (EngineerId, RepositoryId, TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..))
+import Lockstep.Kernel.Profile (ProfileId)
 import Lockstep.Persistence.Entity (EntityKey, Table, foreignKeyTo, keyField, mkEntityTable, nullableForeignKeyTo)
 import Lockstep.Persistence.Fields
   ( clockTimestamp
@@ -101,6 +102,7 @@ import Lockstep.Persistence.Fields
   , setNow
   , tableReference
   )
+import Lockstep.Persistence.Profiles (profileIdColumn)
 import Lockstep.Persistence.Repositories (activeRepositoryCondition, engineerIdField, engineerTable, repositoryIdField, repositoryOwnerField, repositoryTable)
 
 -- Subjects ---------------------------------------------------------------------
@@ -304,6 +306,11 @@ ticketTable =
       <*> O.marshallField ticketRowTitle ticketTitleField
       <*> O.marshallField ticketRowContentRevision ticketContentRevisionField
 
+{- | The Ticket's key. The schema also makes it reference @lockstep_subjects (id)@;
+that is not derived with 'foreignKeyTo' because the subject key is the
+polymorphic 'Uuid' and this key is a 'TicketId' (the kind column, not the
+type, says a subject is a Ticket). 'ticketSubject' in the ledger relates them.
+-}
 ticketIdField :: O.FieldDefinition O.NotNull TicketId
 ticketIdField =
   keyField "id"
@@ -370,6 +377,10 @@ workOrderTable =
       <*> O.marshallField workOrderRowEffectiveDigest (O.unboundedTextField "effective_digest")
       <*> O.marshallField workOrderRowBindingDigest (O.unboundedTextField "binding_digest")
 
+{- | The Work Order's key; like 'ticketIdField' it also references
+@lockstep_subjects (id)@ in the schema, not derived for the same reason (a
+'WorkOrderId' key against the polymorphic 'Uuid' subject key).
+-}
 workOrderIdField :: O.FieldDefinition O.NotNull WorkOrderId
 workOrderIdField =
   keyField "id"
@@ -421,7 +432,7 @@ dependenciesOf workOrderId =
 data SourceRow
   = SourceRow
   { sourceRowLevel :: T.Text
-  , sourceRowProfile :: T.Text
+  , sourceRowProfile :: ProfileId
   , sourceRowVersion :: Int32
   , sourceRowDigest :: T.Text
   }
@@ -435,7 +446,7 @@ sourceTable =
       <*> O.marshallField (\(_, p, _) -> p) sourcePositionField
       <*> ( SourceRow
               <$> O.marshallField (\(_, _, s) -> sourceRowLevel s) (O.unboundedTextField "level")
-              <*> O.marshallField (\(_, _, s) -> sourceRowProfile s) (O.unboundedTextField "profile_id")
+              <*> O.marshallField (\(_, _, s) -> sourceRowProfile s) (profileIdColumn "profile_id")
               <*> O.marshallField (\(_, _, s) -> sourceRowVersion s) (O.integerField "version")
               <*> O.marshallField (\(_, _, s) -> sourceRowDigest s) (O.unboundedTextField "digest")
           )

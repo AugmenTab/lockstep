@@ -35,6 +35,7 @@ import System.Timeout (timeout)
 import Text.Show (Show, show)
 
 import Lockstep.Application.Database (DatabaseRuntime, withDatabase)
+import Lockstep.Kernel.Identity (JobId, ReceiptId)
 import Lockstep.Persistence.Jobs qualified as Jobs
 
 data JobState
@@ -64,8 +65,8 @@ parseJobState code =
 
 data Job
   = Job
-  { jobId :: Int64
-  , jobReceiptId :: Int64
+  { jobId :: JobId
+  , jobReceiptId :: ReceiptId
   , jobState :: JobState
   , jobStepsDone :: Int
   , jobStepsTotal :: Int
@@ -90,12 +91,12 @@ fromRow row = do
       , jobError = Jobs.jobRowError row
       }
 
-findJob :: DatabaseRuntime -> Int64 -> IO (Maybe Job)
+findJob :: DatabaseRuntime -> JobId -> IO (Maybe Job)
 findJob runtime ident = do
   result <- withDatabase runtime (Jobs.findJobById ident)
   pure (either (const Nothing) (>>= fromRow) result)
 
-findJobForReceipt :: DatabaseRuntime -> Int64 -> IO (Maybe Job)
+findJobForReceipt :: DatabaseRuntime -> ReceiptId -> IO (Maybe Job)
 findJobForReceipt runtime receipt = do
   result <- withDatabase runtime (Jobs.findJobByReceipt receipt)
   pure (either (const Nothing) (>>= fromRow) result)

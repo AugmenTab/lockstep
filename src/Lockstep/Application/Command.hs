@@ -62,6 +62,7 @@ import Lockstep.Application.Database
   , checkReadiness
   , withDatabase
   )
+import Lockstep.Kernel.Identity (ReceiptId, receiptIdNumber)
 import Lockstep.Persistence.Commands qualified as Store
 import Lockstep.Persistence.Jobs qualified as Jobs
 
@@ -353,7 +354,7 @@ fromRow row = do
       { priorDigest = digest
       , priorReceipt =
           Receipt
-            { receiptId = Store.rowId row
+            { receiptId = receiptIdNumber (Store.rowId row)
             , receiptKey = Store.rowKey row
             , receiptKind = Store.rowKind row
             , receiptOutcome = outcome
@@ -388,7 +389,10 @@ submitCommand runtime envelope = do
       Right outcome -> outcome
  where
   key = idempotencyKeyText (envelopeKey envelope)
-  record outcome revision = do
+  record outcome revision =
+    fmap snd <$> recorded outcome revision
+  -- The receipt with its typed identity ('Receipt' carries it as a number: a frozen-test boundary).
+  recorded outcome revision = do
     inserted <-
       Store.insertReceipt
         Store.NewReceipt
@@ -410,17 +414,19 @@ submitCommand runtime envelope = do
         Nothing -> Left (CommandNotReady DatabaseError)
         Just (newId, acceptedAt) ->
           Right
-            Receipt
-              { receiptId = newId
-              , receiptKey = key
-              , receiptKind = commandKind (envelopeCommand envelope)
-              , receiptOutcome = outcome
-              , receiptExpected = envelopeExpected envelope
-              , receiptRevision = revision
-              , receiptActor = envelopeActor envelope
-              , receiptAcceptedAt = acceptedAt
-              , receiptReplayed = False
-              }
+            ( newId
+            , Receipt
+                { receiptId = receiptIdNumber newId
+                , receiptKey = key
+                , receiptKind = commandKind (envelopeCommand envelope)
+                , receiptOutcome = outcome
+                , receiptExpected = envelopeExpected envelope
+                , receiptRevision = revision
+                , receiptActor = envelopeActor envelope
+                , receiptAcceptedAt = acceptedAt
+                , receiptReplayed = False
+                }
+            )
   admit = do
     locked <- Store.lockWorkspace
     row <- Store.findReceiptByKey key
@@ -437,16 +443,16 @@ submitCommand runtime envelope = do
                 Store.updateWorkspace (workspaceNameText newName) (revisionInt next)
                 record Applied next
               QueueNoop spec -> do
-                recorded <- record Queued next
-                case recorded of
-                  Right receipt -> do
+                queued <- recorded Queued next
+                case queued of
+                  Right (newId, receipt) -> do
                     Jobs.insertNoopJob
-                      (receiptId receipt)
+                      newId
                       (fromIntegral (noopSteps spec))
                       (fromIntegral (noopStepMillis spec))
                       (fmap fromIntegral (noopFailAtStep spec))
-                    pure recorded
-                  Left _ -> pure recorded
+                    pure (Right receipt)
+                  Left refusal -> pure (Left refusal)
           RefuseStale now ->
             record RefusedStale now
       _ ->
@@ -459,7 +465,7 @@ readWorkspace runtime = do
     found <- result
     maybe (Left DatabaseError) (\(name, revision) -> Right (WorkspaceState name (Revision revision))) found
 
-findReceipt :: DatabaseRuntime -> Int64 -> IO (Maybe Receipt)
+findReceipt :: DatabaseRuntime -> ReceiptId -> IO (Maybe Receipt)
 findReceipt runtime receiptId = do
   result <- withDatabase runtime (Store.findReceiptById receiptId)
   pure (either (const Nothing) (>>= fmap priorReceipt . fromRow) result)

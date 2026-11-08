@@ -8,6 +8,7 @@ import Test.Tasty (defaultMain, testGroup)
 import Lockstep.Compliance.DefectsTest qualified as DefectsTest
 import Lockstep.Compliance.IdentityTest qualified as IdentityTest
 import Lockstep.Compliance.JsonTest qualified as JsonTest
+import Lockstep.Compliance.NegativeTypesTest qualified as NegativeTypesTest
 import Lockstep.Compliance.PersistenceTest qualified as PersistenceTest
 
 main :: IO ()
@@ -19,4 +20,5 @@ main =
       , PersistenceTest.tests
       , DefectsTest.tests
       , IdentityTest.tests
+      , NegativeTypesTest.tests
       ]

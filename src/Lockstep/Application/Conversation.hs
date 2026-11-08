@@ -15,6 +15,8 @@ module Lockstep.Application.Conversation
   , StoredMessage (..)
   , Conversation (..)
   , openRequest
+  , RequestDetails (..)
+  , openRequestAbout
   , postMessage
   , conversation
   , openRequests
@@ -24,6 +26,7 @@ module Lockstep.Application.Conversation
 import Data.Char qualified as Char
 import Data.List qualified as L
 import Data.List.NonEmpty qualified as NE
+import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
@@ -124,7 +127,7 @@ data StoredRequest
 
 data StoredMessage
   = StoredMessage
-  { messageRequest :: T.Text
+  { messageRequest :: HumanRequestId
   , messageSequence :: Int
   , messageKind :: T.Text
   , messagePrincipal :: T.Text
@@ -179,7 +182,7 @@ requestOf row =
 messageOf :: Store.MessageRow -> StoredMessage
 messageOf row =
   StoredMessage
-    { messageRequest = identityText (Store.messageRowRequest row)
+    { messageRequest = Store.messageRowRequest row
     , messageSequence = fromIntegral (Store.messageRowSequence row)
     , messageKind = Store.messageRowKind row
     , messagePrincipal = Store.messageRowPrincipal row
@@ -210,16 +213,57 @@ validDigest :: T.Text -> Bool
 validDigest text =
   T.length text == 64 && T.all (\c -> Char.isDigit c || (c >= 'a' && c <= 'f')) text
 
--- | H5: opens a request about one Work Order, with its first message; the Supervisor only.
+-- | What a request is opened with besides its Work Order ('openRequestFor').
+data RequestDetails
+  = RequestDetails
+  { detailsEngineer :: T.Text
+  , detailsContract :: Maybe T.Text
+  , detailsChoices :: Maybe [T.Text]
+  , detailsQuestion :: T.Text
+  , detailsEvidence :: T.Text
+  , detailsAuthority :: T.Text
+  }
+  deriving (Eq, Show)
+
+-- | H3: only the Supervisor opens a request; the refusal code otherwise.
+senderRefusal :: Sender -> Maybe T.Text
+senderRefusal sender =
+  case sender of
+    SenderAgent _ -> Just (T.pack "agent-assertion")
+    SenderSupervisor -> Nothing
+    _ -> Just (T.pack "not-authorized")
+
+{- | H5: opens a request about one Work Order, with its first message; the
+Supervisor only. The Work Order's text is parsed here ('NewHumanRequest' is a
+frozen-test boundary record); a sender's refusal comes first, then
+@unknown-work-order@ for text that is no Work Order identity.
+-}
 openRequest :: DatabaseRuntime -> IdempotencyKey -> Sender -> NewHumanRequest -> IO (Either NotReadyReason (Either T.Text StoredRequest))
 openRequest runtime key sender request =
+  case (senderRefusal sender, parseIdentity (newRequestWorkOrder request)) of
+    (Nothing, Just workOrder) -> openRequestAbout runtime key sender workOrder details
+    (refusal, _) -> whenReady runtime (pure (Right (Left (fromMaybe (T.pack "unknown-work-order") refusal))))
+ where
+  details =
+    RequestDetails
+      { detailsEngineer = newRequestEngineer request
+      , detailsContract = newRequestContract request
+      , detailsChoices = newRequestChoices request
+      , detailsQuestion = newRequestQuestion request
+      , detailsEvidence = newRequestEvidence request
+      , detailsAuthority = newRequestAuthority request
+      }
+
+-- | 'openRequest' for a Work Order identity.
+openRequestAbout :: DatabaseRuntime -> IdempotencyKey -> Sender -> WorkOrderId -> RequestDetails -> IO (Either NotReadyReason (Either T.Text StoredRequest))
+openRequestAbout runtime key sender workOrder request =
   whenReady runtime $
     case checked of
       Left code -> pure (Right (Left code))
-      Right (workOrder, kind, question, evidence, authority) -> do
+      Right (kind, question, evidence, authority) -> do
         requestId <- newIdentity
         let
-          digest = sha256Text (requestPayloadText (identityText workOrder) (newRequestEngineer request) (newRequestContract request) kind question evidence authority)
+          digest = sha256Text (requestPayloadText (identityText workOrder) (detailsEngineer request) (detailsContract request) kind question evidence authority)
           keyText = idempotencyKeyText key
         withDatabase runtime . O.withTransaction $ do
           existing <- Store.findRequestByKey keyText
@@ -239,8 +283,8 @@ openRequest runtime key sender request =
                         , Store.requestRowKey = keyText
                         , Store.requestRowDigest = digest
                         , Store.requestRowWorkOrder = workOrder
-                        , Store.requestRowEngineer = newRequestEngineer request
-                        , Store.requestRowContract = newRequestContract request
+                        , Store.requestRowEngineer = detailsEngineer request
+                        , Store.requestRowContract = detailsContract request
                         , Store.requestRowKind = requestKindName kind
                         , Store.requestRowChoices = choicesText kind
                         , Store.requestRowQuestion = question
@@ -268,19 +312,15 @@ openRequest runtime key sender request =
                   pure (Right (requestOf row))
  where
   checked = do
-    case sender of
-      SenderAgent _ -> Left (T.pack "agent-assertion")
-      SenderSupervisor -> Right ()
-      _ -> Left (T.pack "not-authorized")
-    workOrder <- maybe (Left (T.pack "unknown-work-order")) Right (parseIdentity (newRequestWorkOrder request) :: Maybe WorkOrderId)
-    case newRequestContract request of
+    maybe (Right ()) Left (senderRefusal sender)
+    case detailsContract request of
       Just c | not (validDigest c) -> Left (T.pack "invalid-contract-digest")
       _ -> Right ()
-    kind <- maybe (Right ClarificationRequest) mkDecisionKind (newRequestChoices request)
-    question <- checkRequestText (newRequestQuestion request)
-    evidence <- checkRequestText (newRequestEvidence request)
-    authority <- checkRequestText (newRequestAuthority request)
-    pure (workOrder, kind, question, evidence, authority)
+    kind <- maybe (Right ClarificationRequest) mkDecisionKind (detailsChoices request)
+    question <- checkRequestText (detailsQuestion request)
+    evidence <- checkRequestText (detailsEvidence request)
+    authority <- checkRequestText (detailsAuthority request)
+    pure (kind, question, evidence, authority)
   choicesText kind =
     case kind of
       ClarificationRequest -> T.empty

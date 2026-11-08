@@ -43,14 +43,17 @@ import Lockstep.Kernel.Profile
   , Gate
   , LayerLevel (..)
   , ProfileDefinition
+  , ProfileId
   , ProfileRef (..)
   , ResolutionInput (..)
   , contentDigestText
+  , definitionId
   , effectiveDigest
   , effectiveGates
   , effectiveSources
   , gateApplies
   , mkProfileDefinition
+  , mkProfileId
   , mkWorkFacts
   , profileIdText
   , profileRef
@@ -146,17 +149,17 @@ data ExpectedChecks
   deriving (Eq, Show)
 
 -- | Whether the page's choice is the current one; nothing chosen is never a set of checks.
-expectationMet :: Maybe T.Text -> ExpectedChecks -> Bool
+expectationMet :: Maybe ProfileId -> ExpectedChecks -> Bool
 expectationMet current expected =
   case (current, expected) of
     (Nothing, ExpectNothing) -> True
-    (Just c, ExpectProfile e) -> c == e
+    (Just c, ExpectProfile e) -> profileIdText c == e
     _ -> False
 
 choiceOf :: Store.ProfileRow -> ChecksChoice
 choiceOf row =
   ChecksChoice
-    { choiceId = Store.profileRowId row
+    { choiceId = profileIdText (Store.profileRowId row)
     , choiceVersion = fromIntegral (Store.profileRowVersion row)
     , choiceDigest = Store.profileRowDigest row
     , choiceDefinition = either (const Nothing) Just (loadStoredDefinition row)
@@ -318,7 +321,8 @@ chooseChecksExpecting runtime pid expected choice confirmed = do
               then refuse decision (T.pack "checks-changed")
               else do
                 when (choice == basicChecksId) registerBasic
-                row <- Store.findProfile choice Nothing
+                -- A choice that is no Profile id names no registered Profile.
+                row <- maybe (pure Nothing) (`Store.findProfile` Nothing) (mkProfileId choice)
                 case row of
                   Nothing -> refuse decision (T.pack "profile-unknown")
                   Just r ->
@@ -328,7 +332,7 @@ chooseChecksExpecting runtime pid expected choice confirmed = do
                       case loadStoredDefinition r of
                         Left _ -> refuse known (T.pack "profile-integrity")
                         Right chosen
-                          | currentId == Just choice -> do
+                          | currentId == Just (Store.profileRowId r) -> do
                               _ <- Store.insertProfileDecision known {Store.profileDecisionOutcome = T.pack "unchanged"}
                               pure (Right ChecksUnchanged)
                           | otherwise -> do
@@ -343,7 +347,7 @@ chooseChecksExpecting runtime pid expected choice confirmed = do
                               if losing && not confirmed
                                 then refuse known (T.pack "fewer-checks-unconfirmed")
                                 else do
-                                  Store.insertRepositoryProfile repositoryId choice
+                                  Store.insertRepositoryProfile repositoryId (Store.profileRowId r)
                                   _ <- Store.insertProfileDecision known
                                   pure (Right ChecksChosen)
           _ -> pure (Left (T.pack "project-has-no-folder"))
@@ -351,12 +355,13 @@ chooseChecksExpecting runtime pid expected choice confirmed = do
 -- | Registers the built-in document as version 1 when no @lockstep-basic@ exists, with its C-P2.3 decision row.
 registerBasic :: O.Orville ()
 registerBasic = do
-  existing <- Store.findProfile basicChecksId Nothing
+  -- The built-in document's own id is @lockstep-basic@ ('basicChecksId').
+  existing <- traverse (\d -> Store.findProfile (definitionId d) Nothing) basicDefinition
   case (existing, basicDefinition) of
-    (Nothing, Just d) -> do
+    (Just Nothing, Just d) -> do
       let
         digest = contentDigestText (refDigest (profileRef sha256Hasher d))
-      Store.insertProfile (Store.ProfileRow basicChecksId 1 digest basicChecksText)
+      Store.insertProfile (Store.ProfileRow (definitionId d) 1 digest basicChecksText)
       _ <-
         Store.insertProfileDecision
           Store.NewProfileDecision

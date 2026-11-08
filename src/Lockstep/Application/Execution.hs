@@ -49,14 +49,17 @@ import Lockstep.Kernel.Profile
   ( Behaviour (..)
   , Hasher (..)
   , ProfileDefinition
+  , ProfileId
   , ProfileRef (..)
   , ResolutionInput (..)
   , contentDigestText
+  , definitionId
   , effectiveGates
   , gateApplies
   , mkClassTag
   , mkProfileDefinition
   , mkWorkFacts
+  , profileIdText
   , profileRef
   , resolveProfile
   )
@@ -113,7 +116,7 @@ bugFixStored =
 data Enablement
   = Enablement
   { enablementProject :: T.Text
-  , enablementRepository :: T.Text
+  , enablementRepository :: RepositoryId
   , enablementEngineer :: T.Text
   , enablementFolder :: T.Text
   , enablementChecks :: T.Text
@@ -128,7 +131,7 @@ data Enablement
 data ExecutionStatus
   = NeedsFolder
   | FolderReadOnly
-  | NotEnabled (Maybe T.Text)
+  | NotEnabled (Maybe ProfileId)
   | Enabled Enablement
   deriving (Eq, Show)
 
@@ -168,10 +171,10 @@ enablementOf :: Store.EnablementRow -> Enablement
 enablementOf row =
   Enablement
     { enablementProject = identityText (Store.enablementRowProject row)
-    , enablementRepository = identityText (Store.enablementRowRepository row)
+    , enablementRepository = Store.enablementRowRepository row
     , enablementEngineer = Store.enablementRowEngineer row
     , enablementFolder = Store.enablementRowFolder row
-    , enablementChecks = Store.enablementRowProfile row
+    , enablementChecks = profileIdText (Store.enablementRowProfile row)
     , enablementChecksVersion = fromIntegral (Store.enablementRowProfileVersion row)
     , enablementChecksDigest = Store.enablementRowProfileDigest row
     , enablementActor = Store.enablementRowActor row
@@ -220,7 +223,7 @@ missingFor current catalogDefinitions =
     _ -> missingBugChecks []
 
 -- | The repository's current checks: the default's id and its latest stored row.
-currentChecks :: RepositoryId -> O.Orville (Maybe T.Text, Maybe Profiles.ProfileRow)
+currentChecks :: RepositoryId -> O.Orville (Maybe ProfileId, Maybe Profiles.ProfileRow)
 currentChecks repository = do
   currentId <- Profiles.repositoryDefault repository
   row <- maybe (pure Nothing) (`Profiles.findProfile` Nothing) currentId
@@ -232,11 +235,11 @@ expectedText expected =
     ExpectNothing -> T.pack "none"
     ExpectProfile p -> p
 
-expectationMet :: Maybe T.Text -> ExpectedChecks -> Bool
+expectationMet :: Maybe ProfileId -> ExpectedChecks -> Bool
 expectationMet current expected =
   case (current, expected) of
     (Nothing, ExpectNothing) -> True
-    (Just c, ExpectProfile e) -> c == e
+    (Just c, ExpectProfile e) -> profileIdText c == e
     _ -> False
 
 executionStatus :: DatabaseRuntime -> ProjectFolders -> T.Text -> IO (Either NotReadyReason (Maybe ExecutionStatus))
@@ -325,7 +328,7 @@ enableExecution runtime folders key rawId expected =
   setDecision engineer repository checksRow =
     Profiles.NewProfileDecision
       { Profiles.profileDecisionOperation = T.pack "repository-set-profile"
-      , Profiles.profileDecisionProfile = Just (Profiles.profileRowId checksRow)
+      , Profiles.profileDecisionProfile = Just (profileIdText (Profiles.profileRowId checksRow))
       , Profiles.profileDecisionVersion = Just (Profiles.profileRowVersion checksRow)
       , Profiles.profileDecisionDigest = Just (Profiles.profileRowDigest checksRow)
       , Profiles.profileDecisionEngineer = Just engineer
@@ -341,7 +344,8 @@ when switching to it loses no check and it holds every bug check; else
 -}
 decideChecks :: Maybe Profiles.ProfileRow -> [Profiles.ProfileRow] -> O.Orville (Either T.Text (Profiles.ProfileRow, Bool))
 decideChecks currentRow catalogRows = do
-  registered <- Profiles.findProfile bugFixProfileId Nothing
+  -- The built-in Bug Profile's own id is @lockstep-bug-fix@ ('bugFixProfileId').
+  registered <- join <$> traverse (\d -> Profiles.findProfile (definitionId d) Nothing) bugFixStored
   -- A stored document that does not reproduce aborts the transaction (never "checks missing").
   catalog <- Just <$> traverse storedDefinition catalogRows
   currentDefinition <- traverse storedDefinition currentRow
@@ -375,7 +379,7 @@ registerBugFix =
     Just definition -> do
       let
         digest = contentDigestText (refDigest (profileRef sha256Hasher definition))
-        row = Profiles.ProfileRow bugFixProfileId 1 digest (TE.decodeUtf8 (LBS.toStrict bugFixDocument))
+        row = Profiles.ProfileRow (definitionId definition) 1 digest (TE.decodeUtf8 (LBS.toStrict bugFixDocument))
       Profiles.insertProfile row
       _ <-
         Profiles.insertProfileDecision

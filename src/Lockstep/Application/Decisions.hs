@@ -150,8 +150,8 @@ that decision produced (C-C.R1 R4).
 decidedReceipt :: DatabaseRuntime -> T.Text -> IO (Either LedgerFailure (Maybe DecisionReceipt))
 decidedReceipt runtime rawSubject =
   case parseUuid rawSubject of
-    -- Not an identity: refused as the database refused it when the text was sent as is.
-    Left _ -> pure (Left unavailable)
+    -- Text that is not a canonical identity names no subject, so it has no receipt.
+    Left _ -> pure (Right Nothing)
     Right subject -> do
       found <- withDatabase runtime (Store.latestReceiptFor subject)
       case found of

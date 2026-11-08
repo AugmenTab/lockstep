@@ -46,7 +46,7 @@ import Lockstep.Application.Database
 import Lockstep.Application.Identity (newEngineerId, newRepositoryId)
 import Lockstep.Effects.Git (observeRepository)
 import Lockstep.Effects.ProjectFolders (gitIdentity)
-import Lockstep.Kernel.Identity (EngineerId, RepositoryId (..), identityText)
+import Lockstep.Kernel.Identity (EngineerId, RepositoryId)
 import Lockstep.Kernel.Repository
   ( AuthoritativeRemote (..)
   , OwnedRepository (..)
@@ -80,7 +80,7 @@ data EngineerRecord
 
 data RepositoryRecord
   = RepositoryRecord
-  { repositoryRecordId :: T.Text
+  { repositoryRecordId :: RepositoryId
   , repositoryRecordOwner :: T.Text
   , repositoryRecordAuthoritative :: Maybe (T.Text, T.Text)
   , repositoryRecordCommonDir :: T.Text
@@ -180,16 +180,15 @@ registerRepository runtime request = do
       pure (Left reason)
     Ready _ -> do
       observed <- observeRegistration (registrationPath request) (registrationRemote request)
-      withDatabase runtime . O.withTransaction $ fmap (fmap snd) (registerObservedIn (registrationEngineer request) observed)
+      withDatabase runtime . O.withTransaction $ registerObservedIn (registrationEngineer request) observed
 
 {- | Registration of an observed folder inside the caller's transaction, under
 the registration lock, with the same decision row (C-C.R1 R5). The caller
 checks readiness. This is the only ownership check, for the command line and a
 project's attempt alike (C-C.R1 R6-3); an attempt reaches it holding the
-projects lock (projects → repositories). The registered repository's identity
-comes back typed beside its record.
+projects lock (projects → repositories).
 -}
-registerObservedIn :: T.Text -> Observed -> O.Orville (Either Refused (RepositoryId, RepositoryRecord))
+registerObservedIn :: T.Text -> Observed -> O.Orville (Either Refused RepositoryRecord)
 registerObservedIn engineerName (Observed path remote repositoryId observed) = do
   let
     request = RegisterRequest engineerName path remote
@@ -227,7 +226,7 @@ registerObservedIn engineerName (Observed path remote repositoryId observed) = d
               row = rowFor repositoryId engineerId observation (registrationEngineer request)
             Store.insertRepository row (observationDigest observation)
             _ <- record decision {Store.decisionRepositoryId = Just repositoryId}
-            pure (Right (repositoryId, recordFromRow row))
+            pure (Right (recordFromRow row))
 
 listRepositories :: DatabaseRuntime -> IO (Either NotReadyReason [RepositoryRecord])
 listRepositories runtime =
@@ -313,7 +312,7 @@ identityFromKey key =
 recordFromRow :: Store.RepositoryRow -> RepositoryRecord
 recordFromRow row =
   RepositoryRecord
-    { repositoryRecordId = identityText (Store.rowRepositoryId row)
+    { repositoryRecordId = Store.rowRepositoryId row
     , repositoryRecordOwner = Store.rowOwnerName row
     , repositoryRecordAuthoritative = (,) <$> Store.rowRemoteName row <*> Store.rowRemoteIdentity row
     , repositoryRecordCommonDir = Store.rowCommonDir row

@@ -39,6 +39,7 @@ import Lockstep.Foundation.EvidenceModel
   , aggregate
   , effectiveDisposition
   )
+import Lockstep.Kernel.Identity (JobId, ReceiptId, jobIdNumber, receiptIdNumber)
 import Lockstep.Persistence.CommandCenter qualified as Store
 
 data SummaryRow
@@ -51,7 +52,7 @@ data SummaryRow
 
 data Activity
   = Activity
-  { activityReceipt :: Int64
+  { activityReceipt :: ReceiptId
   , activityKind :: T.Text
   , activityOutcome :: T.Text
   , activityActor :: T.Text
@@ -145,12 +146,12 @@ toActivity row =
     }
 
 -- | C-P1.6 E3: the canonical outcome text whose SHA-256 the dispatcher stores.
-jobOutcomeCanonical :: Int64 -> T.Text -> Int -> Int -> Maybe T.Text -> T.Text
+jobOutcomeCanonical :: JobId -> T.Text -> Int -> Int -> Maybe T.Text -> T.Text
 jobOutcomeCanonical ident state done total lastError =
   T.intercalate
     (T.pack "\n")
     [ T.pack "lockstep-job-outcome-v1"
-    , T.pack (show ident)
+    , T.pack (show (jobIdNumber ident))
     , state
     , T.pack (show done <> "/" <> show total)
     , fromMaybe T.empty lastError
@@ -164,12 +165,14 @@ sha256Hex =
 evidenceRow :: T.Text -> Store.JobEvidenceRow -> EvidenceRow
 evidenceRow schema job =
   let
-    ident = Store.evidenceJobId job
+    jobId = Store.evidenceJobId job
+    ident = jobIdNumber jobId
+    receipt = receiptIdNumber (Store.evidenceReceiptId job)
     done = fromIntegral (Store.evidenceStepsDone job)
     total = fromIntegral (Store.evidenceStepsTotal job)
     state = Store.evidenceState job
     locator = T.pack ("db:lockstep_jobs/" <> show ident)
-    recomputed = sha256Hex (jobOutcomeCanonical ident state done total (Store.evidenceError job))
+    recomputed = sha256Hex (jobOutcomeCanonical jobId state done total (Store.evidenceError job))
     claimed
       | state == T.pack "succeeded" = Passed
       | state == T.pack "failed" = Failed
@@ -183,8 +186,8 @@ evidenceRow schema job =
       RowInput
         { rowCriterion = T.pack ("AC-JOB-" <> show ident <> "@v1")
         , rowStatement =
-            T.pack ("Job " <> show ident <> " (receipt " <> show (Store.evidenceReceiptId job) <> ") completes all " <> show total <> " steps")
-        , rowSourceRefs = [T.pack "C-P1.5 E4", T.pack ("receipt " <> show (Store.evidenceReceiptId job))]
+            T.pack ("Job " <> show ident <> " (receipt " <> show receipt <> ") completes all " <> show total <> " steps")
+        , rowSourceRefs = [T.pack "C-P1.5 E4", T.pack ("receipt " <> show receipt)]
         , rowRequired = True
         , rowMethod = T.pack "background dispatcher (lockstep serve)"
         , rowExpected = T.pack ("succeeded, " <> show total <> "/" <> show total <> " steps")

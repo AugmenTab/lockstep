@@ -66,6 +66,7 @@ import Lockstep.Application.Tasks
   , decideTask
   , editTask
   , findTask
+  , findTaskById
   , listAllTasks
   , listTasks
   )
@@ -75,7 +76,7 @@ import Lockstep.Kernel.Decision (DecisionRequest (..), decisionRefusalWords)
 import Lockstep.Kernel.Effect (OperationId (..))
 import Lockstep.Kernel.EffectView (EffectStatus (..))
 import Lockstep.Kernel.Execution (executionRefusalWords)
-import Lockstep.Kernel.Identity (WorkOrderId (..), parseUuid)
+import Lockstep.Kernel.Identity (ProjectId (..), TransactionId (..), WorkOrderId (..), parseIdentity, parseUuid)
 import Lockstep.Kernel.Policy (checksRefusalWords, lossWords)
 import Lockstep.Kernel.Project (SetupState (..), parseFolderChoice, refusalWords, setupStateCode)
 import Lockstep.Kernel.Task (parsePriority, taskRefusalWords)
@@ -477,7 +478,8 @@ handleWithDatabase db route request =
           Left _ -> pure notReady
           Right Nothing -> pure (errorJson HTTP.status404 "not-found")
           Right (Just tx) -> do
-            current <- haltRequest db (viewId tx)
+            -- TransactionView carries its id as text (a frozen-test boundary); it is always canonical.
+            current <- maybe (pure (Right Nothing)) (haltRequest db) (parseIdentity (viewId tx))
             case (current, key, revision, value "request", value "choice") of
               (Left _, _, _, _, _) -> pure notReady
               (Right (Just r), Just k, Just rev, Just rid, Just c)
@@ -633,7 +635,7 @@ taskAnswer db task notice = do
         tx <- transactionForWorkOrder db (admissionWorkOrder a)
         case tx of
           Right (Just v) -> do
-            request <- haltRequest db (viewId v)
+            request <- maybe (pure (Right Nothing)) (haltRequest db) (parseIdentity (viewId v))
             pure (Just (v, fromRight Nothing request))
           _ -> pure Nothing
   key <- idempotencyKeyText <$> generateIdempotencyKey
@@ -646,7 +648,7 @@ taskAnswer db task notice = do
 -- | The task page of a transaction's task, after a person's decision about it (C-P4.16).
 transactionAnswer :: DatabaseRuntime -> TransactionView -> Maybe T.Text -> IO Wai.Response
 transactionAnswer db tx notice = do
-  found <- findTask db (viewTask tx)
+  found <- findTaskById db (viewTask tx)
   case found of
     Right (Just task) -> taskAnswer db task notice
     Right Nothing -> pure (errorJson HTTP.status404 "not-found")
@@ -845,16 +847,19 @@ projectPage db view notice = do
   tasks <- fromRight [] <$> listTasks db (projectId view)
   checks <- projectChecks db (projectId view)
   execution <- fromRight Nothing <$> executionStatus db folders (projectId view)
-  started <- fromRight False <$> projectStarted db (projectId view)
+  -- ProjectView carries its id as text (a frozen-test boundary); it is always a canonical project id.
+  started <- maybe (pure (Right False)) (projectStarted db) (parseIdentity (projectId view))
   executionKey <- idempotencyKeyText <$> generateIdempotencyKey
   let
     status =
       case projectSetup view of
         Connected ->
           [ E.p [cls "ls-good-text"] [E.text ("Lockstep can see this folder: " <> fromMaybe "" (projectFolder view))]
-          , if started
-              then E.p [] [E.text "Lockstep works in it only on bugs you hand it, and commits each fix only on its own branch there. It sends nothing anywhere."]
-              else E.p [] [E.text "It cannot change it or run anything in it yet; that arrives in a later update of Lockstep."]
+          , case started of
+              Right True -> E.p [] [E.text "Lockstep works in it only on bugs you hand it, and commits each fix only on its own branch there. It sends nothing anywhere."]
+              Right False -> E.p [] [E.text "It cannot change it or run anything in it yet; that arrives in a later update of Lockstep."]
+              -- Not read: said so, never shown as "not started".
+              Left _ -> E.p [cls "ls-notice", attr "id" "project-started-unknown"] [E.text "Lockstep could not read whether it has started work in this folder. Reload the page to try again."]
           ]
         Organized ->
           [ E.p [] [E.text "This project is organized but has no folder yet. Its files will live in a folder you choose below."]
@@ -905,7 +910,7 @@ projectPage db view notice = do
          ]
       <> projectTasks view tasks
       <> either (const []) (maybe [] projectChecksSection) checks
-      <> projectExecutionSection view execution started executionKey
+      <> projectExecutionSection view execution (started == Right True) executionKey
       <> [E.h2 [] [E.text "Its folder"]]
       <> status
       <> [ E.details
