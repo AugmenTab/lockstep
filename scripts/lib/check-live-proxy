@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# Verification of the egress proxy's request checks and accounting on the host
+# (contract C-P4.L.R1: the independent review of C-P4.L). Needs Docker and the
+# provider image (scripts/provider-image). Runs the real proxy of the image
+# directly (as the helper starts it) on an internal network with a recording
+# stand-in upstream (scripts/lib/live-upstream-record, HTTPS with a certificate
+# made here) and sends it raw requests (scripts/lib/live-proxy-probe). A
+# synthetic configuration and credential; nothing can reach the internet and no
+# provider is contacted. Removes its containers and network at the end.
+# Results: .local/evidence/live-proxy-<stamp>/results.txt
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+root=$PWD
+
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+work=$root/.local/evidence/live-proxy-$stamp
+mkdir -p "$work/upstream" "$work/ledger"
+chmod 700 "$work/ledger"
+results=$work/results.txt
+: > "$results"
+failures=0
+net=lockstep-proxycheck-$stamp
+upstream=lockstep-proxycheck-up-$stamp
+proxy_prefix=lockstep-proxycheck-egress-$stamp-
+image=lockstep-provider:claude-2.1.312
+model=claude-sonnet-5-5
+effort=medium
+
+record() { # STATUS DESCRIPTION
+  printf '%s %s\n' "$1" "$2" | tee -a "$results"
+  if [ "$1" != PASS ]; then failures=$((failures + 1)); fi
+}
+expect() { # DESCRIPTION CONDITION...
+  local description=$1
+  shift
+  if "$@"; then record PASS "$description"; else record FAIL "$description"; fi
+}
+
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  echo "NOT_RUN: the image $image is missing; run scripts/provider-image first" >&2
+  exit 2
+fi
+cleanup() {
+  docker ps -aq --filter "name=^$proxy_prefix" | while read -r c; do docker rm -f "$c" >/dev/null 2>&1 || true; done
+  docker rm -f "$upstream" >/dev/null 2>&1 || true
+  docker network rm "$net" >/dev/null 2>&1 || true
+  rm -f "$work/credential" "$work/standin.key"
+}
+trap cleanup EXIT
+
+umask 077
+secret=sk-ant-test-$(head -c 20 /dev/urandom | od -An -tx1 | tr -d ' \n')
+printf '%s\n' "$secret" > "$work/credential"
+chmod 600 "$work/credential"
+cat > "$work/config" <<EOF
+lockstep-provider 1
+provider claude-code
+model $model
+effort $effort
+pricing synthetic-test-1
+price-input 3000000
+price-output 15000000
+price-cache-write-5m 3750000
+price-cache-write-1h 6000000
+price-cache-read 300000
+long-context-tokens 200000
+long-context-input-percent 200
+long-context-output-percent 150
+budget-micro-usd 50000000
+token-limit 100000000
+invocation-limit 1000
+request-max-tokens 16000
+invocation-output-tokens 60000
+invocation-requests 50
+EOF
+chmod 600 "$work/config"
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$work/standin.key" -out "$work/standin.pem" -days 2 \
+  -subj /CN=standin -addext subjectAltName=DNS:standin >/dev/null 2>&1
+chmod 644 "$work/standin.pem" "$work/standin.key"
+chmod 777 "$work/upstream"
+docker network create --internal "$net" >/dev/null
+docker run -d --name "$upstream" --network "$net" --network-alias standin --read-only --user "$(id -u):$(id -g)" \
+  --cap-drop ALL \
+  --mount "type=bind,source=$root/scripts/lib/live-upstream-record,target=/opt/upstream,readonly" \
+  --mount "type=bind,source=$work/standin.pem,target=/etc/standin.pem,readonly" \
+  --mount "type=bind,source=$work/standin.key,target=/etc/standin.key,readonly" \
+  --mount "type=bind,source=$work/upstream,target=/log" \
+  "$image" python3 /opt/upstream --cert /etc/standin.pem --key /etc/standin.key --log /log/bodies.jsonl >/dev/null
+sleep 1.5
+
+# start_proxy RUN: the proxy as the helper starts it; true once it listens
+start_proxy() {
+  local run=$1 n=0
+  rm -f "$work/ledger/runs/$run.ready"
+  docker run -d --name "$proxy_prefix$run" --network "$net" --network-alias lockstep-egress --read-only \
+    --tmpfs /tmp:rw,nosuid,nodev,size=16777216 --cap-drop ALL --security-opt no-new-privileges \
+    --user "$(id -u):$(id -g)" --log-driver none \
+    --mount "type=bind,source=$work/config,target=/etc/lockstep/provider,readonly" \
+    --mount "type=bind,source=$work/credential,target=/run/lockstep/credential,readonly" \
+    --mount "type=bind,source=$work/standin.pem,target=/etc/lockstep/ca.pem,readonly" \
+    --mount "type=bind,source=$work/ledger,target=/ledger" \
+    "$image" python3 /opt/lockstep/egress-proxy serve --config /etc/lockstep/provider \
+    --credential /run/lockstep/credential --ledger /ledger --run "$run" --role readonly \
+    --upstream standin:8443 --ca /etc/lockstep/ca.pem >/dev/null
+  while [ ! -f "$work/ledger/runs/$run.ready" ] && [ $n -lt 80 ]; do sleep 0.1; n=$((n + 1)); done
+  [ -f "$work/ledger/runs/$run.ready" ]
+}
+stop_proxy() { docker stop --time 3 "$proxy_prefix$1" >/dev/null 2>&1 || true; docker rm -f "$proxy_prefix$1" >/dev/null 2>&1 || true; }
+# probe PROBE...: sets out (one "NAME STATUS CODE" line each)
+probe() {
+  out=$(docker run --rm --network "$net" --read-only --user "$(id -u):$(id -g)" --cap-drop ALL \
+    --mount "type=bind,source=$root/scripts/lib/live-proxy-probe,target=/opt/probe,readonly" \
+    "$image" python3 /opt/probe "$model" "$effort" "$@")
+}
+line_of() { printf '%s\n' "$out" | sed -n "s/^$1 //p" | head -n 1; }
+bodies() { [ -f "$work/upstream/bodies.jsonl" ] && wc -l < "$work/upstream/bodies.jsonl" | tr -d ' ' || echo 0; }
+last_body() { tail -n 1 "$work/upstream/bodies.jsonl"; }
+summary_stop() { sed -n 's/^stop //p' "$work/ledger/runs/$1" | head -n 1; }
+new_id() { head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+
+run1=$(new_id)
+start_proxy "$run1" || { echo "the proxy did not start" >&2; exit 1; }
+
+# 1 what reaches the upstream is the document the proxy checked, not the bytes it was sent
+probe spaced
+expect "a loosely written valid request is answered (200)" test "$(line_of spaced)" = "200 -"
+expect "the upstream received the checked document, written anew" grep -q '"model\\":\\"'"$model"'\\"' <(last_body)
+expect "not the client's own bytes" test -z "$(last_body | grep -F '"model\" :' || true)"
+
+# 2 usage reported only in the final message is charged (cache writes included)
+expect "the settlement counts the cache write the final message reported" \
+  grep -q "^settle $run1 1 3858 1025 5 known 10 5 1000 0 10 200$" "$work/ledger/ledger"
+
+# 3 a field written twice is refused whole, whichever value would have been read
+before=$(bodies)
+probe duplicate-model duplicate-tools
+expect "a model written twice is refused: body-refused" test "$(line_of duplicate-model)" = "403 body-refused"
+expect "tools written twice are refused: body-refused" test "$(line_of duplicate-tools)" = "403 body-refused"
+expect "neither reached the upstream" test "$(bodies)" = "$before"
+
+# 4 only the fields the pinned CLI sends: a field that could change the price is refused
+probe price-field service-tier no-effort deep
+expect "a regional-inference field is refused: field-refused" test "$(line_of price-field)" = "403 field-refused"
+expect "a service tier is refused: field-refused" test "$(line_of service-tier)" = "403 field-refused"
+expect "a request without the configured effort is refused: effort-refused" test "$(line_of no-effort)" = "403 effort-refused"
+expect "a body nested too deep is refused: body-refused" test "$(line_of deep)" = "403 body-refused"
+expect "none of them reached the upstream" test "$(bodies)" = "$before"
+probe valid
+# A-P4.L.R1-1 (C-P4.L.R2 H1): a refusal ends the run's admission; the proxy answers, admits nothing.
+expect "after the run's first refusal a valid request is refused: run-stopped" test "$(line_of valid)" = "403 run-stopped"
+expect "and it does not reach the upstream" test "$(bodies)" = "$before"
+expect "the run's first refusal is its stop: body-refused" test "$(summary_stop "$run1")" = body-refused
+stop_proxy "$run1"
+
+# 5 a run name already in the ledger cannot start again (its reservations would be lost)
+if start_proxy "$run1"; then reused=started; else reused=refused; fi
+expect "a proxy for a run name already used does not start" test "$reused" = refused
+expect "the ledger has that run once" test "$(grep -c "^invocation $run1 " "$work/ledger/ledger")" = 1
+stop_proxy "$run1"
+
+# 6 a ledger that cannot be read refuses the request and stops the run
+run2=$(new_id)
+start_proxy "$run2" || { echo "the second proxy did not start" >&2; exit 1; }
+printf 'not a ledger line\n' >> "$work/ledger/ledger"
+before=$(bodies)
+probe valid
+expect "with an unreadable ledger nothing is sent: 403 ledger-unreadable" test "$(line_of valid)" = "403 ledger-unreadable"
+expect "nothing reached the upstream" test "$(bodies)" = "$before"
+expect "the run's stop says why: ledger-unreadable" test "$(summary_stop "$run2")" = ledger-unreadable
+stop_proxy "$run2"
+
+expect "the credential is in no file kept" test -z "$(grep -r -l -F "$secret" "$work/ledger" "$work/upstream" "$results" || true)"
+echo "check-live-proxy: $failures failure(s); results in $results"
+[ "$failures" = 0 ]

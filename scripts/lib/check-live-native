@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+# Native subscription authentication (contract C-P4.L.N, Option D): the unmodified CLI holds its
+# own sign-in state in a dedicated Docker named volume owned by the CLI identity, and talks to the
+# provider through a passthrough filter that cannot read the traffic; Lockstep never injects a token
+# nor touches the credential content. The real helper in its offline-test mode, the real CLI, a TLS
+# stand-in for api.anthropic.com on an internal network. Synthetic credentials and fixtures only; no
+# provider is contacted; no real login. Results: .local/evidence/live-native-<stamp>/
+#
+#   A  the filter: an allowed host tunnels end-to-end TLS; a disallowed host and a non-CONNECT
+#      method are refused; the filter's log never holds the request body
+#   N4 preflight: a synthetic authenticated volume proceeds; an unauthenticated one is refused
+#      not-authenticated, not retried, nothing reached
+#   N1 the auth volume is owned by the CLI identity; the tools cannot read it; it is not in the tree,
+#      input or output; state persists after the login container is destroyed and across role-container
+#      recreation; the tree stays writable by the operator identity
+#   N5 usage recorded in tokens, no dollars   N6 no token env, no new role-container capability
+#   S  a simulated coding transaction completes through the native path
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+root=$PWD
+
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+work=$root/.local/evidence/live-native-$stamp
+mkdir -p "$work/agent"
+results=$work/results.txt
+: > "$results"
+failures=0
+instance=p4ln
+image=lockstep-provider:claude-2.1.312
+model=claude-sonnet-5-5
+effort=medium
+cli_uid=2000000000
+state=$root/.local/live-native-$stamp
+vol=lockstep-provider-auth-$instance
+token=sk-ant-oat01-fake-$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
+
+record() { printf '%s %s\n' "$1" "$2" | tee -a "$results"; [ "$1" = PASS ] || failures=$((failures + 1)); }
+expect() { local d=$1; shift; if "$@"; then record PASS "$d"; else record FAIL "$d"; fi; }
+
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  echo "NOT_RUN: the image $image is missing; run scripts/provider-image first" >&2
+  exit 2
+fi
+
+netA=lockstep-nat-a-$stamp
+filterA=lockstep-nat-filtera-$stamp
+upA=lockstep-nat-upa-$stamp
+net=lockstep-nat-$stamp
+agent=lockstep-nat-agent-$stamp
+helper_pid=""
+stop_helper() { if [ -n "$helper_pid" ]; then kill "$helper_pid" 2>/dev/null || true; wait "$helper_pid" 2>/dev/null || true; helper_pid=""; fi; }
+cleanup() {
+  stop_helper
+  docker ps -aq --filter "name=^lockstep-run-$instance-" | while read -r c; do docker rm -f "$c" >/dev/null 2>&1 || true; done
+  docker ps -aq --filter "name=^lockstep-egress-$instance-" | while read -r c; do docker rm -f "$c" >/dev/null 2>&1 || true; done
+  docker network ls -q --filter "name=^lockstep-live-$instance-" | while read -r n; do docker network rm "$n" >/dev/null 2>&1 || true; done
+  docker rm -f "$filterA" "$upA" "$agent" >/dev/null 2>&1 || true
+  docker network rm "$netA" "$net" >/dev/null 2>&1 || true
+  docker volume rm -f "$vol" >/dev/null 2>&1 || true
+  [ -f "$state/helper/helper.log" ] && cp "$state/helper/helper.log" "$work/helper.log"
+  [ -f "$state/provider/ledger/ledger" ] && cp "$state/provider/ledger/ledger" "$work/ledger"
+  rm -rf "$state" "$work/ca.key"
+}
+trap cleanup EXIT
+
+umask 077
+mkdir -p "$state/helper" "$state/pane" "$state/provider"
+chmod 700 "$state" "$state/helper" "$state/pane" "$state/provider"
+head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$state/helper/channel.key"
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$work/ca.key" -out "$work/ca.pem" -days 2 \
+  -subj /CN=api.anthropic.com -addext subjectAltName=DNS:api.anthropic.com >/dev/null 2>&1
+chmod 644 "$work/ca.pem" "$work/ca.key"
+chmod 777 "$work/agent"
+
+if command -v sha256sum >/dev/null 2>&1; then sha256() { sha256sum | cut -d ' ' -f 1; }; else sha256() { shasum -a 256 | cut -d ' ' -f 1; }; fi
+
+# ---------------------------------------------------------------- A  the filter, on its own
+docker network create --internal "$netA" >/dev/null
+docker run -d --name "$upA" --network "$netA" --network-alias standin --read-only --user "$(id -u):$(id -g)" \
+  --cap-drop ALL --mount "type=bind,source=$root/scripts/lib/live-connect-probe,target=/opt/p,readonly" \
+  --mount "type=bind,source=$work/ca.pem,target=/etc/c.pem,readonly" \
+  --mount "type=bind,source=$work/ca.key,target=/etc/k.pem,readonly" \
+  "$image" python3 /opt/p upstream --cert /etc/c.pem --key /etc/k.pem >/dev/null
+mkdir -p "$work/ledgerA"; chmod 777 "$work/ledgerA"
+runA=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+docker run -d --name "$filterA" --network "$netA" --network-alias lockstep-egress --read-only --tmpfs /tmp \
+  --cap-drop ALL --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
+  --mount "type=bind,source=$work/ledgerA,target=/ledger" \
+  "$image" python3 /opt/lockstep/egress-proxy passthrough --run "$runA" --ledger /ledger \
+  --allow api.anthropic.com --map api.anthropic.com=standin:8443 >/dev/null
+sleep 2
+probe() { docker run --rm --network "$netA" --read-only --cap-drop ALL \
+  --mount "type=bind,source=$root/scripts/lib/live-connect-probe,target=/opt/p,readonly" \
+  --mount "type=bind,source=$work/ca.pem,target=/etc/ca.pem,readonly" "$image" python3 /opt/p "$@"; }
+allowed=$(probe client api.anthropic.com || true)
+denied=$(probe client evil.example.com || true)
+method=$(probe plainget || true)
+expect "A an allowed host tunnels end-to-end TLS (status 200): $allowed" test "$(echo "$allowed" | awk '{print $1, $2}')" = "status 200"
+expect "A a disallowed host is refused at CONNECT: $denied" test "$denied" = "refused host-refused"
+expect "A a non-CONNECT method is refused (403): $method" test "$(echo "$method" | awk '{print $1, $2}')" = "status 403"
+expect "A the filter never saw the request body (it cannot read the TLS)" test -z "$(grep -l REQUEST-MARKER-7f3a "$work/ledgerA/runs/$runA" 2>/dev/null || true)"
+docker rm -f "$filterA" "$upA" >/dev/null 2>&1 || true
+docker network rm "$netA" >/dev/null 2>&1 || true
+
+# ---------------------------------------------------------------- the auth volume (Option D)
+# Init: a trusted one-off container (not the role container) owns the empty volume to the CLI identity.
+docker volume rm -f "$vol" >/dev/null 2>&1 || true
+docker volume create "$vol" >/dev/null
+docker run --rm --user 0:0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges \
+  --mount "type=volume,source=$vol,target=/auth" "$image" \
+  chown "$cli_uid:$cli_uid" /auth >/dev/null
+docker run --rm --user 0:0 --cap-drop ALL --cap-add FOWNER --security-opt no-new-privileges \
+  --mount "type=volume,source=$vol,target=/auth" "$image" chmod 700 /auth >/dev/null
+# A synthetic login: write the credential into the volume AS the CLI identity (stands in for the
+# login container). The owner-identity (the operator uid, this check's user) never writes here.
+login_state() { # JSON-or-empty
+  printf '%s' "$1" > "$work/creds.json"; chmod 644 "$work/creds.json"
+  if [ -n "$1" ]; then
+    docker run --rm --user "$cli_uid:$cli_uid" --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+      --mount "type=volume,source=$vol,target=/auth" --mount "type=bind,source=$work/creds.json,target=/tmp/c.json,readonly" \
+      "$image" cp /tmp/c.json /auth/.credentials.json >/dev/null
+  else
+    docker run --rm --user "$cli_uid:$cli_uid" --cap-drop ALL --security-opt no-new-privileges \
+      --mount "type=volume,source=$vol,target=/auth" "$image" rm -f /auth/.credentials.json >/dev/null 2>&1 || true
+  fi
+}
+creds='{"claudeAiOauth":{"accessToken":"'$token'","refreshToken":"sk-ant-ort01-fake","expiresAt":9999999999999,"scopes":["user:inference"],"subscriptionType":"max"}}'
+# N1 ownership and tool-unreadability of the volume, independent of the helper.
+vol_owner=$(docker run --rm --user "$(id -u):$(id -g)" --mount "type=volume,source=$vol,target=/auth" "$image" stat -c %u /auth 2>/dev/null || true)
+expect "N1 the auth volume is owned by the CLI identity ($vol_owner)" test "$vol_owner" = "$cli_uid"
+login_state "$creds"
+tool_read=$(docker run --rm --user "$(id -u):$(id -g)" --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+  --mount "type=volume,source=$vol,target=/auth" "$image" sh -c 'cat /auth/.credentials.json 2>&1 || true')
+expect "N1 the tools' identity cannot read the credential in the volume" test -z "$(printf '%s' "$tool_read" | grep -F "$token" || true)"
+
+# ---------------------------------------------------------------- the helper, native (offline-test) mode
+cat > "$state/provider/config" <<EOF
+lockstep-provider 1
+provider claude-code
+model $model
+effort $effort
+billing subscription
+token-limit 100000000
+invocation-limit 1000
+request-max-tokens 16000
+invocation-output-tokens 60000
+invocation-requests 50
+EOF
+chmod 600 "$state/provider/config"
+printf 'api.anthropic.com\n' > "$state/provider/egress-hosts"
+chmod 600 "$state/provider/egress-hosts"
+docker network create --internal "$net" >/dev/null
+printf 'lockstep-offline-test 1\nupstream standin:8443\nca %s\negress-network %s\n' "$work/ca.pem" "$net" \
+  > "$state/provider/offline-test"
+chmod 600 "$state/provider/offline-test"
+
+start_helper() {
+  log_mark=0
+  [ -f "$state/helper/helper.log" ] && log_mark=$(wc -l < "$state/helper/helper.log" | tr -d ' ')
+  "$root/scripts/control-helper" --state "$state" --instance "$instance" --runner < /dev/null >> "$work/helper.out" 2>&1 &
+  helper_pid=$!
+  for _ in $(seq 1 150); do grep -q "started (pid $helper_pid" "$state/helper/helper.log" 2>/dev/null && break; sleep 0.1; done
+  local key i=0 b
+  key=$(head -c 64 "$state/runner/channel.key")
+  ipad=""; opad=""
+  while [ $i -lt 64 ]; do
+    if [ $i -lt 32 ]; then b=$((16#${key:$((i * 2)):2})); else b=0; fi
+    ipad="$ipad$(printf '\\x%02x' $((b ^ 0x36)))"; opad="$opad$(printf '\\x%02x' $((b ^ 0x5c)))"; i=$((i + 1))
+  done
+}
+since() { tail -n "+$((log_mark + 1))" "$state/helper/helper.log"; }
+native_on() { since | grep -q "live runs on (OFFLINE TEST.*subscription, native"; }
+hex_escapes() { local h=$1 o="" j=0; while [ $j -lt ${#h} ]; do o="$o\\x${h:$j:2}"; j=$((j + 2)); done; printf '%s' "$o"; }
+hmac() { local inner; inner=$({ printf "$ipad"; cat; } | sha256); { printf "$opad"; printf "$(hex_escapes "$inner")"; } | sha256; }
+new_id() { head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+seed=""
+implement() {
+  local run=$1 id dir session line body tmp n=0
+  local -a argv=()
+  id=$(new_id); dir=$state/runner/work/$run
+  mkdir -p "$dir/tree" "$dir/input" "$dir/output"
+  printf 'def add(a, b):\n    return a - b\n' > "$dir/tree/calc.py"
+  [ -n "$seed" ] && cp -R "$seed/." "$dir/tree/"
+  printf '{"role":"implementer","answer":{"file":"result.json","kind":"implementation"}}\n' > "$dir/input/context.json"
+  printf 'Fix add.\n' > "$dir/input/role.md"
+  session="${run:0:8}-${run:8:4}-${run:12:4}-${run:16:4}-${run:20:12}"
+  while IFS= read -r line; do
+    line=${line//\{MODEL\}/$model}; line=${line//\{EFFORT\}/$effort}; line=${line//\{SESSION\}/$session}; line=${line//\{INPUT\}//input}
+    argv+=("$line")
+  done < "$root/test/fixtures/live/claude-argv"
+  : > "$dir/argv"; for a in "${argv[@]}"; do printf '%s\0' "$a" >> "$dir/argv"; done
+  body=$(printf 'lockstep-runner-request 1\nid %s\nissued %s\nop run-live-write\nexpect run-%s\nargv %s\n' "$id" "$(date +%s)" "$run" "$(sha256 < "$dir/argv")")
+  tmp=$state/runner/requests/.$id; printf '%s\n' "$body" > "$tmp"; printf 'mac %s\n' "$(printf '%s\n' "$body" | hmac)" >> "$tmp"
+  mv "$tmp" "$state/runner/requests/$id.rreq"
+  res=$state/runner/results/$id.res
+  while [ ! -f "$res" ] && [ $n -lt 1500 ]; do sleep 0.1; n=$((n + 1)); done
+}
+start_standin() {
+  docker rm -f "$agent" >/dev/null 2>&1 || true
+  printf '%s' "$1" > "$work/agent/steps.json"; chmod 644 "$work/agent/steps.json"
+  : > "$work/agent/requests.jsonl"; chmod 666 "$work/agent/requests.jsonl"
+  docker run -d --name "$agent" --network "$net" --network-alias standin --read-only --user "$(id -u):$(id -g)" \
+    --cap-drop ALL \
+    --mount "type=bind,source=$root/scripts/lib/live-standin-secret,target=/opt/standin,readonly" \
+    --mount "type=bind,source=$work/ca.pem,target=/etc/standin.pem,readonly" \
+    --mount "type=bind,source=$work/ca.key,target=/etc/standin.key,readonly" \
+    --mount "type=bind,source=$work/agent,target=/log" \
+    "$image" python3 /opt/standin --cert /etc/standin.pem --key /etc/standin.key --log /log/requests.jsonl \
+    --steps /log/steps.json >/dev/null
+  sleep 1.5
+}
+field() { sed -n "s/^$1 //p" "$res" | head -n 1; }
+fieldline() { sed -n "s/^field $1 //p" "$res" | head -n 1; }
+refused_with() { [ "$(field outcome) $(field reason)" = "refused $1" ]; }
+outcome_is() { [ "$(field outcome) $(fieldline exit)" = "$1" ]; }
+upstream_count() { wc -l < "$work/agent/requests.jsonl" | tr -d ' '; }
+said() { grep -qF "$1" "$work/agent/requests.jsonl"; }
+auth_status() { docker run --rm --user "$cli_uid:$cli_uid" --read-only --tmpfs /tmp --network none --cap-drop ALL \
+  --env HOME=/tmp --env CLAUDE_CONFIG_DIR=/auth --mount "type=volume,source=$vol,target=/auth" \
+  "$image" claude auth status --json 2>/dev/null | grep -o '"loggedIn": [a-z]*'; }
+answer='{"name":"Edit","input":{"file_path":"/output/result.json","old_string":"","new_string":"{\"kind\":\"implementation\",\"summary\":\"add adds\"}"}}'
+
+# N4 unauthenticated: an empty (initialized) volume is refused, nothing reached, not retried
+login_state ""
+start_standin "[$answer]"
+start_helper
+expect "the helper names native subscription mode" native_on
+if native_on; then
+  run=$(new_id); implement "$run"
+  expect "N4 an unauthenticated run is refused not-authenticated" refused_with not-authenticated
+  expect "N4 nothing reached the provider" test "$(upstream_count)" = 0
+  run=$(new_id); implement "$run"
+  expect "N4 it is refused again, not retried into a loop" refused_with not-authenticated
+else
+  record FAIL "native mode is not on; the rest is not run"
+fi
+stop_helper
+
+# N1/N5/N6/S the authenticated path (synthetic credential written as the CLI identity, login container gone)
+login_state "$creds"
+expect "N1 the state persists after the login container is destroyed" test "$(auth_status)" = '"loggedIn": true'
+seed=$work/seed; mkdir -p "$seed/.claude/skills/s"
+printf '# notes\nMARKER-CLAUDEMD-7f3a\n' > "$seed/CLAUDE.md"
+printf -- '---\nname: s\ndescription: MARKER-SKILL-7f3a\n---\nMARKER-SKILL-7f3a\n' > "$seed/.claude/skills/s/SKILL.md"
+start_standin "[{\"name\":\"Edit\",\"input\":{\"file_path\":\"/work/tree/calc.py\",\"old_string\":\"return a - b\",\"new_string\":\"return a + b\"}},{\"name\":\"Bash\",\"input\":{\"command\":\"echo api=\${ANTHROPIC_API_KEY:-none} oauth=\${CLAUDE_CODE_OAUTH_TOKEN:-none} cfg=\$(ls /auth 2>&1) owner=\$(id -u) end\",\"description\":\"env\"}},$answer]"
+start_helper
+if native_on; then
+  run=$(new_id); implement "$run"
+  expect "S the authenticated run exited 0" outcome_is "exited 0"
+  expect "S its answer was written" test -s "$state/runner/work/$run/output/result.json"
+  expect "S the source was edited" grep -q "return a + b" "$state/runner/work/$run/tree/calc.py"
+  expect "S the CLI reached the provider through the filter" test "$(upstream_count)" -ge 1
+  expect "N6 the role container had no ANTHROPIC_API_KEY and no CLAUDE_CODE_OAUTH_TOKEN" said 'api=none oauth=none'
+  expect "N1 the tools (operator identity) could not read the auth volume" said 'cfg=ls: cannot'
+  expect "N1 the tree edit is owned by the operator identity" said "owner=$(id -u) end"
+  # (The offered tool set, Read/Edit/Bash only, is covered by check-live-boundary, unchanged here.)
+  expect "S the repository's CLAUDE.md and skills reached no request" test -z "$(grep -F MARKER- "$work/agent/requests.jsonl" || true)"
+  expect "N5 usage is recorded in tokens ($(fieldline egress.tokens))" test "$(fieldline egress.tokens)" -gt 0 2>/dev/null
+  expect "N5 and in no dollars (micro-USD $(fieldline egress.micro))" test "$(fieldline egress.micro)" = 0
+  expect "N1 state survives role-container recreation (a second run still authenticated)" test "$(auth_status)" = '"loggedIn": true'
+  expect "the synthetic token is in no kept file (ledger, helper log, agent, state)" \
+    test -z "$(grep -r -l -F "$token" "$state/runner" "$state/helper" "$work/helper.out" "$work/agent" 2>/dev/null || true)"
+else
+  record FAIL "native mode is not on for the authenticated path"
+fi
+stop_helper
+
+echo "check-live-native: $failures failure(s); results in $results"
+[ "$failures" = 0 ]

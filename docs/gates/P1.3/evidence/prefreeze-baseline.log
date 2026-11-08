@@ -1,0 +1,128 @@
+All test running disabled by --no-run-tests flag. To mute this message in future, set
+notify-if-no-run-tests: false in Stack's configuration.
+lockstep> configure (lib + exe + test)
+Configuring lockstep-0.2.0.0...
+lockstep> build (lib + exe + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+[ 1 of 23] Compiling Lockstep.Foundation.Config
+[ 2 of 23] Compiling Lockstep.Foundation.Cli
+[ 3 of 23] Compiling Lockstep.Foundation.SystemConfig
+[ 4 of 23] Compiling Lockstep.Persistence.Connection
+[ 5 of 23] Compiling Lockstep.Persistence.Migration
+[ 6 of 23] Compiling Lockstep.Persistence.Migrate
+[ 7 of 23] Compiling Lockstep.Persistence.Migrations
+[ 8 of 23] Compiling Lockstep.Persistence.Queries
+[ 9 of 23] Compiling Lockstep.Application.Database
+[10 of 23] Compiling Lockstep.Web.Common
+[11 of 23] Compiling Lockstep.Web.Handler.NoUser
+[12 of 23] Compiling Lockstep.Web.Server
+[13 of 23] Compiling Lockstep.Web.Static
+[14 of 23] Compiling Lockstep.Web.Components.Page
+[15 of 23] Compiling Lockstep.Web.Components.Page404
+[16 of 23] Compiling Lockstep.Web.Types
+[17 of 23] Compiling Lockstep.Web.Handler.NoPermissionError
+[18 of 23] Compiling Lockstep.Web.Readiness
+[19 of 23] Compiling Lockstep.Web.Liveness
+[20 of 23] Compiling Lockstep.Web.Health
+[21 of 23] Compiling Lockstep.Web.Routes
+[22 of 23] Compiling Lockstep.Web.Application
+[23 of 23] Compiling Paths_lockstep
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+[1 of 1] Compiling Main
+[2 of 2] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep/lockstep
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[1 of 8] Compiling Lockstep.ProcessTest
+[2 of 8] Compiling Lockstep.Support.Http
+[3 of 8] Compiling Lockstep.Support.Postgres
+[4 of 8] Compiling Lockstep.MigrationDbTest
+[5 of 8] Compiling Lockstep.Support.Process
+[6 of 8] Compiling Lockstep.ServiceDbTest
+[7 of 8] Compiling Lockstep.OperatorTrustTest
+/work/test/integration/Lockstep/OperatorTrustTest.hs:26:1: error: [GHC-87110]
+    Could not find module ‘Lockstep.Foundation.OperatorToken’.
+    Use -v to see a list of the files searched for.
+   |
+26 | import Lockstep.Foundation.OperatorToken (csrfFor, decodeToken, tokenDigest)
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       [S-7011]
+       While building package lockstep-0.2.0.0 (scroll up to its section to see the error) using:
+       /stack-root/setup-exe-cache/aarch64-linux/Cabal-simple_w2MFVN35_3.12.1.0_ghc-9.10.3 --verbose=1 --builddir=.stack-work/dist/aarch64-linux/ghc-9.10.3 build lib:lockstep exe:lockstep test:lockstep-integration test:lockstep-unit --ghc-options ""
+       Process exited with code: ExitFailure 1 
+All test running disabled by --no-run-tests flag. To mute this message in future, set
+notify-if-no-run-tests: false in Stack's configuration.
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+Preprocessing test suite 'lockstep-unit' for lockstep-0.2.0.0...
+Building test suite 'lockstep-unit' for lockstep-0.2.0.0...
+[ 1 of 14] Compiling Lockstep.Application.ReadinessTest
+[ 2 of 14] Compiling Lockstep.Foundation.CliDbTest
+[ 3 of 14] Compiling Lockstep.Foundation.CliOperatorTest
+[ 4 of 14] Compiling Lockstep.Foundation.CliTest
+[ 5 of 14] Compiling Lockstep.Foundation.OperatorTokenTest
+/work/test/unit/Lockstep/Foundation/CliOperatorTest.hs:18:54: error: [GHC-88464]
+    Data constructor not in scope: OperatorSignIn :: Port -> Command
+   |
+18 |         parseArgs ["operator", "sign-in"] @?= Right (OperatorSignIn defaultPort)
+   |                                                      ^^^^^^^^^^^^^^
+
+/work/test/unit/Lockstep/Foundation/CliOperatorTest.hs:21:72: error: [GHC-88464]
+    Data constructor not in scope: OperatorSignIn :: Port -> Command
+   |
+21 |         parseArgs ["operator", "sign-in", "--port", "9001"] @?= Right (OperatorSignIn port)
+   |                                                                        ^^^^^^^^^^^^^^
+
+/work/test/unit/Lockstep/Foundation/CliOperatorTest.hs:24:69: error: [GHC-88464]
+    Data constructor not in scope: OperatorSignIn :: Port -> Command
+   |
+24 |         parseArgs ["operator", "sign-in", "--port=9001"] @?= Right (OperatorSignIn port)
+   |                                                                     ^^^^^^^^^^^^^^
+
+/work/test/unit/Lockstep/Foundation/CliOperatorTest.hs:35:58: error: [GHC-88464]
+    Data constructor not in scope: OperatorSignOutAll :: Command
+   |
+35 |         parseArgs ["operator", "sign-out-all"] @?= Right OperatorSignOutAll
+   |                                                          ^^^^^^^^^^^^^^^^^^
+
+/work/test/unit/Lockstep/Foundation/OperatorTokenTest.hs:18:1: error: [GHC-87110]
+    Could not find module ‘Lockstep.Foundation.OperatorToken’.
+    Use -v to see a list of the files searched for.
+   |
+[ 6 of 14] Compiling Lockstep.Foundation.SystemConfigTest
+18 | import Lockstep.Foundation.OperatorToken
+[ 7 of 14] Compiling Lockstep.Persistence.MigrationTest
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^...
+[ 8 of 14] Compiling Lockstep.Web.ApplicationTest
+
+[ 9 of 14] Compiling Lockstep.Web.LivenessPageTest
+[10 of 14] Compiling Lockstep.Web.OperatorRoutesTest
+[11 of 14] Compiling Lockstep.Web.ReadinessRouteTest
+[12 of 14] Compiling Lockstep.Web.RequestGuardTest
+/work/test/unit/Lockstep/Web/RequestGuardTest.hs:15:1: error: [GHC-87110]
+    Could not find module ‘Lockstep.Web.RequestGuard’.
+    Use -v to see a list of the files searched for.
+   |
+15 | import Lockstep.Web.RequestGuard (GuardRefusal (..), RouteClass (..), guardRequest)
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+[13 of 14] Compiling Lockstep.Web.ServerTest
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       [S-7011]
+       While building package lockstep-0.2.0.0 (scroll up to its section to see the error) using:
+       /stack-root/setup-exe-cache/aarch64-linux/Cabal-simple_w2MFVN35_3.12.1.0_ghc-9.10.3 --verbose=1 --builddir=.stack-work/dist/aarch64-linux/ghc-9.10.3 build lib:lockstep test:lockstep-unit --ghc-options ""
+       Process exited with code: ExitFailure 1 

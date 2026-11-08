@@ -1,0 +1,137 @@
+== dev image
+== step 1 format
+Loaded config from: /work/fourmolu.yaml
+== step 2 lint and static checks
+No hints
+partial-function lint: all 17 banned functions flagged in test/fixtures/lint/PartialFunctions.hs
+forbidden facilities: none in 28 files
+source paths: all Haskell sources at case-exact module paths
+== step 3 build
+All test running disabled by --no-run-tests flag. To mute this message in future, set
+notify-if-no-run-tests: false in Stack's configuration.
+lockstep> configure (lib + exe + test)
+Configuring lockstep-0.2.0.0...
+lockstep> build (lib + exe + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+[ 1 of 15] Compiling Lockstep.Foundation.Config
+[ 2 of 15] Compiling Lockstep.Foundation.Cli
+[ 3 of 15] Compiling Lockstep.Foundation.Types
+[ 4 of 15] Compiling Lockstep.Web.Common
+[ 5 of 15] Compiling Lockstep.Web.Handler.NoPermissionError
+[ 6 of 15] Compiling Lockstep.Web.Handler.NoUser
+[ 7 of 15] Compiling Lockstep.Web.Health
+[ 8 of 15] Compiling Lockstep.Web.Server
+[ 9 of 15] Compiling Lockstep.Web.Static
+[10 of 15] Compiling Lockstep.Web.Components.Page
+[11 of 15] Compiling Lockstep.Web.Liveness
+[12 of 15] Compiling Lockstep.Web.Routes
+[13 of 15] Compiling Lockstep.Web.Components.Page404
+[14 of 15] Compiling Lockstep.Web.Application
+[15 of 15] Compiling Paths_lockstep
+Preprocessing test suite 'lockstep-unit' for lockstep-0.2.0.0...
+Building test suite 'lockstep-unit' for lockstep-0.2.0.0...
+[1 of 4] Compiling Lockstep.Foundation.CliTest
+[2 of 4] Compiling Lockstep.Web.ApplicationTest
+[3 of 4] Compiling Lockstep.Web.ServerTest
+[4 of 4] Compiling Main
+[5 of 5] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-unit/lockstep-unit
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+[1 of 1] Compiling Main
+[2 of 2] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep/lockstep
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[1 of 2] Compiling Lockstep.ProcessTest
+[2 of 2] Compiling Main
+[3 of 3] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-integration/lockstep-integration
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5be9c46c31f0403ca09f3f4346386435c77e9fa340000c8fa8320c199270d749/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-AWoRdZzGi4yK1KZ6qlnsc9
+Installing executable lockstep in /work/.stack-work/install/aarch64-linux/5be9c46c31f0403ca09f3f4346386435c77e9fa340000c8fa8320c199270d749/9.10.3/bin
+Registering library for lockstep-0.2.0.0...
+boundary check: Foundation -> Web rejected by Henforcer; control compiled
+== step 4 unit tests
+lockstep> test (suite: lockstep-unit)
+
+lockstep-unit
+  Cli
+    serve with no options binds loopback on the documented default port:        OK
+    the documented default port is 8000:                                        OK
+    --port N sets the port:                                                     OK
+    --port=N sets the port:                                                     OK
+    port bounds 1 and 65535 are accepted:                                       OK
+    --port with no value is a typed error, not the default:                     OK
+    --port= with an empty value is a typed error:                               OK
+    a non-numeric port is rejected:                                             OK
+    a negative port is rejected:                                                OK
+    port 0 is out of range:                                                     OK
+    port 65536 is out of range:                                                 OK
+    a repeated --port is refused:                                               OK
+    there is no option to bind a public interface:                              OK
+    an unknown option is refused:                                               OK
+    an extra positional argument is refused:                                    OK
+    an unknown subcommand is refused:                                           OK
+    no subcommand is refused:                                                   OK
+    mkPort rejects 0 and 65536 and accepts 8000:                                OK
+  Server
+    the default configuration binds 127.0.0.1 only:                             OK
+    a configured port keeps the loopback host:                                  OK
+  Application
+    health
+      GET /api/health_check answers 204 with an empty body:                     OK
+      POST /api/health_check is not a route:                                    OK
+    liveness
+      GET / renders an HTML liveness page:                                      OK
+      the page states liveness only and that database readiness is not checked: OK
+      the page links the Lockstep stylesheet:                                   OK
+      the page carries no Pico, hyperscript or Rollbar reference:               OK
+    removed template routes
+      /app is not a route:                                                      OK
+      /app/login is not a route:                                                OK
+      /app/logout is not a route:                                               OK
+      /app/signup is not a route:                                               OK
+      /app/admin/users is not a route:                                          OK
+      /app/account/profile is not a route:                                      OK
+      /api/docs is not a route:                                                 OK
+      /api/test_authentication is not a route:                                  OK
+      /mobile is not a route:                                                   OK
+    static assets
+      /static/lockstep.css is served as CSS:                                    OK
+      the Pico stylesheet is not shipped:                                       OK
+      the hyperscript bundle is not shipped:                                    OK
+      a path outside the asset allowlist is not served:                         OK
+      an unlisted asset name is not served:                                     OK
+
+All 40 tests passed (0.01s)
+
+
+
+lockstep> Test suite lockstep-unit passed
+== step 6 integration tests
+lockstep> test (suite: lockstep-integration)
+
+lockstep-integration
+  Process
+    serve with no --port answers health on 127.0.0.1:8000:              Listening on 127.0.0.1:8000 (liveness only)
+OK (0.45s)
+    serve --port P answers health and the liveness page on 127.0.0.1:P: Listening on 127.0.0.1:42123 (liveness only)
+OK (0.48s)
+    serve is not reachable on a non-loopback interface:                 Listening on 127.0.0.1:46501 (liveness only)
+OK (0.42s)
+    serve --port without a value exits 64 with a typed error:           OK
+    SIGTERM stops the server with exit 0 within 5 seconds:              Listening on 127.0.0.1:55793 (liveness only)
+OK (0.43s)
+
+All 5 tests passed (1.78s)
+
+
+
+lockstep> Test suite lockstep-integration passed
+
+== summary (tested revision 86d96de835209acf23586031c3219c15b55b3f20)
+  1 format                     PASSED
+  2 lint and static checks     PASSED
+  3 build                      PASSED
+  4 unit tests                 PASSED
+  5 no-live-model guard        NOT_RUN
+  6 integration tests          PASSED

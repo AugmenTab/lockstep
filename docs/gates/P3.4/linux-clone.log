@@ -1,0 +1,52 @@
+21dad60c103fb24265db8ae9c1860864a9877aa8
+Application
+Effects
+Foundation
+Kernel
+Persistence
+Web
+format PASSED
+lint PASSED
+build PASSED
+unit PASSED
+integration FAILED
+    the one-time token works once, only from this service's origin:                                                                                                                     OK (0.58s)
+    fragments need the session header; a cookie carrying the session is ignored:                                                                                                        OK (0.60s)
+    Home shows the observed state, never invented progress:                                                                                                                             OK (0.62s)
+    text from the database is escaped in fragments:                                                                                                                                     OK (0.63s)
+    sections not built yet say so and offer no buttons:                                                                                                                                 OK (0.62s)
+    Advanced shows the exact facts:                                                                                                                                                     OK (0.76s)
+    sign-out ends the session:                                                                                                                                                          OK (0.59s)
+    the Phase 1/2 pages and the status page are unchanged:                                                                                                                              OK (0.59s)
+    a body over 4 KiB is refused:                                                                                                                                                       OK (0.62s)
+  hand-over from the control pane to the application (C-P3.4 A3)
+    the helper issues a one-time token into a private hand-over file, never into the result:                                                                                            OK (3.58s)
+    without a running service nothing is issued:                                                                                                                                        OK (0.80s)
+    the pane hands the address over once, to its own session:                                                                                                                           FAIL (34.62s)
+      test/integration/Lockstep/HandoverTest.hs:66:
+      no result within 30 s:
+      
+      Use -p '/the pane hands the address over once, to its own session/' to rerun this test only.
+    a forged hand-over file is not handed over:                                                                                                                                         FAIL (34.47s)
+      test/integration/Lockstep/HandoverTest.hs:66:
+      no result within 30 s:
+      
+      Use -p '/a forged hand-over file is not handed over/' to rerun this test only.
+    the whole journey in a real browser: pane, Open Lockstep, Home, keyboard, phone width, hostile page, sign-out:                                                                      OK (63.42s)
+
+2 out of 295 tests failed (641.21s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

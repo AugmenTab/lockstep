@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Browser stand-in for scripts/lib/check-lifecycle (C-P3.2 §4). Called by the
+# launcher with the control pane's sign-in address as its only argument, it
+# drives a real headless Chromium (test/browser/control_driver.py in the dev
+# image, host network): wait for the running service, press Stop, wait, press
+# Start, wait, press Restart, wait. Every press is a real mouse click.
+#
+# The address goes to the driver on stdin and is never written anywhere; the
+# summary in $LOCKSTEP_SMOKE_OUT holds only found/not-found markers and the
+# final page text.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+out=${LOCKSTEP_SMOKE_OUT:?LOCKSTEP_SMOKE_OUT must name the summary file}
+link=$1
+case "$link" in
+  http://127.0.0.1:[0-9]*/sign-in#*) ;;
+  *) printf 'unexpected address\n' > "$out"; exit 1 ;;
+esac
+w() { printf '{"op":"wait_text","label":"%s","text":"%s","timeout":"%s"},' "$1" "$2" "$3"; }
+c() { printf '{"op":"click","label":"%s","selector":"%s"},' "$1" "$2"; }
+steps="[{\"op\":\"open\",\"label\":\"pane\",\"url\":\"$link\"},$(w running Running 90)$(c stop '#service-stop')$(w stopped 'Done: the service was stopped.' 120)$(c start '#service-start')$(w started 'Done: the service was started.' 120)$(c restart '#service-restart')$(w restarted 'Done: the service was restarted.' 120){\"op\":\"sleep\",\"seconds\":\"1\"}]"
+link=""
+driver=ok
+raw=$(printf '%s' "$steps" | docker run -i --rm --network host --log-driver none \
+  --volume "$PWD/test/browser:/browser:ro" lockstep-dev:p1 python3 /browser/control_driver.py) || driver=failed
+steps=""
+value() { printf '%s\n' "$raw" | awk -F '\t' -v k="$1" '$1 == k { print $2; exit }'; }
+{
+  printf 'driver=%s\n' "$driver"
+  for label in running stopped started restarted; do
+    printf '%s.found=%s\n' "$label" "$(value "$label.found")"
+  done
+  printf 'final.text=%s\n' "$(value restarted.text)"
+} > "$out"
+[ "$driver" = ok ]

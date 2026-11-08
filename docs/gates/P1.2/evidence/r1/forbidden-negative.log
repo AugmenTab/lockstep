@@ -1,0 +1,14 @@
+== 3. clean tree (with narrowed script)
+forbidden facilities: none in       55 files
+exit=0
+== 1. 'rollbar' added to test/unit/Lockstep/Web/ServerTest.hs
+forbidden facilities found:
+test/unit/Lockstep/Web/ServerTest.hs:32:-- rollbar
+exit=1
+== 2. 'rollbar' in a new file test/fixtures/negative/Rollbar.txt
+forbidden facilities found:
+test/fixtures/negative/Rollbar.txt:1:rollbar
+exit=1
+== control: old script (ed4d712) with the same fixture
+forbidden facilities: none in       39 files
+exit=0

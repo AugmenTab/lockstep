@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Verification of Start / Stop / Restart from the control pane on the host
+# (C-P3.2 §4). Needs Docker and the operator PostgreSQL server (scripts/db up);
+# it never touches the operator's installation, control pane, service or
+# database.
+#
+# Everything runs as instance p32c: state .local/control-p32c, install
+# .local/p32c-install, config .local/config/lockstep-p32c.json, containers
+# lockstep-control-p32c and lockstep-p32c, database lockstep_p32c_<stamp>,
+# pane port 18200, service port 18210; all removed at the end. The browser is
+# scripts/lib/lifecycle-smoke-browser (real headless Chromium, real clicks).
+# Results: .local/evidence/lifecycle-<stamp>/results.txt
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+
+instance=p32c
+state=.local/control-$instance
+install=.local/$instance-install
+config=.local/config/lockstep-$instance.json
+pane=lockstep-control-$instance
+service=lockstep-$instance
+pane_port=18200
+service_port=18210
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+db=lockstep_${instance}_$stamp
+work=.local/evidence/lifecycle-$stamp
+mkdir -p "$work"
+results=$work/results.txt
+: > "$results"
+failures=0
+
+record() { printf '%s %s\n' "$1" "$2" | tee -a "$results"; if [ "$1" != PASS ]; then failures=$((failures + 1)); fi; }
+expect() { local d=$1; shift; if "$@"; then record PASS "$d"; else record FAIL "$d"; fi; }
+
+if ! docker container inspect --format '{{.State.Running}}' lockstep-postgres 2>/dev/null | grep -q true; then
+  echo "NOT_RUN: the operator PostgreSQL (lockstep-postgres) is not running; run scripts/db up" >&2
+  exit 2
+fi
+for p in $pane_port $service_port; do
+  if curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$p/"; then
+    echo "NOT_RUN: something already answers on 127.0.0.1:$p" >&2
+    exit 2
+  fi
+done
+if [ -e "$state" ] || [ -e "$install" ] || [ -e "$config" ]; then
+  echo "NOT_RUN: $state, $install or $config already exists" >&2
+  exit 2
+fi
+
+started_at() { docker container inspect --format '{{.State.StartedAt}}' "$1" 2>/dev/null || echo none; }
+operator_before="$(started_at lockstep-service) $(started_at lockstep-control) $(started_at lockstep-postgres)"
+
+cleanup() {
+  LOCKSTEP_CONTROL_PORT=$pane_port ./lockstep --instance $instance stop >/dev/null 2>&1 || true
+  docker rm -f "$pane" "$service" >/dev/null 2>&1 || true
+  docker exec lockstep-postgres psql -q -U lockstep -d lockstep -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" >/dev/null 2>&1 || true
+  rm -rf "$state" "$install"
+  rm -f "$config"
+}
+trap cleanup EXIT
+
+# A compatible instance: its own database, migrated, and an installation built from this checkout.
+docker exec lockstep-postgres psql -q -U lockstep -d lockstep -c "CREATE DATABASE $db" >/dev/null
+(
+  umask 077
+  sed -E -e 's/"host":"[^"]*"/"host":"127.0.0.1"/' -e 's/"port":[0-9]+/"port":5433/' \
+    -e "s/\"name\":\"[^\"]*\"/\"name\":\"$db\"/" .local/config/lockstep.json > "$config"
+)
+LOCKSTEP_CONTROL_PORT=$pane_port LOCKSTEP_SERVICE_PORT=$service_port LOCKSTEP_BROWSER=true \
+  ./lockstep --instance $instance > "$work/first.out" 2>&1 < /dev/null || true
+mkdir -p "$install/bin"
+cp "$state/install/bin/lockstep" "$install/bin/lockstep" 2>/dev/null || record FAIL "the pane build exists to copy as the instance installation"
+cp "$state/install/VERSION" "$install/VERSION" 2>/dev/null || true
+scripts/service --instance $instance cli db migrate > "$work/migrate.out" 2>&1 || record FAIL "the instance database could be migrated"
+
+# The launch starts the compatible service; the browser stops, starts and restarts it.
+set +e
+LOCKSTEP_CONTROL_PORT=$pane_port LOCKSTEP_SERVICE_PORT=$service_port \
+  LOCKSTEP_BROWSER=scripts/lib/lifecycle-smoke-browser LOCKSTEP_SMOKE_OUT=$work/smoke \
+  ./lockstep --instance $instance > "$work/launch.out" 2>&1 < /dev/null
+code=$?
+set -e
+expect "launch exits 0" test "$code" = 0
+expect "the browser saw the running service" grep -q "running.found=yes" "$work/smoke"
+expect "Stop: the page said the service was stopped" grep -q "stopped.found=yes" "$work/smoke"
+expect "Start: the page said the service was started" grep -q "started.found=yes" "$work/smoke"
+expect "Restart: the page said the service was restarted" grep -q "restarted.found=yes" "$work/smoke"
+expect "the service is running at the end" test "$(docker container inspect --format '{{.State.Running}}' "$service" 2>/dev/null)" = true
+expect "the service answers on its port" curl -s -o /dev/null --max-time 5 "http://127.0.0.1:$service_port/api/health_check"
+journal=$state/helper/journal
+for op in service-stop service-start service-restart; do
+  expect "the helper ran $op exactly once, and it ended ok" bash -c "[ \$(grep -c ' start [0-9a-f]* $op\$' '$journal') = 1 ] && grep -q ' end [0-9a-f]* ok\$' '$journal'"
+done
+expect "no lifecycle operation failed or was refused" bash -c "! grep -E ' end [0-9a-f]+ (failed|timed-out|interrupted)| refused ' '$journal'"
+operator_after="$(started_at lockstep-service) $(started_at lockstep-control) $(started_at lockstep-postgres)"
+expect "the operator's service, control pane and database were not touched" test "$operator_before" = "$operator_after"
+expect "no output contains a sign-in link" bash -c "! cat '$work'/*.out '$work/smoke' | grep -q 'sign-in#'"
+
+echo
+echo "check-lifecycle: $failures failure(s); results in $results"
+[ "$failures" -eq 0 ]

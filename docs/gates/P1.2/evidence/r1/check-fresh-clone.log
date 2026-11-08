@@ -1,0 +1,252 @@
+fresh clone of b3a37233e2077de6a196112a2ef46780b71a30bb at 2026-10-17T16:08:28Z; command: scripts/check --integration
+== dev image
+== step 1 format
+Loaded config from: /work/fourmolu.yaml
+== step 2 lint and static checks
+No hints
+partial-function lint: all 17 banned functions flagged in test/fixtures/lint/PartialFunctions.hs
+forbidden facilities: none in 55 files
+source paths: all Haskell sources at case-exact module paths
+henforcer configs: test config equals production config minus layering rules
+== step 3 build
+All test running disabled by --no-run-tests flag. To mute this message in future, set
+notify-if-no-run-tests: false in Stack's configuration.
+lockstep> configure (lib + exe + test)
+Configuring lockstep-0.2.0.0...
+lockstep> build (lib + exe + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+[ 1 of 23] Compiling Lockstep.Foundation.Config
+[ 2 of 23] Compiling Lockstep.Foundation.Cli
+[ 3 of 23] Compiling Lockstep.Foundation.SystemConfig
+[ 4 of 23] Compiling Lockstep.Persistence.Connection
+[ 5 of 23] Compiling Lockstep.Persistence.Migration
+[ 6 of 23] Compiling Lockstep.Persistence.Migrate
+[ 7 of 23] Compiling Lockstep.Persistence.Migrations
+[ 8 of 23] Compiling Lockstep.Persistence.Queries
+[ 9 of 23] Compiling Lockstep.Application.Database
+[10 of 23] Compiling Lockstep.Web.Common
+[11 of 23] Compiling Lockstep.Web.Handler.NoUser
+[12 of 23] Compiling Lockstep.Web.Server
+[13 of 23] Compiling Lockstep.Web.Static
+[14 of 23] Compiling Lockstep.Web.Components.Page
+[15 of 23] Compiling Lockstep.Web.Components.Page404
+[16 of 23] Compiling Lockstep.Web.Types
+[17 of 23] Compiling Lockstep.Web.Handler.NoPermissionError
+[18 of 23] Compiling Lockstep.Web.Readiness
+[19 of 23] Compiling Lockstep.Web.Liveness
+[20 of 23] Compiling Lockstep.Web.Health
+[21 of 23] Compiling Lockstep.Web.Routes
+[22 of 23] Compiling Lockstep.Web.Application
+[23 of 23] Compiling Paths_lockstep
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+[1 of 1] Compiling Main
+[2 of 2] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep/lockstep
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[1 of 6] Compiling Lockstep.ProcessTest
+[2 of 6] Compiling Lockstep.Support.Postgres
+[3 of 6] Compiling Lockstep.MigrationDbTest
+[4 of 6] Compiling Lockstep.Support.Process
+[5 of 6] Compiling Lockstep.ServiceDbTest
+[6 of 6] Compiling Main
+[7 of 7] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-integration/lockstep-integration
+Preprocessing test suite 'lockstep-unit' for lockstep-0.2.0.0...
+Building test suite 'lockstep-unit' for lockstep-0.2.0.0...
+[ 1 of 10] Compiling Lockstep.Application.ReadinessTest
+[ 2 of 10] Compiling Lockstep.Foundation.CliDbTest
+[ 3 of 10] Compiling Lockstep.Foundation.CliTest
+[ 4 of 10] Compiling Lockstep.Foundation.SystemConfigTest
+[ 5 of 10] Compiling Lockstep.Persistence.MigrationTest
+[ 6 of 10] Compiling Lockstep.Web.ApplicationTest
+[ 7 of 10] Compiling Lockstep.Web.LivenessPageTest
+[ 8 of 10] Compiling Lockstep.Web.ReadinessRouteTest
+[ 9 of 10] Compiling Lockstep.Web.ServerTest
+[10 of 10] Compiling Main
+[11 of 11] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-unit/lockstep-unit
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-EB8cp2I9co2FDmY01Dcjc9
+Installing executable lockstep in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/bin
+Registering library for lockstep-0.2.0.0...
+boundary check: Foundation -> Web and Web -> Persistence rejected by Henforcer; control compiled
+== step 4 unit tests
+lockstep> test (suite: lockstep-unit)
+
+lockstep-unit
+  Cli
+    serve with no options binds loopback on the documented default port:        OK
+    the documented default port is 8000:                                        OK
+    --port N sets the port:                                                     OK
+    --port=N sets the port:                                                     OK
+    port bounds 1 and 65535 are accepted:                                       OK
+    --port with no value is a typed error, not the default:                     OK
+    --port= with an empty value is a typed error:                               OK
+    a non-numeric port is rejected:                                             OK
+    a negative port is rejected:                                                OK
+    port 0 is out of range:                                                     OK
+    port 65536 is out of range:                                                 OK
+    a repeated --port is refused:                                               OK
+    there is no option to bind a public interface:                              OK
+    an unknown option is refused:                                               OK
+    an extra positional argument is refused:                                    OK
+    an unknown subcommand is refused:                                           OK
+    no subcommand is refused:                                                   OK
+    mkPort rejects 0 and 65536 and accepts 8000:                                OK
+  Server
+    the default configuration binds 127.0.0.1 only:                             OK
+    a configured port keeps the loopback host:                                  OK
+  Application
+    health
+      GET /api/health_check answers 204 with an empty body:                     OK
+      POST /api/health_check is not a route:                                    OK
+    liveness
+      GET / renders an HTML liveness page:                                      OK
+      the page states liveness only and that database readiness is not checked: OK
+      the page links the Lockstep stylesheet:                                   OK
+      the page carries no Pico, hyperscript or Rollbar reference:               OK
+    removed template routes
+      /app is not a route:                                                      OK
+      /app/login is not a route:                                                OK
+      /app/logout is not a route:                                               OK
+      /app/signup is not a route:                                               OK
+      /app/admin/users is not a route:                                          OK
+      /app/account/profile is not a route:                                      OK
+      /api/docs is not a route:                                                 OK
+      /api/test_authentication is not a route:                                  OK
+      /mobile is not a route:                                                   OK
+    static assets
+      /static/lockstep.css is served as CSS:                                    OK
+      the Pico stylesheet is not shipped:                                       OK
+      the hyperscript bundle is not shipped:                                    OK
+      a path outside the asset allowlist is not served:                         OK
+      an unlisted asset name is not served:                                     OK
+  SystemConfig
+    a valid configuration decodes:                                              OK
+    a missing database block is invalid:                                        OK
+    a missing database field is invalid:                                        OK
+    a leftover rollbar block is refused as an unknown key:                      OK
+    an unknown key inside the database block is refused:                        OK
+    port 0 is invalid:                                                          OK
+    port 70000 is invalid:                                                      OK
+    showing a decoded configuration never reveals the password:                 OK
+  Cli db
+    db migrate defaults to requiring a backup when migrations are applied:      OK
+    db migrate --backup FILE:                                                   OK
+    db migrate --backup=FILE:                                                   OK
+    db migrate --no-backup:                                                     OK
+    db migrate --backup without a value is a typed error:                       OK
+    --backup and --no-backup conflict:                                          OK
+    a repeated --backup is refused:                                             OK
+    an unknown db migrate option is refused:                                    OK
+    db status:                                                                  OK
+    db status takes no arguments:                                               OK
+    db without a subcommand is refused:                                         OK
+    an unknown db subcommand is refused:                                        OK
+  Migration plan
+    an empty ledger plans every migration in order:                             OK
+    a full ledger plans nothing:                                                OK
+    a ledger prefix plans the remainder:                                        OK
+    a changed applied migration is a checksum mismatch:                         OK
+    an applied id the binary does not know means the database is ahead:         OK
+    a gap in the ledger is refused:                                             OK
+    a list with duplicate ids is invalid:                                       OK
+    a list with decreasing ids is invalid:                                      OK
+    the checksum is the SHA-256 of the SQL text:                                OK
+    mkMigrationId rejects 0 and negatives:                                      OK
+    the production migration list is valid and starts at 1:                     OK
+  Readiness
+    libpq failure classification
+      connection refused is unreachable:                                        OK
+      an unknown host is unreachable:                                           OK
+      a connect timeout is unreachable:                                         OK
+      a password failure is an authentication failure:                          OK
+      a missing database is reported as missing:                                OK
+      anything else is a database error:                                        OK
+    readiness codes
+      ready carries the revision:                                               OK
+      every not-ready reason has its own code:                                  OK
+      no not-ready code can be read as ready:                                   OK
+  Liveness page readiness
+    not configured says readiness is not checked:                               OK
+    every not-ready reason
+      unreachable:                                                              OK
+      authentication:                                                           OK
+      missing:                                                                  OK
+      schema behind:                                                            OK
+      schema invalid:                                                           OK
+      other error:                                                              OK
+    ready shows the revision and the persisted start count:                     OK
+  Readiness route (no database configured)
+    GET /api/readiness answers 503 database_not_configured:                     OK
+    GET /api/health_check still answers 204:                                    OK
+
+All 90 tests passed (0.02s)
+
+
+
+lockstep> Test suite lockstep-unit passed
+== disposable PostgreSQL postgres:17.11-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826
+== step 6 integration + backup/restore
+lockstep> test (suite: lockstep-integration)
+
+lockstep-integration
+  Process
+    serve with no --port answers health on 127.0.0.1:8000:                                            Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:8000
+OK (0.44s)
+    serve --port P answers health and the liveness page on 127.0.0.1:P:                               Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:58471
+OK (0.42s)
+    serve is not reachable on a non-loopback interface:                                               Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:50025
+OK (0.43s)
+    serve --port without a value exits 64 with a typed error:                                         OK (0.01s)
+    SIGTERM stops the server with exit 0 within 5 seconds:                                            Database readiness: not_ready database_not_configured
+Listening on 127.0.0.1:51975
+OK (0.43s)
+  PostgreSQL migrations and readiness
+    fresh install: the production list applies, then is a no-op:                                      OK (0.09s)
+    an ordered list applies in id order and the ledger records that order:                            OK (0.20s)
+    after a partial run only the remainder applies:                                                   OK (0.09s)
+    a failing migration leaves no DDL and no ledger row; earlier ones stay:                           OK (0.19s)
+    a changed applied migration is refused before any SQL runs:                                       OK (0.19s)
+    a database ahead of the binary is refused:                                                        OK (0.09s)
+    a gap in the ledger is refused:                                                                   OK (0.19s)
+    two concurrent runners apply each migration exactly once:                                         OK (0.69s)
+    readiness: schema behind before migrate, ready after:                                             OK (0.09s)
+    readiness: a wrong password is an authentication failure:                                         OK (0.06s)
+    readiness: a missing database is reported as missing:                                             OK (0.08s)
+    readiness: a closed port is unreachable:                                                          OK (0.06s)
+    backup gate
+      an applied ledger with pending work and no backup is refused:                                   OK (0.18s)
+      a missing backup file is refused:                                                               OK (0.19s)
+      a backup older than the last applied migration is refused:                                      OK (0.20s)
+      a fresh backup file allows the migration:                                                       OK (0.20s)
+      an explicit --no-backup allows the migration:                                                   OK (0.20s)
+      an empty database needs no backup:                                                              OK (0.19s)
+  lockstep process with PostgreSQL
+    db migrate installs a fresh database, then is a no-op; db status reports it:                      OK (0.11s)
+    serve reports schema_behind truthfully, then ready after migrate; starts persist across restarts: OK (2.21s)
+    an invalid configuration file stops serve with exit 66:                                           OK
+    a leftover rollbar block stops serve with exit 66 and names the key:                              OK
+    a configuration readable by others stops serve with exit 66:                                      OK
+    a missing configuration file stops serve with exit 66:                                            OK
+
+All 29 tests passed (7.23s)
+
+
+
+lockstep> Test suite lockstep-integration passed
+== backup/restore check
+restoring /var/folders/6x/s00tfzy578l9y38fjt32v3h00000gn/T//lockstep-backup-check.qpMDCQ/20261017T160911Z-r0-28164.dump into backupcheck (stop lockstep serve first)
+backup/restore check: dump + digest written; restore round trip ok; corrupted dump refused
+
+== summary (tested revision b3a37233e2077de6a196112a2ef46780b71a30bb)
+  1 format                     PASSED
+  2 lint and static checks     PASSED
+  3 build                      PASSED
+  4 unit tests                 PASSED
+  5 no-live-model guard        NOT_RUN
+  6 integration + backup/restore PASSED
+exit=0

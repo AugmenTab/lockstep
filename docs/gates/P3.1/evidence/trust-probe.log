@@ -1,0 +1,57 @@
+Chromium 156.0.8078.47 built on Debian GNU/Linux 12 (bookworm)
+[2668] Sandbox: CanCreateUserNamespace() clone() failure: EPERM
+Mozilla Firefox 153.5.1esr
+## chromium: first run from the sign-in link
+## chromium: restart on the same profile
+A LISTENING
+A GET /sign-in Origin=None Referer=None Cookie=None X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A POST /exchange Origin='http://127.0.0.1:8521' Referer=None Cookie=None X-Lockstep-Session=None Access-Control-Request-Headers=None body='PROBEtoken0123456789abcdefghijklmnopqrstuvw'
+B GET / Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+B GET /report?b.localStorage=null Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+B GET /report?b.document_cookie=(empty) Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A OPTIONS /act Origin='http://127.0.0.1:8522' Referer=None Cookie=None X-Lockstep-Session=None Access-Control-Request-Headers='x-lockstep-session' body=''
+B GET /favicon.ico Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+B GET /report?b.header_fetch=blocked%3A%20TypeError Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A POST /act Origin='http://127.0.0.1:8522' Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body='y'
+A ACT refused
+B GET /report?b.nocors_post=sent%20(opaque) Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A GET /check Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A POST /act Origin='http://127.0.0.1:8521' Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session='PROBEsession0123456789abcdefghijklmnopqrst' Access-Control-Request-Headers=None body='z'
+A ACT accepted
+A GET /report?a.check=accepted Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A GET /done Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A DONE first
+A GET /check?restart Origin=None Referer=None Cookie=None X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A POST /act Origin='http://127.0.0.1:8521' Referer=None Cookie=None X-Lockstep-Session='PROBEsession0123456789abcdefghijklmnopqrst' Access-Control-Request-Headers=None body='z'
+A ACT accepted
+A GET /report?a.check=accepted Origin=None Referer=None Cookie=None X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A GET /done?restart Origin=None Referer=None Cookie=None X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A DONE restart
+token occurrences outside the exchange POST body: 0
+## firefox: first run from the sign-in link
+## firefox: restart on the same profile
+A LISTENING
+A GET /sign-in Origin=None Referer=None Cookie=None X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A POST /exchange Origin='http://127.0.0.1:8521' Referer=None Cookie=None X-Lockstep-Session=None Access-Control-Request-Headers=None body='PROBEtoken0123456789abcdefghijklmnopqrstuvw'
+B GET / Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+B GET /report?b.localStorage=null Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+B GET /report?b.document_cookie=(empty) Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+B GET /favicon.ico Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A OPTIONS /act Origin='http://127.0.0.1:8522' Referer=None Cookie=None X-Lockstep-Session=None Access-Control-Request-Headers='x-lockstep-session' body=''
+B GET /report?b.header_fetch=blocked%3A%20TypeError Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A POST /act Origin='null' Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body='y'
+A ACT refused
+B GET /report?b.nocors_post=sent%20(opaque) Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A GET /check Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A POST /act Origin='http://127.0.0.1:8521' Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session='PROBEsession0123456789abcdefghijklmnopqrst' Access-Control-Request-Headers=None body='z'
+A ACT accepted
+A GET /report?a.check=accepted Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A GET /done Origin=None Referer=None Cookie='lockstep_session=PROBEcookie' X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A DONE first
+A GET /check?restart Origin=None Referer=None Cookie=None X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A POST /act Origin='http://127.0.0.1:8521' Referer=None Cookie=None X-Lockstep-Session='PROBEsession0123456789abcdefghijklmnopqrst' Access-Control-Request-Headers=None body='z'
+A ACT accepted
+A GET /report?a.check=accepted Origin=None Referer=None Cookie=None X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A GET /done?restart Origin=None Referer=None Cookie=None X-Lockstep-Session=None Access-Control-Request-Headers=None body=''
+A DONE restart
+token occurrences outside the exchange POST body: 0

@@ -1,0 +1,61 @@
+lockstep> test (suite: lockstep-integration, args: -p C-P4.6)
+
+lockstep-integration
+  C-P4.6 the coding transaction: start, basis, discovery, reproduction (real Git, processes, PostgreSQL)
+    an admitted bug starts one transaction at the basis; not admitted and a busy Engineer are refused: FAIL (0.22s)
+      test/integration/Lockstep/EngineTest.hs:107:
+      refused: "not-implemented"
+      Use -p '/C-P4.6/&&/an admitted bug starts one transaction at the basis; not admitted and a busy Engineer are refused/' to rerun this test only.
+    the basis is the clean HEAD and the work branch is made at it; the person's checkout is untouched: FAIL (0.21s)
+      test/integration/Lockstep/EngineTest.hs:107:
+      refused: "not-implemented"
+      Use -p '/C-P4.6/&&/the basis is the clean HEAD and the work branch is made at it; the person'\''s checkout is untouched/' to rerun this test only.
+    a dirty repository halts at the basis with one decision request to a person:                       FAIL (0.19s)
+      test/integration/Lockstep/EngineTest.hs:107:
+      refused: "not-implemented"
+      Use -p '/C-P4.6/&&/a dirty repository halts at the basis with one decision request to a person/' to rerun this test only.
+    discovery: the Planner's answer is recorded as data, with its invocation:                          FAIL (0.22s)
+      test/integration/Lockstep/EngineTest.hs:107:
+      refused: "not-implemented"
+      Use -p '/C-P4.6/&&/discovery: the Planner'\''s answer is recorded as data, with its invocation/' to rerun this test only.
+    a citation outside the source halts at discovery:                                                  FAIL (0.22s)
+      test/integration/Lockstep/EngineTest.hs:107:
+      refused: "not-implemented"
+      Use -p '/C-P4.6/&&/a citation outside the source halts at discovery/' to rerun this test only.
+    reproduction: the bug's own command fails with its signature at the basis:                         FAIL (0.20s)
+      test/integration/Lockstep/EngineTest.hs:107:
+      refused: "not-implemented"
+      Use -p '/C-P4.6/&&/reproduction: the bug'\''s own command fails with its signature at the basis/' to rerun this test only.
+    a command that passes, or none at all, is reproduction-missing; only then is accepting it offered: FAIL (0.19s)
+      test/integration/Lockstep/EngineTest.hs:107:
+      refused: "not-implemented"
+      Use -p '/C-P4.6/&&/a command that passes, or none at all, is reproduction-missing; only then is accepting it offered/' to rerun this test only.
+    a role that crashes, or no coding agent at all, halts with its reason:                             FAIL (0.20s)
+      test/integration/Lockstep/EngineTest.hs:107:
+      refused: "not-implemented"
+      Use -p '/C-P4.6/&&/a role that crashes, or no coding agent at all, halts with its reason/' to rerun this test only.
+    an invocation cut short is never run again: after a restart it is uncertain and halts:             FAIL (0.19s)
+      test/integration/Lockstep/EngineTest.hs:107:
+      refused: "not-implemented"
+      Use -p '/C-P4.6/&&/an invocation cut short is never run again: after a restart it is uncertain and halts/' to rerun this test only.
+    records and invocations cannot be changed afterwards:                                              FAIL (0.19s)
+      test/integration/Lockstep/EngineTest.hs:107:
+      refused: "not-implemented"
+      Use -p '/C-P4.6/&&/records and invocations cannot be changed afterwards/' to rerun this test only.
+
+10 out of 10 tests failed (2.02s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

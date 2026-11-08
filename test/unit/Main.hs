@@ -1,0 +1,154 @@
+module Main
+  ( main
+  ) where
+
+import Flipstone.Prelude
+import Test.Tasty (defaultMain, testGroup)
+
+import Lockstep.Application.CommandTest qualified as CommandTest
+import Lockstep.Application.NoopCommandTest qualified as NoopCommandTest
+import Lockstep.Application.ProfileDocumentTest qualified as ProfileDocumentTest
+import Lockstep.Application.ReadinessTest qualified as ReadinessTest
+import Lockstep.Effects.ClaudeAdapterTest qualified as ClaudeAdapterTest
+import Lockstep.Effects.ExecutorTest qualified as ExecutorTest
+import Lockstep.Effects.ReconcilerTest qualified as ReconcilerTest
+import Lockstep.Foundation.CliControlTest qualified as CliControlTest
+import Lockstep.Foundation.CliDbTest qualified as CliDbTest
+import Lockstep.Foundation.CliFinalReviewTest qualified as CliFinalReviewTest
+import Lockstep.Foundation.CliJobTest qualified as CliJobTest
+import Lockstep.Foundation.CliLedgerTest qualified as CliLedgerTest
+import Lockstep.Foundation.CliOperatorTest qualified as CliOperatorTest
+import Lockstep.Foundation.CliProfileTest qualified as CliProfileTest
+import Lockstep.Foundation.CliRepositoryTest qualified as CliRepositoryTest
+import Lockstep.Foundation.CliTest qualified as CliTest
+import Lockstep.Foundation.CliWorkspaceTest qualified as CliWorkspaceTest
+import Lockstep.Foundation.ControlProtocolTest qualified as ControlProtocolTest
+import Lockstep.Foundation.EvidenceModelTest qualified as EvidenceModelTest
+import Lockstep.Foundation.FolderProtocolTest qualified as FolderProtocolTest
+import Lockstep.Foundation.InstallProtocolTest qualified as InstallProtocolTest
+import Lockstep.Foundation.LifecycleProtocolTest qualified as LifecycleProtocolTest
+import Lockstep.Foundation.OperatorTokenTest qualified as OperatorTokenTest
+import Lockstep.Foundation.RunnerProtocolTest qualified as RunnerProtocolTest
+import Lockstep.Foundation.SessionProtocolTest qualified as SessionProtocolTest
+import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
+import Lockstep.Kernel.ActivityTest qualified as ActivityTest
+import Lockstep.Kernel.CandidateTest qualified as KernelCandidateTest
+import Lockstep.Kernel.ConversationTest qualified as ConversationTest
+import Lockstep.Kernel.DecisionTest qualified as DecisionTest
+import Lockstep.Kernel.DeliveryTest qualified as DeliveryTest
+import Lockstep.Kernel.EffectTest qualified as EffectTest
+import Lockstep.Kernel.EffectViewTest qualified as EffectViewTest
+import Lockstep.Kernel.EventCodecTest qualified as EventCodecTest
+import Lockstep.Kernel.ExecutionTest qualified as KernelExecutionTest
+import Lockstep.Kernel.GitBasisTest qualified as GitBasisTest
+import Lockstep.Kernel.IdentityTest qualified as IdentityTest
+import Lockstep.Kernel.LifecyclePropertyTest qualified as LifecyclePropertyTest
+import Lockstep.Kernel.PolicyTest qualified as PolicyTest
+import Lockstep.Kernel.ProfileTest qualified as ProfileTest
+import Lockstep.Kernel.ProjectTest qualified as ProjectTest
+import Lockstep.Kernel.ReconciliationTest qualified as ReconciliationTest
+import Lockstep.Kernel.RecoveryTest qualified as RecoveryTest
+import Lockstep.Kernel.RemediationReviewTest qualified as RemediationReviewTest
+import Lockstep.Kernel.RemediationTest qualified as RemediationTest
+import Lockstep.Kernel.RemediationThirdReviewTest qualified as RemediationThirdReviewTest
+import Lockstep.Kernel.RemoteTest qualified as RemoteTest
+import Lockstep.Kernel.RepositoryTest qualified as RepositoryTest
+import Lockstep.Kernel.RolesTest qualified as KernelRolesTest
+import Lockstep.Kernel.RunnerTest qualified as RunnerTest
+import Lockstep.Kernel.SchedulerPropertyTest qualified as SchedulerPropertyTest
+import Lockstep.Kernel.SchedulerTest qualified as SchedulerTest
+import Lockstep.Kernel.TaskTest qualified as TaskTest
+import Lockstep.Kernel.TicketTest qualified as TicketTest
+import Lockstep.Kernel.TraceTest qualified as TraceTest
+import Lockstep.Kernel.TransactionTest qualified as KernelTransactionTest
+import Lockstep.Kernel.TransitionTest qualified as TransitionTest
+import Lockstep.Kernel.WorkOrderTest qualified as WorkOrderTest
+import Lockstep.Kernel.WorkUnitLifecycleTest qualified as WorkUnitLifecycleTest
+import Lockstep.Kernel.WorkUnitTest qualified as WorkUnitTest
+import Lockstep.Persistence.MigrationTest qualified as MigrationTest
+import Lockstep.Web.ApplicationTest qualified as ApplicationTest
+import Lockstep.Web.CommandCenterViewTest qualified as CommandCenterViewTest
+import Lockstep.Web.CommandRoutesTest qualified as CommandRoutesTest
+import Lockstep.Web.LedgerPageTest qualified as LedgerPageTest
+import Lockstep.Web.LivenessPageTest qualified as LivenessPageTest
+import Lockstep.Web.OperatorRoutesTest qualified as OperatorRoutesTest
+import Lockstep.Web.ReadinessRouteTest qualified as ReadinessRouteTest
+import Lockstep.Web.RequestGuardTest qualified as RequestGuardTest
+import Lockstep.Web.ServerTest qualified as ServerTest
+
+main :: IO ()
+main =
+  defaultMain $
+    testGroup
+      "lockstep-unit"
+      [ CliTest.tests
+      , ServerTest.tests
+      , ApplicationTest.tests
+      , SystemConfigTest.tests
+      , CliDbTest.tests
+      , MigrationTest.tests
+      , ReadinessTest.tests
+      , LivenessPageTest.tests
+      , ReadinessRouteTest.tests
+      , OperatorTokenTest.tests
+      , RequestGuardTest.tests
+      , CliOperatorTest.tests
+      , OperatorRoutesTest.tests
+      , CommandTest.tests
+      , CliWorkspaceTest.tests
+      , CommandRoutesTest.tests
+      , NoopCommandTest.tests
+      , CliJobTest.tests
+      , EvidenceModelTest.tests
+      , CommandCenterViewTest.tests
+      , IdentityTest.tests
+      , RemoteTest.tests
+      , RepositoryTest.tests
+      , WorkUnitTest.tests
+      , CliRepositoryTest.tests
+      , TransitionTest.tests
+      , TicketTest.tests
+      , WorkOrderTest.tests
+      , WorkUnitLifecycleTest.tests
+      , DeliveryTest.tests
+      , LifecyclePropertyTest.tests
+      , ProfileTest.tests
+      , ProfileDocumentTest.tests
+      , CliProfileTest.tests
+      , SchedulerTest.tests
+      , SchedulerPropertyTest.tests
+      , EffectTest.tests
+      , EventCodecTest.tests
+      , RecoveryTest.tests
+      , ExecutorTest.tests
+      , ReconciliationTest.tests
+      , ReconcilerTest.tests
+      , EffectViewTest.tests
+      , TraceTest.tests
+      , LedgerPageTest.tests
+      , CliLedgerTest.tests
+      , CliFinalReviewTest.tests
+      , RemediationTest.tests
+      , RemediationReviewTest.tests
+      , RemediationThirdReviewTest.tests
+      , ControlProtocolTest.tests
+      , CliControlTest.tests
+      , LifecycleProtocolTest.tests
+      , InstallProtocolTest.tests
+      , SessionProtocolTest.tests
+      , FolderProtocolTest.tests
+      , ProjectTest.tests
+      , TaskTest.tests
+      , PolicyTest.tests
+      , DecisionTest.tests
+      , ActivityTest.tests
+      , KernelExecutionTest.tests
+      , ConversationTest.tests
+      , RunnerTest.tests
+      , RunnerProtocolTest.tests
+      , GitBasisTest.tests
+      , KernelRolesTest.tests
+      , KernelTransactionTest.tests
+      , KernelCandidateTest.tests
+      , ClaudeAdapterTest.tests
+      ]

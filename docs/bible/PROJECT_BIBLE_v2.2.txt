@@ -1,0 +1,4149 @@
+LOCKSTEP           /   V2   ENGINEERING                SYSTEM
+
+
+
+
+Project
+Bible
+Product constitution & architecture
+
+
+
+REVISION           2.2 — FINAL / RATIFIED
+
+DATE               25 October 2026
+
+AUTHORITY          Human product-owner approval
+
+STACK              Haskell · Launchpad · Orb · HTMX · PostgreSQL
+
+
+
+
+Fidelity-preserving consolidated edition. The original v2.1 body, tables,
+technical identifiers, code formatting, and both diagrams remain intact.
+The v2.2 amendments are approved product direction, not implementation receipts.
+
+
+
+
+GOVERNED SPECIFICATION · RATIFIED ARCHITECTURAL AUTHORITY
+LOCKSTEP / V2.2 PROJECT BIBLE                                                                   RATIFIED 25 OCT 2026
+
+
+
+
+Publication, scope and reading guide
+Version: 2.2 — final ratified product/architecture constitution
+Revision date: 2026-10-25
+Status: Approved governing product direction. It does not assert implementation, test execution, release
+readiness or approval of a new Phase.
+Authority: Explicit product-owner instruction to finalize the reviewed v2.2 Bible, 25 October 2026.
+
+Mission
+Turn one disciplined software engineer into the effective lead of repository-bound digital Engineers without
+replacing human judgment, surrendering repository control, or inventing an AI management hierarchy.
+
+Document scope
+Local-first engineering command center, Haskell/Launchpad v2 architecture, policy-driven SDLC, model-free
+qualification, and human-inspectable verification. New v2.2 provisions cover internal Implementer advice,
+confinement, durable decision conversations, email as the first bidirectional communication channel,
+unattended qualification, and prospective organizational/deployment modes.
+
+Contents
+  Part I — Identity and operating philosophy
+  Part II — Canonical user experiences
+  Part III — Domain and authority model
+  Part IV — Work acquisition, planning, and scheduling
+  Part V — Command center, operator service, and human decisions
+  Part VI — Delivery, tickets, and external systems
+  Part VII — Agent context, skills, and knowledge
+  Part VIII — Security assessment and safety
+  Part IX — Observability, economics, and product quality
+  Part X — SDLC profiles, adversarial verification, and learning
+  Part XI — Haskell v2 architecture and implementation strategy
+  Part XII — Traceability and document stewardship
+
+
+Document authority
+The Project Bible governs product principles; the release PRD defines testable release requirements; the
+dependency-aware implementation plan controls sequencing; frozen Contracts authorize particular Work Units;
+and source code, durable effects, Git and verification records establish what was actually built.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                       V2.2 FINAL · 1
+LOCKSTEP / V2.2 PROJECT BIBLE                                                                    RATIFIED 25 OCT 2026
+
+
+
+
+Ratification and interpretation record
+Decision ID: LS-BIBLE-2.2-RATIFY-2026-10-25
+Decision: Approve Project Bible v2.2 architectural amendments as governing product direction, replacing v2.1 as
+the current product constitution.
+Approval source: Product owner instruction in the Lockstep project conversation on 25 October 2026. This PDF is
+not a cryptographically signed record or a repository commit.
+
+
+How to read this edition
+The 63 original v2.1 body pages (printed pages 3–65) are retained without re-typesetting. The original tables
+and the complete diagrams in §§10 and 35 are preserved. Nine v2.2 integrated inserts follow their respective
+source sections; an expressly designated replacement now supersedes only the named original clause. In
+particular, v2.2 §3.1 replaces original §3.1 item 1. Everything else remains effective except where an inserted
+clause explicitly qualifies its interpretation.
+
+Scope and authority guardrails
+    Phase 3 and Gate C remain bounded to the existing single-Engineer ticket-to-code milestone. No Phase 3
+    execution authorization follows from this ratification.
+
+    Multi-turn conversation semantics are prospective for P4.3; bidirectional email is prospective for P10.2; the
+    Vacation Day Test is a future F3 qualification benchmark.
+
+    Secure remotely accessed single-host installations require an additional security gate; distributed workers
+    and multi-user organizational hosting are future product-scope revisions.
+
+    The email decision authentication policy, remote deployment threat model, and frozen quantitative
+    Vacation Day criteria are open implementation/design gates, not unapproved exceptions.
+
+    Prior Phase 2 records, Git history, frozen Contracts and test receipts retain their original authority and are
+    not retroactively rewritten.
+
+
+Stewardship and source status
+The proposed editable source location is docs/PROJECT_BIBLE.md. The canonical repository file has NOT been
+modified or committed in this conversation. This final PDF provides the approved text to incorporate there;
+future repository publication must preserve the ratification record and the exact revision clauses.
+
+Source reference
+https://github.com/AugmenTab/lockstep — historical Python implementation and behavioral reference, not evidence
+that the v2 release has shipped.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                        V2.2 FINAL · 2
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                                  16 OCT 2026 / HUMAN REVIEW
+
+
+
+
+ Authority                                   Question answered                          Change discipline
+
+ Project Bible                               What is Lockstep, and which principles     Explicit human-approved revision
+                                             must survive?
+
+ Release PRD                                 What behavior is required for a release?   Versioned requirements and acceptance
+                                                                                        criteria
+
+ Implementation plan                         In what dependency order do we build it?   Historical Python plan archived; new v2
+                                                                                        plan separately versioned
+
+ Contracts and authorization records         What may this execution change?            Frozen, bounded, provenance-bearing
+                                                                                        authority
+
+ Source, Git, journals, verification         What was built and what happened?          Authoritative machine evidence
+
+
+
+How to interpret statements
+  • Accepted direction means a decision agreed by the human product owner. It is binding for future design,
+    not a claim that code exists.
+  • Established Python reference refers to behavior already designed or implemented in the original v0.1
+    repository; it is evidence for v2 requirements, not code automatically migrated into Haskell.
+  • Proposed mechanism is an architectural approach requiring a release PRD and implementation design
+    before it becomes executable.
+  • Open question indicates a deliberate nondecision. Future planning must resolve it rather than invent
+    authority from this document.
+
+The word MUST expresses a design invariant, not proof of implementation. This document deliberately avoids
+claiming that an aspirational UI, Scheduler, Work Order system, Skills exchange, PR delivery integration, or Red
+Team currently works.
+
+
+Baseline and evidence snapshot
+The original v0.1 PRD and phase-ordered implementation plan are historical sources. The Haskell/Launchpad v2
+strategy supersedes their future architecture, not their completed facts or observed dogfood lessons. The latter’s
+front matter recorded a Phase 9.14-R4 frontier; it must not be read as the live October 2026 frontier. The public
+main branch inspected for this document was at 8b045edb4100c4a8e8fe2275f7a7b597a1e944cb (2026-10-09), after
+substantial Phase 10–13.1 implementation and dogfood-driven fixes. The public main branch was checked again
+on 2026-10-14 and remained at that revision. At this snapshot, its README and CLI source expose only --help
+and --version ; richer orchestration interfaces remain internal. This is a historical Python v0.1 implementation
+baseline, not a claim that the Haskell v2 engine exists. No full test-suite execution was performed for this Bible.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                                 3
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                     16 OCT 2026 / HUMAN REVIEW
+
+
+
+
+Part I — Identity and operating philosophy
+
+1. What Lockstep is
+Lockstep is a local-first, human-directed software engineering orchestrator. It provides a durable
+command center through which one real software engineer configures and supervises multiple simulated digital
+Engineers.
+
+Each Engineer is a persistent Lockstep execution identity bound to one repository. It uses the established
+Planner/Implementer/Reviewer workflow to complete carefully bounded code changes; it can also interact with
+planning, delivery, and reporting services supplied by deterministic Lockstep infrastructure.
+
+An Engineer is not a new LLM persona called a manager, architect, or team lead. It is an owned execution loop
+with durable state. Its individual model invocations remain disposable.
+
+The human user is the team lead. They decide product intent, acceptable risk, architecture where judgment is
+required, delegation, priorities, final signoff, and whether the work is actually done. Lockstep provides
+engineering throughput, continuity, evidence, safe automation, and comprehensible oversight.
+
+Lockstep is useful in at least two settings:
+
+ 1. Workplace: several repositories, employer-provided model accounts, an existing issue tracker, PR review,
+    organization permissions, and overnight execution.
+ 2. Personal: several independent projects, personal subscription accounts, an internal backlog, optional Master
+    Plans, direct local branch integration, and optional security testing.
+
+The same core product MUST support a single developer, a single repository, and no external tracker.
+Company integrations must not become prerequisites for personal use.
+
+
+
+2. The promise
+A developer should be able to arrive at work, examine a comprehensible command center, assign work to
+repository-specific Engineers, approve important decisions, and review independently verified output. The
+Engineers should carry ordinary tasks forward without requiring constant manual relaying of context or terminal
+commands.
+
+At day’s end the developer may leave properly bounded, safely supervised work operating within configured
+resource and permission limits. On returning, they should understand:
+
+  • what was accepted and verified;
+  • what changed, why, and where to inspect it;
+  • which tickets and PRs need human attention;
+  • which work is blocked and who has the authority to unblock it;
+  • what was integrated versus what still needs final signoff;
+  • what security or knowledge-maintenance findings arose;
+  • how much agent work, retrying, and human correction were required.
+
+The product’s output is not merely code. It is reviewable engineering progress with a durable
+explanation and clear human accountability.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                 4
+LOCKSTEP / V2.2 PROJECT BIBLE                                               25 OCT 2026 / RATIFIED
+
+
+
+
+ V 2 . 2 I N T E G R AT E D G O V E R N I N G R E V I S I O N
+
+
+
+ 01. Identity and operating scope
+
+ Integration point: §1, following original v2.1 page 4. Change class: explicit clarification /
+ prospective organizational scope.
+
+ Initial Lockstep deployment. One real human operator directs one or more repository-bound
+ synthetic Engineers within an installation. The operator remains accountable for authorized
+ decisions and final Done . The initial deployment must remain useful with one person, one
+ repository and no external backlog provider.
+
+ Future organizational mode — not authorized for implementation by this Bible. An
+ organization may operate a shared Lockstep installation for multiple authenticated human
+ engineers, each owning their assigned repository-bound synthetic Engineers, under real-human
+ team-lead supervision. Human reporting hierarchies are not autonomous AI management
+ hierarchies. Organizational mode requires its own release scope, security decisions and
+ acceptance criteria.
+
+ Isolation between personal and professional use. Personal and employer environments
+ remain separate installations and security domains by default. Nothing in a common product
+ architecture permits implicit cross-environment authority, context sharing, or synchronized
+ credentials.
+
+ Normative interpretation: The single-human statements in the preserved §1 describe the
+ required initial and personal reference mode; they do not forbid future real-human organizational
+ structures.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                      REVISION INSERT · 1
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                        16 OCT 2026 / HUMAN REVIEW
+
+
+
+3. Architectural constitution
+Future design and implementation MUST honor the following invariants unless the human owner explicitly revises
+this Bible.
+
+
+3.1 Human leadership is not delegated away
+ 1. Exactly one human-directed leadership layer. There is no autonomous AI Manager, coordinator
+    hierarchy, or simulated software company.
+ 2. The human remains responsible for product intent, strategic priority, consequential architecture changes,
+    permission delegation, risk acceptance, and final Done.
+ 3. AI recommendations are recommendations. A ticket, review comment, Scribe report, Red Team finding, or
+    generated summary never acquires permission to change requirements by being passed to another
+    component.
+ 4. Final human accountability must remain legible even where routine operational steps are preauthorized.
+
+
+3.2 Engineering execution is bounded
+ 1. One Engineer per repository. One Engineer MUST own a repository within a Lockstep installation. Multiple
+    Engineers may run concurrently only across distinct repository ownership domains. There must be no
+    competing Implementers over a single canonical repository.
+ 2. The established engineering core stays Planner → Implementer → independent Reviewer, coordinated
+    by the deterministic Supervisor. Reviewer may be a fresh invocation of the configured Planner model in
+    review mode; it is not another implementation authority.
+ 3. A Work Unit represents the smallest coherent, independently reviewable and verifiable engineering
+    increment safe to land. Artificial micro-tasks and giant unreviewable changes are both undesirable.
+ 4. Tests precede production implementation wherever a behavior-changing Work Unit requires tests.
+    Planner-authored acceptance tests are baseline-checked, frozen, and protected.
+ 5. Accepted Work Units MUST satisfy their frozen Contracts, objective verification, and applicable repository
+    health requirements. They MUST NOT knowingly leave the project broken for some future Work Unit to fix.
+ 6. The Implementer cannot alter frozen acceptance criteria, repair protected tests without authorization, create
+    canonical commits, push, deploy, or expand scope on its own.
+
+
+3.3 The control plane is software, not a conversation
+ 1. The Supervisor owns state transitions, process invocation, permissions, Git mutation, verification, retry limits,
+    recovery, persistence, and hard stops.
+ 2. Scheduling eligibility and priority ordering are host-enforced policy, not an AI manager’s intuition. A Planner
+    may analyze and recommend; the Scheduler decides under recorded human-approved policy.
+ 3. Agents are disposable; truth is durable. A fresh session must reconstruct authority and context from Git
+    and canonical artifacts. No correctness guarantee may depend on retaining conversation history or hitting a
+    provider prompt cache.
+ 4. Correctness-critical rules belong in schemas, transitions, ownership boundaries, explicit authorizations, and
+    verification—not solely in emphatic prompts.
+ 5. Every unattended loop is finitely bounded. Unknown or ambiguous authority fails closed. A crash window may
+    require recovery rather than risk a duplicate model invocation or destructive external operation.
+
+
+3.4 Interfaces and integrations do not become sovereign
+ 1. The UI, CLI, automation service, and integration adapters MUST invoke the same validated domain
+    operations. None may bypass the Supervisor through an alternate implementation of the workflow.
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                     5
+LOCKSTEP / V2.2 PROJECT BIBLE                                                25 OCT 2026 / RATIFIED
+
+
+
+
+ V 2 . 2 I N T E G R AT E D G O V E R N I N G R E V I S I O N
+
+
+
+ 02. Constitutional clarifications — §§3.1–3.3
+
+ Integration point: §3, following original v2.1 page 5. Change class: one explicit replacement
+ and two additive invariants.
+
+ §3.1 — Replacement for constitutional item 1
+
+
+    Human leadership is never delegated to AI. In the initial single-operator deployment,
+    one human is accountable for the installation. In a future organizational installation, normal
+    human reporting and supervisory hierarchies may exist, but there shall be no autonomous
+    AI Manager, AI coordinator hierarchy, or simulated software company. Neither software nor
+    model invocations can self-assign human authority.
+
+
+ This paragraph supersedes only §3.1 item 1 on the preserved original page 5. Items 2–4
+ remain unchanged. Delegation by a human requires an identifiable source of authority, action
+ scope, and audit evidence.
+
+ §3.2 — Add internal Implementer assistance rule
+ A configured Implementer CLI may consult a stronger advisor or use subordinate read-only
+ exploratory processes (repository search, references, or documentation). Every such invocation
+ remains internal to the one authorized Implementer transaction, under its parent invocation's
+ finite time, cost/usage, process, file and network bounds. No auxiliary may write production code,
+ alter protected tests, change the frozen Contract, make canonical commits, or enlarge authority.
+ The Supervisor continues to own all canonical effects and gates.
+
+ Implementer-side advice cannot satisfy mandatory independent semantic challenge or
+ Reviewer gates. Sonnet, Haiku and Opus are examples of provider configuration, not required
+ model versions. Advisor use is optional optimization, not a correctness dependency; actual
+ provider CLI behavior must be qualified rather than assumed from prompts.
+
+ §3.3 — Add preauthorized routine operations and automatic confinement
+ Routine Work Unit permissions are granted within a frozen Contract rather than requiring
+ repeated human approval. Unauthorized operations must be refused mechanically and may
+ provide bounded correction feedback, but may never be allowed because a prompt requests
+ them. Human escalation is reserved for missing authority, consequential tradeoffs, genuine
+ ambiguity, or exhausted safe recovery.
+
+ CLAUDE.md or equivalent instructions are guidance, not a security boundary. Actual isolation
+ depends on enforced process, tool, filesystem and network permissions and negative tests. A
+ Work Unit that cannot proceed safely halts; safety-critical notifications are never suppressed
+ merely to reduce interruption counts.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                       REVISION INSERT · 1
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                        16 OCT 2026 / HUMAN REVIEW
+
+
+
+ 2. External ticketing and Git hosting systems may own their designated business fields or delivery decisions, but
+    cannot directly rewrite Lockstep’s execution history, frozen Contracts, or authorization records.
+ 3. No automatic external push, PR creation, merge, notification, skill publication, or security testing occurs
+    without an explicit configuration and suitable authorization.
+ 4. Sensitive findings, corporate knowledge, credentials, and shared skills MUST observe their source and
+    destination permissions.
+ 5. Optimization is measured per successful Work Unit / completed engineering outcome, including
+    rework, latency, failures, and human effort—not merely per token or the smallest possible diff.
+
+
+3.5 SDLC discipline is policy, not a prompt
+ 1. SDLC Profiles are versioned, explicit process policies specifying required evidence, artifacts, gates,
+    approvals, and permitted exceptions for a class of work. The Supervisor MUST enforce them as structured
+    constraints; prompts alone do not establish compliance.
+ 2. A Profile may strengthen or specialize, but never silently weaken, universal execution guarantees. A
+    missing mandatory artifact, unresolved policy conflict, or unapproved exception blocks progression.
+ 3. Every Work Order and Work Unit must record its effective Profile identity, version/digest, overrides, and
+    human authorization. A Profile change must not retroactively rewrite an active frozen Contract.
+ 4. The semantic adequacy of tests must be independently challenged where the effective Profile requires it.
+    A green test suite is necessary evidence, not conclusive proof that the intended requirement was
+    implemented.
+ 5. Read-only adversarial review may propose counterexamples, coverage gaps, and architectural drift findings,
+    but has no permission to alter frozen tests, production code, or acceptance rules.
+ 6. Recurring lessons, prompted instructions, Skill updates, and Profile improvements are proposals. They
+    require evaluation and explicit human approval before becoming operative policy.
+
+
+3.6 V2 implementation boundaries
+ 1. The accepted v2 application foundation is Launchpad, in Haskell, using WAI/Warp, Orb, Beeline, Brigid,
+    HTMX, Orville, and PostgreSQL. The UI uses custom Lockstep CSS in place of Pico; small JavaScript
+    enhancements such as SortableJS are permitted where justified.
+ 2. The decision engine is pure Haskell by default. Mercury is an optional evaluated alternative, not a
+    mandatory second runtime; a demonstrated advantage must justify its build, deployment, and FFI complexity.
+ 3. The command center is a persistent service: HTTP requests authorize and record commands but must
+    never own the lifetime of an Engineer’s execution. Browser closure does not terminate durable authorized
+    work.
+ 4. The Haskell rebuild is a new implementation, not an automatic line-by-line translation of Python. The
+    Python repository supplies behavioral examples, hard-won failure cases, and regression expectations; v2
+    must requalify its own real effects and recovery.
+ 5. Model inference is not the test harness. Ordinary unit/integration/property tests and CI MUST run
+    without live model/provider calls. Scripted agent adapters, deterministic fixtures, real PostgreSQL/Git/
+    subprocess boundaries, replay, and fault injection prove orchestration behavior. Authorized, finite live-
+    provider tests remain a separate qualification layer.
+ 6. Verification must be inspectable by the human. A consequential acceptance claim MUST expose the
+    intended criterion, the method used to test it, the actual observation, and authoritative linked evidence—
+    including unknown, failed, blocked, and not-run cases. Diagrams, HTML wireframes, and demonstration
+    widgets support review; they do not replace frozen Contracts or machine evidence.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                   6
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                    16 OCT 2026 / HUMAN REVIEW
+
+
+
+4. What Lockstep is not
+Lockstep is not Gastown, an agent swarm, an autonomous executive team, a substitute for a human software
+engineer, a project-management SaaS, a Git hosting service, an IDE, a general deployment platform, or a
+replacement for an organization’s CI and branch policies.
+
+It must not encourage unbounded agent recursion, speculative parallel Implementers in one repository,
+autonomous product discovery treated as authorized backlog, silent changes to permanent skills, or unrestricted
+attacks on live services, SDLC gates enforced only through prompt wording, or autonomous alteration of
+accepted workflow policy.
+
+Lockstep may integrate with these external concerns. Integration does not make Lockstep the authority over
+them.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                               7
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                       16 OCT 2026 / HUMAN REVIEW
+
+
+
+
+Part II — Canonical user experiences
+
+5. Reference story A: a workplace engineering day
+An engineer installs Lockstep on a work machine and opens its local command center in a browser. They create
+three Engineers and bind each to a different work repository. They configure employer-provided authorized
+Claude/Codex accounts, attach each project to its team’s Shortcut workflow, and disable Lockstep’s optional Red
+Team because the organization already operates its own security assessment program.
+
+Each Engineer independently sees its project’s eligible backlog. The deterministic Scheduler selects the highest-
+priority eligible story according to the configured priority, dependency, ownership, and availability rules. An
+existing unresolved blocker makes a story ineligible. The effective SDLC Profile is selected from authorized
+project defaults and story classification—for example, brownfield feature or bug fix—and is frozen with the work
+policy. The Planner assesses the chosen story, produces the required profile-specific artifacts, resolves ordinary
+implementation details, and creates one or more bounded Work Units as necessary. The Supervisor runs the
+usual test-first implementation, deterministic verification, independent semantic challenge of test
+adequacy, and review cycle under the required Profile gates.
+
+When an implementation is accepted locally, the configured PR delivery mode publishes a branch and opens or
+updates a PR. Shortcut is moved to Code Complete (or the team’s corresponding state). That ticket now awaits
+external review without necessarily blocking other independent work. Its Engineer continues to the next eligible
+item.
+
+A reviewer later requests changes on the PR. Lockstep receives or discovers that event, validates its authenticity,
+records the linked evidence, and creates a high-priority follow-up Work Order tied to the original ticket and
+PR. It moves the external story back to In Progress under the configured synchronization policy. The Planner
+distinguishes an authorized correction from a request that changes product requirements. A bounded correction
+Work Unit updates the existing branch/PR; fresh verification runs; the Engineer then returns to normal scheduling.
+
+When the required PR approvals and repository conditions are satisfied, an integration Work Order becomes
+eligible. If configured, Lockstep performs permitted local Git integration and verification before pushing the
+result. If branch protection requires repository-managed integration, Lockstep follows that policy rather than
+bypassing it. Merge conflicts or stale approvals become explicit rework or human decisions. Successful
+integration moves the ticket to Ready for Signoff, not automatically to Done.
+
+During the day, the Scribe writes concise, evidence-linked summaries for completed work and publishes
+permitted updates to the corresponding Shortcut stories. Useful new repository guidance, observed process
+failures, and recurring corrections can appear as Skill or Process Improvement Proposals, which the human
+can examine—with evidence—before approving. The engineer may accept a suggestion into a repository subtree,
+a project-wide location, or a versioned Engineer/global skill library.
+
+The human leaves Lockstep running overnight within explicit time, usage, concurrency, security, and repository
+limits. Important blockers generate work-email notifications only if this channel is configured. The next morning,
+the human reviews pending PRs, changes requested, signoffs, skill proposals, and Scribe briefings. They know
+what their digital Engineers did and remain responsible for marking work truly Done.
+
+
+Required outcome of story A
+Lockstep must support several independently progressing repositories under one local user, source-of-
+truth-aware Shortcut integration, human PR review and correction, configured delivery modes, durable out-of-
+band events, notifications, and comprehension without opening provider chat histories.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                    8
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                      16 OCT 2026 / HUMAN REVIEW
+
+
+
+6. Reference story B: personal projects after work
+On a personal computer, the same person installs Lockstep and opens the same command center. They create
+two Engineers bound to two personal repositories and configure personal subscription-backed agent accounts. No
+Shortcut subscription is necessary: the internal work queue and Scheduler are sufficient.
+
+The first repository already has a human-approved implementation plan. The Planner imports or reads its Phase/
+Sub-phase structure, proposes the next bounded pieces of work, and publishes those pieces into the Work Unit
+execution pipeline without erasing their planning ancestry.
+
+The second repository begins with only a PRD. Its default greenfield Profile requires an appropriate requirements
+and architecture basis before a new implementation Work Unit can be authorized. The Planner reasons with the
+human, generates a Master Plan, outlines the current Phase, and plans executable increments just in time. The
+human can approve, correct, or reject unfrozen plans in the UI before execution receives authority.
+
+The user can choose more demanding quality Profiles or human signoff gates for these projects without altering
+the universal transaction rules. The developer wants stronger assurance for these side projects. They enable the
+optional Red Team against an explicitly authorized running test instance, backed by a locally hosted Qwen-
+family model. The Red Team runs independently within its test scope and budget and creates evidence-backed
+security findings. Verified findings enter the local ticket queue, where the Scheduler can prioritize remediation
+while preserving the Engineer’s current transaction safety.
+
+The developer does not require PRs. Accepted Work Units accumulate as small green commits on appropriately
+isolated development branches. The Scribe produces Phase-level briefings. The human reviews the work and,
+upon explicit approval, permits integration of the Phase branch into main under the configured local Git policy.
+The human remains responsible for the final Done declaration.
+
+
+Required outcome of story B
+The same product must offer a useful no-cloud-control-plane, no-ticket-vendor, no-PR workflow. External
+model inference still depends on the selected provider, while supported local models can serve explicitly
+configured roles. No workplace feature may make simple personal operation cumbersome.
+
+
+
+7. Reference story C: unexpected maintenance work
+A user or external monitor submits a bug report. A dependency security alert appears. A Red Team finding is
+verified. Or a human creates an issue for a regression the original Master Plan never anticipated.
+
+These events create Tickets or Work Items with provenance. The Scheduler admits an eligible Work Order; the
+Planner reproduces, narrows, and specifies the necessary change. The resulting Work Unit has no required
+Phase or Sub-phase parent. It still receives the same frozen Contract, tests, authorization, implementation,
+verification, review, and Git protections as plan-driven engineering work.
+
+This story is the reason Sub-phase cannot remain the universal name for execution.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                   9
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                       16 OCT 2026 / HUMAN REVIEW
+
+
+
+
+Part III — Domain and authority model
+
+8. Vocabulary
+
+ Term                                               Canonical meaning
+
+ Operator / Human team lead                         Person who owns policy, delegation, strategic direction, and
+                                                    final signoff
+
+ Installation                                       One local Lockstep deployment with its own configured
+                                                    resources and UI/service
+
+ Engineer                                           Persistent execution identity bound to exactly one repository;
+                                                    contains the core workflow, policies, accounts, and durable
+                                                    state
+
+ Repository                                         Git source and associated context, configuration, branches,
+                                                    remote policies, and validation commands
+
+ Project                                            Product/work scope associated with a repository; may contain
+                                                    planning documents, tickets, and a delivery policy
+
+ Master Plan                                        Human-approved, dependency-aware plan for a larger initiative;
+                                                    optional for backlog-driven work
+
+ Phase                                              Major milestone within an optional Master Plan
+
+ Sub-phase                                          Planning element within a Phase; when selected for
+                                                    implementation it gives rise to a Work Unit
+
+ SDLC Profile                                       Versioned, declarative development process policy: required
+                                                    artifacts, evidence, approvals, and gates by work class;
+                                                    bounded by universal invariants
+
+ Effective Profile                                  Resolved project/work-class policy plus explicit authorized
+                                                    overrides, bound by identity and digest to a Work Order/Work
+                                                    Unit
+
+ Semantic Challenge                                 Independent read-only attempt to falsify test adequacy or
+                                                    requirement satisfaction with reproducible counterexamples
+                                                    and provenance
+
+ Improvement Proposal                               Evidence-backed suggested change to a Skill, Profile, prompt,
+                                                    rubric, verifier, or regression test; never installed automatically
+
+ Ticket / Work Item                                 Persistent record of a need, defect, feature, finding, or
+                                                    externally managed story; its human-facing business identity
+
+ Work Order                                         Schedulable, authorized operation with source, priority,
+                                                    dependencies, and policy; may involve engineering, delivery,
+                                                    review, or administrative action
+
+ Work Unit                                          One bounded test-first engineering transaction governed by a
+                                                    frozen Contract; not inherently a Sub-phase
+
+ Contract                                           Frozen statement of objective, acceptance criteria, test
+                                                    requirements, permitted paths, verification, and authority for a
+                                                    Work Unit
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                      10
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                             16 OCT 2026 / HUMAN REVIEW
+
+
+
+
+ Term                                                      Canonical meaning
+
+ Attempt                                                   One numbered implementation/review/rework execution within
+                                                           the Work Unit’s finite budget
+
+ Scheduler                                                 Deterministic host component selecting eligible Work Orders
+                                                           under human-approved policy
+
+ Supervisor                                                Deterministic authority enforcing execution, persistence, Git,
+                                                           verification, retry/recovery, and hard stops
+
+ Planner                                                   AI role for requirements interpretation, decomposition, tests,
+                                                           decisions within delegation, and semantic review
+
+ Implementer                                               AI role that changes permitted production artifacts to satisfy a
+                                                           frozen Contract
+
+ Reviewer                                                  Read-only AI review role, typically a fresh Planner-mode
+                                                           invocation; cannot repair code
+
+ Scribe                                                    Read-only auxiliary role producing useful human explanation
+                                                           and context-improvement proposals from evidence
+
+ Red Team                                                  Optional independent security-assessment worker restricted to
+                                                           authorized targets and policies
+
+ Skill                                                     Versioned reusable instruction/capability artifact with declared
+                                                           scope and provenance
+
+ Skill Proposal                                            Suggested addition or revision requiring evaluated evidence
+                                                           and explicit authorization before installation
+
+ Integration                                               Confirmation that accepted implementation has entered the
+                                                           configured destination branch under repository policy
+
+ Done                                                      Human-declared completion of the business obligation, distinct
+                                                           from implementation acceptance or integration
+
+
+
+8.1 The crucial translation
+A Master Plan’s Sub-phase is an input to scheduling. The Scheduler may create a Work Order from it, and the
+Planner materializes the corresponding Work Unit when it is selected for execution. A Work Unit stores an
+optional plan_ref pointing to Phase/Sub-phase. In backlog-driven mode it may instead store a ticket_ref ; both
+references may coexist.
+
+Neither Master Plan nor Phase nor Sub-phase may be required for a legitimate ticket-originated
+Work Unit.
+
+A single Ticket may require multiple Work Units. A PR review correction may require an additional Work Unit
+linked to the same Ticket and PR. An approved integration Work Order may require no Work Unit at all unless real
+engineering repair is needed.
+
+
+8.2 Identity and historical compatibility
+The proposed future model should use stable identities for Engineer , Ticket , WorkOrder , and WorkUnit , plus
+durable typed references to originating plans, external tracker IDs, PRs, and attempted actions.
+
+Existing historical Phase/Sub-phase IDs, schemas, event streams, and accepted commits MUST remain
+interpretable. The new naming does not authorize a bulk rewrite of frozen history. New events and schemas
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                             11
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                        16 OCT 2026 / HUMAN REVIEW
+
+
+
+should be versioned; older runs may be projected through compatibility adapters as work-unit-like history without
+pretending they were born under the new model.
+
+
+
+9. Three independent lifecycles
+Avoid a single giant state machine where every Ticket, Work Order, Work Unit, and PR shares one artificial status.
+
+
+9.1 Ticket lifecycle — business intent
+Illustrative states include PROPOSED , READY , IN_PROGRESS , CODE_COMPLETE , AWAITING_REVIEW , READY_FOR_SIGNOFF ,
+ DONE , CANCELED , and BLOCKED . An external tracker may use different columns; mapping is configured and explicit.
+
+A Ticket owns requested outcomes, provenance, assignee/ownership, priority, business dependencies, external
+links, and the human final signoff. These states do not grant source-code mutation authority.
+
+
+9.2 Work Order lifecycle — scheduling and authorization
+Illustrative states include PENDING , ELIGIBLE , CLAIMED , ACTIVE , WAITING , COMPLETED , HALTED , SUPERSEDED , and
+ CANCELED . Work Order kinds may include ENGINEERING , INVESTIGATE , PR_REWORK , INTEGRATE , PLAN , PUBLISH_REPORT ,
+and SKILL_INSTALL .
+
+Each Work Order has a specific effect/authority class. An INTEGRATE order is not permission to implement
+arbitrary code; an ENGINEERING order is not permission to push or publish security evidence. Work Order
+completion is not automatically Ticket completion.
+
+
+9.3 Work Unit lifecycle — engineering execution
+A Work Unit inherits the established state-machine discipline: Contract planning, Planner test authoring, baseline
+classification, test freeze and Supervisor test commit, implementation, deterministic verification, read-only
+review, bounded rework, accepted implementation commit, and durable settlement or halt.
+
+The Work Unit stores authoritative work_unit_id , contract_id , execution identity, Git basis, attempt and retry
+state, verification evidence, and acceptance outcome. Provenance to a Ticket or Sub-phase is optional metadata,
+not an artificial authority parent.
+
+The Work Unit lifecycle remains narrow on purpose. A PR approval or external Done transition is not a Work Unit
+state transition. Its effective SDLC Profile can require additional pre-freeze evidence gates and post-
+verification semantic gates without redefining the universal Work Unit state machine.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                  12
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                                     16 OCT 2026 / HUMAN REVIEW
+
+
+
+10. Authority graph
+
+
+
+
+                Authoritative relationships shown schematically; source of truth remains the versioned specification.
+
+
+The meaning of the arrows matters: information transmission never increases authority. Human approval
+or a previously authorized bounded policy is required before an external suggestion becomes an effectful
+operation. User-visible buttons are another presentation of those same validated transitions.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                               13
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                        16 OCT 2026 / HUMAN REVIEW
+
+
+
+
+Part IV — Work acquisition, planning, and
+scheduling
+
+11. Two sourcing modes, one execution system
+Source and method are separate. A Ticket, imported plan, Red Team finding, or reviewer request establishes
+what needs attention; an effective SDLC Profile establishes which disciplined process must precede and verify
+completion. The Scheduler determines when an authorized Work Order may begin; the Work Unit engine executes
+the same protected transaction regardless of origin.
+
+
+11.1 Plan-driven
+The user supplies an existing plan or PRD. The Planner produces or interprets a human-approved Master Plan and
+provisional Phase/Sub-phase outline. The Scheduler makes the next dependency-ready planned item eligible; the
+Planner fully specifies only the next Work Unit. Subsequent outline revision remains just-in-time and may change
+only unfrozen future work.
+
+A completed Sub-phase remains a permanent planning and audit fact. Its executed Work Unit retains the link to
+it.
+
+
+11.2 Backlog-driven
+Tickets originate from the internal board, Shortcut, GitHub Issues, security findings, or dependency alerts. The
+Scheduler selects the highest-priority eligible authorized item in that repository. The Planner assesses the ticket,
+investigates where necessary, and decomposes the engineering work into one or more Work Units. No artificial
+Phase tree is created.
+
+
+11.3 Mixed mode
+A planned initiative may receive urgent maintenance work, and a workplace ticket may warrant its own short
+internal plan. Both enter the same queue. The Scheduler does not silently erase the Master Plan or mutate a
+frozen Contract to accommodate new work. Interruption and reprioritization happen at safe boundaries with
+recorded reasons.
+
+
+
+12. Scheduling policy
+The Scheduler MUST consider a work item’s required Profile prerequisites and outstanding human approvals in
+addition to ordinary priority and dependency checks. The Planner may recommend Profile classification; only
+allowed policy-resolution rules or an authorized human selection may make it effective. A higher-priority bug is
+not ready merely because it is urgent if its reproduction evidence or permission gate is absent.
+
+The proposed Scheduler is deterministic. At each eligible scheduling boundary it should:
+
+ 1. Read the authoritative local queue and synchronized external state.
+ 2. Deduplicate work using durable source identity and event receipts.
+ 3. Eliminate canceled, completed, in-flight, unapproved, stale, or dependency-blocked Work Orders.
+ 4. Enforce one-repository ownership, per-Engineer mutation exclusivity, configured concurrency, and resource
+    budgets.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                  14
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                        16 OCT 2026 / HUMAN REVIEW
+
+
+
+ 5. Rank eligible work according to the human-approved mapping of source priority, urgency, due date, security
+    criticality, age, and tie-break rules.
+ 6. Claim one Work Order durably before performing side effects.
+ 7. Dispatch a specific operation under its authority class; record state and execution evidence.
+ 8. Reevaluate at the next safe boundary or on an authorized interruption.
+
+The precise ranking algorithm and fairness/starvation behavior are open design work, not a license to make an
+AI Manager. Planner recommendations may inform priorities but do not by themselves reassign authorized
+business priority.
+
+
+12.1 Dependencies
+A Work Order is eligible only when its declared blocking dependencies are satisfied. That includes imported
+tracker relationships and locally recorded technical prerequisites. When sources conflict, policy must specify the
+owning authority and whether to halt for reconciliation. A high-priority security fix cannot simply skip a required
+schema migration.
+
+
+12.2 Interruptions
+Three useful, separately authorized policies:
+
+  • Normal: finish the current transaction, then reconsider the queue.
+  • Safe-boundary priority: stop before another Work Unit or major phase operation; preserve completed work
+    and credentials.
+  • Emergency halt: stop and settle safely; ambiguous crash windows remain recovery-required rather than
+    assuming replay is harmless.
+
+No new ticket may silently preempt a frozen in-flight Work Unit by altering its Contract. If preemption is required,
+it must follow an explicit controlled-stop and resumption protocol.
+
+
+12.3 Multi-Engineer resources
+The command plane may run multiple Engineers simultaneously on different repositories, with deterministic
+scheduling across provider account quotas, local model capacity, CPU/memory, total machine limits, and run
+deadlines. Subscription limits may be unknown; UNKNOWN is not invented numerical quota telemetry. One
+Engineer’s quota exhaustion should not poison unrelated Engineers or corrupt their state.
+
+A repository’s one-Engineer rule is independent of whether that Engineer has several outstanding PRs awaiting
+humans. Outstanding delivery obligations are not parallel Implementers.
+
+ # Part V —
+ Command
+ center,
+ operator
+ service, and
+ human
+ decisions
+
+ ## 13. A local-
+ first command
+ plane
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                  15
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ Lockstep v2
+ runs a
+ persistent
+ Haskell
+ operator
+ service
+ derived from
+ Launchpad
+ exposing an
+ Orb/Brigid/
+ HTMX browser
+ command
+ center and the
+ same validated
+ application
+ operations
+ used by a
+ supported CLI.
+ The service is
+ not an
+ externally
+ hosted control
+ plane by
+ default, and
+ closing the
+ browser must
+ not terminate
+ authorized
+ work. Remote
+ access is an
+ optional
+ separately
+ secured
+ deployment
+ mode.
+
+ The command
+ plane owns
+ human
+ interaction,
+ Engineer setup,
+ account/profile
+ selection,
+ project
+ configuration,
+ planning
+ approvals,
+ Work Order
+ admission,
+ scheduling
+ controls,
+ notifications,
+ and projections
+ of authoritative
+ run state. It
+ does not
+ become a
+ competing
+ Supervisor.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          16
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ The execution
+ plane owns
+ Work Unit
+ transactions,
+ verification,
+ durable replay/
+ recovery, Git
+ mutation, and
+ exact side-
+ effect
+ authorization.
+
+ Accepted
+ stack and
+ dependency
+ boundaries.
+ WAI/Warp
+ serves the
+ HTTP surface;
+ Orb/Beeline
+ own routes and
+ handlers; Brigid
+ generates
+ HTML; HTMX
+ progressively
+ enhances
+ server-
+ rendered
+ fragments;
+ targeted
+ SortableJS
+ supports
+ reorder
+ interactions
+ where useful;
+ custom CSS
+ establishes
+ Lockstep’s own
+ visual
+ language.
+ Orville owns
+ PostgreSQL
+ access at the
+ persistence
+ boundary. None
+ of these
+ packages
+ belongs in the
+ pure decision
+ kernel.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          17
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ Launchpad is a
+ starting
+ codebase, not
+ an irrevocable
+ bundle. Keep
+ useful
+ bootstrapping,
+ application
+ wiring,
+ migrations, and
+ permission
+ patterns after
+ verifying their
+ licenses and
+ suitability for
+ the intended
+ distribution.
+ Remove
+ unused
+ application-
+ specific
+ modules and
+ Pico. Do not
+ carry obsolete
+ features or
+ dependencies
+ just because
+ they arrived
+ with the
+ template.
+
+ PostgreSQL is
+ the accepted
+ v2 default,
+ superseding
+ v1’s SQLite
+ consideration.
+ A local
+ installation
+ may provision a
+ local database
+ (for example
+ through a
+ documented
+ service/
+ container
+ setup);
+ PostgreSQL
+ does not by
+ itself imply
+ remote hosting
+ or a distributed
+ worker fleet.
+ Running
+ workers on
+ separate
+ machines is a
+ separate future
+ security and
+ transport
+ design, not an
+ implicit v2
+ requirement.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          18
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ ### 13.1
+ Minimum
+ useful UI
+
+ The UI should
+ move ahead
+ of luxury
+ features in
+ product priority.
+ It directly
+ addresses
+ costly operator
+ friction
+ exposed by
+ dogfood:
+ scripting
+ complex shell
+ commands,
+ shuttling
+ context
+ manually,
+ locating
+ evidence, and
+ reconstructing
+ what failed.
+
+ Initial screens
+ should include:
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          19
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ | Screen |
+ Operator
+ questions it
+ answers | |—|
+ —| | Command
+ Center | Which
+ Engineers are
+ running, halted,
+ queued, or
+ waiting for me?
+ | | Engineer /
+ Project |
+ Which repo,
+ providers,
+ budget,
+ integration,
+ branch policy,
+ and current
+ work? | |
+ Queue /
+ Tickets | What
+ is ready,
+ blocked,
+ proposed,
+ prioritized,
+ claimed, or
+ awaiting
+ signoff? | |
+ Plan | What
+ are the Master
+ Plan, current
+ Phase,
+ dependencies,
+ and next
+ planned units?
+ | | Work Unit
+ detail | What is
+ the frozen
+ Contract,
+ protected-test
+ set, attempt,
+ diff,
+ verification,
+ and review
+ verdict? Which
+ criteria are
+ proved,
+ unproved, or
+ blocked? | |
+ Errors /
+ Evidence |
+ What failed,
+ why, what was
+ tried, what may
+ safely be done
+ next? What
+ evidence backs
+ each status? | |
+ Human Inbox
+ | What exact
+ questions,
+ rework choices,
+ skill proposals,
+ and approvals
+ require human
+ authority? | |
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          20
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ Delivery |
+ Which
+ branches and
+ PRs are open,
+ reviewed,
+ awaiting
+ integration,
+ integrated, or
+ awaiting Done?
+ | | Skills
+ Library |
+ Which skills
+ exist, where
+ are they
+ installed, what
+ versions/audits/
+ sharing
+ permissions
+ apply? | |
+ Reports /
+ Audit | What
+ work
+ completed,
+ what did it cost
+ in observable
+ effort, and
+ what remains
+ uncertain? |
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          21
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ Visual
+ verification
+ view. The
+ canonical Work
+ Unit view
+ SHOULD render
+ a compact,
+ clickable
+ acceptance
+ matrix: each
+ criterion,
+ required
+ method,
+ executed
+ command/
+ scenario,
+ result,
+ evidence link,
+ and unresolved
+ uncertainty.
+ Distinguish
+  NOT_RUN ,
+  PASSED ,
+  FAILED ,
+  INCONCLUSIVE ,
+ and BLOCKED —
+ never make a
+ blank cell look
+ green. Display
+ the tested Git
+ revision,
+ Profile/Contract
+ digest, test
+ runner
+ environment,
+ and challenge/
+ review
+ provenance.
+ Show source
+ snippets,
+ diagrams,
+ HTML
+ wireframes,
+ before/after
+ comparisons,
+ or demo
+ widgets when
+ they materially
+ improve
+ understanding.
+ These are
+ derived or
+ explicitly
+ versioned
+ against
+ canonical
+ artifacts; they
+ cannot
+ themselves
+ mutate policy
+ or authorize
+ work. A
+ screenshot may
+ demonstrate
+ rendering but
+ cannot prove
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          22
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ runtime
+ correctness.
+
+ Presentation
+ hierarchy.
+ Lead with
+ visual
+ summaries and
+ actionable
+ differences, not
+ multi-page
+ prose. Keep full
+ Markdown
+ Contracts, logs,
+ test traces, and
+ Scribe reports
+ one click away;
+ do not truncate
+ or paraphrase
+ away material
+ evidence.
+ Semantic
+ findings must
+ be visibly
+ separate from
+ deterministic
+ test results.
+ Human
+ accessibility
+ requires
+ keyboard
+ alternatives,
+ textual status
+ labels, and
+ non-drag
+ controls.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          23
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ The command
+ center also
+ shows the
+ active SDLC
+ Profile, its
+ required
+ evidence/
+ checklist,
+ pending
+ semantic
+ findings, and
+ approved
+ improvement
+ proposals,
+ with clear links
+ to the
+ canonical
+ artifacts. A
+ read-only state/
+ evidence
+ dashboard
+ should precede
+ interactive
+ controls.
+ Interactive
+ controls should
+ follow once
+ their typed
+ domain
+ operations and
+ authorization
+ checks exist.
+ The browser is
+ not a shell-
+ script launcher:
+ clicking
+ Answer,
+ Approve,
+ Reject,
+ Prioritize,
+ Resume, or
+ Install Skill
+ must invoke a
+ concrete
+ authorized
+ operation and
+ present the
+ resulting
+ durable state
+ or error.
+
+ ### 13.2
+ Truthful
+ progress
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          24
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ Never fabricate
+ percentages,
+ ETA, quota
+ balances, cost,
+ or verification
+ completeness.
+ Report exact
+ statuses such
+ as PLANNING ,
+  TESTS_FROZEN ,
+  IMPLEMENTING ,
+  VERIFYING ,
+  AWAITING_PR_
+ REVIEW , and
+  HUMAN_REQUIR
+ ED based on
+ actual
+ evidence.
+ Explain stale/
+ missing
+ telemetry
+ explicitly. UI
+ annotations or
+ friendly labels
+ may be derived
+ projections, but
+ never the only
+ record of
+ execution truth.
+
+ ### 13.3
+ Human
+ decisions
+
+ A decision form
+ should display
+ the request,
+ source,
+ evidence,
+ affected repo/
+ Work Unit/PR,
+ available legal
+ choices, and
+ consequences.
+ A human
+ answer is
+ bound to exact
+ request
+ identity and
+ revision,
+ recorded once,
+ and revalidated
+ when
+ consumed. A
+ stale button
+ must fail with a
+ comprehensible
+ refresh/
+ reconcile
+ message, not
+ apply to a
+ newer request.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          25
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ The current
+ kernel’s
+ durable
+ human-
+ escalation work
+ provides a
+ useful basis.
+ The proposed
+ command
+ center must
+ surface it and
+ close any
+ remaining end-
+ to-end planner-
+ escalation
+ reachability
+ gaps before
+ claiming a
+ reliable
+ interactive
+ loop.
+
+ ### 13.4
+ Overnight
+ behavior
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          26
+LOCKSTEP / V2.2 PROJECT BIBLE                                               25 OCT 2026 / RATIFIED
+
+
+
+
+ V 2 . 2 I N T E G R AT E D G O V E R N I N G R E V I S I O N
+
+
+
+ 03. Durable human decision conversations —
+ §13.3
+
+ Integration point: §13.3, following original v2.1 page 26. Change class: new durable decision-
+ conversation requirements.
+
+ A Human Request is a bounded, source-linked request for human information, judgment or
+ authorization, identifying the Engineer, Work Order/Work Unit, Contract, evidence, current
+ revision and requested authority.
+
+ A Conversation is the durable, ordered sequence of human and Planner messages concerning
+ that request. It can have zero or more clarification exchanges before one binding decision. It is
+ independent of the lifetime of any model session, notification channel or open browser. Messages,
+ authenticated sender identity evidence, response status, request revisions and channel receipts
+ live in the canonical persistent store.
+
+ When a human asks for more information, the existing Planner role may answer through a new
+ bounded, read-only invocation using a curated Context Pack, canonical evidence and relevant
+ conversation history. A clarification is not a decision, cannot grant new authority, and does not
+ resume a blocked Work Unit. There is no fixed lifetime limit on human-led conversation turns, but
+ each model invocation, automated follow-up and resource use is finitely budgeted.
+
+ A binding response must be interpreted conservatively and checked by the host against authentic
+ principal identity, current delegated decision scope, exact HumanRequestId (or future equivalent
+ stable identity), revision/Contract basis, legal command and replay/idempotency identity. A
+ response may contribute information even when it cannot authorize a side effect. Ambiguity,
+ forwarding, spoofing, stale revisions and unauthorized action proposals do not become approvals.
+
+ A valid binding decision must be consumed through the same typed Supervisor command as
+ a local UI decision. Repeated replies, late provider responses and crash/restart replay may not re-
+ execute the effect. The Planner remains an advisor and interpreter, not a decision authority.
+
+ Non-goal for Gate C: The existing P3.14 finite human question/answer/resume semantics
+ remain mandatory; implementing arbitrary multi-turn email conversation is not a Phase 3 or Gate
+ C prerequisite. P4.3 introduces the persistent conversation model, and P10.2 adds email
+ transport.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                      REVISION INSERT · 1
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ The Haskell
+ service
+ dispatches
+ durable
+ background
+ work rather
+ than executing
+ a long-running
+ Work Unit
+ inside a single
+ HTTP handler. A
+ persistent local
+ service can
+ continue while
+ the browser is
+ closed, but only
+ while the host,
+ credentials,
+ networking,
+ required
+ containers, and
+ provider
+ resources
+ remain
+ available.
+ Sleep/
+ shutdown is not
+ fictionalized as
+ work time. On
+ restart, the
+ service
+ reconstructs
+ current
+ authority and
+ resumes only
+ legal
+ operations.
+ Uncertain side-
+ effect
+ outcomes
+ require
+ reconciliation
+ before retry.
+
+ ## 14. The
+ Human Inbox
+ and
+ notifications
+
+ Human
+ attention is a
+ first-class finite
+ resource. The
+ interface
+ should
+ aggregate:
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          27
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ - pending
+ requirements/
+ architecture
+ questions; -
+ blocked runs
+ and quota/
+ authentication
+ incidents; -
+ plan and Phase
+ signoffs; - PR
+ reviews and
+ integration
+ decisions; -
+ security
+ findings
+ requiring
+ disclosure or
+ triage; - skill
+ install/share/
+ audit
+ proposals; -
+ final Ticket
+ Done signoffs.
+
+ The Inbox
+ distinguishes
+ information,
+ action
+ required, and
+ urgent
+ interruption.
+ Default
+ notifications
+ should be quiet
+ for routine
+ success.
+ Channels such
+ as work email
+ are opt-in and
+ configured with
+ appropriate
+ credentials,
+ recipients,
+ privacy rules,
+ and thresholds.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          28
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ A notification
+ records a link
+ or reference to
+ the durable
+ request; the
+ email body is
+ never a
+ substitute for
+ canonical
+ authorization.
+ Remote links to
+ a localhost
+ application
+ may be
+ unusable off-
+ machine, so
+ the product
+ must not imply
+ remote control
+ simply because
+ email
+ notifications
+ exist.
+
+ ## 15. Human
+ authority and
+ multi-person
+ workplaces
+
+ The initial
+ Lockstep model
+ remains one
+ local human
+ owner.
+ Workplace
+ integration
+ introduces
+ other people
+ through
+ Shortcut,
+ GitHub, code
+ review, and
+ security
+ processes, but
+ does not
+ automatically
+ make the local
+ runtime a
+ shared multi-
+ user service.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          29
+LOCKSTEP / V2.2 PROJECT BIBLE                                                  25 OCT 2026 / RATIFIED
+
+
+
+
+ V 2 . 2 I N T E G R AT E D G O V E R N I N G R E V I S I O N
+
+
+
+ 04. Channel-independent communications — §14
+
+ Integration point: §14, following original v2.1 page 29. Change class: transport-independent
+ messaging abstraction and inbound-email requirements.
+
+ Lockstep separates Human Request, Conversation, Notification, Channel Adapter, and
+ Authorization. A Notification says whom to inform, about what, at what urgency and under
+ which privacy/deduplication policy. The Channel Adapter sends/receives transport messages; it
+ cannot directly modify Work Unit state. Authorization is the host-enforced decision whether an
+ authenticated human may perform the requested action against the specified current revision.
+
+ Email is the first bidirectional channel for the Vacation Day Test. Email transport should
+ support notification delivery, direct replies, multi-turn conversations, and eventual decision
+ submission without requiring a remote browser or publicly exposed HTTP endpoint. Polling a
+ configured mailbox may be an implementation option. Slack, Discord, Signal, Telegram, phone
+ and additional UI channels are future adapters, not first-release requirements.
+
+ Outbound and inbound messages must be durably correlated by stable canonical request identity
+ and transport receipts, preserving the original source envelope subject to retention/secrets policy,
+ with explicit delivery status, deduplication, auditability and crash reconciliation. Email Message-ID ,
+ In-Reply-To and subject/threading metadata are correlation hints, never identity or permission
+ proofs. Quoted previous messages, signatures, attachments and forwarded content remain
+ untrusted data. Duplicate, stale, mismatched or unauthenticated messages may not silently
+ approve anything.
+
+ Authorization security gate (open): Configured mailbox access and sender address by
+ themselves do not prove that a particular high-risk command is authorized. Before enabling
+ email-based approvals, the security design must enumerate the permitted decision classes,
+ identity evidence, reply handling, revocation and any stronger confirmation needed. High-impact
+ operations that cannot be authenticated adequately by the supported email channel fail closed
+ rather than receiving weaker security to enable convenience.
+
+ A conversation can eventually move between channels while retaining the same canonical
+ history, provided identity and disclosure permissions are independently verified for the new
+ channel. Routine success should remain quiet; necessary safety notices cannot be withheld
+ merely to pass an interruption metric.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                         REVISION INSERT · 1
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ The command
+ plane must
+ record the
+ exact authority
+ source of
+ externally
+ performed
+ actions: PR
+ reviewer,
+ repository
+ policy, issue-
+ tracker
+ workflow, or
+ the local
+ operator. For a
+ future shared
+ UI, explicit
+ roles may
+ include
+ engineer,
+ project lead,
+ repository
+ maintainer,
+ security
+ reviewer, and
+ administrator.
+ Full multi-user
+ authentication,
+ permission
+ management,
+ and remote
+ access are
+ future
+ release work,
+ not
+ assumptions
+ hidden inside
+ the first local
+ UI.
+
+ Even in single-
+ user mode,
+ human-
+ delegated
+ authorization
+ must be scoped
+ to actions. A
+ configured rule
+ allowing PR
+ publication
+ does not
+ automatically
+ authorize
+ arbitrary
+ merges, public
+ security
+ disclosure,
+ production
+ deployment, or
+ skill sharing.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          30
+LOCKSTEP / V2.2 PROJECT BIBLE                                                25 OCT 2026 / RATIFIED
+
+
+
+
+ V 2 . 2 I N T E G R AT E D G O V E R N I N G R E V I S I O N
+
+
+
+ 05. Human organizational ownership and
+ supervision — §15
+
+ Integration point: §15, following original v2.1 page 30. Change class: future organizational
+ authority model (not current release scope).
+
+ The required initial v2 product remains single-operator. The extension below is a future
+ organizational deployment concept, not evidence of implemented shared-user security or
+ permission to develop it during current Phase 3–10 Contracts.
+
+ Each synthetic Engineer has exactly one accountable human engineer owner, and each
+ synthetic Engineer remains bound to exactly one canonical repository ownership domain. A
+ real human team lead has observational and policy-bounded supervisory authority over the
+ synthetic Engineers belonging to human engineers within that lead's configured reporting scope.
+
+ A lead may observe work, halt it safely, handle delegated questions, and exercise specifically
+ authorized team decisions without taking ownership of the synthetic Engineer. Supervision does
+ not permit weakening Profiles, overwriting frozen Contracts, bypassing protected reviews,
+ elevating arbitrary Git permissions or silently reassigning ownership.
+
+ To accept a human action, organizational authorization must verify the actual principal, current
+ role/reporting relationship, delegated scope, repository/project, exact requested capability, source
+ policy, version basis, any separation-of-duties requirements and revocation state. An email or
+ Slack participant may provide context even if they lack decision authority. If an authorized team
+ lead answers while the owner is away, the decision ledger names that lead and records the
+ precise delegation basis.
+
+ Organizational administrators may manage identity and policy without acquiring blanket authority
+ to rewrite repositories or disclose sensitive findings. Multi-human authentication, employment/
+ reporting changes, owner handoffs, revocation propagation and organization-wide visibility
+ boundaries require dedicated future requirements and security tests. Launchpad's existing roles
+ are potential reused primitives, not proof this authorization model exists.
+
+ Professional and personal installations remain separate security domains; common software does
+ not imply federation or cross-environment access.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                       REVISION INSERT · 1
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                                16 OCT 2026 / HUMAN REVIEW
+
+
+
+
+Part VI — Delivery, tickets, and external systems
+
+16. Configurable Git delivery
+The established kernel uses Supervisor-owned Git branches/worktrees and commits tests before implementation.
+Delivery to the outside world adds a separate authorized lifecycle after internal acceptance.
+
+
+16.1 Delivery modes
+
+ Mode                                        Behavior                                  Suggested use
+
+ Local only                                  Keep accepted commits on local isolated   Personal development and early dogfood
+                                             branches; no automatic remote effects
+
+ Branch push                                 Publish only expressly configured         Teams without PR automation
+                                             branches under a scoped remote policy
+
+ Pull request                                Publish branch; open/update PR; observe   Formal workplaces
+                                             review and repository policy; integrate
+                                             through the permitted path
+
+
+Default remains no remote push unless configured and authenticated. The selected delivery mode is project/
+repository policy, not a Planner-generated suggestion.
+
+
+16.2 PR lifecycle and review feedback
+A Work Unit may be fully accepted internally while the Ticket remains CODE_COMPLETE or AWAITING_REVIEW . External
+review is a separate authority layer.
+
+ 1. Supervisor commits an internally approved green Work Unit.
+ 2. Delivery adapter publishes the appropriate branch/commit and creates or updates the associated PR using
+    idempotent operation records.
+ 3. A configured tracker state moves to Code Complete, subject to its field-ownership policy.
+ 4. Review results and comments enter as authenticated, typed events linked to exact PR and commit basis.
+ 5. CHANGES_REQUESTED creates a priority rework Work Order; the source Ticket returns to In Progress where the
+    workflow mapping permits.
+ 6. The Planner determines whether the feedback can be handled as a bounded correction or needs a new
+    human product decision.
+ 7. The Engineer adds the correction as a new verified Work Unit or authorized continuation, preserving earlier
+    accepted history, then pushes the same PR branch where permitted.
+ 8. Approval is rechecked against the current reviewed commit and all required policies before integration.
+
+A PR being closed without merge, a PR being approved, and a PR receiving changes requested are distinct
+outcomes. Review comments are evidence and requests—not automatically authorized changes to the frozen
+Contract.
+
+
+16.3 PR granularity
+Support, subject to later design, one PR per Ticket/feature and one PR per Work Unit. Both can contain
+separate test and implementation commits. PR granularity does not redefine Work Unit granularity or excuse an
+unhealthy intermediate commit.
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                           31
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                        16 OCT 2026 / HUMAN REVIEW
+
+
+
+The exact branching and rebasing strategy is open: long-lived review branches need clear synchronization with a
+moving destination and with new independently accepted Work Units.
+
+
+16.4 Integration, conflicts, and branch protection
+The preferred human story allows Lockstep to do the permitted Git integration after external approval. Two
+practical policies must be supported:
+
+  • Local integration: Supervisor verifies the review basis, merges/rebases as configured on a local integration
+    branch, runs required checks, and pushes if destination protection allows it.
+  • Repository-managed integration: Lockstep requests an authorized Git host operation or merge-queue
+    entry, then observes and verifies the resulting destination state.
+
+The product must never bypass protected-branch or mandatory review rules simply to avoid the host’s
+green merge button. A stale approval, diverged branch, missing required CI, or ambiguous conflict halts or
+returns to bounded rework. A merge conflict is not authorization for an Implementer to change unrelated product
+behavior.
+
+Integration must be identified durably and idempotently. If the network fails after a push or merge request,
+Lockstep reconciles the remote state before attempting the effect again.
+
+
+16.5 Integrated is not Done
+Internal acceptance, PR approval, integration, and Done are different facts.
+
+Successful integration may move an external Ticket to Ready for Signoff, Ready for Acceptance, or another
+explicitly mapped state. Only the human controller declares Done. In organizations, this may occur directly
+in the connected issue tracker; Lockstep observes and records the event. In personal mode, a human can
+approve a whole Phase, authorize integration, and explicitly mark the corresponding work complete.
+
+
+
+17. Ticket ownership and synchronization
+The internal Work Item record always stores execution linkage and event provenance. It does not necessarily own
+every business-facing ticket field.
+
+
+17.1 Internal-only mode
+Lockstep stores Tickets, priorities, dependencies, comments/decisions, and signoff state locally. This is the
+complete personal-user default.
+
+
+17.2 External tracker mode
+A Shortcut story or GitHub Issue may own its title, description, business priority, workflow status, blocking
+relationships, and acceptance by stakeholders. Lockstep mirrors only authorized fields and owns its execution
+ledger, Contracts, Work Units, verification, and recovery history.
+
+
+17.3 Hybrid mode
+Internal and external objects can refer to the same underlying request. The adapter must maintain stable source
+identities and explicit mappings. A write to an externally owned field is made through the authorized external API.
+A concurrent conflicting edit must be reconciled or halted rather than silently won by whichever copy saved last.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                  32
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                             16 OCT 2026 / HUMAN REVIEW
+
+
+
+17.4 Integrations by type
+
+ Integration                                               Primary purpose
+
+ Shortcut                                                  Work intake, priority, dependencies, story workflow, linked
+                                                           implementation reports, human Done
+
+ GitHub Issues                                             Issue/bug intake, development discussion, vulnerability-safe
+                                                           sanitized tickets where appropriate
+
+ GitHub PRs                                                Review, changes requested, approval, CI status, branch
+                                                           protection, integration evidence
+
+ Dependabot or dependency alerts                           Actionable maintenance/security proposals with package,
+                                                           advisory, and affected version evidence
+
+ Email/notifications                                       Human attention routing, not execution authority
+
+ Figma/FigJam or other boards                              Potential future adapter only where a real work lifecycle is
+                                                           supported; not treated as equivalent to an issue tracker by
+                                                           default
+
+
+External adapters implement stable domain semantics; the Scheduler and Supervisor must remain independent
+of provider-specific nouns such as Story, Issue, Iteration, or Check Run.
+
+
+
+18. Event ingress and safe synchronization
+All external feedback flows through the same trust boundary:
+
+
+  Inbound webhook or outbound poll
+    -> authenticate source and transport
+    -> normalize and validate payload
+    -> deduplicate by provider/delivery/subject identity
+    -> append durable receipt with event provenance
+    -> reconcile against current linked object revision
+    -> derive a permitted domain event or proposal
+    -> enforce actor and policy authorization
+    -> update queue at a safe scheduling boundary
+    -> dispatch only through validated Supervisor operations
+
+
+Webhooks are useful where a secure reachable endpoint exists. A purely local installation should also support
+outbound polling with durable cursors rather than require the operator to expose localhost. Delivery is at-least-
+once in the real world; the adapter must make processing effectively idempotent at the authoritative boundary.
+
+Incoming Ticket descriptions, PR comments, Skills, issue templates, and Red Team payloads are untrusted
+content even when their transport is authenticated. They may describe desired behavior but cannot issue
+executable instructions that override Lockstep’s system policy, frozen Contract, or filesystem permissions.
+
+Outgoing state transitions and publications require a durable outbox/effect ledger sufficient to avoid duplicate
+PRs, duplicate issue creation, repeated messages, and unsafe replay after crashes. The exact transaction
+mechanism is a detailed design question, not a reason to bypass these requirements.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                         33
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                        16 OCT 2026 / HUMAN REVIEW
+
+
+
+
+Part VII — Agent context, skills, and knowledge
+
+19. Fresh context, Project Digest, and implementation economy
+The engineering kernel’s context doctrine remains unchanged:
+
+  • fresh model sessions are normal;
+  • the Project Digest captures intentionally curated stable facts;
+  • Context Packs carry relevant authoritative state, selected documentation, tests, diff, verification evidence,
+    and invocation identity;
+  • stable context should precede volatile context in deterministic rendering;
+  • provider-side cache benefits are optional and correctness-neutral;
+  • persistent model conversation is never the canonical memory of the project.
+
+The Implementer should use the least machinery necessary to satisfy the frozen Contract. It should reuse
+existing code and suitable standard/platform facilities rather than add speculative abstractions or dependencies.
+This economy rule may not shrink accepted scope or skip tests.
+
+Any effort to optimize prompts, model selection, verification, or cache usage must be judged against successful-
+work quality and rework, not simply input tokens. This directly continues the original cost-mitigation and Phase
+12 policy-evaluation direction.
+
+
+
+20. Skills Library
+The command center includes a browsable, versioned Skills Library, accessible even in single-user local mode.
+It should let a user discover installed and available skills, inspect effective scope, view provenance and changes,
+evaluate compatibility, propose edits, install or roll back a version, and share a permission-appropriate package
+with a friend or organization.
+
+
+20.1 Scope and inheritance
+At minimum, distinguish:
+
+ 1. Subtree-local skill — guidance for a particular conceptual directory or subsystem.
+ 2. Project-wide skill — instructions useful throughout one repository.
+ 3. Engineer / local global skill — guidance available across projects or selected Engineers under the local
+    user’s authority.
+ 4. Organization-shared package — published version that authorized organization members may install
+    explicitly.
+ 5. Public/friend-shared package — a separately approved, export-safe artifact.
+
+Skill scope is not automatically the same as vendor filesystem location. A Lockstep-managed registry/manifest
+should describe where and how a selected provider receives a skill. Direct mutation of vendor installation
+internals should be avoided when a managed, reversible projection is possible.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                   34
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                                16 OCT 2026 / HUMAN REVIEW
+
+
+
+20.2 Skill proposal lifecycle
+The Planner, Scribe, or audit system may emit a candidate based on recurring Context Debt, repeated error
+patterns, or a useful new convention. It includes:
+
+  • problem and evidence references;
+  • proposed content and target scope;
+  • affected Engineers/projects and provider compatibility;
+  • candidate source and publisher;
+  • changed files/installation preview;
+  • security/license/privacy checks;
+  • audit and evaluation results where available;
+  • explicit human approval requirement.
+
+One-click approval is allowed to be easy; it is not permissionless. Applying a skill should be a deterministic,
+versioned, reversible operation with an auditable installer and rollback. Global/organization publication should
+use stronger review than adding a narrow subtree-local note.
+
+
+20.3 Sharing
+A shared skill is published as an explicit versioned artifact, not as a live writable link into the operator’s private
+filesystem. The export flow should scan for credentials, private repository paths, confidential implementation
+details, third-party proprietary text, and unsuitable embedded instructions. The receiving user sees the contents
+and grants installation scope.
+
+The system should distinguish publish, import, approve, install, activate, update, and remove. A
+publisher’s change must never silently rewrite a recipient’s active agent instructions.
+
+
+
+21. Skill and prompt audit
+Skills auditing and the broader SDLC learning loop are related but distinct. A Skill Audit examines a versioned
+instruction artifact. A Process Improvement Proposal may instead target an SDLC Profile gate, verification rule,
+role prompt, or new regression scenario. Both must be evidence-backed and approved; neither gains edit
+authority by describing itself as optimization.
+
+Lockstep should make prompt maintenance a routine, evidence-guided operation. The six audit candidates that
+motivated this direction are:
+
+
+ Anti-pattern                                                What to inspect
+
+ Verification rituals                                        Redundant instructions to repeatedly “double-check” outside
+                                                             mandatory deterministic checks
+
+ Thoroughness / emphasis boosters                            Prose that encourages unnecessary tool calls or verbosity
+                                                             without improving correctness
+
+ Mandatory reasoning scaffolds                               Rigid scratchpads or step lists that cost effort without
+                                                             observable benefit
+
+ Stale examples                                              Few-shot examples encoding old model failure modes or
+                                                             obsolete project conventions
+
+ Contradictory rules                                         Conflicting instructions across global, project, subtree, and task
+                                                             layers
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                             35
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                             16 OCT 2026 / HUMAN REVIEW
+
+
+
+
+ Anti-pattern                                               What to inspect
+
+ Dated configuration                                        Model flags, reasoning budgets, API options, or CLI switches no
+                                                            longer supported
+
+
+An audit should distinguish static evidence (duplicate or contradictory instructions, obsolete paths) from
+behavioral hypotheses (a shorter instruction might reduce retries or improve performance). The latter require
+controlled comparison against representative tasks, preferably using the existing Phase 12 evaluation machinery
+and objective graders.
+
+The audit is read-only. It outputs a proposed diff, evidence, affected scope, likely risks, and an evaluation report.
+The human authorizes a deterministic installation operation. A changed model should trigger reevaluation, not
+automatic deletion of previously useful knowledge.
+
+Critical distinction: A model instruction saying “double-check everything” may be redundant; the Supervisor’s
+mandatory compilation, tests, scope checks, and frozen-artifact checks are not redundant rituals and must never
+be weakened by prompt optimization.
+
+
+
+22. Scribe and human continuity
+The Scribe may aggregate recurring failure patterns, semantic-review findings, and measurable improvement
+proposals. It is not a self-updating policy engine and cannot silently promote lessons learned into global Skills or
+Profiles. Reports distinguish direct evidence from AI interpretation and must preserve inspectable source
+references.
+
+The Scribe operates outside commit approval and cannot mutate source, invent execution truth, or make
+strategic decisions. It receives authoritative evidence and generates readable explanations, architectural context,
+failure lessons, and candidate documentation improvements.
+
+The expected per-Work-Unit or per-Phase briefing should answer:
+
+  • What changed, and why was it requested?
+  • How does the implementation work and where should I look?
+  • What tests and verification evidence support acceptance?
+  • Which decisions/tradeoffs matter to a continuing engineer?
+  • What failed, retried, or required human intervention?
+  • What remains open, risky, or awaiting external review?
+
+A workplace adapter may publish a permitted summary into the originating Shortcut story. The canonical
+briefing and evidence remain local. Publishing and redaction policies prevent leaking corporate details into
+personal/public Skills or notifications.
+
+ # Part VIII —
+ Security
+ assessment
+ and safety
+
+ ## 23.
+ Optional
+ independent
+ Red Team
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                             36
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ The Red Team
+ is a bounded
+ auxiliary
+ capability, not
+ another
+ software
+ Engineer or
+ source of
+ implementation
+ approval. It is
+ optional per
+ project and
+ explicitly
+ disabled where
+ an organization
+ already uses its
+ own
+ assessment
+ process.
+
+ An authorized
+ Red Team
+ profile should
+ contain:
+
+ - specific target
+ origin(s),
+ environments,
+ and ownership
+ authorization; -
+ permitted test
+ techniques and
+ forbidden
+ actions; -
+ request-rate,
+ concurrency,
+ duration, and
+ resource limits;
+ - test
+ credentials
+ scoped to the
+ target, if any; -
+ selected
+ model/
+ provider,
+ including
+ possible locally
+ hosted models
+ such as Qwen;
+ - permitted
+ network access
+ and sandbox
+ boundaries; -
+ reporting
+ destination and
+ disclosure
+ policy; -
+ identity of the
+ tested build/
+ commit/
+ deployment; -
+ stopping and
+ cleanup rules.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          37
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ The model may
+ reason about
+ an application
+ or propose
+ bounded
+ probes, but
+ test execution
+ must pass
+ through host-
+ enforced target
+ and permission
+ policy. Red
+ Team scope
+ cannot expand
+ because a
+ webpage,
+ discovered
+ endpoint, or
+ agent
+ instruction
+ suggests it.
+
+ ### 23.1
+ Findings
+
+ The Red Team
+ should produce
+ evidence-
+ backed
+ candidates,
+ not unverified
+ “vulnerability”
+ labels. A
+ finding record
+ includes target
+ and build
+ identity,
+ affected
+ behavior,
+ reproducibility,
+ observed
+ evidence,
+ plausible
+ impact,
+ uncertainty,
+ proposed
+ severity,
+ duplicate keys,
+ and disclosure
+ sensitivity.
+ Where
+ appropriate,
+ independent
+ verification or a
+ deterministic
+ replay
+ distinguishes a
+ verified finding
+ from a
+ hypothesis.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          38
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ Verified
+ findings
+ become
+ security Tickets
+ with
+ provenance
+ and priority
+ policy. The
+ Scheduler may
+ then select
+ remediation
+ Work Orders.
+ The Red Team
+ cannot write
+ the fix, revise a
+ frozen
+ Contract,
+ commit, push,
+ or approve its
+ own
+ remediation.
+
+ If the
+ application
+ changes while
+ a test runs, the
+ finding remains
+ anchored to
+ the tested
+ version. The
+ product can
+ explicitly mark
+ it needs
+ revalidation
+ instead of
+ falsely
+ declaring it
+ fixed or still
+ exploitable.
+
+ ### 23.2
+ Security
+ disclosure and
+ external
+ publishing
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          39
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ A verified
+ vulnerability
+ must not be
+ published
+ automatically
+ as a public
+ GitHub Issue.
+ Private
+ advisories,
+ restricted
+ trackers, or
+ sanitized
+ engineering
+ tickets may be
+ configured. The
+ chosen
+ destination
+ must be
+ appropriate for
+ the repository’s
+ visibility and
+ the
+ organization’s
+ disclosure
+ policy.
+ Automatically
+ chaining
+ GitHub Issues
+ to Shortcut
+ stories is an
+ adapter
+ workflow, not a
+ mandatory
+ publishing
+ hierarchy.
+
+ ### 23.3
+ Product
+ positioning
+
+ The Red Team
+ offers useful
+ additional
+ assurance for a
+ solo developer;
+ it does not
+ replace
+ professional
+ security
+ review,
+ compliance
+ processes, or
+ production
+ penetration-
+ test
+ authorization.
+ A test site must
+ be expressly
+ authorized
+ even if it is
+ publicly
+ reachable.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          40
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ ## 24.
+ Process,
+ credential, and
+ repository
+ isolation
+
+ The current
+ local-first
+ system invokes
+ provider CLIs
+ and holds
+ durable
+ repository
+ state. The
+ expanded
+ product must
+ also separate
+ resource and
+ credential
+ scopes across
+ Engineers:
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          41
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ - each Engineer
+ sees only the
+ repository,
+ Context Packs,
+ selected agent
+ accounts, tools,
+ and worktrees
+ it needs; -
+ corporate
+ project data
+ and credentials
+ never flow into
+ personal
+ repositories or
+ personal model
+ profiles by
+ accident; -
+ agent
+ subprocesses
+ inherit only a
+ deliberately
+ constructed
+ environment; -
+ API billing
+ credentials do
+ not silently
+ replace
+ subscription-
+ backed
+ authentication;
+ - Reviewer and
+ Scribe paths
+ remain read-
+ only with
+ respect to
+ production; -
+ Supervisor
+ runtime files,
+ journals, and
+ credential
+ stores remain
+ outside
+ Implementer
+ write authority;
+ - optional Red
+ Team network
+ access is more
+ restrictive than
+ generic
+ application
+ browsing; -
+ remote pushes,
+ integrations,
+ disclosures,
+ skill
+ publication,
+ and external
+ notifications
+ require their
+ own
+ permissions.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          42
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ Per-Engineer
+ model
+ configurations
+ may use
+ separate
+ corporate/
+ personal
+ subscriptions,
+ but the product
+ must detect or
+ clearly warn
+ about account/
+ profile
+ collisions
+ where multiple
+ Engineers
+ share scarce
+ quotas.
+
+ For serious
+ unattended
+ operation, the
+ isolation
+ decision must
+ be evidence-
+ based. CLI-
+ native
+ sandboxes may
+ suffice for
+ controlled
+ dogfood;
+ stronger
+ containers/VMs
+ may be
+ necessary
+ before
+ advertising
+ high-trust
+ overnight or
+ multi-
+ repository
+ operation. An
+ execution
+ policy should
+ declare its
+ isolation level
+ accurately.
+
+ ## 25. Durable
+ recovery and
+ external side
+ effects
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          43
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ The
+ Supervisor’s
+ existing safety
+ philosophy
+ prioritizes at-
+ most-once
+ invocation
+ and explicit
+ recovery when
+ crash timing is
+ ambiguous.
+ Expansion to
+ external APIs
+ makes this
+ principle more
+ important.
+
+ All effectful
+ operations
+ should have
+ durable intent
+ and identity:
+ source ticket
+ claims, PR
+ creation,
+ branch push,
+ merge request,
+ tracker update,
+ email
+ notification,
+ skill
+ installation,
+ and authorized
+ security
+ probes. For
+ side effects
+ with uncertain
+ outcomes,
+ Lockstep must
+ query or
+ reconcile the
+ authoritative
+ destination
+ before
+ replaying an
+ operation.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          44
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ Human halt/
+ resume
+ remains exact:
+ the request
+ and resolution
+ are bound to
+ run/Work Unit/
+ attempt
+ identity and
+ relevant
+ current basis.
+ After a human
+ answer or PR
+ review, the
+ Supervisor
+ reassesses
+ staleness and
+ permissions
+ before
+ dispatch.
+
+ No error
+ handler may
+ silently
+ reinterpret
+ uncertainty as
+ success or
+ unboundedly
+ retry a possibly
+ completed
+ external effect.
+
+ ## 26. Human
+ completion and
+ accountability
+
+ Human
+ authority is not
+ just an
+ emergency
+ stop. It also
+ shapes the
+ normal flow:
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          45
+LOCKS TEP / ARCHITECTURE & DEL IVERY                16 OCT 2026 / HUMAN REVIEW
+
+
+
+ - approve a
+ new Master
+ Plan or a
+ material
+ requirement
+ change; -
+ select delivery
+ policy and
+ external-
+ automation
+ boundaries; -
+ configure
+ whether
+ external
+ reviews can
+ authorize
+ integration; -
+ answer
+ architectural or
+ product
+ ambiguity; -
+ accept/reject
+ proposed skills
+ and
+ documentation
+ changes; -
+ approve Phase
+ delivery or
+ request more
+ work; - declare
+ that a Ticket or
+ product
+ objective is
+ Done.
+
+ A human can
+ preauthorize
+ classes of
+ routine
+ operations;
+ they should not
+ be forced to
+ click through
+ every safe
+ engineering
+ step. But
+ Lockstep may
+ never silently
+ turn that
+ convenience
+ into general-
+ purpose
+ authority to
+ publish, merge,
+ or deploy
+ outside the
+ configured
+ class.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                          46
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                       16 OCT 2026 / HUMAN REVIEW
+
+
+
+
+Part IX — Observability, economics, and product
+quality
+
+27. Evidence over narrative
+Authoritative state consists of contracts, effective SDLC Profile versions and gate receipts, configuration,
+source/Git, structured events and journals, invocation identities, process outcomes, verification artifacts,
+semantic challenge evidence, claims/settlements, and explicit human decisions. Status pages, Scribe
+summaries, Shortcut comments, and notifications are projections or publications of that evidence.
+
+The product should make it possible to answer: Who authorized this? Which artifact was frozen? What
+exact model/process ran? Which tests and gates passed? Which Git object was accepted? What
+happened on retry? What is still waiting on a human?
+
+An audit should expose unavailable or incomplete telemetry honestly. It must not turn a missing cost/usage field
+into zero.
+
+
+
+28. Unit of measurement
+The central performance measure is successful engineering work at required quality. For development, the
+useful unit is an accepted Work Unit; for external delivery, a completed Ticket/PR integration may be the higher-
+level outcome. Neither is defined by changed lines of code.
+
+Initial measures include:
+
+  • Work Units attempted/completed and first-pass acceptance rate;
+  • Planner/Implementer/Reviewer invocations per accepted Work Unit;
+  • retries, candidate corrections, replans, and failure causes;
+  • verification runs, rejection rates, and accepted wrong-work audits where measurable;
+  • wall-clock duration and waiting time by stage;
+  • human intervention count and attention time where supplied;
+  • provider/model usage and available quota signals;
+  • branch/PR review churn and time awaiting human review;
+  • integration failures and merge-conflict rework;
+  • recurring Context Debt, Skill proposals, Profile exceptions, and accepted process improvements;
+  • semantic challenge findings, confirmed counterexamples, mutation-test sensitivity where measured, and
+    false positive/re-review rates;
+  • time and model effort spent on required SDLC artifacts and gates;
+  • observed model/token/cache usage where the provider exposes it.
+
+Subscription-backed usage may not expose defensible dollars per call. Report measured resource consumption
+rather than fictional prices. An efficiency change is accepted when it reduces total repeated work or effort
+without degrading correctness, accepted quality, or reasonable latency.
+
+
+28.1 Model-free qualification and real-provider evaluation
+Lockstep’s runtime MUST be testable end to end without calling a live LLM. A scripted model adapter emits
+the same bounded, typed role results as a real configured provider. The actual Supervisor, Profile policy engine,
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                   47
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                                    16 OCT 2026 / HUMAN REVIEW
+
+
+
+durable PostgreSQL claims/outbox, process runner, disposable Git repository, evidence projector, and operator
+operations are exercised wherever the scenario intends to prove them. Only the model’s probabilistic response is
+substituted; a scripted response is never labeled proof of real-model quality.
+
+Testing strata are deliberately separate:
+
+
+ Layer                                         Evidence produced                           Live model calls
+
+ Pure transitions/property-based or model-     Invariant preservation, legal/illegal       Never
+ based state-machine tests                     transitions, deterministic refusals
+
+ Scripted role-protocol scenarios and          Correct orchestration of Planner,           Never
+ recorded-trace replays                        Implementer, Reviewer, semantic
+                                               challenger and human interventions
+
+ Real-effect integration and fault injection   Actual PostgreSQL transactions, Git         Never
+                                               commits/worktrees, process lifecycle,
+                                               uncertain/duplicate dispatch and
+                                               recovery
+
+ Provider adapter contract tests               CLI argument, typed parsing, timeout,       Normally never
+                                               partial output and secret handling (using
+                                               controlled stubs)
+
+ Explicit live-provider smoke and quality      Credentials, transport, model behavior,     Yes, opt-in and bounded
+ evaluation                                    prompt/semantic quality in real
+                                               conditions
+
+
+Ordinary CI MUST provide zero live inference calls by construction: no hidden model-backed fixtures,
+accidental network fallbacks, or mandatory credentials. Scripted fixtures MUST cover at least successful
+completion; schema-invalid/malicious/partial outputs; timeouts, cancellation and provider quota; stale/duplicated
+events and human answers; unauthorized paths; immutable tests; false-green semantic challenges; crash-before/
+after-effect ambiguity; and recovery. Inject time and faults deterministically where feasible. Recorded failures
+from the Python implementation become versioned regression cases, not one-off explanations. Real-provider
+qualification must declare its adapter, account, target, cost/turn/time limits, and consent; failed or unavailable
+live tests MUST NOT be misrepresented as passed.
+
+
+28.2 Visual evidence and review contract
+For every mandatory verification gate the operator MUST be able to answer, visually and by linked raw evidence:
+what was intended to be proven; how it was checked; what was actually established. A gate row binds
+criterion ID to source requirement/Contract revision, method/scenario, expected observation, actual result, tested
+revision/environment, evidence locator, and disposition. Findings, counterexamples, unknowns, and non-
+execution stay distinguishable. Visual artifacts (state diagrams, HTML wireframes, code snippets, interactive
+read-only demos and before/after examples) SHOULD be provided when useful and MUST be traceable to the
+authoritative artifacts they illustrate.
+
+The visual projection is read-only and reproducible from durable evidence, not an alternate gate authority.
+Generated diagrams are documentation; interactive demos run against isolated sample or declared test data and
+cannot silently write canonical state. A human can always expand the actual test command, output, diff, and
+exact provenance. A gate that cannot explain its evidence is not ready for acceptance.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                              48
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                             16 OCT 2026 / HUMAN REVIEW
+
+
+
+29. Quality gates by boundary
+
+ Boundary                                                 Required evidence
+
+ Work admission / SDLC Profile                            Authenticated source, valid effective Profile digest, required
+                                                          discovery/reproduction/architecture artifacts, explicit exceptions
+                                                          and approvals
+
+ Planner candidate                                        Valid scope, dependency/architecture constraints, meaningful
+                                                          acceptance criteria; required Profile discovery evidence
+
+ Test freeze                                              Planner-authored tests, correct baseline expectations, protected
+                                                          test paths, Supervisor commit; required pre-freeze semantic
+                                                          adequacy challenge settled
+
+ Work Unit acceptance                                     Allowed production scope, deterministic verification, required
+                                                          independent semantic challenge, independent read-only review,
+                                                          serviceable Git state; linked criterion-to-method-to-result
+                                                          evidence matrix
+
+ Phase completion                                         Broad integration gate against coherent accepted repository
+                                                          state
+
+ PR publication                                           Accepted local basis, approved delivery mode, authenticated
+                                                          remote identity, idempotent publication
+
+ PR integration                                           Current approval basis, repository policy/CI, conflict resolution if
+                                                          required, integration verification
+
+ Human Done                                               Explicit authorized human signoff mapped to correct Ticket
+                                                          revision
+
+ Skill / process policy installation                      Human approval, target scope, measured or reasoned evidence,
+                                                          compatibility, privacy checks, versioned rollback
+
+ Red Team finding                                         Authorization, evidence, tested-build identity, reproducibility/
+                                                          verification disposition, safe disclosure
+
+ Overnight claim                                          Finite budgets, isolated credentials, restart/recovery tests,
+                                                          external-effects reconciliation, honest notifications
+
+
+
+
+30. Product success criteria
+Lockstep succeeds when a single engineer can use it without becoming a full-time dispatcher of scripts and agent
+conversations. Progress should remain comprehensible, green, reviewable, and bounded even when human
+attention is absent for a workday or night.
+
+Useful acceptance signals include:
+
+ 1. A new user initializes an Engineer and can inspect/operate it through the UI without invoking internal Python
+    APIs.
+ 2. Several Engineers independently advance different repositories with isolated account profiles and no cross-
+    repository authority leakage.
+ 3. A plan-derived Sub-phase and an external bug Ticket both become ordinary Work Units without artificial
+    ancestry.
+ 4. A PR review request creates a traceable follow-up; a correction updates the existing PR and does not rewrite
+    frozen history.
+ 5. An approved integration is verified without implying human Done.
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                            49
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                       16 OCT 2026 / HUMAN REVIEW
+
+
+
+ 6. A skill suggestion can be inspected, approved into the right scope, audited, and rolled back.
+ 7. An optional Red Team can assess an authorized staging target and create a restricted, evidence-backed
+    remediation Ticket.
+ 8. After unattended operation, the human sees a concise, accurate morning briefing and clearly identifies
+    unfinished obligations.
+ 9. Greenfield, brownfield, and bug-fix Work Orders satisfy their different process gates using the same Work
+    Unit execution engine.
+10. A deliberately inadequate test suite is challenged with a concrete failure case; the Supervisor prevents
+    premature acceptance and records who authorized the correction.
+11. A recurring failure becomes a reviewable improvement proposal; only a human-approved policy or Skill
+    version can change future Engineer behavior.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                 50
+LOCKSTEP / V2.2 PROJECT BIBLE                                               25 OCT 2026 / RATIFIED
+
+
+
+
+ V 2 . 2 I N T E G R AT E D G O V E R N I N G R E V I S I O N
+
+
+
+ 06. The Vacation Day Test — §30
+
+ Integration point: §30, following original v2.1 page 50. Change class: new named future end-
+ to-end acceptance benchmark.
+
+
+    Vacation Day Test (future Gate F3 benchmark). Over a predeclared full vacation-day
+    interval, one human operator authorizes 2–4 independent repository-bound synthetic
+    Engineers to execute a realistic eligible workload. The operator is absent from the
+    command center and participates only through reply emails. Across the entire interval, no
+    more than five human replies/substantive decision interactions may be required;
+    clarification replies count. The run must show a prespecified minimum of meaningful,
+    independently verified progress, correct accepted/blocked/failed/unknown results, preserved
+    authorization and isolation, independent fault handling, reliable conversations, and an
+    accurate evidence-linked concluding briefing.
+
+
+ A silent system making no meaningful progress fails. It also fails if the operator must open the UI
+ or terminal to rescue ordinary execution, if required verifications are bypassed, or if more than
+ five human replies are required. Safety-critical alerts still must be delivered; they cannot be
+ suppressed to manipulate the score. The test interval, tasks, minimum progress and quantitative
+ evidence criteria are frozen before the run rather than chosen after seeing results.
+
+ The five-reply budget counts every substantive reply, including questions seeking more context.
+ Combining many unrelated approvals into one huge email does not count as one effortless
+ decision. Failures and necessary escalations must be faithfully reported, even when this causes
+ the test to fail.
+
+ An ordinary successful vacation day is not exhaustive resilience proof: separate P10.3/P10.5 fault-
+ injection qualifications must cover restart, service sleep, provider quota exhaustion, connection
+ loss, uncertain Git/provider/email outcomes and correct multi-repository isolation.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                      REVISION INSERT · 1
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                                  16 OCT 2026 / HUMAN REVIEW
+
+
+
+
+Part X — SDLC profiles, adversarial verification,
+and learning
+
+31. Why SDLC profiles exist
+Lockstep’s original strength is an unusually disciplined execution loop: the Planner specifies acceptance, the
+tests are frozen before the Implementer writes production code, deterministic verification runs, an independent
+Reviewer examines the result, and the Supervisor accepts only supported evidence. The comparison with
+Software Factory Kit identified the separate importance of development-process discipline: research,
+requirements, architecture, reproducibility, security analysis, task decomposition, release preparation, and
+documentation may need to happen before or around a Work Unit.
+
+These are complementary, not rival agent architectures. Lockstep MUST preserve one canonical engineering
+transaction protocol while allowing the surrounding SDLC obligations to vary by work type and project context.
+
+An SDLC Profile is therefore a versioned, declarative policy governing required process artifacts, approval
+boundaries, quality gates, and evidence obligations. It is not a role prompt, model persona, agent swarm, or
+alternative execution engine. Profiles are subject to the constitution’s universal guarantees. Profiles should be
+composable only where resolution semantics and conflicts are explicit, typed, and tested.
+
+A Profile may require the Planner to research unfamiliar code, map architectural impact, produce a reproduction
+case, construct a threat model, or secure human signoff. It MAY request read-only auxiliary analysis within strict
+budgets. It MUST NOT invent a new code-writing Implementer or permit two Implementers in the same repository.
+
+
+31.1 Initial reference profiles
+
+ Profile                          Problem it serves              Illustrative required            Illustrative signoff and
+                                                                 discovery/pre-freeze             post-work gates
+                                                                 evidence
+
+ Greenfield                       Building from a PRD or new     Requirements basis, explicit     Human approval of material
+                                  product concept                assumptions, architecture and    scope/architecture; phase-
+                                                                 risk assessment, dependency-     level integration checks;
+                                                                 aware plan, acceptance           documentation
+                                                                 criteria
+
+ Brownfield feature               Extending an existing          Codebase map, affected           API/data migration
+                                  repository                     contracts/interfaces,            assessment where needed;
+                                                                 compatibility constraints,       existing-system regression
+                                                                 relevant regression baseline     and integration evidence
+
+ Bug fix                          Human support ticket,          Reproduction or justified non-   Confirmed counterexample
+                                  reported defect, failure       reproducibility, impact, root-   addressed; no unrelated
+                                                                 cause hypothesis, failing        behavior drift; traceable
+                                                                 regression test                  incident resolution
+
+ Maintenance / dependency         Dependabot-style advisory or   Dependency/version               Lockfile/build reproducibility,
+ update                           routine update                 provenance, impact and           compatibility/regression
+                                                                 licensing/security assessment,   verification, authorized
+                                                                 affected interfaces              dependency scope
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                                   51
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                                  16 OCT 2026 / HUMAN REVIEW
+
+
+
+
+ Profile                          Problem it serves              Illustrative required             Illustrative signoff and
+                                                                 discovery/pre-freeze              post-work gates
+                                                                 evidence
+
+ Security remediation             Verified Red Team finding or   Authorized finding, tested-       Regression that detects defect
+                                  private advisory               build identity, severity          class, independent review,
+                                                                 rationale, reproduction           disclosure and sensitive-
+                                                                 evidence restricted by            artifact controls
+                                                                 disclosure policy
+
+ PR correction                    Requested changes to an        Review comment linked to          Scoped rework, new
+                                  existing PR                    precise PR/head revision,         verification, approval-basis
+                                                                 classification of correction vs   recheck; no unrelated ticket
+                                                                 new requirement                   invention
+
+
+Only the first three are required as foundational v2 Profile templates; others are natural later additions. Exact
+artifact templates, mandatory versus optional gates, and approval defaults belong in the release PRD. This table
+expresses accepted direction, not an already-approved machine schema.
+
+
+31.2 Universal invariants versus profile obligations
+Some guarantees can never be waived by selecting a convenient Profile: one mutating Implementer per
+repository; scope and authorization checks; durable attempts; protected frozen tests where behavior changes;
+deterministic verification; independent read-only review; bounded retries; legitimate Git commits; and human
+completion authority.
+
+Other obligations are contextual. A new authentication subsystem may require a security-design review; a typo-
+only documentation change may not require Planner-authored failing tests. A Profile can authorize a typed
+exception path, but that path must preserve evidence of why the work was classified as non-behavior-changing
+and cannot be used to smuggle in unverified source changes.
+
+The Supervisor enforces the actual policy. An agent instruction such as “please do a security review” is not
+evidence that a security gate was satisfied.
+
+
+
+32. Policy selection, binding, and gates
+An Engineer is configured with a project default Profile (and optional work-class mappings). Each Work Order
+records the effective Profile selected by deterministic policy or explicitly accepted by the human. Planner
+recommendations to change classification are proposals, not operational authority.
+
+The Profile resolution sequence is:
+
+ 1. Identify the Work Order and its trusted source, repository, kind, classification, and current external revision.
+ 2. Resolve project defaults, permitted work-class specialization, and any human-approved stricter overrides
+    under a documented precedence rule.
+ 3. Reject conflicting requirements or unresolved exceptions; do not guess which authority wins.
+ 4. Persist the immutable effective Profile identity, version, digest, origin and approval basis before
+    creating or admitting the corresponding Work Unit.
+ 5. At every gate, validate required artifact type, provenance, content digest, applicability, and approval state
+    against the bound Profile version.
+ 6. If the Profile changes mid-flight, retain the frozen basis for already-authorized effects and require an explicit
+    reconciliation decision for work not yet executed.
+
+A conceptual Haskell model (not final source API):
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                                 52
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                        16 OCT 2026 / HUMAN REVIEW
+
+
+
+
+  newtype ProfileId = ProfileId Text
+  newtype PolicyDigest = PolicyDigest ByteString
+
+  data EffectiveProfile = EffectiveProfile
+    { profileId      :: ProfileId
+    , version        :: ProfileVersion
+    , policyDigest   :: PolicyDigest
+    , requiredGates :: NonEmpty GateSpec
+    , exceptions     :: [ApprovedException]
+    }
+
+  data GateResult
+    = GatePassed GateEvidence
+    | GateNeedsHuman HumanRequest
+    | GateRejected GateFailure
+
+
+The actual schema may be more strongly typed. It must distinguish evidence exists, evidence has been
+independently verified, and a human authorized an exception. Mere existence of an artifact or a model’s
+prose assertion does not satisfy an evidence gate.
+
+A policy should define when artifacts are required, who may author or approve them, what evidence
+checks them, and how the result is versioned and recovered after a crash. Not every profile needs its
+own bespoke orchestrator. The Scheduler and Work Unit engine interpret the same gate/authority vocabulary for
+every source of work.
+
+
+32.1 SDLC stages are not necessarily Work Units
+Requirements analysis, architecture exploration, reproduction, risk review, and integration signoff may be
+standalone, bounded Work Orders that produce evidence without modifying production code. Once
+implementation is authorized, one or more Work Units perform the familiar engineering transaction. A final
+artifact-only Work Order can publish the Scribe’s report or request human Done.
+
+This prevents unnecessary fake commits and artificial Sub-phases. The important distinction is which authority
+boundary a stage crosses, not whether an AI agent spoke during that stage.
+
+
+32.2 Policy safety and configuration UX
+The command center should show a human-readable Profile checklist next to each Engineer, Work Order and
+Work Unit, with remaining prerequisites, source documents, unresolved findings, signoff owners, and clearly
+labeled exceptions. Profile selection and exception approval are explicit human actions unless an existing
+deterministic rule already delegates the choice.
+
+Profiles can be shared as versioned packages, but receiving a package does not install it, grant it authority, or
+overwrite organizational policy. Treat externally supplied profile contents as untrusted instructions until
+independently reviewed and authorized.
+
+
+
+33. Adversarial semantic verification
+
+33.1 The problem it addresses
+A green test suite proves something limited: the implementation satisfies those tests in that environment.
+Tests may miss acceptance criteria, encode a mistaken interpretation, overfit examples, or omit edge cases. An
+AI implementer can therefore produce a clean, apparently verifiable change that is nevertheless the wrong
+implementation.
+
+Lockstep should add a read-only semantic challenger that attempts to falsify the adequacy of the acceptance
+basis and the claim that the implementation meets it. This is independent evaluation, not another production-
+code Implementer and not a manager. It may be a separately configured verifier model or an isolated reviewer
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                   53
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                              16 OCT 2026 / HUMAN REVIEW
+
+
+
+invocation, depending on the chosen release design. Independence must be meaningful: the challenger should
+not simply rely on the Planner’s own justification as its oracle.
+
+The verifier operates from the requirements, ticket, explicit Contract, permitted design constraints, tests, and
+relevant evidence. It must have no implicit power to broaden scope, revise acceptance criteria, alter protected
+tests, commit, or merge.
+
+
+33.2 Two challenge windows
+Before freeze: Challenge whether the proposed tests are capable of distinguishing the intended behavior from
+plausible wrong behavior. Look for omitted acceptance criteria, boundary cases, invariant violations, permission
+mistakes, and negative cases. Where feasible, run a controlled mutant, differential implementation, or minimal
+counterexample test in isolation. If the challenge demonstrates inadequacy, the Planner may revise unfrozen
+test candidates through the normal validation loop; the human resolves material requirement ambiguity.
+
+After implementation, before acceptance: Challenge the actual candidate against the authoritative Contract
+and independent evidence. Assess scope drift, undocumented architecture changes, logical gaps, security/
+regression hazards, and requirements missed by green tests. Any failing challenge must yield a typed, evidence-
+bearing finding and a governed remediation route. A challenger report never edits a frozen Contract or quietly
+changes protected tests.
+
+The effective SDLC Profile decides which challenge types are mandatory. Critical or security-sensitive work may
+use stronger or multiple challenge strategies; the common engine still has one production-code writer at a time.
+
+
+33.3 Evidence and decision semantics
+A semantic finding should contain:
+
+
+ Field                                                     Purpose
+
+ requirement_ref                                          Precise originating criterion, ticket span, specification revision,
+                                                          or documented ambiguity
+
+ basis                                                    Contract/test/commit/build versions assessed
+
+ claim                                                    The suspected defect or missing case; separated from observed
+                                                          facts
+
+ counterexample                                           Reproducible input, mutant, alternate interpretation, or
+                                                          concrete failing scenario when available
+
+ reproduction                                             Authorized steps and exact tooling/environment; sensitivity
+                                                          policy where required
+
+ confidence_and_limitations                               Why the result may be wrong, incomplete, or environment-
+                                                          specific
+
+ disposition                                              CONFIRMED , DISPROVED , NEEDS_HUMAN , or INCONCLUSIVE ,
+                                                          assigned through authorized verification
+
+
+An inconclusive challenge cannot be silently reported as passed. A confirmed defect blocks acceptance under
+mandatory gates and produces scoped rework. A false positive should be recorded as such to improve the
+verifier, without granting it unlimited retry budget.
+
+Citations and precise source references are first-class verification data where requirements derive from a
+document or external issue. A model-generated quotation or source span is a claim: the cited span and revision
+must exist and must substantively support the asserted requirement. The goal is defensible evidence, not the
+appearance of confidence through citation formatting.
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                               54
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                                    16 OCT 2026 / HUMAN REVIEW
+
+
+
+33.4 What semantic review does not guarantee
+No single model, property test, mutation suite, or independent reviewer can prove an arbitrary program correct.
+Lockstep should not market “fully verified” behavior on the basis of one adversarial pass. This layer reduces a
+known blind spot by creating testable counterexamples, surfacing unresolved interpretations, and requiring
+accountability for what remains unknown.
+
+
+
+34. Structured lessons learned and controlled improvement
+Lockstep must be able to get better at its job without granting agents authority to rewrite their own
+rules. The system records repeated failed attempts, false-green cases, human corrections, recurring escalations,
+stale instructions, unnecessary verification rituals in prompts (not mandatory host checks), broken provider
+assumptions, and costly context duplication.
+
+An evidence-backed Improvement Proposal may target one of several distinct artifacts:
+
+
+ Target                                      Example of a justified change                Approval and evaluation
+
+ Skill                                       A recurring library convention becomes a     Human chooses scope, privacy and
+                                             scoped reusable procedure                    compatible agents; versioned installation
+
+ SDLC Profile                                Certain API migrations require an explicit   Human reviews the policy diff, added
+                                             compatibility gate                           cost, exceptions and consequences
+
+ Role prompt / Context Pack                  Remove stale provider flag or duplicated     Behavioral evaluation against
+                                             instructions                                 representative tasks and protections
+
+ Verification rule                           Add a deterministic check for a recurring    Demonstrated failing fixture and new
+                                             false-green class                            regression protection
+
+ Test / rubric library                       Add a reusable mutation or semantic          Independent test fixture, versioning and
+                                             counterexample                               scope review
+
+
+
+34.1 The proposal lifecycle
+Observe → classify → cite evidence → draft proposed diff → evaluate → request human approval →
+install/publish a version → monitor → rollback if needed.
+
+At minimum, record proposal identity, affected scope, author/provenance, triggering Work Units, specific before/
+after content, target model/tool versions, privacy and licensing checks, evaluation basis, required approver,
+accepted/rejected decision, and installation receipt. Scribe may prepare reports; Planner may suggest changes;
+the Human Inbox presents the proposals. Neither role may bypass installation authority.
+
+Automatic evaluations should be possible, including A/B comparisons of success rates, corrections, cost, and
+latency against a pinned task set. Do not assume short prompts are better prompts, or that one successful run
+validates global deployment. Where evidence is inadequate, the correct outcome is insufficient evidence, not
+automatic acceptance.
+
+
+34.2 Scope boundaries
+A lesson observed in one repo defaults to that repo or subtree. It is not silently elevated to an organizational or
+global Implementer skill. Sharing outside a company must respect proprietary material, license terms, personal
+data, vulnerability-disclosure restrictions, and explicit recipient permissions.
+
+Global or organizational sharing and installation remain distinct operations. A friend accepting a Skill cannot
+acquire authority over the publisher’s projects, and an internally generated policy change cannot spread to every
+Engineer just because it was recommended repeatedly.
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                                    55
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                                     16 OCT 2026 / HUMAN REVIEW
+
+
+
+35. Combined quality and acceptance gates
+The canonical engineering pipeline is still Planner → protected tests → one Implementer → objective
+verification → independent review → accepted commit, under Supervisor ownership. Profiles surround and
+strengthen it:
+
+
+
+
+                Authoritative relationships shown schematically; source of truth remains the versioned specification.
+
+
+The diagram expresses authority ordering, not a requirement that every Work Order executes the same
+number of model calls. In particular, mandatory test adequacy checks must occur while the candidate tests are
+still unfrozen; if a finding is discovered only after freeze, remediation follows an explicit authorized route instead
+of silently rewriting the test commit.
+
+A successful SDLC gate proves a specific obligation was satisfied by specific evidence. It never means an LLM
+“felt confident.” Repeated challenges must be budgeted and terminating, with a human escalation path for
+unresolved ambiguity or contradictory evidence.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                               56
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                                  16 OCT 2026 / HUMAN REVIEW
+
+
+
+
+Part XI — Haskell v2 architecture and
+implementation strategy
+
+36. The accepted implementation foundation
+Decision (accepted): Rebuild Lockstep v2 in Haskell using Launchpad as the application foundation. This
+is not an automatic migration of the Python code. The motivation is an execution model better aligned with typed
+state transitions, effect isolation, property testing, a coherent web stack, and a fundamentally different product/
+domain architecture.
+
+
+ Layer                                       V2 direction                              Responsibility and boundary
+
+ Application foundation                      Launchpad                                 Reuse proven scaffolding after
+                                                                                       dependency/license/security audit;
+                                                                                       remove irrelevant sample application
+                                                                                       modules
+
+ Language                                    Haskell                                   Application, Scheduler, Supervisor, and
+                                                                                       effect interpreters
+
+ HTTP serving                                WAI / Warp                                Persistent local service and optional
+                                                                                       separately authorized remote access
+
+ Web framework                               Orb                                       Validated request handlers and
+                                                                                       application wiring, not workflow authority
+
+ Routing                                     Beeline                                   Typed routing in the application boundary
+
+ Server-side HTML                            Brigid                                    Rendered views of canonical state and
+                                                                                       human controls
+
+ Interactivity                               HTMX, minimal local JS                    Forms, partial updates, polling/SSE; no
+                                                                                       default SPA state mirror
+
+ Reordering                                  SortableJS where useful                   Accessible queue reordering, with server-
+                                                                                       side version, priority and dependency
+                                                                                       enforcement
+
+ Styling                                     Custom Lockstep CSS                       Replace Pico; dense, legible, workstation-
+                                                                                       style command center
+
+ Persistence                                 PostgreSQL + Orville                      Durable state/transactions, claims, inbox/
+                                                                                       outbox, evidence indexes
+
+ Decision core                               Pure Haskell                              Typed validation of authority, state
+                                                                                       transitions, and effect intents
+
+ Research alternative                        Mercury (optional)                        Narrow experiment only if determinism/
+                                                                                       mode benefits justify FFI and deployment
+                                                                                       complexity
+
+ Agents                                      Configured provider CLIs/HTTP endpoints   Disposable Planner, Implementer,
+                                                                                       Reviewer, and authorized auxiliary
+                                                                                       invocations
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                                57
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                       16 OCT 2026 / HUMAN REVIEW
+
+
+
+This supersedes v1’s speculative SQLite default and TypeScript frontend suggestion. PostgreSQL is accepted
+because Launchpad already uses it, not because Lockstep needs a remote database or multiple command-plane
+nodes. The first supported installation should keep the service local-first; its database can live on the same
+machine or another explicitly configured trusted host.
+
+Deployment boundary: Running Lockstep on a separate dedicated machine is a deployment choice; remote
+access introduces security obligations (TLS/identity/authorization/network boundaries) but not an automatic
+requirement for a distributed Engineer protocol. Remote workers or multi-node schedulers are separate future
+capabilities and should not contaminate the first implementation.
+
+Portability and licensing gate: Before adopting Launchpad source or its dependencies into a distributable
+Lockstep release, confirm source ownership, licenses, redistribution permissions, and maintained dependency
+versions. Strip unused functionality and Pico deliberately; do not assume Launchpad’s provenance grants blanket
+publication rights.
+
+
+
+37. Pure decision core, not a gratuitous effect framework
+The model is a durable state machine interpreted into controlled effects, not an endless conversation.
+Lockstep’s decision function should be small, total over its declared inputs, exhaustive for meaningful cases, and
+easy to property-test.
+
+Conceptually:
+
+
+  decide
+    :: SupervisorSnapshot
+    -> ObservedEvent
+    -> Either Refusal (NonEmpty DomainEvent, [EffectIntent])
+
+
+Here EffectIntent is a description of an authorized capability and its parameters, not an already-executed side
+effect. The boundary beneath decide validates state revision and policy version, atomically records the decision
+and intended effects, then dispatches through typed interpreters. The next observation re-enters the same
+decision engine.
+
+A more advanced free-monad/effect abstraction may be considered if its extra indirection demonstrably simplifies
+tests, interpreters, or invariant enforcement. “It is elegant Haskell” is not enough. Ordinary ADTs, opaque
+constructors, pure transition functions, and deliberately small interpreters are the baseline. An effect framework
+is a tool, not the product identity.
+
+
+37.1 Types encode evidence, not magic
+Represent Work Unit phases with distinct constructors containing prerequisite evidence. A ReadyToReview state
+should carry verified implementation evidence; an Accepted state should carry a verifiable accepted Git basis.
+Use opaque constructors/smart constructors when practical to constrain transitions at compile time.
+
+Types cannot prove that a remote service executed exactly once, that a model’s claim is truthful, or that an
+external ticket wasn’t updated concurrently. Runtime checks and durable protocols are still required. Different
+pieces of logic may be pure without pretending the real world is pure.
+
+
+37.2 Haskell versus Mercury
+Mercury’s mode/determinism declarations might offer a narrower and clearer specification for certain policy- or
+constraint-solving functions. Evaluate with the same real examples as the Haskell kernel: legal transition
+coverage, refusal cases, property generation, runtime/compiler burden, and ability to deliver as part of one
+locally installed product.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                 58
+LOCKSTEP / V2.2 PROJECT BIBLE                                             25 OCT 2026 / RATIFIED
+
+
+
+
+ V 2 . 2 I N T E G R AT E D G O V E R N I N G R E V I S I O N
+
+
+
+ 07. Deployment topology — §36
+
+ Integration point: §36, following original v2.1 page 58. Change class: clarified boundary,
+ future architecture only.
+
+ A — Local first (required baseline). One managed host runs the Haskell command plane,
+ PostgreSQL (which may use an explicitly configured trusted separate database host), repository
+ worktrees and authorized local agent CLIs. The operator uses the loopback service. No corporate
+ or cloud control plane is required for personal use.
+
+ B — Dedicated single-host installation (future separately qualified deployment). The
+ same installation may run on a managed home, office or cloud server; agents, repositories and
+ Git effects remain local to that server. A remote user may access its command center through an
+ explicitly approved private network or tunnel. Remote operator access requires encrypted
+ authenticated transport, application authentication and authorization, revocation, origin/CSRF/
+ session defenses, secret redaction, audit evidence, network restrictions and an explicit threat
+ model. A tunnel alone does not grant command authority. A casual public-binding flag is not
+ acceptable.
+
+ C — Distributed controller and execution nodes (future product-scope revision). A
+ distinct control plane may someday schedule scoped operations for enrolled nodes that retain
+ local repositories and secrets. Such a protocol would require authenticated device enrollment/
+ revocation, attestation/trust-boundary analysis, strong transport security, isolation between
+ environments, verifiable work authorization, node-local durable operation records, fencing,
+ evidence provenance and network-partition reconciliation. A lost heartbeat does not establish
+ that execution stopped, and does not authorize blind re-dispatch. SSH command forwarding is not
+ an adequate substitute for an effect-aware execution protocol.
+
+ Distributed workers, multi-node scheduling, cross-host mutation and organization-wide
+ deployment are not authorized initial-v2 deliverables or Phase 3–10 scope. Dedicated hosting and
+ secure remote viewing do not imply distributed execution.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                    REVISION INSERT · 1
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                       16 OCT 2026 / HUMAN REVIEW
+
+
+
+Mercury’s det does not imply once-only external effects. Unless it supplies compelling measured benefit, do not
+introduce a second production language into the control plane. Mercury remains a valid experiment, not
+an architectural obligation.
+
+
+
+38. Durable effect execution and recovery
+The runtime must separate decision, durable authorization, execution, observation, and settlement.
+
+
+  Validated UI / CLI command or authenticated external event
+      -> transactional command admission and expected-revision check
+      -> pure Supervisor/Scheduler decision
+      -> durable state events + effects-to-dispatch (one DB transaction)
+      -> bounded worker claims and dispatches an authorized effect
+      -> result/evidence is persisted and correlated to effect identity
+      -> reconciliation and new observation; never silent double-execution
+
+
+PostgreSQL gives transaction isolation, constraints, conflict detection, and durable records. It does not itself
+supply exactly-once side effects for Git commits, model invocations, remote PR creation, or emails. Use explicit
+operation identities, idempotency where supported, outbox/inbox records, local Git inspection, and uncertain-
+outcome reconciliation. Do not replay an irreversible or expensive external operation merely because
+its response was lost.
+
+Engineer ownership is exclusive by repository identity, not only by display name or path spelling. Claims and
+leases must survive or be safely reconstructed after crash; detect stale ownership, process deaths, and host
+restart. No heartbeat should imply that a still-running subprocess vanished or that a timed-out invocation is safe
+to repeat. Provider quotas and resource reservations are bounded under explicit account policies.
+
+
+38.1 Operational security
+Local-first does not mean the HTTP service is trusted by default: reject untrusted origins, apply CSRF protection,
+validate sessions/authorization, bind to loopback unless intentionally configured otherwise, and keep sensitive
+providers’ credentials outside rendered pages, logs, and agent Context Packs. HTTP commands may enqueue
+Work Orders but cannot run long-lived transactions inline.
+
+The first product should provide explicit local database setup/migration/backup procedures. Durable storage is
+part of the product, not a developer-only afterthought. Running a background service with PostgreSQL remains an
+operational tradeoff to measure during dogfood.
+
+
+38.2 Keeping the model-facing surface narrow
+Build explicit provider adapters that pass structured requests, accept bounded typed results, and project only
+authorized context. Model CLIs may change over time; keep vendor-specific flags, usage telemetry, and
+authentication outside the pure decision kernel. Prompt caches and model session persistence are optimizations,
+never durability mechanisms.
+
+
+
+39. The v2 delivery strategy
+The current public Python repository at 8b045edb remains a valuable behavioral reference: Git isolation, test
+freeze, escalation, recovery, verification, retry budgeting, audit, context, and dogfood mistakes are lessons to
+preserve. It is not the planned production implementation of v2. The earlier Phase 0–13.1 implementation history
+remains historically true, but we do not continue provisional Phase 13.2 as if a Haskell rewrite were an extension
+of those Python classes.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                  59
+LOCKSTEP / V2.2 PROJECT BIBLE                                               25 OCT 2026 / RATIFIED
+
+
+
+
+ V 2 . 2 I N T E G R AT E D G O V E R N I N G R E V I S I O N
+
+
+
+ 08. Remote-access security qualifier — §38.1
+
+ Integration point: §38.1, following original v2.1 page 59. Change class: refinement to existing
+ operational security.
+
+ The initial service remains loopback-only unless an explicit, separately accepted remote-access
+ deployment is configured. A private tunnel such as Tailscale can restrict connectivity but cannot
+ replace application authorization, consent, authentication, TLS/secure transport analysis, session/
+ origin/CSRF safeguards, audit logging or the Supervisor's bounded side-effect permissions.
+
+ The local CLI/session provider credentials, Git credentials, repository contents and security
+ findings remain within their permitted trust boundaries. A remote interface or communications
+ channel must not reveal or synchronize them to a personal environment or another organization
+ by default. All remote human commands enter the same audited, idempotent, expected-revision
+ validation path as local commands.
+
+ Remote workers would introduce additional threat models, per-node keys, execution identity,
+ fencing and reconciliation; those are out of current release scope. Email notifications, even
+ bidirectional ones, do not require remote HTTP access and confer no automatic right to connect to
+ the command plane.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                      REVISION INSERT · 1
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                        16 OCT 2026 / HUMAN REVIEW
+
+
+
+Release numbering and repository/branch layout remain open. This document is Bible v2.1, not a claim
+that product release 2.0 has shipped. A new v2 PRD and dependency-aware implementation plan must be
+authored from this Bible and validated against the first vertical slice.
+
+
+Milestone A — Launchpad extraction and executable shell
+Prepare a minimal Haskell Launchpad-based application; audit licenses and dependencies; remove Pico and
+unrelated features; retain reliable Orb/Brigid/Beeline/Orville wiring. Boot WAI/Warp, migrate/connect PostgreSQL,
+render a genuine status page, and demonstrate secure command admission through a typed application
+operation. Establish a reproducible build, tests, CI, installation instructions, and persistent service lifecycle.
+
+Exit evidence: application starts from a clean install; database schema and health checks work; a real
+authorized command produces a durable record; the browser only projects its result.
+
+Qualification principle applying to all milestones: Offline-by-default property/scenario/fault testing begins
+with the first effect boundary. A real live-provider dogfood is a separate, explicitly budgeted final compatibility
+proof, never a prerequisite for ordinary CI. Visual evidence projections are developed incrementally from Gate A
+onward, rather than left until Scribe is complete.
+
+
+Milestone B — Pure policies and event/effect substrate
+Implement Engineer , repository ownership, Work Order, effective SDLC Profile, Work Unit/Contract, Attempt,
+authorization, and first event/effect records as stable typed domain models. Exercise generated transition, policy
+precedence, refusal, and crash-reconciliation tests. Design the first actual outbox/executor loop, not an API
+surface with no durable effects.
+
+Exit evidence: replayable deterministic decisions, invalid transitions refused, profile artifacts/gates enforced by
+the host, recovery tests against persisted claims.
+
+
+Milestone C — One end-to-end ticket-driven Work Unit
+Register one repository-bound Engineer. Through the real UI, create a bug-fix Ticket with no Master Plan,
+classify its Profile, reproduce the defect, authorize a frozen Contract, run Planner-authored protected tests, launch
+one Implementer, verify through real Git and subprocess effects, perform required independent semantic
+challenge and review, record accepted evidence, and stop for a human completion choice.
+
+Exit evidence: one supported-surface, end-to-end trace that survives controlled process interruption and
+produces a genuinely green accepted change. No shell-script-only happy path or fake Phase ancestry.
+
+
+Milestone D — Plan-driven parity and human command center
+Add PRD → Master Plan → Phase/Sub-phase derivation of Work Orders, showing that planned Sub-phases and bug
+tickets create the same Work Unit shape and use the same engine. Provide Human Inbox, visible effective
+Profiles, semantic findings, safe pause/resume, evidence browsing, and clear reasons for every halt. Introduce a
+bounded baseline of Scribe reporting and structured Improvement Proposals.
+
+Exit evidence: plan and ticket modes have parity; a real human can operate, correct, and resume without
+invoking private internals.
+
+
+Milestone E — Multiple Engineers and workplace flow
+Permit concurrent independent repositories with exclusive Engineer ownership and deterministic shared-account
+budgeting. Integrate GitHub PR review/change-request events and permitted merge modes; then connect
+Shortcut backlog selection, blockers, status publication, and human-controlled Done. Implement secure
+reconciliation of remote events, API polling/webhooks as supported, and observable pending integration
+obligations.
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                  60
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                               16 OCT 2026 / HUMAN REVIEW
+
+
+
+Exit evidence: the workplace reference story completes with two or more repositories, independently
+reviewable PRs, follow-up corrections, and human signoff. No parallel Implementers in one repo.
+
+
+Milestone F — Skills, security, overnight qualification
+Add versioned Skills Library, scoped sharing and installation, tested prompt audits, Profile improvement
+proposals, and mature Scribe continuity. Introduce optional isolated Red Team only with explicit target
+authorization and finding provenance. Run multi-repo overnight trials with provider throttling, machine
+interruption, restart recovery, stale remote events, and careful notifications.
+
+Exit evidence: claims of unattended safety and human knowledge continuity are backed by repeatable fault-
+injection and real-use evidence, not a count of green unit tests.
+
+Sequencing note: Milestones are dependency envelopes, not permission to ship components with broken
+prerequisites. SDLC Profile structure, semantic verification seams, and improvement proposal types enter the
+design at B/C, even if sophisticated profile editors, broad mutation infrastructure, and cross-organization Skill
+sharing are delivered later. Keep initial UX deliberately small so we reach a real working loop early.
+
+
+
+40. Open design questions before the v2 PRD freezes contracts
+
+ Area                                                       Question that must be resolved
+
+ Launchpad adoption                                         Source/license rights, specific template revision, dependencies
+                                                            to retain, application-specific files to remove
+
+ Project/repo ownership                                     Canonical repo identity across paths/remotes/worktrees and
+                                                            portable Engineer configuration
+
+ Policy schema                                              Effective Profile resolution, versioning, inheritance, exceptions,
+                                                            mandatory gate vocabulary, and safe user overrides
+
+ Semantic challenger                                        Independent oracle strategy, pre-/post-freeze position, mutation
+                                                            fixtures, evidence bar, mandatory versus advisory handling
+
+ Runtime testing                                            Stable scripted-agent protocol, no-live-CI enforcement,
+                                                            deterministic clock/fault injection and replay-fixture format
+                                                            (policy established in P0)
+
+ Visual evidence                                            Canonical criterion/method/result/locator schema, HTML
+                                                            wireframe of gate inspection, diagram/demonstration policy,
+                                                            artifact digest validation (policy established in P0)
+
+ Haskell effect representation                              ADTs versus an effect library, typed intent/observation
+                                                            vocabulary, totality and termination policy
+
+ Database consistency                                       Concrete PostgreSQL schema, claims, transactional outbox/
+                                                            inbox, snapshot/rebuild protocol, migrations, backups
+
+ Operator service                                           Local auth and CSRF, background worker lifecycle, process kill/
+                                                            restart semantics, secure optional remote access
+
+ Execution isolation                                        Provider account projection, sandbox/network boundaries,
+                                                            process groups, no competing code writers, verification prefix
+
+ Skills and policy sharing                                  Format and signing/trust, licensing/proprietary data checks,
+                                                            version pinning, rollback, evaluation thresholds
+
+ PR and tracker correctness                                 Who owns each field, branch protection rules, PR approval
+                                                            staleness, remote polling/webhook deduplication
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                                61
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                              16 OCT 2026 / HUMAN REVIEW
+
+
+
+
+ Area                                                      Question that must be resolved
+
+ External effects                                          Safe retry/reconcile semantics for agent calls, Git, PRs, email,
+                                                           model inference, and security tests
+
+ Historical evidence                                       Whether old Python runs remain in a separate archive/viewer or
+                                                           receive an optional read-only projector
+
+ V2 repository strategy                                    New repository versus branch, when to change main , archived
+                                                           Python history, release naming and migration guide
+
+ Mercury experiment                                        Problem example and objective adoption threshold; no
+                                                           obligatory Mercury integration
+
+
+No agent may silently answer a material authorization or policy question on behalf of the human. The PRD may
+make concrete choices once the human has approved their tradeoffs.
+
+
+Anti-patterns that v2 MUST reject
+Reject: an AI Manager or Gastown-like simulated hierarchy; multiple production-code Implementers writing the
+same repo; “works on my prompt” in place of gates; one profile per execution engine; a mandatory Master Plan
+for an external ticket; UI handler = long-running worker; PostgreSQL transactions mistaken for exactly-once
+external effects; semantic reviewer findings treated as automatic Contracts; Skills/Profile self-modification without
+human approval; unverifiable “green” success; a Mercury FFI added without demonstrated payoff; and porting
+Python code verbatim rather than preserving its useful guarantees.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                             62
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                                   16 OCT 2026 / HUMAN REVIEW
+
+
+
+
+Part XII — Traceability and document stewardship
+
+41. Changes since Bible v1.0
+This revision preserves all first-edition product commitments, including one human team lead, one Engineer per
+repository, Work Orders and independent Work Units, local-first operation, human Done, configurable PR
+integration, safe external ticket intake, the Skills Library, independent optional Red Team, and evidence-first
+autonomy.
+
+It adds or supersedes:
+
+
+ Topic                                       Bible v1.0                                 Bible v2.0 decision
+
+ Implementation strategy                     Evolve the Python kernel with a            Rebuild in Haskell using Launchpad,
+                                             command-plane wrapper                      retaining Python as a behavioral
+                                                                                        reference rather than the production
+                                                                                        substrate
+
+ Decision engine                             Deterministic Supervisor, implementation   Pure Haskell by default, Mercury
+                                             language not fixed                         optional if experiments justify the
+                                                                                        additional complexity
+
+ Web stack                                   Generic local service and browser UI       WAI/Warp, Orb, Beeline, Brigid,
+                                                                                        HTMX, targeted SortableJS and custom
+                                                                                        CSS; no default SPA or Pico
+
+ Persistence                                 Storage backend undecided, SQLite          PostgreSQL + Orville via Launchpad;
+                                             earlier preference                         local-first is still a requirement
+
+ Development discipline                      Universal test-first Work Unit loop        Versioned SDLC Profiles specifying
+                                                                                        contextual artifacts, approvals, evidence,
+                                                                                        and enforced gates
+
+ Semantic quality                            Deterministic tests + independent          Add adversarial semantic challenge
+                                             Reviewer                                   of test adequacy and requirements
+                                                                                        satisfaction, without another
+                                                                                        Implementer
+
+ Learning                                    Skill suggestions and prompt audits        Expand to structured, evidence-based
+                                                                                        improvement proposals for Skills,
+                                                                                        Profiles, prompts, verification rules, and
+                                                                                        regression libraries; human-approved
+                                                                                        only
+
+ Roadmap                                     Extend provisional Python Phases and       New Haskell v2 plan from foundation
+                                             pull UI forward                            through actual vertical slice; original
+                                                                                        Python history preserved
+
+
+Bible v2.1 amendment (2026-10-16): adopted model-free runtime qualification as the normal testing path
+(with budgeted, opt-in live-provider dogfood) and visual-first, criterion-to-method-to-result evidence inspection.
+Both requirements apply to the execution kernel and the operator interface; neither relaxes semantic challenge
+or authorization requirements. The approved v2.0 architecture, domain, and user stories remain otherwise
+unchanged.
+
+The first-edition conceptual move from Sub-phase to Work Unit remains binding. The original v0.1 Phase/Sub-
+phase history remains factual but does not impose an ancestry requirement on ticket-driven work.
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                                 63
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                             16 OCT 2026 / HUMAN REVIEW
+
+
+
+42. Evidence and source register
+ 1. LOCKSTEP_PROJECT_BIBLE_v1.0.md / .pdf , dated 2026-10-10. Direct textual baseline for the mission,
+    constitution, user stories, domain model, command center, Skills, external delivery, safety, and human Done.
+    Sections carried forward above retain their substance unless explicitly superseded here.
+ 2. Lockstep_PRD_v0.1.pdf , original narrow product requirements and enforcement philosophy. It is not the v2
+    release PRD.
+ 3. lockstep-implementation-plan.md , historical Python implementation phase plan. Completed chronology and
+    real dogfood remain informative; provisional future phases are not the new Haskell roadmap.
+ 4. ai-cost-mitigation.pdf , cost/quality lessons: evaluate cost per accepted outcome, retries, cache signals,
+    review work, and overhead rather than per-call estimates.
+ 5. https://github.com/AugmenTab/lockstep , last checked 2026-10-14, with public main still at commit 8b045edb
+    from 2026-10-09. Evidence for original Python code and tests, not for shipped Haskell, command center, Skills
+    exchange, SDLC policy engine, or Red Team.
+ 6. Artificer source archive ( artificer-main.zip ), supplied example supporting Haskell/Brigid/HTMX +
+    targeted SortableJS interactions. It demonstrates a working drag-and-drop pattern; it does not prove all such
+    interactions or Launchpad’s source license/redistribution rights.
+ 7. Human owner architecture decisions through 2026-10-14, including Haskell + Launchpad +
+    PostgreSQL; Orb/Beeline/Brigid/HTMX; custom CSS instead of Pico; optional Mercury evaluation; one Engineer
+    per repo; strict no-parallel-Implementer rule; optional security assessment; and both canonical reference
+    stories.
+ 8. Software Factory Kit / SDLC comparison discussion (2026-10-12 to 2026-10-14), basis for
+    configurable SDLC Profiles, process/implementation separation, independent adversarial semantic
+    verification, structured lessons learned, and explicit rejection of write swarms. The comparison established
+    useful design directions; it is not proof that a particular third-party implementation’s workflow or validation is
+    correct.
+ 9. Human owner feedback on Yuno testing and visual deliverables (2026-10-15 to 2026-10-16), basis
+    for offline scripted-agent qualification, real-effect fault testing, and visual-first inspectable verification. Yuno is
+    a motivating precedent, not a separately audited codebase in this document.
+10. User-provided prompt-audit screenshot, basis for reviewing instruction debt categories and controlling
+    Skill and prompt improvement recommendations, not blanket permission to remove deterministic test gates.
+
+Where this Bible extrapolates into concrete schema and runtime policy, the text says conceptual, proposed, or
+open. The governing fact is the human-approved direction; implementation mechanics must be proven by code,
+tests, and dogfood.
+
+
+
+43. Stewardship and amendment protocol
+  • Store the canonical editable Bible in a human-reviewed repository documentation location (proposed docs/
+    PROJECT_BIBLE.md ). The Markdown document is the authoritative editable text; PDF is a presentation artifact
+    generated from it.
+  • Record revision date, human approval, reasons and affected constitutional rules or domain definitions. The
+    human may amend any rule deliberately; no model may treat accidental omission as authorization.
+  • Separate Bible version, release PRD version, implementation-plan version, and product/binary version. Bible
+    v2.1 does not mean Lockstep v2 has shipped.
+  • Freeze implementation Contracts only after the relevant policy, Profile, dependencies, acceptance tests, and
+    authorized deviations are settled. Later changes create explicit new versions and links, not historical rewrites.
+  • Preserve original Python project history and evidence as read-only reference material. Decisions to migrate
+    data or reuse code must be separately reviewed, tested, and permissioned.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                       64
+LOCKSTEP / V2.2 PROJECT BIBLE                                                                 RATIFIED 25 OCT 2026
+
+
+
+
+09. Documentation authority and historical
+compatibility — §43
+
+Integration point: §43, following original v2.1 printed page 64. Change class: documentation and amendment
+governance, not a product implementation requirement.
+
+This final v2.2 edition preserves all 63 original v2.1 body pages (printed pages 3–65) without re-typesetting,
+retaining original tables, exact identifiers, code typography, and both diagrams. The final front matter
+supersedes the v2.1 title and metadata pages. Nine governing v2.2 revision inserts appear at their subject
+sections.
+
+The product owner ratified these amendments on 25 October 2026. Explicitly named replacements now
+govern the referenced v2.1 clauses; additions or clarifications do not silently weaken other invariants. The
+only expressly replaced constitutional clause is §3.1 item 1. The older source pages remain visible for source
+fidelity and historic comparison.
+
+The proposed canonical editable documentation location remains docs/PROJECT_BIBLE.md (one literal path).
+This PDF does not claim that the editable file has been reconstructed, updated, committed, or published to the
+repository.
+
+Historical evidence remains historical. Phase 2 receipts, Python reference artifacts, accepted or pending
+decisions, frozen Work Unit Contracts, protected tests, and Git commits are not retroactively amended by a
+documentation revision. New implementation obligations must be traced into future release PRD acceptance
+criteria and dependency-aware plan entries and separately authorized before any effectful execution.
+
+
+Effect of ratification
+Approved governing product direction; NOT authorization to start Phase 3, invoke providers, expose remote
+services, grant email decision authority, operate distributed nodes, or create organizational users. Those
+actions require their separate acceptance and security gates.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                   V2.2 FINAL · §43
+LOCKS TEP / ARCHITECTURE & DEL IVERY                                                        16 OCT 2026 / HUMAN REVIEW
+
+
+
+  • Do not inject the entire Bible into every model invocation. Curate role-relevant, versioned Context Packs and
+    relevant Profile policy excerpts to prevent context debt and contradictory instructions.
+  • Require a new release PRD and a dependency-ordered v2 implementation plan before declaring readiness to
+    start automated coding. The first real vertical slice must falsify architectural assumptions early, not postpone
+    integration until every subsystem exists.
+
+
+
+
+Closing product invariant
+
+    One human leads. One Engineer owns each repository. Every engineering change is a
+    bounded, independently verified Work Unit under a versioned, enforceable SDLC Profile. A
+    deterministic, durable Haskell control plane owns authority and truth. Model-free tests
+    exercise that runtime; independently checked, human-inspectable evidence justifies
+    acceptance. Models propose; evidence and authorized policy decide. External systems inform
+    the workflow without overruling it. The human remains accountable for Done.
+
+
+
+Lockstep should make a disciplined engineer more capable and better informed. Its destination is not a simulated
+software company or an elaborate effect-framework demonstration: it is a trustworthy local engineering
+command center through which a real developer directs independent digital Engineers, knows why their work is
+sound, and has the authority to say when the work is truly complete.
+
+
+
+
+GOVERNED SPECIFICATION · NOT AN EXECUTION RECEIPT                                                                  65
+

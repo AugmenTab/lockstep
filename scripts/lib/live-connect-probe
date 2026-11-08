@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+# Test tools for the native passthrough filter (contract C-P4.L.N; test only; never a real login).
+# Two roles, chosen by the first argument:
+#
+#   live-connect-probe upstream --cert FILE --key FILE
+#       A TLS server standing in for the provider (api.anthropic.com). It answers any POST with a
+#       body carrying the marker RESPONSE-MARKER-7f3a, so a test can confirm the filter never saw it.
+#
+#   live-connect-probe client HOST
+#       Tunnels to HOST:443 through the filter at lockstep-egress:8080 (HTTPS CONNECT), verifying the
+#       given CA, and POSTs a body carrying REQUEST-MARKER-7f3a. Prints "status <n>" or "refused <code>"
+#       or "error <kind>". The CA is /etc/ca.pem.
+import http.client
+import http.server
+import json
+import ssl
+import sys
+
+
+def upstream(cert, key):
+    class H(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("content-length", "0")))
+            body = json.dumps({"ok": True, "marker": "RESPONSE-MARKER-7f3a"}).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", 8443), H)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert, key)
+    server.socket = ctx.wrap_socket(server.socket, server_side=True)
+    server.serve_forever()
+
+
+def client(host):
+    ctx = ssl.create_default_context(cafile="/etc/ca.pem")
+    try:
+        c = http.client.HTTPSConnection("lockstep-egress", 8080, timeout=20, context=ctx)
+        c.set_tunnel(host, 443)
+        c.request("POST", "/v1/messages", json.dumps({"m": "REQUEST-MARKER-7f3a"}),
+                  {"content-type": "application/json"})
+        r = c.getresponse()
+        print("status", r.status, r.read().decode("utf-8", "replace"))
+    except OSError as e:
+        text = str(e)
+        if "403" in text:
+            print("refused host-refused")
+        else:
+            print("error", type(e).__name__)
+    except Exception as e:  # noqa: BLE001 - a probe reports every outcome
+        print("error", type(e).__name__)
+
+
+def plainget():
+    # A non-CONNECT request straight to the filter: it must be refused, never proxied.
+    try:
+        c = http.client.HTTPConnection("lockstep-egress", 8080, timeout=20)
+        c.request("GET", "/v1/messages")
+        r = c.getresponse()
+        print("status", r.status, r.read().decode("utf-8", "replace").strip())
+    except Exception as e:  # noqa: BLE001 - a probe reports every outcome
+        print("error", type(e).__name__)
+
+
+def main():
+    if len(sys.argv) >= 2 and sys.argv[1] == "upstream":
+        a = dict(zip(sys.argv[2::2], sys.argv[3::2]))
+        upstream(a["--cert"], a["--key"])
+        return 0
+    if len(sys.argv) == 3 and sys.argv[1] == "client":
+        client(sys.argv[2])
+        return 0
+    if len(sys.argv) == 2 and sys.argv[1] == "plainget":
+        plainget()
+        return 0
+    print("usage: live-connect-probe upstream --cert F --key F | client HOST | plainget", file=sys.stderr)
+    return 64
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

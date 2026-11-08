@@ -1,0 +1,48 @@
+lockstep> test (suite: lockstep-unit, args: -p /C-P3.4/)
+
+lockstep-unit
+  SessionProtocol (C-P3.4 A3)
+    the allowlist is exactly open-application:                                     FAIL
+      test/unit/Lockstep/Foundation/SessionProtocolTest.hs:58:
+      expected: ["open-application"]
+       but got: [""]
+      Use -p '/C-P3.4/&&/the allowlist is exactly open-application/' to rerun this test only.
+    names are exact and the other kinds refuse it:                                 FAIL
+      test/unit/Lockstep/Foundation/SessionProtocolTest.hs:60:
+      expected: Just OpenApplication
+       but got: Nothing
+      Use -p '/C-P3.4/&&/names are exact and the other kinds refuse it/' to rerun this test only.
+    HMAC vector (computed with openssl):                                           OK
+    encoding is exactly the documented file, and it decodes back:                  FAIL
+      test/unit/Lockstep/Foundation/SessionProtocolTest.hs:76:
+      expected: "lockstep-session-request 1\nid 0123456789abcdef0123456789abcdef\nissued 1761400000\nop open-application\nexpect service-running\nmac 74bde5f4151417aed27eb621041d0c96aa9a996d26b6265f651e076f9424b7f1\n"
+       but got: ""
+      Use -p '/C-P3.4/&&/encoding is exactly the documented file, and it decodes back/' to rerun this test only.
+    a wrong expectation, unknown operation, bad MAC and other version are refused: FAIL
+      test/unit/Lockstep/Foundation/SessionProtocolTest.hs:80:
+      expected: Left BadExpect
+       but got: Left Malformed
+      Use -p '/C-P3.4/&&/a wrong expectation, unknown operation, bad MAC and other version are refused/' to rerun this test only.
+    kinds do not mix:                                                              OK
+    malformed and oversized files are refused:                                     FAIL
+      test/unit/Lockstep/Foundation/SessionProtocolTest.hs:93:
+      expected: Left TooLarge
+       but got: Left Malformed
+      Use -p '/C-P3.4/&&/malformed and oversized files are refused/' to rerun this test only.
+
+5 out of 7 tests failed (0.01s)
+
+
+
+lockstep> Test suite lockstep-unit failed
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-unit:  exited with: ExitFailure 1
+       Logs printed to console
+       

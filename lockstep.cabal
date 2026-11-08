@@ -1,0 +1,458 @@
+cabal-version: 2.2
+
+-- This file has been generated from package.yaml by hpack version 0.38.1.
+--
+-- see: https://github.com/sol/hpack
+
+name:           lockstep
+version:        0.2.0.0
+description:    Lockstep v2 local application (private).
+homepage:       https://github.com/AugmenTab/lockstep#readme
+bug-reports:    https://github.com/AugmenTab/lockstep/issues
+author:         Tyler Baum
+maintainer:     Tyler Baum
+copyright:      2026 Tyler Baum; Launchpad-derived portions 2023 Tyler Baum
+license:        NONE
+build-type:     Simple
+extra-source-files:
+    LICENSE-LAUNCHPAD
+    henforcer.toml
+    henforcer-tests.toml
+    THIRD_PARTY_LICENSES.md
+    static/app.js
+    static/control.js
+    static/htmx.min.js
+    static/lockstep.css
+
+source-repository head
+  type: git
+  location: https://github.com/AugmenTab/lockstep
+
+library
+  exposed-modules:
+      Lockstep.Application.Activity
+      Lockstep.Application.Command
+      Lockstep.Application.CommandCenter
+      Lockstep.Application.ControlPane
+      Lockstep.Application.Conversation
+      Lockstep.Application.Database
+      Lockstep.Application.Decisions
+      Lockstep.Application.Dispatcher
+      Lockstep.Application.Engine
+      Lockstep.Application.EngineCandidate
+      Lockstep.Application.EngineEvidence
+      Lockstep.Application.EngineWorker
+      Lockstep.Application.Execution
+      Lockstep.Application.Executor
+      Lockstep.Application.Identity
+      Lockstep.Application.Ledger
+      Lockstep.Application.LedgerView
+      Lockstep.Application.OperatorTrust
+      Lockstep.Application.ProfileDocument
+      Lockstep.Application.Profiles
+      Lockstep.Application.ProjectChecks
+      Lockstep.Application.Projects
+      Lockstep.Application.Reconciler
+      Lockstep.Application.Repositories
+      Lockstep.Application.Sandbox
+      Lockstep.Application.Tasks
+      Lockstep.Effects.Executor
+      Lockstep.Effects.Git
+      Lockstep.Effects.GitSupervisor
+      Lockstep.Effects.HelperRunner
+      Lockstep.Effects.Process
+      Lockstep.Effects.ProjectFolders
+      Lockstep.Effects.Provider.Claude
+      Lockstep.Effects.Provider.Live
+      Lockstep.Effects.Reconciler
+      Lockstep.Effects.Roles
+      Lockstep.Effects.Scripted
+      Lockstep.Foundation.Cli
+      Lockstep.Foundation.Config
+      Lockstep.Foundation.ControlProtocol
+      Lockstep.Foundation.EvidenceModel
+      Lockstep.Foundation.FolderProtocol
+      Lockstep.Foundation.InstallProtocol
+      Lockstep.Foundation.Json
+      Lockstep.Foundation.LifecycleProtocol
+      Lockstep.Foundation.OperatorToken
+      Lockstep.Foundation.RunnerProtocol
+      Lockstep.Foundation.SessionProtocol
+      Lockstep.Foundation.SystemConfig
+      Lockstep.Kernel.Activation
+      Lockstep.Kernel.Activity
+      Lockstep.Kernel.Candidate
+      Lockstep.Kernel.Conversation
+      Lockstep.Kernel.Decision
+      Lockstep.Kernel.Delivery
+      Lockstep.Kernel.Effect
+      Lockstep.Kernel.EffectView
+      Lockstep.Kernel.EventCodec
+      Lockstep.Kernel.Evidence
+      Lockstep.Kernel.Execution
+      Lockstep.Kernel.GitBasis
+      Lockstep.Kernel.Identity
+      Lockstep.Kernel.KeyLifetime
+      Lockstep.Kernel.Policy
+      Lockstep.Kernel.Profile
+      Lockstep.Kernel.Project
+      Lockstep.Kernel.Reconciliation
+      Lockstep.Kernel.Recovery
+      Lockstep.Kernel.Repository
+      Lockstep.Kernel.Roles
+      Lockstep.Kernel.Runner
+      Lockstep.Kernel.Scheduler
+      Lockstep.Kernel.Task
+      Lockstep.Kernel.Ticket
+      Lockstep.Kernel.Transaction
+      Lockstep.Kernel.Transition
+      Lockstep.Kernel.WorkOrder
+      Lockstep.Kernel.WorkUnit
+      Lockstep.Kernel.WorkUnitLifecycle
+      Lockstep.Persistence.CommandCenter
+      Lockstep.Persistence.Commands
+      Lockstep.Persistence.Connection
+      Lockstep.Persistence.Conversation
+      Lockstep.Persistence.DecisionReceipts
+      Lockstep.Persistence.Execution
+      Lockstep.Persistence.Jobs
+      Lockstep.Persistence.Ledger
+      Lockstep.Persistence.Migrate
+      Lockstep.Persistence.Migration
+      Lockstep.Persistence.Migrations
+      Lockstep.Persistence.OperatorSessions
+      Lockstep.Persistence.Profiles
+      Lockstep.Persistence.Projects
+      Lockstep.Persistence.Queries
+      Lockstep.Persistence.Repositories
+      Lockstep.Persistence.Sandbox
+      Lockstep.Persistence.SessionLocks
+      Lockstep.Persistence.Tasks
+      Lockstep.Persistence.Transactions
+      Lockstep.Web.ActivityPage
+      Lockstep.Web.App
+      Lockstep.Web.Application
+      Lockstep.Web.ChecksPages
+      Lockstep.Web.CommandCenter
+      Lockstep.Web.Common
+      Lockstep.Web.Components.Page
+      Lockstep.Web.Components.Page404
+      Lockstep.Web.Control
+      Lockstep.Web.DecisionPages
+      Lockstep.Web.ExecutionPages
+      Lockstep.Web.Fragment
+      Lockstep.Web.Handler.NoPermissionError
+      Lockstep.Web.Handler.NoUser
+      Lockstep.Web.Health
+      Lockstep.Web.LedgerPage
+      Lockstep.Web.Liveness
+      Lockstep.Web.Operator
+      Lockstep.Web.Readiness
+      Lockstep.Web.RequestGuard
+      Lockstep.Web.Routes
+      Lockstep.Web.SecureResponse
+      Lockstep.Web.Server
+      Lockstep.Web.Static
+      Lockstep.Web.TaskPages
+      Lockstep.Web.Types
+  other-modules:
+      Paths_lockstep
+  autogen-modules:
+      Paths_lockstep
+  hs-source-dirs:
+      src
+  default-extensions:
+      NoImplicitPrelude
+  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer
+  build-depends:
+      base
+    , beeline-routing
+    , brigid
+    , bytestring
+    , containers
+    , cookie
+    , crypton
+    , directory
+    , fast-logger
+    , file-embed
+    , flipstone-prelude
+    , henforcer
+    , http-types
+    , json-fleece-aeson
+    , json-fleece-core
+    , memory
+    , mtl
+    , ogma
+    , orb
+    , orville-postgresql
+    , postgresql-libpq
+    , process
+    , safe-exceptions
+    , shrubbery
+    , string-interpolate
+    , text
+    , time
+    , unix
+    , unliftio
+    , wai
+    , warp
+  default-language: GHC2021
+
+executable lockstep
+  main-is: Main.hs
+  hs-source-dirs:
+      app/lockstep
+  default-extensions:
+      NoImplicitPrelude
+  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T
+  build-depends:
+      base
+    , fast-logger
+    , flipstone-prelude
+    , henforcer
+    , lockstep
+    , safe-exceptions
+    , text
+    , warp
+  default-language: GHC2021
+
+test-suite lockstep-integration
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Lockstep.ActivityBrowserTest
+      Lockstep.ActivityPageTest
+      Lockstep.AppShellTest
+      Lockstep.BrowserFormTest
+      Lockstep.CommandCenterTest
+      Lockstep.ControlBrowserTest
+      Lockstep.ControlHelperTest
+      Lockstep.ControlPaneTest
+      Lockstep.ConversationTest
+      Lockstep.DecisionsBrowserTest
+      Lockstep.DecisionsPageTest
+      Lockstep.DecisionsTest
+      Lockstep.DispatcherTest
+      Lockstep.EndToEndTest
+      Lockstep.EngineAttemptPageTest
+      Lockstep.EngineCandidateTest
+      Lockstep.EngineHelperPathTest
+      Lockstep.EngineHumanTest
+      Lockstep.EngineImplementTest
+      Lockstep.EngineOwnershipTest
+      Lockstep.EnginePageTest
+      Lockstep.EngineRecoveryTest
+      Lockstep.EngineRecoveryTwoTest
+      Lockstep.EngineTest
+      Lockstep.ExecutionBrowserTest
+      Lockstep.ExecutionPageTest
+      Lockstep.ExecutionTest
+      Lockstep.ExecutorTest
+      Lockstep.FaultPlanTest
+      Lockstep.FirstUseJourneyTest
+      Lockstep.FolderHelperTest
+      Lockstep.GateCRemediationAddendumTest
+      Lockstep.GateCRemediationBrowserTest
+      Lockstep.GateCRemediationFolderRaceTest
+      Lockstep.GateCRemediationFolderTest
+      Lockstep.GateCRemediationIdentityTest
+      Lockstep.GateCRemediationPageTest
+      Lockstep.GateCRemediationRetainTest
+      Lockstep.GateCRemediationTest
+      Lockstep.GitSupervisorTest
+      Lockstep.HandoverTest
+      Lockstep.HelperRunnerTest
+      Lockstep.InstallBrowserTest
+      Lockstep.InstallHelperTest
+      Lockstep.InstallPaneTest
+      Lockstep.LauncherTest
+      Lockstep.LedgerTest
+      Lockstep.LedgerTraceTest
+      Lockstep.LifecycleBrowserTest
+      Lockstep.LifecycleHelperTest
+      Lockstep.LifecyclePaneTest
+      Lockstep.LiveAdapterTest
+      Lockstep.MigrationDbTest
+      Lockstep.OperatorCommandTest
+      Lockstep.OperatorLedgerTest
+      Lockstep.OperatorTrustTest
+      Lockstep.ProcessRunnerTest
+      Lockstep.ProcessTest
+      Lockstep.ProfileRegistryTest
+      Lockstep.ProjectChecksBrowserTest
+      Lockstep.ProjectChecksPageTest
+      Lockstep.ProjectChecksTest
+      Lockstep.ProjectsBrowserTest
+      Lockstep.ProjectsPageTest
+      Lockstep.ProjectsTest
+      Lockstep.ReconciliationTest
+      Lockstep.RemediationFinalReviewTest
+      Lockstep.RemediationReviewTest
+      Lockstep.RemediationTest
+      Lockstep.RemediationThirdReviewTest
+      Lockstep.RepositoryOwnershipTest
+      Lockstep.RolesTest
+      Lockstep.ServeWorkerTest
+      Lockstep.ServiceDbTest
+      Lockstep.SnapshotBoundsTest
+      Lockstep.Support.App
+      Lockstep.Support.Control
+      Lockstep.Support.Decisions
+      Lockstep.Support.Folders
+      Lockstep.Support.Http
+      Lockstep.Support.Install
+      Lockstep.Support.Ledger
+      Lockstep.Support.Lifecycle
+      Lockstep.Support.Postgres
+      Lockstep.Support.Process
+      Lockstep.TasksBrowserTest
+      Lockstep.TasksPageTest
+      Lockstep.TasksTest
+  hs-source-dirs:
+      test/integration
+  default-extensions:
+      NoImplicitPrelude
+  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T -fplugin-opt=Henforcer:--config=henforcer-tests.toml
+  build-tool-depends:
+      lockstep:lockstep
+  build-depends:
+      base
+    , bytestring
+    , directory
+    , flipstone-prelude
+    , henforcer
+    , http-client
+    , http-types
+    , lockstep
+    , network
+    , orville-postgresql
+    , process
+    , tasty
+    , tasty-hunit
+    , temporary
+    , text
+    , time
+    , unix
+  default-language: GHC2021
+
+test-suite lockstep-stress
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  hs-source-dirs:
+      test/stress
+  default-extensions:
+      NoImplicitPrelude
+  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts "-with-rtsopts=-M96m -T" -fplugin-opt=Henforcer:--config=henforcer-tests.toml
+  build-depends:
+      base
+    , bytestring
+    , directory
+    , flipstone-prelude
+    , henforcer
+    , lockstep
+    , process
+    , tasty
+    , tasty-hunit
+    , temporary
+    , text
+  default-language: GHC2021
+
+test-suite lockstep-unit
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Lockstep.Application.CommandTest
+      Lockstep.Application.NoopCommandTest
+      Lockstep.Application.ProfileDocumentTest
+      Lockstep.Application.ReadinessTest
+      Lockstep.Effects.ClaudeAdapterTest
+      Lockstep.Effects.ExecutorTest
+      Lockstep.Effects.ReconcilerTest
+      Lockstep.Foundation.CliControlTest
+      Lockstep.Foundation.CliDbTest
+      Lockstep.Foundation.CliFinalReviewTest
+      Lockstep.Foundation.CliJobTest
+      Lockstep.Foundation.CliLedgerTest
+      Lockstep.Foundation.CliOperatorTest
+      Lockstep.Foundation.CliProfileTest
+      Lockstep.Foundation.CliRepositoryTest
+      Lockstep.Foundation.CliTest
+      Lockstep.Foundation.CliWorkspaceTest
+      Lockstep.Foundation.ControlProtocolTest
+      Lockstep.Foundation.EvidenceModelTest
+      Lockstep.Foundation.FolderProtocolTest
+      Lockstep.Foundation.InstallProtocolTest
+      Lockstep.Foundation.LifecycleProtocolTest
+      Lockstep.Foundation.OperatorTokenTest
+      Lockstep.Foundation.RunnerProtocolTest
+      Lockstep.Foundation.SessionProtocolTest
+      Lockstep.Foundation.SystemConfigTest
+      Lockstep.Kernel.ActivityTest
+      Lockstep.Kernel.CandidateTest
+      Lockstep.Kernel.ConversationTest
+      Lockstep.Kernel.DecisionTest
+      Lockstep.Kernel.DeliveryTest
+      Lockstep.Kernel.EffectTest
+      Lockstep.Kernel.EffectViewTest
+      Lockstep.Kernel.EventCodecTest
+      Lockstep.Kernel.ExecutionTest
+      Lockstep.Kernel.GitBasisTest
+      Lockstep.Kernel.IdentityTest
+      Lockstep.Kernel.LifecycleFixtures
+      Lockstep.Kernel.LifecyclePropertyTest
+      Lockstep.Kernel.PolicyTest
+      Lockstep.Kernel.ProfileTest
+      Lockstep.Kernel.ProjectTest
+      Lockstep.Kernel.ReconciliationTest
+      Lockstep.Kernel.RecoveryTest
+      Lockstep.Kernel.RemediationReviewTest
+      Lockstep.Kernel.RemediationTest
+      Lockstep.Kernel.RemediationThirdReviewTest
+      Lockstep.Kernel.RemoteTest
+      Lockstep.Kernel.RepositoryTest
+      Lockstep.Kernel.RolesTest
+      Lockstep.Kernel.RunnerTest
+      Lockstep.Kernel.SchedulerFixtures
+      Lockstep.Kernel.SchedulerPropertyTest
+      Lockstep.Kernel.SchedulerTest
+      Lockstep.Kernel.TaskTest
+      Lockstep.Kernel.TicketTest
+      Lockstep.Kernel.TraceTest
+      Lockstep.Kernel.TransactionTest
+      Lockstep.Kernel.TransitionTest
+      Lockstep.Kernel.WorkOrderTest
+      Lockstep.Kernel.WorkUnitLifecycleTest
+      Lockstep.Kernel.WorkUnitTest
+      Lockstep.Persistence.MigrationTest
+      Lockstep.Web.ApplicationTest
+      Lockstep.Web.CommandCenterViewTest
+      Lockstep.Web.CommandRoutesTest
+      Lockstep.Web.LedgerPageTest
+      Lockstep.Web.LivenessPageTest
+      Lockstep.Web.OperatorRoutesTest
+      Lockstep.Web.ReadinessRouteTest
+      Lockstep.Web.RequestGuardTest
+      Lockstep.Web.ServerTest
+  hs-source-dirs:
+      test/unit
+  default-extensions:
+      NoImplicitPrelude
+  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T -fplugin-opt=Henforcer:--config=henforcer-tests.toml
+  build-depends:
+      QuickCheck
+    , base
+    , brigid
+    , bytestring
+    , flipstone-prelude
+    , henforcer
+    , http-types
+    , lockstep
+    , tasty
+    , tasty-hunit
+    , tasty-quickcheck
+    , text
+    , time
+    , wai
+    , wai-extra
+    , warp
+  default-language: GHC2021

@@ -1,62 +1,80 @@
-# syntax=docker/dockerfile:1.7
+# Lockstep development and build container (canonical build environment).
 #
-# Lockstep application runtime image.
+# Derived from Launchpad 11886bf's Dockerfile. Removed relative to Launchpad:
+# openssh-client and any SSH key mount (every dependency is public).
 #
-# Two stages:
-#   1. build   — installs the dev extra, runs ./scripts/check (the canonical
-#                repository health contract), and builds a wheel of the
-#                project plus its runtime dependencies.
-#   2. runtime — installs only those wheels into a slim image, drops to a
-#                non-root user, and exposes `lockstep` as the entrypoint.
+# The host needs only Docker; GHC, Stack, fourmolu and hlint live here.
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 
-# ---------------------------------------------------------------------------
-# Stage 1: verification and wheel build
-# ---------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm AS build
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
+ENV BOOTSTRAP_HASKELL_NONINTERACTIVE=1 \
+    BOOTSTRAP_HASKELL_GHC_VERSION=9.10.3 \
+    BOOTSTRAP_HASKELL_CABAL_VERSION=3.14.2.0 \
+    BOOTSTRAP_HASKELL_INSTALL_STACK=1 \
+    BOOTSTRAP_HASKELL_STACK_VERSION=3.7.1 \
+    BOOTSTRAP_HASKELL_INSTALL_NO_STACK_HOOK=1 \
+    PATH=/root/.ghcup/bin:/root/.cabal/bin:/root/.local/bin:$PATH
 
 RUN apt-get update \
- && apt-get install --yes --no-install-recommends git \
- && rm -rf /var/lib/apt/lists/*
+      && apt-get install -y --no-install-recommends \
+           build-essential \
+           ca-certificates \
+           curl \
+           git \
+           iproute2 \
+           libffi-dev \
+           libgmp-dev \
+           libnuma-dev \
+           libtinfo-dev \
+           pkg-config \
+           xz-utils \
+           zlib1g-dev \
+      && apt-get clean \
+      && rm -rf /var/lib/apt/lists/* \
+      && curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org -o /tmp/ghcup-install.sh \
+      && sh /tmp/ghcup-install.sh \
+      && rm /tmp/ghcup-install.sh
 
-WORKDIR /workspace
+ENV LANG=C.UTF-8 \
+    TZ=UTC
 
-COPY . .
+RUN cabal update \
+      && cabal install \
+           fourmolu-0.18.0.0 \
+           hlint-3.10 \
+           --installdir=/usr/local/bin \
+           --install-method=copy \
+           --overwrite-policy=always \
+      && fourmolu --version \
+      && hlint --version \
+      && ghc --numeric-version \
+      && stack --numeric-version
 
-RUN python -m pip install ".[dev]"
-
-RUN ./scripts/check
-
-RUN python -m pip wheel --wheel-dir /wheels .
-
-# ---------------------------------------------------------------------------
-# Stage 2: runtime
-# ---------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm AS runtime
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
-
+# C++ libraries for the libphonenumber Haskell binding, which Brigid requires.
 RUN apt-get update \
- && apt-get install --yes --no-install-recommends git \
- && rm -rf /var/lib/apt/lists/*
+      && apt-get install -y --no-install-recommends \
+           libphonenumber-dev \
+           libprotobuf-dev \
+      && apt-get clean \
+      && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd --system --gid 1001 lockstep \
- && useradd  --system --uid 1001 --gid lockstep \
-             --home-dir /home/lockstep --create-home \
-             --shell /usr/sbin/nologin lockstep
+# libpq for Orville / postgresql-libpq (P1.2). The server runs in its own
+# pinned PostgreSQL container; no PostgreSQL server or client tools here.
+RUN apt-get update \
+      && apt-get install -y --no-install-recommends \
+           libpq-dev \
+      && apt-get clean \
+      && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /wheels /tmp/wheels
-RUN python -m pip install --no-index --find-links=/tmp/wheels lockstep \
- && rm -rf /tmp/wheels
+# The project stack.yaml sets system-ghc/install-ghc so Stack uses this GHC.
+ENV STACK_ROOT=/stack-root
+WORKDIR /work
 
-USER lockstep
-WORKDIR /home/lockstep
-
-ENTRYPOINT ["lockstep"]
+# Test tooling for the real-browser form tests (C-P1.7-R1 R2): headless
+# Chromium driven over the DevTools protocol by a Python standard-library
+# script. Neither is linked into or needed by the shipped lockstep binary.
+RUN apt-get update \
+      && apt-get install -y --no-install-recommends \
+           chromium \
+           python3 \
+      && apt-get clean \
+      && rm -rf /var/lib/apt/lists/*

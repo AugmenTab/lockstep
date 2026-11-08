@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+# A stand-in upstream for scripts/lib/check-live-proxy (contract C-P4.L.R1; test
+# only; never a model). HTTPS with the check's certificate. For each request it
+# appends the exact body it received to LOG (one JSON line: {"body": TEXT}) and
+# answers with a Messages API event stream whose usage reports cache writes only
+# in its final message_delta (1000 tokens written, 10 read, 10 input, 5 output).
+#
+#   live-upstream-record --cert FILE --key FILE --log FILE
+import argparse
+import http.server
+import json
+import ssl
+import sys
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--cert", required=True)
+    p.add_argument("--key", required=True)
+    p.add_argument("--log", required=True)
+    a = p.parse_args()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("content-length", "0")))
+            with open(a.log, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"body": body.decode("utf-8", "replace")}) + "\n")
+            events = [
+                {"type": "message_start", "message": {
+                    "id": "msg_record", "type": "message", "role": "assistant", "model": "x", "content": [],
+                    "stop_reason": None, "stop_sequence": None,
+                    "usage": {"input_tokens": 10, "output_tokens": 1, "cache_creation_input_tokens": 0,
+                              "cache_read_input_tokens": 10}}},
+                {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+                {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "ok"}},
+                {"type": "content_block_stop", "index": 0},
+                {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                 "usage": {"input_tokens": 10, "output_tokens": 5, "cache_creation_input_tokens": 1000,
+                           "cache_read_input_tokens": 10,
+                           "cache_creation": {"ephemeral_5m_input_tokens": 1000, "ephemeral_1h_input_tokens": 0}}},
+                {"type": "message_stop"},
+            ]
+            payload = b"".join(b"event: " + e["type"].encode() + b"\ndata: " + json.dumps(e).encode() + b"\n\n"
+                               for e in events)
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", 8443), Handler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(a.cert, a.key)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    server.serve_forever()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

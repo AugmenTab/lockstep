@@ -1,0 +1,46 @@
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+[ 5 of 83] Compiling Lockstep.Foundation.FolderProtocol [Source file changed]
+Preprocessing test suite 'lockstep-unit' for lockstep-0.2.0.0...
+Building test suite 'lockstep-unit' for lockstep-0.2.0.0...
+[19 of 60] Compiling Lockstep.Foundation.FolderProtocolTest [Lockstep.Foundation.FolderProtocol changed]
+[33 of 60] Compiling Lockstep.Kernel.ProjectTest [Lockstep.Kernel.Project changed]
+[60 of 60] Compiling Main [Lockstep.Foundation.FolderProtocolTest changed]
+[61 of 61] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-unit/lockstep-unit [Objects changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-6ggF0AiJnRUCIB81Gsi4xx
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-unit, args: -p /C-P3.5/)
+
+lockstep-unit
+  FolderProtocol (C-P3.5 J6)
+    the allowlist is exactly add-folder:                                                                  OK
+    names are exact and the other kinds refuse it:                                                        OK
+    HMAC vector (computed with openssl):                                                                  OK
+    encoding is exactly the documented file, and it decodes back:                                         OK
+    the list digest is folders- and the first 16 hex of its SHA-256 (computed with shasum):               OK
+    the expectation is folders- and 16 lower-case hex digits, nothing else:                               OK
+    a path is absolute, plain and without separators the list or the mount use:                           OK
+    an unusable path, unknown operation, bad MAC and other version are refused:                           OK
+    kinds do not mix:                                                                                     OK
+    malformed and oversized files are refused:                                                            OK
+  Project rules (C-P3.5)
+    a name is 1 to 80 characters after trimming, without control characters:                              OK
+    an outcome is at most 2000 characters; new lines and tabs are kept, other control characters are not: OK
+    rule errors have stable codes:                                                                        OK
+    the folder name comes from the project name: a-z, 0-9 and -, at most 36:                              OK
+    taken folder names get -2, -3 … and stay within 36:                                                   OK
+    the project's Engineer is p- and the folder name, a valid C-P2.1 name:                                OK
+    folder choices are new, existing with a path, or later:                                               OK
+    setup states have stable codes:                                                                       OK
+    every refusal has its own plain words, with no Git vocabulary:                                        OK
+    the project codes include every P3.5 refusal:                                                         OK
+    rule errors refuse rather than truncate:                                                              OK
+
+All 21 tests passed (0.01s)
+
+
+
+lockstep> Test suite lockstep-unit passed
+Completed 2 action(s).

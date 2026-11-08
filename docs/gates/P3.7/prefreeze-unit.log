@@ -1,0 +1,22 @@
+lockstep> test (suite: lockstep-unit, args: -p /C-P3.7/)
+
+lockstep-unit
+  C-P3.7 plain words for checks and for what can start
+    each of the nine always-on rules has its own plain sentence:                    OK
+    every stage, artifact, verifier, approval, kind and path class has plain words: OK
+    a check is a checklist row in plain words:                                      OK
+    with no current set of checks nothing is lost:                                  OK
+    an identical set or one that only adds checks loses nothing:                    OK
+    a removed check and the documents-only rule are losses:                         OK
+    a changed check is a loss even when it is stricter:                             OK
+    an inherited documents-only setting reads as allowed:                           OK
+    each loss is named in plain words:                                              OK
+    every reason work cannot start has plain words:                                 OK
+    every refusal has plain words, and an unknown code has general ones:            OK
+    the built-in starting choice is lockstep-basic version 1 with no extra checks:  OK
+
+All 12 tests passed (0.01s)
+
+
+
+lockstep> Test suite lockstep-unit passed

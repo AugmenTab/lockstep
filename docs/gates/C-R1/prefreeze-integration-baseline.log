@@ -1,0 +1,145 @@
+lockstep-0.2.0.0: unregistering (local file changes:
+test/integration/Lockstep/GateCRemediationPageTest.hs
+test/integration/Lockstep/GateCRemediationT...)
+lockstep> configure (lib + test)
+Configuring lockstep-0.2.0.0...
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[22 of 63] Compiling Lockstep.GateCRemediationTest [Source file changed]
+[46 of 63] Compiling Lockstep.GateCRemediationPageTest [Source file changed]
+[63 of 63] Compiling Main [Lockstep.GateCRemediationPageTest changed]
+[64 of 64] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-integration/lockstep-integration [Objects changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-6ggF0AiJnRUCIB81Gsi4xx
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-integration, args: -p C-C.R1)
+
+lockstep-integration
+  Gate C review remediation (C-C.R1; real PostgreSQL)
+    decisions serialized per key (R1)
+      two answers with one key at once: the first is applied, the other is a key conflict and never reaches the work:        FAIL (2.51s)
+        test/integration/Lockstep/GateCRemediationTest.hs:258:
+        expected: Left "key-conflict"
+         but got: Right ("applied",True)
+        Use -p '/C-C.R1/&&/two answers with one key at once: the first is applied, the other is a key conflict and never reaches the work/' to rerun this test only.
+      the same answer sent twice at once: applied once, the second is the first's receipt:                                   FAIL (2.44s)
+        test/integration/Lockstep/GateCRemediationTest.hs:279:
+        expected: 0
+         but got: 1
+        Use -p '/C-C.R1/&&/the same answer sent twice at once: applied once, the second is the first'\''s receipt/' to rerun this test only.
+      a key whose lock is held elsewhere is refused as busy after the bound, and nothing is recorded:                        FAIL (0.39s)
+        test/integration/Lockstep/GateCRemediationTest.hs:285:
+        expected: Left "decision-busy"
+         but got: Right ("applied",False)
+        Use -p '/C-C.R1/&&/a key whose lock is held elsewhere is refused as busy after the bound, and nothing is recorded/' to rerun this test only.
+      the lock's connection lost while the work changes: no receipt is made up, and the key is never replayed:               FAIL (1.90s)
+        test/integration/Lockstep/GateCRemediationTest.hs:297:
+        expected: [1]
+         but got: [0]
+        Use -p '/C-C.R1/&&/the lock'\''s connection lost while the work changes: no receipt is made up, and the key is never replayed/' to rerun this test only.
+      attempt markers cannot be changed or deleted:                                                                          FAIL
+        Exception: SqlExecutionError {sqlExecutionErrorExecStatus = Just FatalError, sqlExecutionErrorMessage = "ERROR:  relation \"lockstep_decision_attempts\" does not exist\nLINE 1: SELECT count(*)::integer AS v FROM lockstep_decision_attempt...\n                                           ^\n", sqlExecutionErrorSqlState = Just "42P01", sqlExecutionErrorSqlQuery = "SELECT count(*)::integer AS v FROM lockstep_decision_attempts"}
+        HasCallStack backtrace:
+          collectBacktraces, called at libraries/ghc-internal/src/GHC/Internal/Exception.hs:169:13 in ghc-internal:GHC.Internal.Exception
+          toExceptionWithBacktrace, called at libraries/ghc-internal/src/GHC/Internal/IO.hs:260:11 in ghc-internal:GHC.Internal.IO
+          throwIO, called at ./Control/Concurrent/Async.hs:110:7 in tasty-1.5.3-7clNd4478q2L7Y34nuWmO:Control.Concurrent.Async
+        
+        
+        Use -p '/C-C.R1/&&/attempt markers cannot be changed or deleted/' to rerun this test only.
+    expected values outside the stored range are refused before any receipt (R3):                                            FAIL (0.25s)
+      test/integration/Lockstep/GateCRemediationTest.hs:328:
+      expected: Left "revision-out-of-range"
+       but got: Left "failure unavailable"
+      Use -p '/C-C.R1/&&/expected values outside the stored range are refused before any receipt (R3)/' to rerun this test only.
+    a receipt is current only while nothing else changed its work (R4):                                                      FAIL (0.25s)
+      test/integration/Lockstep/GateCRemediationTest.hs:341:
+      expected: Right (Just False)
+       but got: Right (Just True)
+      Use -p '/C-C.R1/&&/a receipt is current only while nothing else changed its work (R4)/' to rerun this test only.
+    project connection serialized per project (R5)
+      two connects of one project at once: one Engineer, one registration, one folder:                                       FAIL (2.28s)
+        test/integration/Lockstep/GateCRemediationTest.hs:365:
+        expected: 1
+         but got: 2
+        Use -p '/C-C.R1/&&/two connects of one project at once: one Engineer, one registration, one folder/' to rerun this test only.
+      a failure at the Engineer, the registration or the project write leaves nothing behind:                                FAIL (0.29s)
+        test/integration/Lockstep/GateCRemediationTest.hs:377:
+        expected: []
+         but got: ["garden"]
+        Use -p '/C-C.R1/&&/a failure at the Engineer, the registration or the project write leaves nothing behind/' to rerun this test only.
+    tasks (R3, R7, R9)
+      a task decision waits for the task lock:                                                                               FAIL (1.77s)
+        test/integration/Lockstep/GateCRemediationTest.hs:399:
+        the task was decided while its lock was held
+        Use -p '/C-C.R1/&&/a task decision waits for the task lock/' to rerun this test only.
+      a decision on a task whose title changed since is stale; one outside the stored range is refused and recorded nowhere: FAIL (0.17s)
+        test/integration/Lockstep/GateCRemediationTest.hs:409:
+        expected: Right (Left "revision-out-of-range")
+         but got: Right (Left "stale-revision")
+        Use -p '/C-C.R1/&&/a decision on a task whose title changed since is stale; one outside the stored range is refused and recorded nowhere/' to rerun this test only.
+      a creation key used in another project is a key conflict and shows nothing of that project:                            FAIL (0.15s)
+        test/integration/Lockstep/GateCRemediationTest.hs:418:
+        expected: Left "key-conflict"
+         but got: Right "14ee6078-2855-463c-b5b7-bb2cb81da3e7"
+        Use -p '/C-C.R1/&&/a creation key used in another project is a key conflict and shows nothing of that project/' to rerun this test only.
+    a Profile called none is a choice like any other, and the old form value fails closed (R10):                             FAIL (0.16s)
+      test/integration/Lockstep/GateCRemediationTest.hs:428:
+      expected: Right ChecksChosen
+       but got: Left "not-implemented"
+      Use -p '/C-C.R1/&&/a Profile called none is a choice like any other, and the old form value fails closed (R10)/' to rerun this test only.
+  Gate C review remediation over HTTP (C-C.R1)
+    out-of-range or non-decimal expected values are a form error and record nothing (R3):                                    FAIL (0.76s)
+      test/integration/Lockstep/GateCRemediationPageTest.hs:152:
+      expected: 200
+       but got: 503
+      Use -p '/C-C.R1/&&/out-of-range or non-decimal expected values are a form error and record nothing (R3)/' to rerun this test only.
+    out-of-range task and project revisions are a form error and change nothing (R3):                                        FAIL (0.82s)
+      test/integration/Lockstep/GateCRemediationPageTest.hs:90:
+      missing "Lockstep could not read this form": "<div class=\"ls-section\"><h1>Buy bread</h1><p class=\"ls-muted\">In the project Kitchen \226\128\148 Priority: Normal</p><p class=\"ls-notice\" role=\"alert\">This task changed since this page was shown. Nothing was changed; the page now shows it as it is.</p><p class=\"ls-state-line\">Not yet ready to work on.</p><p class=\"ls-muted\">Lockstep keeps track of this task. Nothing runs it yet; that arrives in a later update of Lockstep.</p><h2>What done looks like</h2><p class=\"ls-muted\">Not written down yet.</p><h2>What you can do</h2><div class=\"ls-task-actions\"><form method=\"post\" action=\"/app/api/tasks/155a2236-2399-4dc8-968a-36a2701aa618/decide\" class=\"ls-inline-form\"><input type=\"hidden\" name=\"ticket_revision\" value=\"1\"/><input type=\"hidden\" name=\"action\" value=\"ready\"/><button id=\"task-ready\" type=\"submit\">Mark as ready to work on</button></form><form method=\"post\" action=\"/app/api/tasks/155a2236-2399-4dc8-968a-36a2701aa618/decide\" class=\"ls-inline-form\"><input type=\"hidden\" name=\"ticket_revision\" value=\"1\"/><input type=\"hidden\" name=\"action\" value=\"block\"/><label for=\"block-reason\" class=\"ls-label\">Why is it blocked?</label><input type=\"text\" id=\"block-reason\" name=\"reason\" maxlength=\"200\"/><button id=\"task-block\" type=\"submit\">Block\226\128\166</button></form><form method=\"post\" action=\"/app/api/tasks/155a2236-2399-4dc8-968a-36a2701aa618/decide\" class=\"ls-inline-form\"><input type=\"hidden\" name=\"ticket_revision\" value=\"1\"/><input type=\"hidden\" name=\"action\" value=\"cancel\"/><button id=\"task-cancel\" type=\"submit\">Cancel task\226\128\166</button></form></div><h2>Change it</h2><form id=\"edit-task\" method=\"post\" action=\"/app/api/tasks/155a2236-2399-4dc8-968a-36a2701aa618/edit\"><input type=\"hidden\" name=\"revision\" value=\"1\"/><div class=\"ls-field\"><label for=\"task-title\">What needs doing</label><input type=\"text\" id=\"task-title\" name=\"title\" value=\"Buy bread\" maxlength=\"200\" required=\"required\"/></div><div class=\"ls-field\"><label for=\"task-acceptance\">What does done look like?</label><textarea id=\"task-acceptance\" name=\"acceptance\" rows=\"4\" maxlength=\"4000\"></textarea></div><fieldset><legend>How much does it matter?</legend><div class=\"ls-choice\"><input type=\"radio\" id=\"priority-high\" name=\"priority\" value=\"high\"/><label for=\"priority-high\">High</label></div><div class=\"ls-choice\"><input type=\"radio\" id=\"priority-normal\" name=\"priority\" value=\"normal\" checked=\"checked\"/><label for=\"priority-normal\">Normal</label></div><div class=\"ls-choice\"><input type=\"radio\" id=\"priority-low\" name=\"priority\" value=\"low\"/><label for=\"priority-low\">Low</label></div></fieldset><fieldset><legend>What must be finished first?</legend><p class=\"ls-muted\">There are no other tasks in this project yet.</p></fieldset><button id=\"save-task\" type=\"submit\">Save changes</button></form><details><summary>Technical details</summary><dl class=\"ls-facts\"><dt>Task</dt><dd><code>155a2236-2399-4dc8-968a-36a2701aa618</code></dd><dt>State</dt><dd><code>proposed</code></dd><dt>Revisions</dt><dd><code>task 1, record 1</code></dd><dt>Priority value</dt><dd><code>500</code></dd></dl></details><p><a href=\"/app/projects/3d2b2592-0a1d-4d41-b5b9-9647a3efe05f\" id=\"back-to-project\">Back to Kitchen</a></p></div>"
+      Use -p '/C-C.R1/&&/out-of-range task and project revisions are a form error and change nothing (R3)/' to rerun this test only.
+    a closed decision that changed elsewhere does not show the earlier answer as how it stands (R4):                         FAIL (0.78s)
+      test/integration/Lockstep/GateCRemediationPageTest.hs:90:
+      missing "no longer waiting": "<div class=\"ls-section\"><h1>Done</h1><p class=\"ls-good-text\">Recorded: Put it back in line.</p><p>The work goes back to the queue and can be picked up again; what it already did is kept.</p><details><summary>Technical details</summary><dl class=\"ls-facts\"><dt>Receipt</dt><dd><code>20c8a659-8650-4afd-acbd-4a91ede24f14 put-back expected=4 applied</code></dd></dl></details><p><a href=\"/app/decisions\" id=\"back-to-decisions\">Back to Decisions</a></p></div>"
+      Use -p '/C-C.R1/&&/a closed decision that changed elsewhere does not show the earlier answer as how it stands (R4)/' to rerun this test only.
+    a title made to look like markup stays text inside the attribute (R8):                                                   OK (0.79s)
+    the checks form says whether anything is chosen, apart from the chosen ID (R10):                                         FAIL (0.80s)
+      test/integration/Lockstep/GateCRemediationPageTest.hs:90:
+      missing "name=\"expected_set\" value=\"no\"": "<div class=\"ls-section\"><h1>How work is checked</h1><p class=\"ls-muted\">In the project Website</p><h2>Rules that always apply</h2><p>These rules always apply to work Lockstep does. No choice on this page can turn them off.</p><ul class=\"ls-rules\"><li>Only one worker changes a piece of work at a time.</li><li>Work stays inside what a person authorized.</li><li>Every attempt is recorded and kept.</li><li>Agreed tests cannot be changed to make work pass.</li><li>Results are checked by repeatable automatic checks.</li><li>Work is reviewed by someone other than its author.</li><li>Failed work is retried only a limited number of times.</li><li>Only checked, approved changes are saved into the project.</li><li>Only a person can mark work as finished.</li></ul><h2>Extra checks</h2><p class=\"ls-notice\">No checks are chosen for this project yet.</p><p>Until a choice is saved, work in this project cannot start. Always-on rules only is a safe first choice: it adds nothing to the rules above, and you can choose more checks later.</p><h2>Choose</h2><form id=\"checks-form\" method=\"post\" action=\"/app/api/projects/6b6e44ca-dfae-46a3-8770-4f2d770b0af9/checks\"><input type=\"hidden\" name=\"expected\" value=\"none\"/><fieldset><legend>Which checks should apply?</legend><div class=\"ls-choice\"><input type=\"radio\" id=\"choice-lockstep-basic\" name=\"choice\" value=\"lockstep-basic\" checked=\"checked\"/><label for=\"choice-lockstep-basic\">Always-on rules only (recommended to start) \226\128\148 no extra checks</label></div><div class=\"ls-choice\"><input type=\"radio\" id=\"choice-team\" name=\"choice\" value=\"team\"/><label for=\"choice-team\">team \226\128\148 2 extra checks</label></div></fieldset><div class=\"ls-choice\"><input type=\"checkbox\" id=\"confirm-fewer\" name=\"confirm_fewer\" value=\"yes\"/><label for=\"confirm-fewer\">I understand that this choice may stop requiring some checks.</label></div><button id=\"save-checks\" type=\"submit\" class=\"ls-primary\">Save</button></form><h2>Work waiting to start</h2><p>No work in this project is waiting to start.</p><p class=\"ls-muted\">Lockstep does not start work by itself yet; this is the order it would use. How much a piece of work matters decides its place in line only once it can start.</p><details><summary>Technical details</summary><dl class=\"ls-facts\"><dt>Repository default Profile</dt><dd><code>none</code></dd><dt>Scheduler preview (Work Orders)</dt><dd><code>none queued</code></dd></dl></details><p><a href=\"/app/projects/6b6e44ca-dfae-46a3-8770-4f2d770b0af9\" id=\"back-to-project\">Back to Website</a></p></div>"
+      Use -p '/C-C.R1/&&/the checks form says whether anything is chosen, apart from the chosen ID (R10)/' to rerun this test only.
+  Gate C review remediation on the host (C-C.R1 R6, R12)
+    scripts/service mounts a listed folder only when its real path is the listed path (R6):                                  FAIL (0.02s)
+      test/integration/Lockstep/GateCRemediationFolderTest.hs:73:
+      a link was mounted: docker run --rm --interactive --network host --volume /tmp/lockstep-folders-755bbf11156f4a93/home/checkout/.local/install:/opt/lockstep:ro --volume /tmp/lockstep-folders-755bbf11156f4a93/home/checkout/.local/config/lockstep-host.json:/etc/lockstep/lockstep.json:ro --env LOCKSTEP_CONFIG=/etc/lockstep/lockstep.json --volume /tmp/lockstep-folders-755bbf11156f4a93/home/site-link:/tmp/lockstep-folders-755bbf11156f4a93/home/site-link:ro --volume /tmp/lockstep-folders-755bbf11156f4a93/home/code-link/other:/tmp/lockstep-folders-755bbf11156f4a93/home/code-link/other:ro --volume /tmp/lockstep-folders-755bbf11156f4a93/home/code/site:/tmp/lockstep-folders-755bbf11156f4a93/home/code/site:ro --user 0:0 --env LOCKSTEP_PROJECT_FOLDERS=:/tmp/lockstep-folders-755bbf11156f4a93/home/site-link:/tmp/lockstep-folders-755bbf11156f4a93/home/code-link/other:/tmp/lockstep-folders-755bbf11156f4a93/home/code/site lockstep-dev:p1 /opt/lockstep/bin/lockstep db status
+      Use -p '/C-C.R1/&&/scripts\/service mounts a listed folder only when its real path is the listed path (R6)/' to rerun this test only.
+    setup-path names another lockstep found first on PATH, and leaves it alone (R12):                                        FAIL
+      test/integration/Lockstep/GateCRemediationFolderTest.hs:91:
+      setup-path does not say "/tmp/lockstep-home-415b884310608215/project/.venv/bin/lockstep":
+      Make the lockstep command work from any folder, by adding a link in /tmp/lockstep-home-415b884310608215/.local/bin? [y/N] Added /tmp/lockstep-home-415b884310608215/.local/bin/lockstep.
+      You can now type lockstep in a terminal.
+      
+      Use -p '/C-C.R1/&&/setup-path names another lockstep found first on PATH, and leaves it alone (R12)/' to rerun this test only.
+  attribute escaping in a real browser (C-C.R1 R8)
+    a task titled like markup: no injected attribute, and the title field holds the exact text:                              OK (2.28s)
+
+19 out of 21 tests failed (19.06s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+Completed 2 action(s).
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

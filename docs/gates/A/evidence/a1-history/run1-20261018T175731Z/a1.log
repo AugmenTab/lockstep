@@ -1,0 +1,264 @@
+## A1 run 20261018T175731Z; commit 1fa38e1114f462671c82133aa0906748988b0daa; clean: yes; database lockstep_a1_20261018t175731z; port 8100
+## A1-01 clean build: fresh clone + scripts/check --integration
+### fresh clone
+argv: git clone -q . .local/a1-clone-20261018T175731Z
+exit: 0 (expected 0)
+stdout sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+
+stderr:
+
+### checkout
+argv: git -C .local/a1-clone-20261018T175731Z checkout -q 1fa38e1114f462671c82133aa0906748988b0daa
+exit: 0 (expected 0)
+stdout sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+
+stderr:
+
+scripts/check --integration in .local/a1-clone-20261018T175731Z: exit 0; log .local/evidence/a1-20261018T175731Z/check-fresh-clone.log sha256 454ee61d1bd0d729883727b4f7cb2841cbd414c00c45b71b652b388175b09c8c
+CHECK PASSED: A1-01: scripts/check --integration from a fresh clone exits 0 with step 5 PASSED
+## A1-02 install the release binary
+### scripts/service install
+argv: scripts/service install
+exit: 0 (expected 0)
+stdout sha256: b09d12cbd0d53115d111b47adf15b4e2464c1cce68816da575c62fa3e9bada9d  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+commit 1fa38e1114f462671c82133aa0906748988b0daa
+dirty false
+sha256 9475bf8961d1dd25c658735ea09fbbfdc3d261be98ad815afc5028e73a0573b9
+installed_at 2026-10-18T17:59:51Z
+stderr:
+
+CHECK PASSED: A1-02: installed from a clean checkout of the tested commit
+## A1-03 fresh database, migration, readiness
+### create database
+argv: docker exec lockstep-postgres psql -U lockstep -d lockstep -c CREATE DATABASE lockstep_a1_20261018t175731z
+exit: 0 (expected 0)
+stdout sha256: 691e4b64d448c6cffd680247056c2f445e4fbf2dcbc9be821934064e906d1ce7  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+CREATE DATABASE
+stderr:
+
+### db status (before)
+argv: scripts/service cli db status
+exit: 0 (expected 0)
+stdout sha256: b910ea03b9304d425c42d36c691a2970bb852977d2e901003080df2cd9cf2df5  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+readiness not_ready schema_behind 5
+revision none
+pending 5
+stderr:
+
+### db migrate (empty database, no backup needed)
+argv: scripts/service cli db migrate
+exit: 0 (expected 0)
+stdout sha256: e273c689fb17054631e737d3d2d15c5e71aeed88c7bea952e2fcc238632520d3  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+applied migrations: 1, 2, 3, 4, 5
+stderr:
+
+### db status (after)
+argv: scripts/service cli db status
+exit: 0 (expected 0)
+stdout sha256: 9da2a3a6e767d3dc511fb7fd92890edfe6ff1d18b464460e5a5f4af7a5a16d93  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+readiness ready 5
+revision 5
+pending 0
+stderr:
+
+CHECK PASSED: A1-03: a fresh database migrates to revision 5 and reports ready 5
+## A1-04 start the installed service
+### scripts/service start
+argv: scripts/service start --port 8100
+exit: 0 (expected 0)
+stdout sha256: 4e288d0446f854c118a2af56410f4d33f2e13b741990d1bb954cd3c548a1fa1a  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+started lockstep-a1: http://127.0.0.1:8100/ (1fa38e1114f462671c82133aa0906748988b0daa)
+stderr:
+
+### health
+request: curl http://127.0.0.1:8100/api/health_check
+status: 204
+body sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 (0 bytes)
+### readiness
+request: curl http://127.0.0.1:8100/api/readiness
+status: 200
+body sha256: 42ccc33e20e66ed2f3b49864d52d55d5b9a3c15184b70ade1a434f676d6a95e7 (7 bytes)
+CHECK PASSED: A1-04: the installed service answers health 204 and readiness 'ready 5' on 127.0.0.1:8100
+## A1-05 operator sign-in (CLI link, browser-shaped exchange)
+### operator sign-in
+argv: scripts/service cli operator sign-in --port 8100
+exit: 0 (expected 0)
+stdout: http://127.0.0.1:8100/operator/sign-in?token=<TOKEN>
+stderr bytes: 0
+### confirm page
+request: curl http://127.0.0.1:8100/operator/sign-in?token=<TOKEN>
+status: 200
+Cache-Control: no-store
+Referrer-Policy: origin
+Content-Security-Policy: default-src 'none'; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'
+body sha256: 24becbfc944a5546556e360bc2677e8a9d26c49e3ad76fe37963642e6fecff9f (629 bytes)
+### exchange
+request: curl -X POST -H Origin: http://127.0.0.1:8100 -H Referer: http://127.0.0.1:8100/ --data token=<TOKEN> http://127.0.0.1:8100/operator/sign-in
+status: 303
+Location: /operator
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+Set-Cookie: lockstep_session=<SESSION-REDACTED-AFTER-RUN>; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200
+body sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 (0 bytes)
+CHECK PASSED: A1-05: confirm page 200, exchange 303 to /operator with a session cookie
+## A1-06 typed command through the browser form, then the same command again
+### operator page
+request: curl -H Cookie: lockstep_session=<SESSION> http://127.0.0.1:8100/operator
+status: 200
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+body sha256: fecf1b0e1b481f3aae04e8b7cb2cbe4c2978a4fff88a1774ec4d1743aaa40415 (1130 bytes)
+### rename via form
+request: curl -X POST -H Origin: http://127.0.0.1:8100 -H Cookie: lockstep_session=<SESSION> --data-urlencode name=A1 Workspace --data expected_revision=0&idempotency_key=lTJqk2yUg_IFgG0jGdqIwg&csrf=bOodAZFIWPkNp8tBaHbadFqy5fuCzXVCT-H_jTTWpj0 http://127.0.0.1:8100/operator/commands/rename-workspace
+status: 303
+Location: /operator/receipts/1
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+body sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 (0 bytes)
+### same form again (duplicate)
+request: curl -X POST -H Origin: http://127.0.0.1:8100 -H Cookie: lockstep_session=<SESSION> --data-urlencode name=A1 Workspace --data expected_revision=0&idempotency_key=lTJqk2yUg_IFgG0jGdqIwg&csrf=bOodAZFIWPkNp8tBaHbadFqy5fuCzXVCT-H_jTTWpj0 http://127.0.0.1:8100/operator/commands/rename-workspace
+status: 303
+Location: /operator/receipts/1
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+body sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 (0 bytes)
+CHECK PASSED: A1-06: form command 303 to a receipt; the duplicate returns the same receipt (/operator/receipts/1)
+## A1-07 typed command through the CLI (same operation)
+### workspace rename via CLI
+argv: scripts/service cli workspace rename --expected-revision 1 --idempotency-key a1-cli-key-00000001 A1 via CLI
+exit: 0 (expected 0)
+stdout sha256: b8b430ac3dc4d1272bfd3abdc1b22ddd7d725ea34394e491940dad5274ee1c1e  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+receipt 2 applied revision 2 key a1-cli-key-00000001
+stderr:
+
+### same CLI command again (duplicate)
+argv: scripts/service cli workspace rename --expected-revision 1 --idempotency-key a1-cli-key-00000001 A1 via CLI
+exit: 0 (expected 0)
+stdout sha256: e350fd7fc9ebebc11ff5bec81494e15b22766cdbaff31c2e9786c3ce2f0a023b  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+receipt 2 applied revision 2 key a1-cli-key-00000001 (replayed)
+stderr:
+
+CHECK PASSED: A1-07: CLI command applied at revision 2; the duplicate prints the same receipt, replayed
+## A1-08 stale commands are refused durably
+### stale via CLI
+argv: scripts/service cli workspace rename --expected-revision 0 --idempotency-key a1-cli-key-00000002 Too old
+exit: 65 (expected 65)
+stdout sha256: f60d9976cb4cbf28644c67ba8942bd306738ba4cf7625001846521c5ab7cee06  stderr sha256: 7886011b410dadc819b28c2f3085c8b861afc5c4184855ee25686db490effc54
+stdout:
+receipt 3 refused_stale revision 2 key a1-cli-key-00000002
+stderr:
+lockstep: refused: stale revision (expected 0, current 2)
+### operator page
+request: curl -H Cookie: lockstep_session=<SESSION> http://127.0.0.1:8100/operator
+status: 200
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+body sha256: 2479f8f129d1e6817b05c28224ed06f36a61ff8b13dcd5762b3d99ff5459b128 (1134 bytes)
+### stale via form
+request: curl -X POST -H Origin: http://127.0.0.1:8100 -H Cookie: lockstep_session=<SESSION> --data-urlencode name=Too old --data expected_revision=0&idempotency_key=E--NZGibZvSTe5lTyVN_lw&csrf=bOodAZFIWPkNp8tBaHbadFqy5fuCzXVCT-H_jTTWpj0 http://127.0.0.1:8100/operator/commands/rename-workspace
+status: 409
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+body sha256: 317a3c86aad2368d1e1d336f71479a6cadc90569e9ba192d7a81168824932f10 (727 bytes)
+CHECK PASSED: A1-08: stale CLI command exit 65 with a refused_stale receipt; stale form 409
+## A1-09 unauthorized requests are refused and store nothing
+### no session
+request: curl -X POST -H Origin: http://127.0.0.1:8100 --data name=X&expected_revision=2&idempotency_key=a1-unauth-key-0001&csrf=bOodAZFIWPkNp8tBaHbadFqy5fuCzXVCT-H_jTTWpj0 http://127.0.0.1:8100/operator/commands/rename-workspace
+status: 401
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+body sha256: 0f62f1ff839901be100a80130d0e264686ff4bcff997c89ac58c57cebb4f6cd0 (403 bytes)
+### wrong csrf
+request: curl -X POST -H Origin: http://127.0.0.1:8100 -H Cookie: lockstep_session=<SESSION> --data name=X&expected_revision=2&idempotency_key=a1-unauth-key-0002&csrf=0qaHzxn_v8Upc4bffhI6afA_xIAGTDTqTqbLRVQjALU http://127.0.0.1:8100/operator/commands/rename-workspace
+status: 403
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+body sha256: e614bac7386482bbcbd71ed759cfc59fe7e1f6ce534f4dc7209c6d246be932d5 (366 bytes)
+### foreign origin
+request: curl -X POST -H Origin: http://attacker.example -H Cookie: lockstep_session=<SESSION> --data name=X&expected_revision=2&idempotency_key=a1-unauth-key-0003&csrf=bOodAZFIWPkNp8tBaHbadFqy5fuCzXVCT-H_jTTWpj0 http://127.0.0.1:8100/operator/commands/rename-workspace
+status: 403
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+body sha256: ae7db5e0bd6f7032902454ea1a3f279ef060b6644f2fe4e6865e49cdc80b4df5 (336 bytes)
+### Host localhost
+request: curl -H Host: localhost:8100 -H Cookie: lockstep_session=<SESSION> http://127.0.0.1:8100/operator
+status: 403
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+body sha256: 54bb521783b886281332d331b919f1128ccc82f4878d2358e1803b173a5f7e5e (360 bytes)
+receipts before 4, after 4; statuses 401 403 403 403
+CHECK PASSED: A1-09: no session 401, wrong CSRF 403, foreign Origin 403, Host localhost 403; no receipt stored
+## A1-10 a client that disconnects right after queueing a job
+### queue form
+request: curl -H Cookie: lockstep_session=<SESSION> http://127.0.0.1:8100/operator/jobs/new
+status: 200
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+body sha256: 6e4f7227dbb99f07022d5843c61f96f90f167eeb1accbcdea904949f5165252d (1013 bytes)
+raw POST sent and the socket closed without reading the response
+### job show 1
+argv: scripts/service cli job show 1
+exit: 0 (expected 0)
+stdout sha256: 40131938f7a82749c2206d7f4b31127dd4f394c10d3d4680f47c5bd15142506a  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+job 1 succeeded steps 5/5 attempts 1
+stderr:
+
+CHECK PASSED: A1-10: the disconnected client's job was admitted and succeeded
+## A1-11 restart the service; the same operation and evidence are shown
+### scripts/service restart
+argv: scripts/service restart --port 8100
+exit: 0 (expected 0)
+stdout sha256: b1e4e24b8079a6f035f0554e659e6e36e95213012375a86f4f308542f632af86  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+stopped lockstep-a1 (exit 0); log saved to .local/install/last-run.log
+started lockstep-a1: http://127.0.0.1:8100/ (1fa38e1114f462671c82133aa0906748988b0daa)
+stderr:
+
+### receipt after restart
+request: curl -H Cookie: lockstep_session=<SESSION> http://127.0.0.1:8100/operator/receipts/1
+status: 200
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+body sha256: 1e3b4be66209f860babf35e0a343e233692ea9ec5070c21419510a85999aa865 (721 bytes)
+### command center after restart
+request: curl -H Cookie: lockstep_session=<SESSION> http://127.0.0.1:8100/operator/center
+status: 200
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+body sha256: ca08a92c74a24583cd8c3834de6862099c966c6423d04f38d10e62e6298025b6 (4192 bytes)
+CHECK PASSED: A1-11: after restart: the form receipt shows 'applied'; the center lists the job as PASSED and counts match
+## A1-12 durable receipts in PostgreSQL
+1|rename-workspace|applied|browser-session|0|1|lTJqk2yUg_IFgG0jGdqIwg
+2|rename-workspace|applied|cli|1|2|a1-cli-key-00000001
+3|rename-workspace|refused_stale|cli|0|2|a1-cli-key-00000002
+4|rename-workspace|refused_stale|browser-session|0|2|E--NZGibZvSTe5lTyVN_lw
+5|queue-noop|queued|browser-session|2|2|GqqWJxcer8mWSnjM2bXp4w
+1|5|succeeded|5|5|1|91b1dc5e2c3af69eceb8e20c682b1965f472edfd184ee5bbc255e8a77896c8ec
+CHECK PASSED: A1-12: receipts table holds 2 applied, 2 refused_stale, 1 queued; the job row has an outcome digest
+## A1-13 rendered pages (headless Chromium through a cookie proxy)
+Chromium 155.0.8059.79 built on Debian GNU/Linux 12 (bookworm)
+CHECK PASSED: A1-13: screenshots captured
+## A1-14 zero live-model calls
+### scripts/service stop
+argv: scripts/service stop
+exit: 0 (expected 0)
+stdout sha256: d27c710916d2eacec23738444944b30262d0298c244fa15db42b466e44c9927a  stderr sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+stdout:
+stopped lockstep-a1 (exit 0); log saved to .local/install/last-run.log
+stderr:
+
+sentinel log: 0 bytes; password occurrences: 0; sign-in token occurrences in pages and service log: 0
+0
+CHECK FAILED: A1-14: the provider-CLI sentinel log is empty and no secret appears in the recorded output
+## A1 result: 1 failing check(s); database lockstep_a1_20261018t175731z kept for inspection

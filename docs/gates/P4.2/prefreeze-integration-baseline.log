@@ -1,0 +1,102 @@
+lockstep-0.2.0.0: unregistering (components added: test:lockstep-integration)
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+Preprocessing executable 'lockstep' for lockstep-0.2.0.0...
+Building executable 'lockstep' for lockstep-0.2.0.0...
+Preprocessing test suite 'lockstep-integration' for lockstep-0.2.0.0...
+Building test suite 'lockstep-integration' for lockstep-0.2.0.0...
+[ 1 of 73] Compiling Lockstep.HelperRunnerTest [Source file changed]
+[ 3 of 73] Compiling Lockstep.ProcessRunnerTest [Source file changed]
+[74 of 74] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-integration/lockstep-integration [Objects changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-6ggF0AiJnRUCIB81Gsi4xx
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-integration, args: -p C-P4.2)
+
+lockstep-integration
+  C-P4.2 direct finite runner (real processes)
+    exit code and both streams are reported as they were:                      FAIL (0.02s)
+      test/integration/Lockstep/ProcessRunnerTest.hs:69:
+      refused: not-implemented
+      Use -p '/C-P4.2/&&/exit code and both streams are reported as they were/' to rerun this test only.
+    too much standard output ends the run: output-limit, the first bytes kept: FAIL
+      test/integration/Lockstep/ProcessRunnerTest.hs:69:
+      refused: not-implemented
+      Use -p '/C-P4.2/&&/too much standard output ends the run: output-limit, the first bytes kept/' to rerun this test only.
+    too much standard error ends the run: output-limit:                        FAIL
+      test/integration/Lockstep/ProcessRunnerTest.hs:69:
+      refused: not-implemented
+      Use -p '/C-P4.2/&&/too much standard error ends the run: output-limit/' to rerun this test only.
+    the wall clock ends a run: timed-out, and the whole group is gone:         FAIL
+      test/integration/Lockstep/ProcessRunnerTest.hs:69:
+      refused: not-implemented
+      Use -p '/C-P4.2/&&/the wall clock ends a run: timed-out, and the whole group is gone/' to rerun this test only.
+    a descendant that outlives the program is killed with the group:           FAIL
+      test/integration/Lockstep/ProcessRunnerTest.hs:69:
+      refused: not-implemented
+      Use -p '/C-P4.2/&&/a descendant that outlives the program is killed with the group/' to rerun this test only.
+    a cancelled run ends promptly: cancelled, and the group is gone:           FAIL (0.30s)
+      test/integration/Lockstep/ProcessRunnerTest.hs:140:
+      refused: not-implemented
+      Use -p '/C-P4.2/&&/a cancelled run ends promptly: cancelled, and the group is gone/' to rerun this test only.
+    a failing or killed program is never a success:                            FAIL
+      test/integration/Lockstep/ProcessRunnerTest.hs:69:
+      refused: not-implemented
+      Use -p '/C-P4.2/&&/a failing or killed program is never a success/' to rerun this test only.
+    malformed requests are refused before anything starts:                     FAIL
+      test/integration/Lockstep/ProcessRunnerTest.hs:190:
+      expected: [("empty argv","argv-empty"),("empty program","argv-invalid"),("NUL in an argument","argv-invalid"),("too many arguments","argv-invalid"),("relative program with a slash","executable-not-absolute"),("relative directory","directory-invalid"),("directory with ..","directory-invalid"),("bad variable name","environment-invalid"),("repeated variable","environment-invalid"),("NUL in a value","environment-invalid"),("zero wall clock","limits-invalid"),("negative output limit","limits-invalid"),("missing directory","directory-missing"),("missing program","executable-missing"),("unknown bare name","executable-missing"),("bare name without PATH","executable-missing")]
+       but got: [("empty argv","not-implemented"),("empty program","not-implemented"),("NUL in an argument","not-implemented"),("too many arguments","not-implemented"),("relative program with a slash","not-implemented"),("relative directory","not-implemented"),("directory with ..","not-implemented"),("bad variable name","not-implemented"),("repeated variable","not-implemented"),("NUL in a value","not-implemented"),("zero wall clock","not-implemented"),("negative output limit","not-implemented"),("missing directory","not-implemented"),("missing program","not-implemented"),("unknown bare name","not-implemented"),("bare name without PATH","not-implemented")]
+      Use -p '/C-P4.2/&&/malformed requests are refused before anything starts/' to rerun this test only.
+    only the given environment reaches the program:                            FAIL
+      test/integration/Lockstep/ProcessRunnerTest.hs:69:
+      refused: not-implemented
+      Use -p '/C-P4.2/&&/only the given environment reaches the program/' to rerun this test only.
+    standard input is empty and no descriptor of Lockstep is inherited:        FAIL
+      test/integration/Lockstep/ProcessRunnerTest.hs:69:
+      refused: not-implemented
+      Use -p '/C-P4.2/&&/standard input is empty and no descriptor of Lockstep is inherited/' to rerun this test only.
+    a bare program name is looked up in the run's own PATH only:               FAIL
+      test/integration/Lockstep/ProcessRunnerTest.hs:69:
+      refused: not-implemented
+      Use -p '/C-P4.2/&&/a bare program name is looked up in the run'\''s own PATH only/' to rerun this test only.
+  C-P4.2 runner client and the real host helper
+    a run through the helper: exit code, streams and signed digests:           FAIL (10.22s)
+      test/integration/Lockstep/HelperRunnerTest.hs:117:
+      the helper did not make the runner key
+      Use -p '/C-P4.2/&&/a run through the helper: exit code, streams and signed digests/' to rerun this test only.
+    the helper's refusal reaches the caller and nothing runs:                  FAIL (10.18s)
+      test/integration/Lockstep/HelperRunnerTest.hs:117:
+      the helper did not make the runner key
+      Use -p '/C-P4.2/&&/the helper'\''s refusal reaches the caller and nothing runs/' to rerun this test only.
+    a cancelled run is reported cancelled:                                     FAIL (10.13s)
+      test/integration/Lockstep/HelperRunnerTest.hs:117:
+      the helper did not make the runner key
+      Use -p '/C-P4.2/&&/a cancelled run is reported cancelled/' to rerun this test only.
+    without a helper there is no result: an unknown outcome, not a failure:    FAIL
+      test/integration/Lockstep/HelperRunnerTest.hs:171:
+      channel: not-implemented
+      Use -p '/C-P4.2/&&/without a helper there is no result: an unknown outcome, not a failure/' to rerun this test only.
+    an invalid request is refused before anything is sent:                     FAIL
+      test/integration/Lockstep/HelperRunnerTest.hs:186:
+      channel: not-implemented
+      Use -p '/C-P4.2/&&/an invalid request is refused before anything is sent/' to rerun this test only.
+
+16 out of 16 tests failed (30.86s)
+
+
+
+lockstep> Test suite lockstep-integration failed
+Completed 2 action(s).
+
+Error: [S-7282]
+       Stack failed to execute the build plan.
+       
+       While executing the build plan, Stack encountered the error:
+       
+       Error: [S-1995]
+       Test suite failure for package lockstep-0.2.0.0
+           lockstep-integration:  exited with: ExitFailure 1
+       Logs printed to console
+       

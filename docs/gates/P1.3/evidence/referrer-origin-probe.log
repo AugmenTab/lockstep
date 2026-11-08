@@ -1,0 +1,32 @@
+# Referrer-Policy origin probe (D-2d), 2026-10-17, docker debian:bookworm-slim, both browsers headless
+# command: docker run --rm -v <this dir>:/probe:ro debian:bookworm-slim sh /probe/referrer-origin-probe-run.sh
+# flow: GET confirm page (policy under test, E3 CSP + probe nonce) -> form POST -> 303 /operator (no-referrer, Set-Cookie) -> GET /operator
+Chromium 155.0.8059.79 built on Debian GNU/Linux 12 (bookworm)
+[2668] Sandbox: CanCreateUserNamespace() clone() failure: EPERM
+Mozilla Firefox 153.5.0esr
+## policy=origin chromium
+GET /operator/sign-in?token=PROBEtoken0123456789abcdefghijklmnopqrstuvw Origin=None Sec-Fetch-Site='none' Referer=None Cookie=None
+GET /static/lockstep.css Origin=None Sec-Fetch-Site='same-origin' Referer='http://127.0.0.1:8411/' Cookie=None
+POST /operator/sign-in Origin='http://127.0.0.1:8411' Sec-Fetch-Site='same-origin' Referer='http://127.0.0.1:8411/' Cookie=None
+GET /operator Origin=None Sec-Fetch-Site='same-origin' Referer=None Cookie='lockstep_session=probesession'
+GET /favicon.ico Origin=None Sec-Fetch-Site='same-origin' Referer=None Cookie='lockstep_session=probesession'
+token occurrences outside the GET sign-in request line: 0
+## policy=origin firefox
+GET /operator/sign-in?token=PROBEtoken0123456789abcdefghijklmnopqrstuvw Origin=None Sec-Fetch-Site='none' Referer=None Cookie=None
+GET /static/lockstep.css Origin=None Sec-Fetch-Site='same-origin' Referer='http://127.0.0.1:8411/' Cookie=None
+POST /operator/sign-in Origin='http://127.0.0.1:8411' Sec-Fetch-Site='same-origin' Referer='http://127.0.0.1:8411/' Cookie=None
+GET /operator Origin=None Sec-Fetch-Site='same-origin' Referer=None Cookie='lockstep_session=probesession'
+token occurrences outside the GET sign-in request line: 0
+## policy=no-referrer chromium
+GET /operator/sign-in?token=PROBEtoken0123456789abcdefghijklmnopqrstuvw Origin=None Sec-Fetch-Site='none' Referer=None Cookie=None
+GET /static/lockstep.css Origin=None Sec-Fetch-Site='same-origin' Referer=None Cookie=None
+POST /operator/sign-in Origin='null' Sec-Fetch-Site='same-origin' Referer=None Cookie=None
+GET /operator Origin=None Sec-Fetch-Site='same-origin' Referer=None Cookie='lockstep_session=probesession'
+GET /favicon.ico Origin=None Sec-Fetch-Site='same-origin' Referer=None Cookie='lockstep_session=probesession'
+token occurrences outside the GET sign-in request line: 0
+## policy=no-referrer firefox
+GET /operator/sign-in?token=PROBEtoken0123456789abcdefghijklmnopqrstuvw Origin=None Sec-Fetch-Site='none' Referer=None Cookie=None
+GET /static/lockstep.css Origin=None Sec-Fetch-Site='same-origin' Referer=None Cookie=None
+POST /operator/sign-in Origin='null' Sec-Fetch-Site='same-origin' Referer=None Cookie=None
+GET /operator Origin=None Sec-Fetch-Site='same-origin' Referer=None Cookie='lockstep_session=probesession'
+token occurrences outside the GET sign-in request line: 0

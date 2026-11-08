@@ -1,0 +1,316 @@
+{-# LANGUAGE OverloadedStrings #-}
+
+{- | The control pane's HTTP surface (contract C-P3.1 §3): a content-free shell,
+two static assets, a health check, and a small JSON API that takes the session
+only from the @X-Lockstep-Session@ header. No cookie is read or set, and no
+response carries CORS headers. Route recognition comes first (unrouted: 404),
+then the exact Host/Origin guard of C-P1.3 E7, then the session.
+-}
+module Lockstep.Web.Control
+  ( controlApplication
+  , runControlPane
+  ) where
+
+import Data.ByteString qualified as BS
+import Data.ByteString.Char8 qualified as BS8
+import Data.ByteString.Lazy qualified as LBS
+import Data.Char qualified as Char
+import Data.List qualified as L
+import Data.Text qualified as T
+import Data.Text.Encoding qualified as TE
+import Data.Text.Encoding.Error qualified as TEE
+import Flipstone.Prelude
+import Network.HTTP.Types qualified as HTTP
+import Network.Wai qualified as Wai
+import Network.Wai.Handler.Warp qualified as Warp
+import System.Exit (ExitCode (ExitFailure), exitWith)
+import System.IO (FilePath, hFlush, hPutStrLn, putStrLn, stderr, stdout)
+import Text.Show (show)
+
+import Lockstep.Application.ControlPane
+  ( FolderList (..)
+  , PaneRuntime
+  , ResultView (..)
+  , SubmitError (..)
+  , checkSession
+  , endSession
+  , exchangeSignIn
+  , openPane
+  , paneIdentity
+  , readFolders
+  , readResult
+  , renderPaneError
+  , submitFolder
+  , submitInstall
+  , submitLifecycle
+  , submitOpenApplication
+  , submitRequest
+  , takeHandover
+  )
+import Lockstep.Foundation.Config (BindHost (Loopback), Port, ServeConfig (..), portNumber)
+import Lockstep.Foundation.ControlProtocol (ControlResult (..), outcomeName, parseOp, requestIdText)
+import Lockstep.Foundation.FolderProtocol (validFolderExpect, validFolderPath)
+import Lockstep.Foundation.InstallProtocol (InstallExpect, InstallOp, parseInstallExpect, parseInstallOp, validFor)
+import Lockstep.Foundation.LifecycleProtocol (LifecycleOp, expectedFor, parseLifecycleExpect, parseLifecycleOp)
+import Lockstep.Web.RequestGuard (RouteClass (..), guardRequest)
+import Lockstep.Web.SecureResponse (errorJson, jsonResponse, jsonString, readBodyLimited, respondWith)
+import Lockstep.Web.Server (serverSettings)
+import Lockstep.Web.Static (StaticAsset (..), lookupAsset)
+
+-- | @lockstep control serve@: checks the state directory, then serves until SIGTERM.
+runControlPane :: Port -> FilePath -> IO ()
+runControlPane port state = do
+  opened <- openPane state
+  case opened of
+    Left err -> do
+      hPutStrLn stderr ("lockstep: control pane: " <> renderPaneError err)
+      exitWith (ExitFailure 66)
+    Right runtime -> do
+      let
+        settings =
+          Warp.setOnException (\_ _ -> pure ())
+            . Warp.setBeforeMainLoop (putStrLn ("Control pane listening on 127.0.0.1:" <> show (portNumber port)) >> hFlush stdout)
+            $ serverSettings (ServeConfig Loopback port)
+      Warp.runSettings settings (controlApplication port runtime)
+
+notFound :: Wai.Response
+notFound =
+  errorJson HTTP.status404 "not-found"
+
+-- | The shell every page address returns: no state, no data; the script loads the rest.
+shell :: Wai.Response
+shell =
+  respondWith
+    HTTP.status200
+    [(HTTP.hContentType, "text/html; charset=utf-8")]
+    ( LBS.fromStrict . BS8.pack . L.unlines $
+        [ "<!doctype html>"
+        , "<html lang=\"en\">"
+        , "<head>"
+        , "<meta charset=\"utf-8\">"
+        , "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        , "<title>Lockstep</title>"
+        , "<link rel=\"stylesheet\" href=\"/static/lockstep.css\">"
+        , "</head>"
+        , "<body class=\"control\">"
+        , "<main id=\"app\" class=\"control-main\" aria-live=\"polite\"><p>Opening Lockstep\226\128\166</p></main>"
+        , "<noscript><p>Lockstep needs JavaScript turned on in this browser.</p></noscript>"
+        , "<script src=\"/static/control.js\"></script>"
+        , "</body>"
+        , "</html>"
+        ]
+    )
+
+data Route
+  = Shell
+  | Asset StaticAsset
+  | Health
+  | Session
+  | SignOut
+  | Requests
+  | Lifecycle
+  | Install
+  | OpenApplication
+  | FoldersList
+  | FoldersAdd
+  | Handover T.Text
+  | RequestResult T.Text
+  | Preflight
+
+isApi :: Route -> Bool
+isApi route =
+  case route of
+    Shell -> False
+    Asset _ -> False
+    Health -> False
+    _ -> True
+
+matchRoute :: BS.ByteString -> [T.Text] -> Maybe Route
+matchRoute method path =
+  let
+    get = method == HTTP.methodGet || method == HTTP.methodHead
+    post = method == HTTP.methodPost
+    options = method == HTTP.methodOptions
+  in
+    case path of
+      [] | get -> Just Shell
+      ["sign-in"] | get -> Just Shell
+      ["static", name]
+        | get && name `L.elem` ["control.js", "lockstep.css"] -> Asset <$> lookupAsset name
+      ["api", "health"] | get -> Just Health
+      ["api", "session"]
+        | post -> Just Session
+        | options -> Just Preflight
+      ["api", "sign-out"]
+        | post -> Just SignOut
+        | options -> Just Preflight
+      ["api", "requests"]
+        | post -> Just Requests
+        | options -> Just Preflight
+      ["api", "lifecycle"]
+        | post -> Just Lifecycle
+        | options -> Just Preflight
+      ["api", "install"]
+        | post -> Just Install
+        | options -> Just Preflight
+      ["api", "open-application"]
+        | post -> Just OpenApplication
+        | options -> Just Preflight
+      ["api", "folders"]
+        | get -> Just FoldersList
+        | post -> Just FoldersAdd
+        | options -> Just Preflight
+      ["api", "handover", rid]
+        | get && T.length rid == 32 && T.all (\c -> Char.isDigit c || (c >= 'a' && c <= 'f')) rid -> Just (Handover rid)
+        | options -> Just Preflight
+      ["api", "requests", rid]
+        | get && T.length rid == 32 && T.all (\c -> Char.isDigit c || (c >= 'a' && c <= 'f')) rid -> Just (RequestResult rid)
+        | options -> Just Preflight
+      _ -> Nothing
+
+controlApplication :: Port -> PaneRuntime -> Wai.Application
+controlApplication port runtime request respond =
+  case matchRoute (Wai.requestMethod request) (Wai.pathInfo request) of
+    Nothing -> respond notFound
+    Just Preflight -> respond (errorJson HTTP.status405 "method-not-allowed")
+    Just route ->
+      case guardRequest port (if isApi route then OperatorRoute else PublicRead) request of
+        Left _ -> respond (errorJson HTTP.status403 "refused")
+        Right () -> handle route
+ where
+  sessionHeader =
+    L.lookup "X-Lockstep-Session" (Wai.requestHeaders request)
+  withSession action = do
+    ok <- maybe (pure False) (checkSession runtime) sessionHeader
+    if ok then action else respond (errorJson HTTP.status401 "signed-out")
+  withBody action = do
+    body <- readBodyLimited request 4096
+    case body of
+      Nothing -> respond (errorJson HTTP.status413 "too-large")
+      Just bytes -> action bytes
+  handle route =
+    case route of
+      Shell -> respond shell
+      Asset asset -> respond (respondWith HTTP.status200 [(HTTP.hContentType, assetContentType asset)] (LBS.fromStrict (assetBody asset)))
+      Health -> respond (respondWith HTTP.status204 [("X-Lockstep-Control", paneIdentity runtime)] "")
+      Session -> withBody $ \bytes -> do
+        session <- exchangeSignIn runtime (TE.decodeUtf8With TEE.lenientDecode bytes)
+        respond $ case session of
+          Just s -> jsonResponse HTTP.status200 ("{\"session\":" <> jsonString s <> "}")
+          Nothing -> errorJson HTTP.status403 "sign-in-refused"
+      SignOut -> withBody $ \_ -> withSession $ do
+        traverse_ (endSession runtime) sessionHeader
+        respond (respondWith HTTP.status204 [] "")
+      Requests -> withBody $ \bytes -> withSession $
+        case parseOp (TE.decodeUtf8With TEE.lenientDecode bytes) of
+          Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
+          Just op -> do
+            submitted <- submitRequest runtime op
+            respond $ case submitted of
+              Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
+              Left err -> submitError err
+      Lifecycle -> withBody $ \bytes -> withSession $
+        case parseLifecycleBody (TE.decodeUtf8With TEE.lenientDecode bytes) of
+          Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
+          Just op -> do
+            submitted <- submitLifecycle runtime op
+            respond $ case submitted of
+              Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
+              Left err -> submitError err
+      Install -> withBody $ \bytes -> withSession $
+        case parseInstallBody (TE.decodeUtf8With TEE.lenientDecode bytes) of
+          Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
+          Just (op, expect) -> do
+            submitted <- submitInstall runtime op expect
+            respond $ case submitted of
+              Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
+              Left err -> submitError err
+      OpenApplication -> withBody $ \_ -> withSession $ do
+        submitted <- submitOpenApplication runtime
+        respond $ case submitted of
+          Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
+          Left err -> submitError err
+      FoldersList -> withSession $ do
+        list <- readFolders runtime
+        respond . jsonResponse HTTP.status200 $
+          "{\"digest\":"
+            <> jsonString (folderListDigest list)
+            <> ",\"folders\":["
+            <> T.intercalate "," ["{\"mode\":" <> jsonString m <> ",\"path\":" <> jsonString p <> "}" | (m, p) <- folderListEntries list]
+            <> "]}"
+      FoldersAdd -> withBody $ \bytes -> withSession $
+        case parseFolderBody (TE.decodeUtf8With TEE.lenientDecode bytes) of
+          Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
+          Just (expect, path) -> do
+            submitted <- submitFolder runtime expect path
+            respond $ case submitted of
+              Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
+              Left err -> submitError err
+      Handover rid -> withSession $ do
+        url <- takeHandover runtime rid
+        respond $ case url of
+          Just u -> jsonResponse HTTP.status200 ("{\"url\":" <> jsonString u <> "}")
+          Nothing -> notFound
+      RequestResult rid -> withSession $ do
+        view <- readResult runtime rid
+        respond $ case view of
+          ResultUnknown -> notFound
+          ResultPending -> jsonResponse HTTP.status200 "{\"state\":\"pending\"}"
+          ResultUntrusted -> jsonResponse HTTP.status200 "{\"state\":\"untrusted\"}"
+          ResultDone result -> jsonResponse HTTP.status200 (resultJson result)
+      Preflight -> respond (errorJson HTTP.status405 "method-not-allowed")
+
+submitError :: SubmitError -> Wai.Response
+submitError err =
+  case err of
+    HelperUnavailable -> errorJson HTTP.status503 "helper-unavailable"
+    RequestNotWritten -> errorJson HTTP.status503 "request-not-written"
+    LifecycleBusy -> errorJson HTTP.status409 "busy"
+
+{- | @<operation> <expected state>@, exactly two words separated by one space,
+where the expectation is the operation's own (C-P3.2 M2, M6).
+-}
+parseLifecycleBody :: T.Text -> Maybe LifecycleOp
+parseLifecycleBody body =
+  case T.splitOn " " body of
+    [opText, expectText] -> do
+      op <- parseLifecycleOp opText
+      expect <- parseLifecycleExpect expectText
+      if expect == expectedFor op then Just op else Nothing
+    _ -> Nothing
+
+-- | @<operation> <expectation>@ for an install request (C-P3.3 U1).
+parseInstallBody :: T.Text -> Maybe (InstallOp, InstallExpect)
+parseInstallBody body =
+  case T.splitOn " " body of
+    [opText, expectText] -> do
+      op <- parseInstallOp opText
+      expect <- parseInstallExpect expectText
+      if validFor op expect then Just (op, expect) else Nothing
+    _ -> Nothing
+
+-- | @add-folder <expectation> <path>@ for a folder request (C-P3.5 J6); the path may contain spaces.
+parseFolderBody :: T.Text -> Maybe (T.Text, T.Text)
+parseFolderBody body = do
+  rest <- T.stripPrefix "add-folder " body
+  let
+    (expect, afterExpect) = T.breakOn " " rest
+  path <- T.stripPrefix " " afterExpect
+  if validFolderExpect expect && validFolderPath path
+    then Just (expect, path)
+    else Nothing
+
+resultJson :: ControlResult -> T.Text
+resultJson result =
+  T.concat
+    [ "{\"state\":\"done\""
+    , ",\"id\":" <> jsonString (resultId result)
+    , ",\"op\":" <> jsonString (resultOp result)
+    , ",\"outcome\":" <> jsonString (outcomeName (resultOutcome result))
+    , ",\"reason\":" <> maybe "null" jsonString (resultReason result)
+    , ",\"started\":" <> T.pack (show (resultStarted result))
+    , ",\"finished\":" <> T.pack (show (resultFinished result))
+    , ",\"fields\":{" <> T.intercalate "," [jsonString k <> ":" <> jsonString v | (k, v) <- resultFields result] <> "}"
+    , ",\"detail\":" <> jsonString (resultDetail result)
+    , "}"
+    ]

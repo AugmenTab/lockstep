@@ -1,0 +1,353 @@
+#!/usr/bin/env bash
+# The installed Lockstep service on this host (C-P1.7 E6; docs/OPERATOR_GUIDE.md).
+#
+#   scripts/service install            build the release binary into .local/install
+#   scripts/service start [--port N]   run it detached (container lockstep-service)
+#   scripts/service stop               SIGTERM; waits up to 10 s
+#   scripts/service restart [--port N]
+#   scripts/service status
+#   scripts/service logs
+#   scripts/service cli ARGS...        run the installed binary with the same config
+#   scripts/service open [--port N]    start if needed and open the sign-in page in this
+#                                      host's browser (C-OPEN; also: scripts/lockstep open)
+#   scripts/service --instance NAME COMMAND...
+#                                      the same for a qualification install, e.g. b1
+#
+# The binary binds 127.0.0.1 only. The container uses host networking; on this
+# Mac's Docker runtime (OrbStack, Docker Engine 29.4) that loopback listener is
+# forwarded to this machine's 127.0.0.1:N only (measured by scripts/a1, A1-04b:
+# lsof shows a single 127.0.0.1 listener and the LAN address refuses). Another
+# runtime may forward differently: re-run scripts/a1 after changing it. Only .local/install (read-only)
+# and the generated config are mounted: no repository files, no static
+# directory, no Node or Python runtime.
+#
+# Overrides: LOCKSTEP_SERVICE_CONFIG (a config file with host/port reachable
+# from the host, default generated from .local/config/lockstep.json),
+# LOCKSTEP_SERVICE_SENTINEL_DIR (provider-CLI shims put first on PATH, used by
+# scripts/a1), LOCKSTEP_SERVICE_NAME.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+# --instance NAME: container lockstep-NAME, install .local/NAME-install, config
+# .local/config/lockstep-NAME.json (as scripts/b1 leaves them). Exported so the nested
+# start/stop of restart and open use the same instance.
+if [ "${1:-}" = --instance ]; then
+  instance=${2:-}
+  case $instance in
+    "" | service | *[!abcdefghijklmnopqrstuvwxyz0123456789-]*)
+      echo "scripts/service: --instance takes lower-case letters, digits and '-' (not 'service')" >&2
+      exit 64 ;;
+  esac
+  shift 2
+  [ -f ".local/config/lockstep-$instance.json" ] || { echo "scripts/service: instance $instance has no config" >&2; exit 66; }
+  export LOCKSTEP_SERVICE_NAME="lockstep-$instance"
+  export LOCKSTEP_SERVICE_INSTALL_DIR=".local/$instance-install"
+  export LOCKSTEP_SERVICE_CONFIG=".local/config/lockstep-$instance.json"
+fi
+
+image=lockstep-dev:p1
+name=${LOCKSTEP_SERVICE_NAME:-lockstep-service}
+# C-P2.9-R1 M7: a qualification run installs elsewhere and never replaces the operator's binary.
+install_dir=${LOCKSTEP_SERVICE_INSTALL_DIR:-.local/install}
+# §4.2 finding 10, §4.5 P4, §4.7 F4: .local/install or .local/<name>-install, and not a symlink.
+case $install_dir in
+  .local/install) install_ok=true ;;
+  .local/*/* | .local/.*) install_ok=false ;;
+  .local/*[!abcdefghijklmnopqrstuvwxyz0123456789-]*-install) install_ok=false ;;
+  .local/?*-install) install_ok=true ;;
+  *) install_ok=false ;;
+esac
+if [ "$install_ok" != true ] || [ -L "$install_dir" ]; then
+  echo "scripts/service: LOCKSTEP_SERVICE_INSTALL_DIR must be .local/install or .local/<name>-install (lower-case letters, digits, '-'), not a symlink" >&2
+  exit 64
+fi
+db_config=.local/config/lockstep.json
+host_config=.local/config/lockstep-host.json
+
+usage() {
+  sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' >&2
+  exit 64
+}
+
+host_config_path() {
+  if [ -n "${LOCKSTEP_SERVICE_CONFIG:-}" ]; then
+    echo "$LOCKSTEP_SERVICE_CONFIG"
+    return
+  fi
+  [ -f "$db_config" ] || { echo "scripts/service: $db_config is missing; run scripts/db up" >&2; exit 66; }
+  # scripts/db publishes PostgreSQL on 127.0.0.1:5433 (ADR-0002 Q1).
+  umask 077
+  sed -E -e 's/"host":"[^"]*"/"host":"127.0.0.1"/' -e 's/"port":[0-9]+/"port":5433/' "$db_config" > "$host_config"
+  chmod 600 "$host_config"
+  echo "$host_config"
+}
+
+run_args() { # common docker arguments
+  local config
+  config=$(host_config_path)
+  local args=(--network host
+    --volume "$PWD/$install_dir:/opt/lockstep:ro"
+    --volume "$PWD/$config:/etc/lockstep/lockstep.json:ro"
+    --env LOCKSTEP_CONFIG=/etc/lockstep/lockstep.json)
+  if [ -n "${LOCKSTEP_SERVICE_SENTINEL_DIR:-}" ]; then
+    args+=(--volume "$PWD/$LOCKSTEP_SERVICE_SENTINEL_DIR:/opt/sentinel"
+      --env PATH="/opt/sentinel/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      --env LOCKSTEP_SENTINEL_LOG=/opt/sentinel/sentinel.log)
+  fi
+  folder_args
+  runner_args
+  printf '%s\n' "${args[@]}"
+}
+
+# C-P4.2 R3: the helper's runner channel (LOCKSTEP_SERVICE_RUNNER, set by the helper
+# started with --runner), mounted at its own path so the service can prepare runs and
+# sign requests. Skipped unless it is an absolute, real, private directory.
+runner_args() {
+  local d=${LOCKSTEP_SERVICE_RUNNER:-} real
+  [ -n "$d" ] || return 0
+  case $d in
+    /*) ;;
+    *) return 0 ;;
+  esac
+  case $d in
+    *:* | *,*) return 0 ;;
+  esac
+  [ -d "$d" ] && [ ! -L "$d" ] && [ -O "$d" ] || return 0
+  real=$(cd -P -- "$d" 2>/dev/null && pwd -P || true)
+  [ "$real" = "$d" ] || return 0
+  args+=(--volume "$d:$d" --env "LOCKSTEP_RUNNER_DIR=$d")
+  case " ${args[*]} " in
+    *" --user "*) ;;
+    *) args+=(--user "$(id -u):$(id -g)") ;;
+  esac
+}
+
+# C-P3.5 J5: the folders named by LOCKSTEP_SERVICE_FOLDERS (the helper's list), each
+# mounted at its own path: "rw PATH" only as the first line, then "ro PATH" lines.
+# Lines that are not well formed, or name no existing folder, are skipped; so is a
+# listed path that is a symbolic link or whose real path is not the listed one
+# (C-C.R1 R6), checked again here right before mounting. With no folder mounted the
+# container runs exactly as before.
+folder_args() {
+  local file=${LOCKSTEP_SERVICE_FOLDERS:-} line mode p real n=0 root="" added="" mounted=0
+  [ -n "$file" ] && [ -f "$file" ] || return 0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    mode=${line%% *}
+    p=${line#* }
+    case $p in
+      /*) ;;
+      *) continue ;;
+    esac
+    case $p in
+      / | *:* | *,* | */) continue ;;
+    esac
+    [ -d "$p" ] && [ ! -L "$p" ] || continue
+    real=$(cd -P -- "$p" 2>/dev/null && pwd -P || true)
+    [ "$real" = "$p" ] || continue
+    if [ "$mode" = rw ] && [ $n = 1 ]; then
+      args+=(--volume "$p:$p")
+      root=$p
+    elif [ "$mode" = ro ]; then
+      args+=(--volume "$p:$p:ro")
+      added="$added:$p"
+    else
+      continue
+    fi
+    mounted=$((mounted + 1))
+  done < "$file"
+  [ $mounted -gt 0 ] || return 0
+  args+=(--user "$(id -u):$(id -g)" --env "LOCKSTEP_PROJECT_FOLDERS=$root$added")
+}
+
+require_install() {
+  [ -x "$install_dir/bin/lockstep" ] || { echo "scripts/service: not installed; run scripts/service install" >&2; exit 69; }
+}
+
+command=${1:-}
+[ -n "$command" ] || usage
+shift
+
+case "$command" in
+  install)
+    docker build --quiet --tag "$image" . >/dev/null
+    mkdir -p "$install_dir/bin"
+    docker run --rm --volume "$PWD:/work" --volume lockstep-stack-root:/stack-root --workdir /work "$image" \
+      sh -c "stack build --copy-bins --local-bin-path '$install_dir/bin' >/dev/null 2>&1"
+    commit=$(git rev-parse HEAD)
+    dirty=false
+    [ -z "$(git status --porcelain)" ] || dirty=true
+    digest=$(shasum -a 256 "$install_dir/bin/lockstep" | cut -d' ' -f1)
+    printf 'commit %s\ndirty %s\nsha256 %s\ninstalled_at %s\n' "$commit" "$dirty" "$digest" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$install_dir/VERSION"
+    cat "$install_dir/VERSION"
+    ;;
+
+  start)
+    require_install
+    port=8000
+    case "${1:-}" in
+      --port) port=${2:?--port needs a value} ;;
+      --port=*) port=${1#--port=} ;;
+      "") ;;
+      *) usage ;;
+    esac
+    if docker container inspect "$name" >/dev/null 2>&1; then
+      echo "scripts/service: $name already exists; use stop or restart" >&2
+      exit 75
+    fi
+    if curl -s -o /dev/null "http://127.0.0.1:$port/api/health_check"; then
+      echo "scripts/service: something already answers on 127.0.0.1:$port; pass --port N" >&2
+      exit 75
+    fi
+    args=()
+    while IFS= read -r a; do args+=("$a"); done < <(run_args)
+    docker run --detach --name "$name" --stop-timeout 10 "${args[@]}" "$image" \
+      /opt/lockstep/bin/lockstep serve --port "$port" >/dev/null
+    for _ in $(seq 1 50); do
+      if curl -s -o /dev/null "http://127.0.0.1:$port/api/health_check"; then
+        echo "started $name: http://127.0.0.1:$port/ ($(sed -n 's/^commit //p' "$install_dir/VERSION"))"
+        exit 0
+      fi
+      sleep 0.2
+    done
+    echo "scripts/service: $name did not answer on 127.0.0.1:$port; see scripts/service logs" >&2
+    exit 1
+    ;;
+
+  stop)
+    if docker container inspect "$name" >/dev/null 2>&1; then
+      docker stop --time 10 "$name" >/dev/null
+      code=$(docker container inspect --format '{{.State.ExitCode}}' "$name")
+      docker logs "$name" > "$install_dir/last-run.log" 2>&1 || true
+      docker rm "$name" >/dev/null
+      echo "stopped $name (exit $code); log saved to $install_dir/last-run.log"
+    else
+      echo "$name is not running"
+    fi
+    ;;
+
+  restart)
+    "$0" stop
+    "$0" start "$@"
+    ;;
+
+  status)
+    if docker container inspect "$name" >/dev/null 2>&1; then
+      echo "$name: $(docker container inspect --format '{{.State.Status}} since {{.State.StartedAt}}' "$name")"
+    else
+      echo "$name: not running"
+    fi
+    [ -f "$install_dir/VERSION" ] && sed 's/^/installed /' "$install_dir/VERSION"
+    ;;
+
+  logs)
+    docker logs "$name"
+    ;;
+
+  cli)
+    require_install
+    args=()
+    while IFS= read -r a; do args+=("$a"); done < <(run_args)
+    # C-P2.3: standard input reaches the CLI when it is not a terminal (profile add -).
+    if [ -t 0 ]; then
+      docker run --rm "${args[@]}" "$image" /opt/lockstep/bin/lockstep "$@"
+    else
+      docker run --rm --interactive "${args[@]}" "$image" /opt/lockstep/bin/lockstep "$@"
+    fi
+    ;;
+
+  open)
+    # C-OPEN O2: every failure is typed and no output ever contains the link.
+    port=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --port)
+          [ $# -ge 2 ] || usage
+          port=$2
+          shift 2
+          ;;
+        --port=*)
+          port=${1#--port=}
+          shift
+          ;;
+        *) usage ;;
+      esac
+    done
+    if [ -n "$port" ]; then
+      case "$port" in
+        *[!0-9]* | "") usage ;;
+      esac
+      [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || usage
+    fi
+    require_install
+    host_config_path >/dev/null
+    args=()
+    while IFS= read -r a; do args+=("$a"); done < <(run_args)
+    # The database must be ready before anything is started.
+    readiness=$(docker run --rm --log-driver none "${args[@]}" "$image" /opt/lockstep/bin/lockstep db status 2>/dev/null | sed -n '1p' || true)
+    case "$readiness" in
+      "readiness ready"*) ;;
+      *)
+        echo "scripts/service open: the database is not ready (${readiness:-no answer}); see scripts/db status and scripts/service cli db migrate" >&2
+        exit 69
+        ;;
+    esac
+    if docker container inspect "$name" >/dev/null 2>&1; then
+      if [ "$(docker container inspect --format '{{.State.Running}}' "$name")" != true ]; then
+        echo "scripts/service open: $name exists but is not running; see scripts/service logs, then scripts/service restart" >&2
+        exit 69
+      fi
+      running_port=$(docker container inspect --format '{{range .Args}}{{.}} {{end}}' "$name" | sed -n 's/.*--port \([0-9][0-9]*\).*/\1/p')
+      running_port=${running_port:-8000}
+      if [ -n "$port" ] && [ "$port" != "$running_port" ]; then
+        echo "scripts/service open: $name is running on port $running_port, not $port" >&2
+        exit 75
+      fi
+      port=$running_port
+    else
+      port=${port:-8000}
+      "$0" start --port "$port" >/dev/null || {
+        echo "scripts/service open: the service did not start on port $port" >&2
+        exit 69
+      }
+    fi
+    if [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/health_check")" != 204 ]; then
+      echo "scripts/service open: the service does not answer on 127.0.0.1:$port" >&2
+      exit 69
+    fi
+    # The one-time link: issued by the installed CLI, kept out of the Docker log,
+    # held only in this variable and handed to the launcher (C-OPEN O5).
+    link=$(docker run --rm --log-driver none "${args[@]}" "$image" /opt/lockstep/bin/lockstep operator sign-in --port "$port" 2>/dev/null) || {
+      echo "scripts/service open: a sign-in link could not be issued" >&2
+      exit 70
+    }
+    if [[ ! "$link" =~ ^http://127\.0\.0\.1:$port/operator/sign-in\?token=[A-Za-z0-9_-]{43}$ ]]; then
+      link=""
+      echo "scripts/service open: the sign-in command answered unexpectedly" >&2
+      exit 70
+    fi
+    if [ -n "${LOCKSTEP_BROWSER:-}" ]; then
+      launcher=$LOCKSTEP_BROWSER
+    elif [ "$(uname -s)" = Darwin ]; then
+      launcher=open
+    else
+      launcher=xdg-open
+    fi
+    if ! command -v "$launcher" >/dev/null 2>&1; then
+      echo "scripts/service open: no browser launcher ($launcher); set LOCKSTEP_BROWSER to a command that opens a URL" >&2
+      exit 70
+    fi
+    # The launcher's own output is discarded: an error message may repeat the link.
+    if ! "$launcher" "$link" >/dev/null 2>&1; then
+      link=""
+      echo "scripts/service open: the browser launcher ($launcher) failed; the unused link expires within 5 minutes" >&2
+      exit 70
+    fi
+    link=""
+    echo "opened the sign-in page of http://127.0.0.1:$port/ in the browser: press Sign in (one-time link, valid 5 minutes)"
+    ;;
+
+  *)
+    usage
+    ;;
+esac

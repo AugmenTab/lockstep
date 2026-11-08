@@ -1,0 +1,293 @@
+#!/usr/bin/env bash
+# Verification of the container runner on the host (C-P4.2 §3, R3; DG-17 D-17.1(a)).
+# Needs Docker and the dev image (lockstep-dev:p1, built by scripts/check). Starts
+# the real scripts/control-helper with --runner on a disposable state directory
+# (.local/runner-check-<stamp>, instance p42r, test limits: 6 s, 64 KiB stdout,
+# 16 KiB stderr), signs requests as the service would, and checks what a run can
+# and cannot do. Touches nothing of the operator's installation; removes its state
+# and containers at the end. Results: .local/evidence/runner-<stamp>/results.txt
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+root=$PWD
+
+instance=p42r
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+state=$root/.local/runner-check-$stamp
+work=.local/evidence/runner-$stamp
+mkdir -p "$work"
+results=$work/results.txt
+: > "$results"
+failures=0
+prefix=lockstep-run-$instance-
+
+record() { # STATUS DESCRIPTION
+  printf '%s %s\n' "$1" "$2" | tee -a "$results"
+  if [ "$1" != PASS ]; then failures=$((failures + 1)); fi
+}
+expect() { # DESCRIPTION CONDITION...
+  local description=$1
+  shift
+  if "$@"; then record PASS "$description"; else record FAIL "$description"; fi
+}
+
+if ! docker image inspect lockstep-dev:p1 >/dev/null 2>&1; then
+  echo "NOT_RUN: the image lockstep-dev:p1 is missing; run scripts/check first" >&2
+  exit 2
+fi
+image_id=$(docker image inspect --format '{{.Id}}' lockstep-dev:p1)
+
+helper_pid=""
+cleanup() {
+  [ -n "$helper_pid" ] && kill "$helper_pid" 2>/dev/null && wait "$helper_pid" 2>/dev/null
+  docker ps -aq --filter "name=^$prefix" | while read -r c; do docker rm -f "$c" >/dev/null 2>&1 || true; done
+  [ -d "$state/helper" ] && cp "$state/helper/helper.log" "$work/helper.log" 2>/dev/null
+  [ -d "$state/helper" ] && cp "$state/helper/runner-journal" "$work/runner-journal" 2>/dev/null
+  rm -rf "$state"
+}
+trap cleanup EXIT
+
+umask 077
+mkdir -p "$state/helper" "$state/pane"
+chmod 700 "$state" "$state/helper" "$state/pane"
+head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$state/helper/channel.key"
+LOCKSTEP_RUNNER_TEST_LIMITS=1 LOCKSTEP_CANARY=canary-must-not-leak \
+  "$root/scripts/control-helper" --state "$state" --instance "$instance" --runner \
+  < /dev/null > "$work/helper.out" 2>&1 &
+helper_pid=$!
+for _ in $(seq 1 100); do
+  [ -s "$state/runner/channel.key" ] && break
+  sleep 0.1
+done
+[ -s "$state/runner/channel.key" ] || { echo "the helper did not make the runner key" >&2; cat "$work/helper.out" >&2; exit 1; }
+key=$(head -c 64 "$state/runner/channel.key")
+
+# HMAC-SHA256 exactly as the helper computes it.
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256() { sha256sum | cut -d ' ' -f 1; }
+else
+  sha256() { shasum -a 256 | cut -d ' ' -f 1; }
+fi
+ipad=""
+opad=""
+i=0
+while [ $i -lt 64 ]; do
+  if [ $i -lt 32 ]; then b=$((16#${key:$((i * 2)):2})); else b=0; fi
+  ipad="$ipad$(printf '\\x%02x' $((b ^ 0x36)))"
+  opad="$opad$(printf '\\x%02x' $((b ^ 0x5c)))"
+  i=$((i + 1))
+done
+hex_escapes() {
+  local hex=$1 out="" j=0
+  while [ $j -lt ${#hex} ]; do out="$out\\x${hex:$j:2}"; j=$((j + 2)); done
+  printf '%s' "$out"
+}
+hmac() {
+  local inner
+  inner=$({ printf "$ipad"; cat; } | sha256)
+  { printf "$opad"; printf "$(hex_escapes "$inner")"; } | sha256
+}
+
+new_id() { head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+
+# prepare RUN ARGV... : a run directory with an empty tree and the argument vector
+prepare() {
+  local run=$1 dir
+  shift
+  dir=$state/runner/work/$run
+  mkdir -p "$dir/tree" "$dir/input" "$dir/output"
+  : > "$dir/argv"
+  for a in "$@"; do printf '%s\0' "$a" >> "$dir/argv"; done
+}
+
+# request ID OP RUN [ARGV-SHA] [ISSUED] [MAC-OVERRIDE]: writes a signed request
+request() {
+  local id=$1 op=$2 run=$3 sha=${4:-} issued=${5:-$(date +%s)} mac_override=${6:-} body tmp
+  if [ -z "$sha" ]; then sha=$(sha256 < "$state/runner/work/$run/argv"); fi
+  body=$(printf 'lockstep-runner-request 1\nid %s\nissued %s\nop %s\nexpect run-%s\nargv %s\n' "$id" "$issued" "$op" "$run" "$sha")
+  tmp=$state/runner/requests/.$id
+  printf '%s\n' "$body" > "$tmp"
+  printf 'mac %s\n' "${mac_override:-$(printf '%s\n' "$body" | hmac)}" >> "$tmp"
+  mv "$tmp" "$state/runner/requests/$id.rreq"
+}
+
+# wait_result ID [SECONDS]: sets res (the result file) or fails
+wait_result() {
+  local id=$1 limit=${2:-30} n=0
+  res=$state/runner/results/$id.res
+  while [ ! -f "$res" ] && [ $n -lt $((limit * 10)) ]; do sleep 0.1; n=$((n + 1)); done
+  [ -f "$res" ]
+}
+field() { sed -n "s/^$1 //p" "$res" | head -n 1; }
+fieldline() { sed -n "s/^field $1 //p" "$res" | head -n 1; }
+signed() {
+  local mac
+  mac=$(field mac)
+  [ "$(head -n "$(($(wc -l < "$res") - 1))" "$res" | hmac)" = "$mac" ]
+}
+out_of() { cat "$state/runner/work/$1/stdout"; }
+
+# run_probe OP ARGV... : runs and waits; sets id, run, res
+run_probe() {
+  local op=$1
+  shift
+  run=$(new_id)
+  id=$(new_id)
+  prepare "$run" "$@"
+  request "$id" "$op" "$run"
+  wait_result "$id" 40
+}
+gone() { [ -z "$(docker ps -aq --filter "name=^$prefix$1")" ]; }
+
+# 1 a run reports its exit code and both streams, signed, with the pinned image
+run_probe run-readonly /bin/sh -c 'echo hi; echo err >&2; exit 3'
+expect "result is signed with the runner key" signed
+expect "exit code 3 is reported as exited 3" test "$(field outcome) $(fieldline exit)" = "exited 3"
+expect "standard output is captured" test "$(out_of "$run")" = hi
+expect "standard error is captured" test "$(cat "$state/runner/work/$run/stderr")" = err
+expect "the pinned image is the one that ran" test "$(fieldline image)" = "$image_id"
+expect "the stdout digest matches the file" test "$(fieldline stdout-sha256)" = "$(sha256 < "$state/runner/work/$run/stdout")"
+expect "the container is removed" gone "$run"
+
+# 2 no network: only the loopback interface, and no outside connection
+run_probe run-verify /bin/sh -c 'ls /sys/class/net'
+expect "only the loopback interface exists" test "$(out_of "$run")" = lo
+run_probe run-verify python3 -c 'import socket; socket.create_connection(("1.1.1.1", 53), 3)'
+expect "an outside connection fails" test "$(field outcome)" = exited -a "$(fieldline exit)" != 0
+
+# 3 read-only root filesystem; the home and the Docker socket are not there
+run_probe run-write /bin/sh -c 'touch /etc/lockstep-probe 2>/dev/null && echo wrote || echo refused'
+expect "the root filesystem is read-only" test "$(out_of "$run")" = refused
+run_probe run-write /bin/sh -c 'test -e /var/run/docker.sock && echo socket || echo none; test -e "$1" && echo home || echo none' probe "$HOME"
+expect "no Docker socket and no host home" test "$(out_of "$run" | tr '\n' ' ')" = "none none "
+
+# 4 not root, no capabilities, no privilege escalation
+run_probe run-write /bin/sh -c 'id -u; grep CapEff /proc/self/status | tr -s " \t" " "; grep NoNewPrivs /proc/self/status | tr -s " \t" " "'
+expect "runs as the invoking user, not root" test "$(out_of "$run" | sed -n 1p)" = "$(id -u)"
+expect "no effective capabilities" test "$(out_of "$run" | sed -n 2p)" = "CapEff: 0000000000000000"
+expect "no new privileges" test "$(out_of "$run" | sed -n 3p)" = "NoNewPrivs: 1"
+
+# 5 the environment: the fixed variables and the image's own, nothing from the host
+run_probe run-readonly /usr/bin/env
+image_env=$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' lockstep-dev:p1 | cut -d = -f 1)
+leaked=""
+while IFS= read -r line; do
+  name=${line%%=*}
+  case " HOME PATH LANG LC_ALL TZ HOSTNAME $(echo $image_env) " in
+    *" $name "*) ;;
+    *) leaked="$leaked $name" ;;
+  esac
+done < "$state/runner/work/$run/stdout"
+expect "no variable from the host reaches the run (found:${leaked:- none})" test -z "$leaked"
+expect "the canary of the helper's environment is absent" test -z "$(grep canary-must-not-leak "$state/runner/work/$run/stdout" || true)"
+expect "HOME is the private temporary directory" grep -qx 'HOME=/tmp' "$state/runner/work/$run/stdout"
+
+# 6 the tree: read-only for a read-only role, writable for the Implementer, no .git
+run=$(new_id); id=$(new_id)
+prepare "$run" /bin/sh -c 'echo changed > a.txt 2>/dev/null && echo wrote || echo refused; ls -a'
+echo original > "$state/runner/work/$run/tree/a.txt"
+request "$id" run-readonly "$run"; wait_result "$id" 40
+expect "a read-only role cannot change the tree" test "$(out_of "$run" | sed -n 1p)" = refused
+expect "the host file is unchanged" test "$(cat "$state/runner/work/$run/tree/a.txt")" = original
+expect "the snapshot has no .git" test -z "$(out_of "$run" | grep -x .git || true)"
+run=$(new_id); id=$(new_id)
+prepare "$run" /bin/sh -c 'echo changed > a.txt && echo wrote'
+echo original > "$state/runner/work/$run/tree/a.txt"
+request "$id" run-write "$run"; wait_result "$id" 40
+expect "the Implementer can change the tree" test "$(cat "$state/runner/work/$run/tree/a.txt")" = changed
+
+# 7 protected files are read-only even in a writable tree
+run=$(new_id); id=$(new_id)
+prepare "$run" /bin/sh -c 'echo forged > tests/t.py 2>/dev/null && echo wrote || echo refused; rm -f tests/t.py 2>/dev/null && echo removed || echo kept'
+mkdir -p "$state/runner/work/$run/tree/tests"
+echo 'frozen' > "$state/runner/work/$run/tree/tests/t.py"
+printf 'tests/t.py\n' > "$state/runner/work/$run/protected"
+request "$id" run-write "$run"; wait_result "$id" 40
+expect "a protected file cannot be written or removed" test "$(out_of "$run" | tr '\n' ' ')" = "refused kept "
+expect "the protected file is unchanged on the host" test "$(cat "$state/runner/work/$run/tree/tests/t.py")" = frozen
+
+# 8 bounded processes
+run_probe run-write /bin/sh -c 'for i in $(seq 1 400); do sleep 4 & echo $i; done'
+started=$(out_of "$run" | tail -n 1)
+expect "no more than 256 processes (started: ${started:-?})" test "${started:-400}" -lt 400
+
+# 9 the wall clock: timed-out, and the container is gone
+t0=$(date +%s)
+run_probe run-verify /bin/sleep 60
+t1=$(date +%s)
+expect "a run past its wall clock is timed-out" test "$(field outcome)" = timed-out
+expect "it ended within 20 s ($((t1 - t0)) s)" test $((t1 - t0)) -lt 20
+expect "the timed-out container is gone" gone "$run"
+
+# 10 too much output: output-limit, the first bytes kept
+run_probe run-verify /usr/bin/yes
+expect "too much output is output-limit" test "$(field outcome)" = output-limit
+expect "the kept output is exactly the limit" test "$(wc -c < "$state/runner/work/$run/stdout" | tr -d ' ')" = 65536
+expect "the container that printed too much is gone" gone "$run"
+
+# 11 cancellation, and one run at a time
+run=$(new_id); id=$(new_id)
+prepare "$run" /bin/sleep 60
+request "$id" run-verify "$run"
+sleep 1.5
+busy_run=$(new_id); busy_id=$(new_id)
+prepare "$busy_run" /bin/true
+request "$busy_id" run-verify "$busy_run"
+cancel_id=$(new_id)
+request "$cancel_id" cancel-run "$run" none
+wait_result "$busy_id" 10 && expect "a second run while one runs is refused: busy" test "$(field outcome) $(field reason)" = "refused busy"
+wait_result "$cancel_id" 10 && expect "the cancel request is accepted" test "$(field outcome)" = ok
+wait_result "$id" 20 && expect "the cancelled run reports cancelled" test "$(field outcome)" = cancelled
+expect "the cancelled container is gone" gone "$run"
+
+# 12 refusals: nothing runs
+refused_with() { # ID REASON
+  wait_result "$1" 10 && [ "$(field outcome) $(field reason)" = "refused $2" ]
+}
+run=$(new_id); id=$(new_id); prepare "$run" /bin/true
+request "$id" run-verify "$run" "" "" 0000000000000000000000000000000000000000000000000000000000000000
+expect "a bad MAC is refused" refused_with "$id" bad-mac
+run=$(new_id); id=$(new_id); prepare "$run" /bin/true
+request "$id" run-verify "$run" "" $(($(date +%s) - 600))
+expect "a stale request is refused" refused_with "$id" stale
+run=$(new_id); id=$(new_id); prepare "$run" /bin/true
+request "$id" run-privileged "$run"
+expect "an unknown operation is refused" refused_with "$id" unknown-op
+run=$(new_id); id=$(new_id)
+request "$id" run-verify "$run" 0000000000000000000000000000000000000000000000000000000000000000
+expect "a missing run directory is refused" refused_with "$id" run-missing
+run=$(new_id); id=$(new_id); mkdir -p "$state/elsewhere/tree" "$state/elsewhere/input" "$state/elsewhere/output"
+ln -s "$state/elsewhere" "$state/runner/work/$run"
+request "$id" run-verify "$run" 0000000000000000000000000000000000000000000000000000000000000000
+expect "a run directory that is a symlink is refused" refused_with "$id" run-missing
+run=$(new_id); id=$(new_id); prepare "$run" /bin/true
+request "$id" run-verify "$run" 1111111111111111111111111111111111111111111111111111111111111111
+expect "an argument vector that does not match its digest is refused" refused_with "$id" argv-mismatch
+run=$(new_id); id=$(new_id); prepare "$run" /bin/true
+printf '../outside\n' > "$state/runner/work/$run/protected"
+request "$id" run-write "$run"
+expect "a protected path with .. is refused" refused_with "$id" protected-invalid
+run=$(new_id); id=$(new_id); prepare "$run" /bin/true
+mkdir -p "$state/runner/work/$run/tree"; ln -s /etc "$state/runner/work/$run/tree/link"
+printf 'link/passwd\n' > "$state/runner/work/$run/protected"
+request "$id" run-write "$run"
+expect "a protected path through a symlink is refused" refused_with "$id" protected-invalid
+id=$(new_id)
+tmp=$state/runner/requests/.x
+printf 'lockstep-runner-request 1\nid %s\nissued %s\nop run-verify\nexpect run-../../etc\nargv none\n' "$id" "$(date +%s)" > "$tmp"
+printf 'mac %s\n' "$(head -n 6 "$tmp" | hmac)" >> "$tmp"
+mv "$tmp" "$state/runner/requests/$id.rreq"
+expect "a run name that is not 32 hex characters is refused" refused_with "$id" bad-expect
+# a replay of an accepted request runs nothing again
+run=$(new_id); id=$(new_id); prepare "$run" /bin/sh -c 'echo once >> /output/count'
+request "$id" run-write "$run"; wait_result "$id" 40
+cp "$res" "$work/first.res"
+rm -f "$res"
+issued=$(date +%s)
+body=$(printf 'lockstep-runner-request 1\nid %s\nissued %s\nop run-write\nexpect run-%s\nargv %s\n' "$id" "$issued" "$run" "$(sha256 < "$state/runner/work/$run/argv")")
+printf '%s\nmac %s\n' "$body" "$(printf '%s\n' "$body" | hmac)" > "$state/runner/requests/.r"
+mv "$state/runner/requests/.r" "$state/runner/requests/$id.rreq"
+sleep 3
+expect "a replayed request runs nothing and writes no result" test ! -e "$state/runner/results/$id.res" -a "$(wc -l < "$state/runner/work/$run/output/count" | tr -d ' ')" = 1
+
+echo "check-runner: $failures failure(s); results in $results"
+[ "$failures" = 0 ]
