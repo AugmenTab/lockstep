@@ -71,6 +71,7 @@ module Lockstep.Application.Ledger
 
 import Control.Exception (Exception, SomeException, throwIO, try)
 import Control.Monad (filterM, foldM, unless)
+import Data.Bits (toIntegralSized)
 import Data.Char qualified as Char
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List qualified as L
@@ -122,6 +123,7 @@ import Lockstep.Kernel.EventCodec
   , encodeWorkOrderEvent
   , parsePrincipal
   , principalName
+  , workOrderCreatedText
   )
 import Lockstep.Kernel.Identity (EngineerId (..), RepositoryId (..), TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..), parseUuid, uuidText)
 import Lockstep.Kernel.KeyLifetime (idempotencyHolds)
@@ -324,9 +326,24 @@ oid :: OperationId -> T.Text
 oid (OperationId u) =
   uuidText u
 
+{- | Narrowing for an @integer@ column. Every caller-supplied value passes
+'withinInteger' at its entry point first, and every other value comes from an
+@integer@ column (plus one, for a next revision), so the value is in range.
+-}
 int32 :: Int -> Int32
 int32 =
   fromIntegral
+
+{- | A caller's revision or generation is checked against PostgreSQL's
+@integer@ range ('toIntegralSized') before anything is read or written: out
+of range it is refused (@revision-out-of-range@, as decisions refuse it), so
+a stored refusal or observation never records a wrapped value.
+-}
+withinInteger :: Applicative f => Int -> f (Either LedgerFailure a) -> f (Either LedgerFailure a)
+withinInteger n action =
+  case toIntegralSized n :: Maybe Int32 of
+    Just _ -> action
+    Nothing -> pure (refused (T.pack "revision-out-of-range") "a revision or generation is outside the range of a stored integer")
 
 -- Tickets --------------------------------------------------------------------
 
@@ -458,7 +475,7 @@ decideTicketIn =
   decideTicketWith (pure ())
 
 decideTicketWith :: O.Orville () -> TicketId -> Int -> Command TicketInput -> O.Orville (Either LedgerFailure Receipt)
-decideTicketWith afterEvent t expected command@(Command principal input) = do
+decideTicketWith afterEvent t expected command@(Command principal input) = withinInteger expected $ do
   loaded <- loadTicket (tid t)
   case loaded of
     Left failure -> pure (Left failure)
@@ -483,7 +500,7 @@ decideTicketWith afterEvent t expected command@(Command principal input) = do
 
 reviseTicket :: DatabaseRuntime -> TicketId -> Int -> T.Text -> IO (Either LedgerFailure Receipt)
 reviseTicket runtime t expected title =
-  transaction runtime $ \_ -> do
+  withinInteger expected . transaction runtime $ \_ -> do
     loaded <- loadTicket (tid t)
     case loaded of
       Left failure -> pure (Left failure)
@@ -616,7 +633,7 @@ createWorkOrderIn u request = do
                       , Store.workOrderRowEffectiveDigest = contentDigestText (effectiveDigest effective)
                       , Store.workOrderRowBindingDigest = contentDigestText (bindingDigest binding)
                       }
-                  _ <- Store.insertEvent text (Store.EventRow 1 (principalName Human) createCommand state)
+                  _ <- Store.insertEvent text (Store.EventRow 1 (principalName Human) workOrderCreatedText state)
                   traverse_
                     (\(position, (level, ref)) -> Store.insertSource text position (Store.SourceRow level (profileIdText (refId ref)) (int32 (refVersion ref)) (contentDigestText (refDigest ref))))
                     (L.zip [1 ..] sources)
@@ -633,10 +650,6 @@ createWorkOrderIn u request = do
     binding <- bindingFor (WorkOrderId u) effective
     sources <- storedSources effective
     pure (effective, binding, sources)
-
-createCommand :: T.Text
-createCommand =
-  fromRight (T.pack "create") (encodeWorkOrderEvent WorkOrderCreated)
 
 bindingFor :: WorkOrderId -> EffectiveProfile -> Either LedgerFailure ProfileBinding
 bindingFor w effective =
@@ -787,7 +800,7 @@ intentsPermitted (Command principal input) =
       _ -> False
 
 decideWorkOrder :: DatabaseRuntime -> Faults -> WorkOrderId -> Int -> Command WorkOrderInput -> [IntentRequest] -> IO (Either LedgerFailure Receipt)
-decideWorkOrder runtime faults w expected command@(Command principal input) requests = do
+decideWorkOrder runtime faults w expected command@(Command principal input) requests = withinInteger expected $ do
   operations <- traverse (const (fmap OperationId newUuid)) requests
   transaction runtime $ \run -> do
     loaded <- lockWorkOrder w
@@ -1333,13 +1346,13 @@ claimIntent runtime owner seconds operation
 
 dispatchIntent :: DatabaseRuntime -> OperationId -> Int -> IO (Either LedgerFailure Intent)
 dispatchIntent runtime operation generation =
-  transaction runtime $ \_ ->
+  withinInteger generation . transaction runtime $ \_ ->
     stepStored operation (Command Supervisor . IntentDispatch generation)
 
 -- | E4: a stale observation is refused for the state but stored as evidence.
 observeIntent :: DatabaseRuntime -> OperationId -> Int -> Observation -> IO (Either LedgerFailure Intent)
 observeIntent runtime operation generation observation =
-  transaction runtime $ \_ -> do
+  withinInteger generation . transaction runtime $ \_ -> do
     result <- stepStored operation (const (Command Supervisor (IntentObserve generation observation)))
     case result of
       Right intent -> do
@@ -1368,7 +1381,7 @@ observationText observation =
 
 settleIntent :: DatabaseRuntime -> OperationId -> Int -> IO (Either LedgerFailure Intent)
 settleIntent runtime operation generation =
-  transaction runtime $ \_ ->
+  withinInteger generation . transaction runtime $ \_ ->
     stepStored operation (const (Command Supervisor (IntentSettle generation)))
 
 {- | DG-04 D-4.6 (C-P2.9-R1 M4): a Human abandons the intent, the decision is
@@ -1554,13 +1567,13 @@ claimForExecution runtime owner seconds operation
 -- | X5 step (3): the dispatch marker, committed before the adapter runs.
 beginDispatch :: DatabaseRuntime -> OperationId -> Int -> IO (Either LedgerFailure Intent)
 beginDispatch runtime operation generation =
-  transaction runtime $ \_ ->
+  withinInteger generation . transaction runtime $ \_ ->
     stepForActive operation Nothing (Command Supervisor . IntentDispatch generation)
 
 -- | C-P2.9-R1 M6: the dispatch marker with the lease renewed for the given seconds.
 beginDispatchLeased :: DatabaseRuntime -> OperationId -> Int -> Int -> IO (Either LedgerFailure Intent)
 beginDispatchLeased runtime operation generation seconds =
-  transaction runtime $ \_ ->
+  withinInteger generation . transaction runtime $ \_ ->
     stepForActive operation (Just seconds) (Command Supervisor . IntentDispatch generation)
 
 -- | X6: a halt of the order by the Supervisor, when its lifecycle accepts one.
@@ -1586,7 +1599,7 @@ unknown outcome or an exhausted budget.
 -}
 concludeIntent :: DatabaseRuntime -> OperationId -> Int -> Observation -> IO (Either LedgerFailure Intent)
 concludeIntent runtime operation generation observation =
-  transaction runtime $ \_ -> do
+  withinInteger generation . transaction runtime $ \_ -> do
     locked <- lockForExecution operation
     case locked of
       Left failure -> pure (Left failure)
@@ -1732,7 +1745,7 @@ prepareLookup runtime operation =
 -- | R4: the lookup's result, under the generation it was made against, with its record.
 applyLookup :: DatabaseRuntime -> OperationId -> Int -> LookupResult -> IO (Either LedgerFailure Intent)
 applyLookup runtime operation generation result =
-  transaction runtime $ \_ -> do
+  withinInteger generation . transaction runtime $ \_ -> do
     locked <- lockForExecution operation
     case locked of
       Left failure -> pure (Left failure)
@@ -1768,7 +1781,7 @@ applyLookup runtime operation generation result =
 -- | R5, R6: a Human's resolution of an unknown outcome, recorded apart from observations.
 resolveOutcome :: DatabaseRuntime -> OperationId -> Int -> Resolution -> IO (Either LedgerFailure Intent)
 resolveOutcome runtime operation generation resolution =
-  transaction runtime $ \_ -> do
+  withinInteger generation . transaction runtime $ \_ -> do
     locked <- lockForExecution operation
     case locked of
       Left failure -> pure (Left failure)

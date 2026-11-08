@@ -26,7 +26,7 @@ module Lockstep.Application.Projects
 import Control.Applicative ((<|>))
 import Control.Monad (filterM)
 import Data.List qualified as L
-import Data.Maybe (fromMaybe, isJust, isNothing)
+import Data.Maybe (isJust, isNothing)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
@@ -49,13 +49,11 @@ import Lockstep.Kernel.Project
   , engineerNameFor
   , mkProjectName
   , mkProjectOutcome
-  , parseSetupState
   , projectNameText
   , projectOutcomeText
   , projectRequestText
   , projectSlug
   , ruleErrorCode
-  , setupStateCode
   , slugCandidate
   )
 import Lockstep.Persistence.Projects qualified as Store
@@ -121,7 +119,7 @@ viewOf row =
     { projectId = Store.rowId row
     , projectName = Store.rowName row
     , projectOutcome = Store.rowOutcome row
-    , projectSetup = fromMaybe Organized (parseSetupState (Store.rowSetup row))
+    , projectSetup = Store.rowSetup row
     , projectRefusal = Store.rowRefusal row
     , projectFolder = Store.rowFolder row
     , projectEngineer = Store.rowEngineerName row
@@ -309,7 +307,7 @@ connectIn view slug path first fallback = do
 -- | Records the attempt at the revision it was read at; the new state.
 recordIn :: ProjectView -> SetupState -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> O.Orville (Either T.Text ProjectView)
 recordIn view setup refusal folder engineer repository = do
-  updated <- Store.updateProjectSetup (projectId view) (projectRevision view) (setupStateCode setup) refusal folder engineer repository
+  updated <- Store.updateProjectSetup (projectId view) (projectRevision view) setup refusal folder engineer repository
   if updated
     then maybe (Left (T.pack "unknown-project")) (Right . viewOf) <$> Store.findProjectById (projectId view)
     else pure (Left (T.pack "stale-revision"))

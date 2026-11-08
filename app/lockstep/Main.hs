@@ -36,16 +36,17 @@ import Lockstep.Application.Command
 import Lockstep.Application.Database
   ( DatabaseRuntime
   , MigrateError (..)
+  , MigrateReport (..)
   , NotReadyReason
   , Readiness (..)
   , SchemaStatus (..)
   , checkReadiness
   , closeDatabase
-  , migrateWithPolicy
+  , migrateWithPolicyReporting
   , openDatabase
   , readinessCode
   , recordServiceStart
-  , renderMigrateError
+  , renderMigrateReport
   , revisionNumber
   , schemaStatus
   )
@@ -315,15 +316,15 @@ engineWorker runtime logLine = do
 
 dbMigrate :: BackupPolicy -> DatabaseRuntime -> IO ()
 dbMigrate policy runtime = do
-  result <- migrateWithPolicy policy migrations runtime
+  result <- migrateWithPolicyReporting policy migrations runtime
   case result of
     Right [] ->
       putStrLn "nothing to apply: the database is at this binary's schema revision"
     Right applied ->
       putStrLn ("applied migrations: " <> L.intercalate ", " (fmap (show . revisionNumber) applied))
-    Left err -> do
-      hPutStrLn stderr ("lockstep: " <> renderMigrateError err)
-      exitWith (ExitFailure (migrateExitCode err))
+    Left report -> do
+      hPutStrLn stderr ("lockstep: " <> renderMigrateReport report)
+      exitWith (ExitFailure (migrateExitCode (reportError report)))
 
 -- | sysexits-style codes for the db migrate refusals.
 migrateExitCode :: MigrateError -> Int

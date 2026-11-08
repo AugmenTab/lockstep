@@ -9,6 +9,7 @@ module Lockstep.Kernel.EventCodec
   , parsePrincipal
   , WorkOrderEvent (..)
   , TicketEvent (..)
+  , workOrderCreatedText
   , encodeWorkOrderEvent
   , decodeWorkOrderEvent
   , encodeTicketEvent
@@ -59,10 +60,15 @@ notDurable what =
 
 -- Encoding -------------------------------------------------------------------
 
+-- | The creation event's text: the one encoding that cannot be refused.
+workOrderCreatedText :: T.Text
+workOrderCreatedText =
+  T.pack "create"
+
 encodeWorkOrderEvent :: WorkOrderEvent -> Either T.Text T.Text
 encodeWorkOrderEvent event =
   case event of
-    WorkOrderCreated -> Right (T.pack "create")
+    WorkOrderCreated -> Right workOrderCreatedText
     WorkOrderStep input ->
       case input of
         WoMarkEligible -> verb "mark-eligible" []

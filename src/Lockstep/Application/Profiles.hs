@@ -20,10 +20,8 @@ module Lockstep.Application.Profiles
   ) where
 
 import Control.Exception (IOException, throwIO, try)
-import Crypto.Hash (SHA256 (SHA256), hashWith)
 import Data.ByteString.Lazy qualified as LBS
 import Data.List qualified as L
-import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Flipstone.Prelude
@@ -40,19 +38,19 @@ import Lockstep.Application.Database
   , withDatabase
   )
 import Lockstep.Application.ProfileDocument (decodeProfileDocument)
+import Lockstep.Foundation.Digest (sha256Utf8)
 import Lockstep.Kernel.Profile
   ( Behaviour (..)
-  , ContentDigest
   , Hasher (..)
   , ProfileDefinition
   , ProfileRef (..)
   , ResolutionInput (..)
+  , contentDigestFromBytes
   , contentDigestText
   , definitionId
   , definitionVersion
   , effectiveDigest
   , mkClassTag
-  , mkContentDigest
   , mkNonBehaviouralBasis
   , mkProfileDefinition
   , mkWorkFacts
@@ -69,15 +67,12 @@ import Lockstep.Kernel.Transition (Principal (Human))
 import Lockstep.Kernel.WorkOrder (parseWorkOrderKind)
 import Lockstep.Persistence.Profiles qualified as Store
 
--- | SHA-256 of the UTF-8 text, as 64 lowercase hex characters.
+{- | SHA-256 of the UTF-8 text, as 64 lowercase hex characters: the digest's
+32 bytes through the explicit hex encoding, with no fallback.
+-}
 sha256Hasher :: Hasher
 sha256Hasher =
-  Hasher (digestOf . T.pack . show . hashWith SHA256 . TE.encodeUtf8)
-
--- | The 'show' of a SHA-256 digest is always 64 lowercase hex characters.
-digestOf :: T.Text -> ContentDigest
-digestOf text =
-  fromMaybe (digestOf (T.replicate 64 (T.pack "0"))) (mkContentDigest text)
+  Hasher (contentDigestFromBytes . sha256Utf8)
 
 data ProfileFailure
   = -- | A refusal: code, reason and the decision row when one was recorded (exit 65).

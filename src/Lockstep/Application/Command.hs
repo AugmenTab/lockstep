@@ -15,6 +15,7 @@ module Lockstep.Application.Command
   , generateIdempotencyKey
   , Revision (..)
   , revisionInt
+  , mkRevision
   , InvalidReason (..)
   , renderInvalidReason
   , OperatorCommand (..)
@@ -92,6 +93,7 @@ data InvalidReason
   | NameHasControl
   | KeyMalformed
   | RevisionNegative
+  | RevisionTooLarge
   | StepsOutOfRange
   | StepMillisOutOfRange
   | FailAtOutOfRange
@@ -105,6 +107,7 @@ renderInvalidReason reason =
     NameHasControl -> "the workspace name contains a control character"
     KeyMalformed -> "the idempotency key must be 16-64 characters of A-Z a-z 0-9 - _"
     RevisionNegative -> "the expected revision is negative"
+    RevisionTooLarge -> "the expected revision is larger than " <> show (maxBound :: Int64)
     StepsOutOfRange -> "steps must be 1-20"
     StepMillisOutOfRange -> "step milliseconds must be 0-5000"
     FailAtOutOfRange -> "the failure step must be between 1 and the number of steps"
@@ -160,6 +163,15 @@ revisionInt :: Revision -> Int64
 revisionInt (Revision n) =
   n
 
+{- | A caller-supplied expected revision: 0 to 'maxBound' 'Int64'. The range
+is checked on the 'Integer' before it is narrowed, so no value wraps.
+-}
+mkRevision :: Integer -> Either InvalidReason Revision
+mkRevision expected
+  | expected < 0 = Left RevisionNegative
+  | expected > toInteger (maxBound :: Int64) = Left RevisionTooLarge
+  | otherwise = Right (Revision (fromInteger expected))
+
 data OperatorCommand
   = RenameWorkspace WorkspaceName
   | QueueNoop NoopSpec
@@ -196,7 +208,7 @@ noopPayload spec =
 buildQueue :: Actor -> T.Text -> Integer -> Integer -> Integer -> Maybe Integer -> Either InvalidReason CommandEnvelope
 buildQueue actor keyText expected steps millis failAt = do
   key <- mkIdempotencyKey keyText
-  revision <- if expected < 0 then Left RevisionNegative else Right (Revision (fromInteger expected))
+  revision <- mkRevision expected
   stepsInt <- bounded StepsOutOfRange steps
   millisInt <- bounded StepMillisOutOfRange millis
   failInt <- traverse (bounded FailAtOutOfRange) failAt
@@ -231,10 +243,7 @@ buildRename :: Actor -> T.Text -> Integer -> T.Text -> Either InvalidReason Comm
 buildRename actor keyText expected nameText = do
   key <- mkIdempotencyKey keyText
   name <- mkWorkspaceName nameText
-  revision <-
-    if expected < 0
-      then Left RevisionNegative
-      else Right (Revision (fromInteger expected))
+  revision <- mkRevision expected
   pure (mkEnvelope actor key revision (RenameWorkspace name))
 
 -- | SHA-256 of the kind, expected revision and payload; not the actor (E3).

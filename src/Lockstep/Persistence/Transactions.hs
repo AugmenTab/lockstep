@@ -39,6 +39,7 @@ import Orville.PostgreSQL qualified as O
 import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
 
+import Lockstep.Kernel.Transaction (Stage, parseStage, stageName)
 import Lockstep.Persistence.Execution
   ( admissionIdField
   , admissionProjectField
@@ -53,6 +54,7 @@ import Lockstep.Persistence.Execution
   )
 import Lockstep.Persistence.Fields
   ( clockTimestamp
+  , codeField
   , forUpdate
   , headMay
   , joinedOn
@@ -76,7 +78,7 @@ data TransactionRow
   , txRowEngineer :: T.Text
   , txRowFolder :: T.Text
   , txRowState :: T.Text
-  , txRowStage :: T.Text
+  , txRowStage :: Stage
   , txRowHaltCode :: Maybe T.Text
   , txRowCandidates :: Int32
   , txRowAttempts :: Int32
@@ -187,9 +189,10 @@ txStateField :: O.FieldDefinition O.NotNull T.Text
 txStateField =
   O.unboundedTextField "state"
 
-txStageField :: O.FieldDefinition O.NotNull T.Text
+-- | The stage the transaction is or was last at; a code the Kernel does not know fails the read.
+txStageField :: O.FieldDefinition O.NotNull Stage
 txStageField =
-  O.unboundedTextField "stage"
+  codeField "transaction stage" stageName parseStage "stage"
 
 txHaltCodeField :: O.FieldDefinition O.Nullable (Maybe T.Text)
 txHaltCodeField =

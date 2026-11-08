@@ -60,9 +60,11 @@ import Lockstep.Kernel.Profile
   , profileRef
   , resolveProfile
   )
+import Lockstep.Kernel.Project (SetupState (Connected))
 import Lockstep.Kernel.Transition (Principal (Human))
 import Lockstep.Kernel.WorkOrder (WorkOrderKind (Engineering))
 import Lockstep.Persistence.Execution qualified as Store
+import Lockstep.Persistence.Integrity (integrityViolation)
 import Lockstep.Persistence.Profiles qualified as Profiles
 import Lockstep.Persistence.Projects qualified as Projects
 import Lockstep.Persistence.Tasks qualified as Tasks
@@ -201,8 +203,8 @@ writable folders row =
 -- | A connected project's folder, Engineer and repository; Nothing when it is not connected.
 connection :: Projects.ProjectRow -> O.Orville (Maybe (T.Text, T.Text, T.Text))
 connection row =
-  case (Projects.rowSetup row == T.pack "connected", Projects.rowFolder row, Projects.rowEngineerName row) of
-    (True, Just folder, Just engineer) -> fmap (\repository -> (folder, engineer, repository)) <$> Store.projectRepository (Projects.rowId row)
+  case (Projects.rowSetup row, Projects.rowFolder row, Projects.rowEngineerName row) of
+    (Connected, Just folder, Just engineer) -> fmap (\repository -> (folder, engineer, repository)) <$> Store.projectRepository (Projects.rowId row)
     _ -> pure Nothing
 
 {- | X2: which bug checks the current checks of a repository lack, resolved as
@@ -471,7 +473,8 @@ admitBug runtime folders key rawId expected
               Right _ -> do
                 let
                   workOrder = uuidText u
-                effective <- Store.workOrderEffectiveDigest workOrder
+                -- The work order was created in this transaction with its digest; none is an integrity violation, and the creation rolls back.
+                effective <- maybe (integrityViolation "a work order created in this transaction has no effective digest") pure =<< Store.workOrderEffectiveDigest workOrder
                 Store.insertAdmission
                   Store.AdmissionRow
                     { Store.admissionRowKey = keyText
@@ -479,7 +482,7 @@ admitBug runtime folders key rawId expected
                     , Store.admissionRowTask = tid
                     , Store.admissionRowProject = enablementProject enablement
                     , Store.admissionRowWorkOrder = workOrder
-                    , Store.admissionRowEffectiveDigest = fromMaybe T.empty effective
+                    , Store.admissionRowEffectiveDigest = effective
                     , Store.admissionRowActor = actor
                     , Store.admissionRowAt = T.empty
                     }

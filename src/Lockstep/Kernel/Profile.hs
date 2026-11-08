@@ -9,6 +9,7 @@ function is a value supplied by the boundary.
 module Lockstep.Kernel.Profile
   ( -- * Digests
     ContentDigest
+  , contentDigestFromBytes
   , mkContentDigest
   , contentDigestText
   , Hasher (..)
@@ -112,11 +113,14 @@ module Lockstep.Kernel.Profile
   ) where
 
 import Control.Monad (foldM)
+import Data.ByteArray qualified as BA
+import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import Data.Char qualified as Char
 import Data.List qualified as L
 import Data.Maybe (mapMaybe)
 import Data.Ord (Down (..))
 import Data.Text qualified as T
+import Data.Text.Encoding qualified as TE
 import Data.Time (UTCTime)
 import Data.Time.Format.ISO8601 (iso8601Show)
 import Flipstone.Prelude
@@ -134,6 +138,15 @@ newtype ContentDigest
   = ContentDigest T.Text
   deriving (Eq, Ord, Show)
 
+{- | The digest a 'Hasher' computed, from its bytes: the lowercase hex
+encoding, two characters per byte (32 bytes of SHA-256 give 64). Total; the
+boundary's hash function is trusted to be SHA-256, as everywhere else.
+-}
+contentDigestFromBytes :: BA.ByteArrayAccess ba => ba -> ContentDigest
+contentDigestFromBytes =
+  ContentDigest . TE.decodeLatin1 . convertToBase Base16
+
+-- | Parses stored or supplied text: exactly 64 lowercase hex characters.
 mkContentDigest :: T.Text -> Maybe ContentDigest
 mkContentDigest text =
   if T.length text == 64 && T.all (\c -> Char.isDigit c || (c >= 'a' && c <= 'f')) text

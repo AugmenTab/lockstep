@@ -14,6 +14,7 @@ module Lockstep.Persistence.Fields
     uuidField
   , digestField
   , hexDigest
+  , codeField
 
     -- * Marshalling
   , marshal
@@ -108,6 +109,17 @@ fromByteaText value =
   case T.stripPrefix (T.pack "\\x") value of
     Nothing -> Left "lockstep: a bytea value is not in hex output format"
     Just hex -> convertFromBase Base16 (TE.encodeUtf8 hex)
+
+{- | A text column holding one code of a closed set, read and written as its
+Haskell type (Launchpad's @convertField@ / @tryConvertSqlType@ pattern). A
+stored code the type does not know is a decoding failure, never a default.
+-}
+codeField :: String -> (a -> T.Text) -> (T.Text -> Maybe a) -> String -> O.FieldDefinition O.NotNull a
+codeField what toCode fromCode name =
+  O.convertField (O.tryConvertSqlType toCode decode) (O.unboundedTextField name)
+ where
+  decode code =
+    maybe (Left ("lockstep: column " <> name <> " holds an unknown " <> what <> " code: " <> T.unpack code)) Right (fromCode code)
 
 -- | Lowercase hex, as PostgreSQL's @encode(..., 'hex')@ gives it.
 hexDigest :: BS.ByteString -> T.Text

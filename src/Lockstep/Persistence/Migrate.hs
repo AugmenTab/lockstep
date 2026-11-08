@@ -42,7 +42,8 @@ import Lockstep.Persistence.Migration
 data MigrateFailure
   = MigrateConnectionFailed String
   | MigratePlanRefused MigrationRefusal
-  | MigrationSqlFailed MigrationId [MigrationId]
+  | -- | The migration that failed, those applied before it, and PostgreSQL's message.
+    MigrationSqlFailed MigrationId [MigrationId] String
   | MigrateLedgerUnreadable String
 
 -- | Identifies Lockstep's migration lock among advisory locks.
@@ -71,7 +72,7 @@ applyPending config list =
       Left failure ->
         pure . Left $
           case failure of
-            MigrationSqlFailed failedId _ -> MigrationSqlFailed failedId (L.reverse applied)
+            MigrationSqlFailed failedId _ message -> MigrationSqlFailed failedId (L.reverse applied) message
             other -> other
       Right Nothing ->
         pure (Right (L.reverse applied))
@@ -122,7 +123,7 @@ applyNext conn list = do
   applyOne migration = do
     executed <- run conn (TE.encodeUtf8 (migrationSql migration))
     case executed of
-      Left _ -> pure (Left (MigrationSqlFailed (migrationId migration) []))
+      Left message -> pure (Left (MigrationSqlFailed (migrationId migration) [] message))
       Right _ -> do
         recorded <- recordApplied conn migration
         pure $ case recorded of

@@ -127,11 +127,11 @@ import Lockstep.Kernel.Transaction
   , TxInput (..)
   , TxState (..)
   , haltChoices
-  , parseStage
   , reproduces
   , stageName
   , stateColumns
   , stateFromColumns
+  , stateStage
   , stepTransaction
   , txInputName
   )
@@ -227,13 +227,13 @@ tailOf bytes =
 
 kernelOf :: Store.TransactionRow -> Maybe Transaction
 kernelOf row = do
-  state <- stateFromColumns (Store.txRowState row) (Store.txRowStage row) (Store.txRowHaltCode row)
+  state <- stateFromColumns (Store.txRowState row) (stageName (Store.txRowStage row)) (Store.txRowHaltCode row)
   pure (Transaction state (Counters (fromIntegral (Store.txRowCandidates row)) (fromIntegral (Store.txRowAttempts row))))
 
--- | The stage the row was last at (a stored stage always reads back; basis otherwise).
+-- | The stage the row was last at; the column is typed, so an unknown stored stage never reads.
 lastStage :: Store.TransactionRow -> Stage
-lastStage row =
-  fromMaybe StageBasis (parseStage (Store.txRowStage row))
+lastStage =
+  Store.txRowStage
 
 viewOf :: Store.TransactionRow -> [Store.RecordRow] -> [Store.InvocationRow] -> TransactionView
 viewOf row records invocations =
@@ -244,7 +244,7 @@ viewOf row records invocations =
     , viewEngineer = Store.txRowEngineer row
     , viewFolder = Store.txRowFolder row
     , viewState = Store.txRowState row
-    , viewStage = Store.txRowStage row
+    , viewStage = stageName (Store.txRowStage row)
     , viewHalt = Store.txRowHaltCode row
     , viewBasis = Store.txRowBasis row
     , viewBranch = Store.txRowBranch row
@@ -354,7 +354,7 @@ startTransaction runtime raw =
                             , Store.txRowEngineer = Store.factEngineer f
                             , Store.txRowFolder = Store.factFolder f
                             , Store.txRowState = T.pack "running"
-                            , Store.txRowStage = stageName StageBasis
+                            , Store.txRowStage = StageBasis
                             , Store.txRowHaltCode = Nothing
                             , Store.txRowCandidates = 0
                             , Store.txRowAttempts = 0
@@ -417,11 +417,11 @@ applyLocked row principal input records change =
           existing <- Store.transactionRecords txId
           let
             stage = lastStage row
-            (stateName, stageText, code) = stateColumns stage (txState next)
+            (stateName, _, code) = stateColumns stage (txState next)
             updated =
               (change row)
                 { Store.txRowState = stateName
-                , Store.txRowStage = stageText
+                , Store.txRowStage = stateStage stage (txState next)
                 , Store.txRowHaltCode = code
                 , Store.txRowCandidates = fromIntegral (candidatesMade (txCounters next))
                 , Store.txRowAttempts = fromIntegral (attemptsMade (txCounters next))

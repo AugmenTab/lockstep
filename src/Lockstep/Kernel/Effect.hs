@@ -108,6 +108,8 @@ mkEffectSpec name terms budget
         TermsUnqueryable | budget /= 0 -> Left UnsafeRetryBudget
         TermsIdempotent idem
           | keyLifetimeSeconds idem < 1 -> Left (InvalidEffectSpec (T.pack "the key lifetime must be at least one second"))
+          -- The stored lifetime is a PostgreSQL bigint; a longer one cannot be recorded faithfully.
+          | keyLifetimeSeconds idem > toInteger (maxBound :: Int64) -> Left (InvalidEffectSpec (T.pack "the key lifetime must be at most 9223372036854775807 seconds"))
           | not (refusesChangedParameters idem) -> Left IdempotencyUndocumented
         _ -> Right (EffectSpec name terms budget)
 

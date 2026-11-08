@@ -71,6 +71,7 @@ library
       Lockstep.Foundation.Cli
       Lockstep.Foundation.Config
       Lockstep.Foundation.ControlProtocol
+      Lockstep.Foundation.Digest
       Lockstep.Foundation.EvidenceModel
       Lockstep.Foundation.Fleece
       Lockstep.Foundation.FolderProtocol
@@ -118,6 +119,7 @@ library
       Lockstep.Persistence.DecisionReceipts
       Lockstep.Persistence.Execution
       Lockstep.Persistence.Fields
+      Lockstep.Persistence.Integrity
       Lockstep.Persistence.Jobs
       Lockstep.Persistence.Ledger
       Lockstep.Persistence.Migrate
@@ -225,8 +227,10 @@ test-suite lockstep-compliance
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
+      Lockstep.Compliance.DefectsTest
       Lockstep.Compliance.JsonTest
       Lockstep.Compliance.PersistenceTest
+      Lockstep.Compliance.Support
   hs-source-dirs:
       test/compliance
   default-extensions:

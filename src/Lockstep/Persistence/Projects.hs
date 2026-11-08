@@ -25,14 +25,15 @@ import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
 import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
 
-import Lockstep.Persistence.Fields (increment, selectJoined, setNow, tableReference, uuidField)
+import Lockstep.Kernel.Project (SetupState (..), parseSetupState, setupStateCode)
+import Lockstep.Persistence.Fields (codeField, increment, selectJoined, setNow, tableReference, uuidField)
 
 data ProjectRow
   = ProjectRow
   { rowId :: T.Text
   , rowName :: T.Text
   , rowOutcome :: T.Text
-  , rowSetup :: T.Text
+  , rowSetup :: SetupState
   , rowRefusal :: Maybe T.Text
   , rowFolder :: Maybe T.Text
   , rowEngineerName :: Maybe T.Text
@@ -62,7 +63,7 @@ projectTable =
       <*> O.marshallField newProjectKey projectKeyField
       <*> O.marshallField newProjectName projectNameField
       <*> O.marshallField newProjectOutcome (O.unboundedTextField "outcome")
-      <*> O.marshallField (const (T.pack "organized")) projectSetupField
+      <*> O.marshallField (const Organized) projectSetupField
       <*> O.marshallReadOnlyField projectRefusalField
       <*> O.marshallReadOnlyField projectFolderField
       <*> O.marshallReadOnlyField projectEngineerField
@@ -81,9 +82,10 @@ projectNameField :: O.FieldDefinition O.NotNull T.Text
 projectNameField =
   O.unboundedTextField "name"
 
-projectSetupField :: O.FieldDefinition O.NotNull T.Text
+-- | A stored code the Kernel does not know fails the read (C-P3.5 J1 states only).
+projectSetupField :: O.FieldDefinition O.NotNull SetupState
 projectSetupField =
-  O.unboundedTextField "setup"
+  codeField "project setup state" setupStateCode parseSetupState "setup"
 
 projectRefusalField :: O.FieldDefinition O.Nullable (Maybe T.Text)
 projectRefusalField =
@@ -153,7 +155,7 @@ insertProject projectId key name outcome digest =
 {- | Records one connection attempt if the project is still at the expected
 revision; True when it was. The revision goes up by one.
 -}
-updateProjectSetup :: O.MonadOrville m => T.Text -> Int64 -> T.Text -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> m Bool
+updateProjectSetup :: O.MonadOrville m => T.Text -> Int64 -> SetupState -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> m Bool
 updateProjectSetup projectId expected setup refusal folder engineerName repositoryId =
   not . null
     <$> O.updateFieldsAndReturnEntities
@@ -178,4 +180,4 @@ connectedFolders =
   selectJoined
     (O.marshallReadOnlyField (O.unboundedTextField "folder"))
     (tableReference projectTable)
-    (O.where_ (O.fieldEquals projectSetupField (T.pack "connected") `O.andExpr` O.fieldIsNotNull projectFolderField))
+    (O.where_ (O.fieldEquals projectSetupField Connected `O.andExpr` O.fieldIsNotNull projectFolderField))

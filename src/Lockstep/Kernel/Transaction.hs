@@ -24,6 +24,7 @@ module Lockstep.Kernel.Transaction
   , maxCorrections
   , maxAttempts
   , stateColumns
+  , stateStage
   , stateFromColumns
   , reproduces
   , haltChoices
@@ -43,12 +44,23 @@ a closed one) and its halt or stop code.
 -}
 stateColumns :: Stage -> TxState -> (T.Text, T.Text, Maybe T.Text)
 stateColumns lastStage state =
+  ( txStateName state
+  , stageName (stateStage lastStage state)
+  , case state of
+      Halted _ code -> Just code
+      Stopped code -> Just code
+      _ -> Nothing
+  )
+
+-- | T5: the stage stored with a state (the last stage for a stopped one).
+stateStage :: Stage -> TxState -> Stage
+stateStage lastStage state =
   case state of
-    Running s -> (txStateName state, stageName s, Nothing)
-    Halted s code -> (txStateName state, stageName s, Just code)
-    Accepted -> (txStateName state, stageName StageAccept, Nothing)
-    Done -> (txStateName state, stageName StageAccept, Nothing)
-    Stopped code -> (txStateName state, stageName lastStage, Just code)
+    Running s -> s
+    Halted s _ -> s
+    Accepted -> StageAccept
+    Done -> StageAccept
+    Stopped _ -> lastStage
 
 -- | The state of stored columns; nothing for columns that do not read back.
 stateFromColumns :: T.Text -> T.Text -> Maybe T.Text -> Maybe TxState

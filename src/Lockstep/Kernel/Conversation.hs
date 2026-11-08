@@ -23,6 +23,7 @@ module Lockstep.Kernel.Conversation
   , inputMessageKind
   , inputText
   , stepRequest
+  , stepRequestChecked
   , conversationRefusalCodes
   , requestPayloadText
   , messagePayloadText
@@ -191,24 +192,33 @@ may give the input; the text; then the input's own rule. The result is the
 request after the input; the caller appends exactly one message for it.
 -}
 stepRequest :: HumanRequest -> Command RequestInput -> Either T.Text HumanRequest
-stepRequest request (Command principal input)
+stepRequest request command =
+  fmap fst (stepRequestChecked request command)
+
+{- | 'stepRequest', also returning the message text as H1 checked it (trimmed,
+CRLF as LF): the text a caller stores, so nothing unchecked is ever written.
+-}
+stepRequestChecked :: HumanRequest -> Command RequestInput -> Either T.Text (HumanRequest, T.Text)
+stepRequestChecked request (Command principal input)
   | principal == Agent = refuse "agent-assertion"
   | requestState request /= Open = refuse "request-closed"
   | expectedOf input /= requestRevision request = refuse "stale-revision"
   | principal `L.notElem` permitted input = refuse "not-authorized"
   | otherwise = do
-      _ <- checkRequestText (inputText input)
-      case input of
-        HumanDecides _ choice _ ->
-          case requestKind request of
-            ClarificationRequest -> refuse "not-a-decision"
-            DecisionRequest choices ->
-              case L.find ((== choice) . choiceText) (NE.toList choices) of
-                Nothing -> refuse "unknown-choice"
-                Just c -> Right request {requestState = Answered c}
-        Revise _ _ -> Right request {requestRevision = requestRevision request + 1}
-        Withdraw _ _ -> Right request {requestState = Withdrawn}
-        _ -> Right request
+      text <- checkRequestText (inputText input)
+      next <-
+        case input of
+          HumanDecides _ choice _ ->
+            case requestKind request of
+              ClarificationRequest -> refuse "not-a-decision"
+              DecisionRequest choices ->
+                case L.find ((== choice) . choiceText) (NE.toList choices) of
+                  Nothing -> refuse "unknown-choice"
+                  Just c -> Right request {requestState = Answered c}
+          Revise _ _ -> Right request {requestRevision = requestRevision request + 1}
+          Withdraw _ _ -> Right request {requestState = Withdrawn}
+          _ -> Right request
+      pure (next, text)
  where
   refuse =
     Left . T.pack

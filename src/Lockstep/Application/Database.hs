@@ -20,8 +20,12 @@ module Lockstep.Application.Database
   , schemaStatus
   , MigrateError (..)
   , renderMigrateError
+  , MigrateReport (..)
+  , renderMigrateReport
   , runMigrations
+  , runMigrationsReporting
   , migrateWithPolicy
+  , migrateWithPolicyReporting
   , ServiceStarts (..)
   , recordServiceStart
   , readServiceStarts
@@ -32,6 +36,7 @@ module Lockstep.Application.Database
   ) where
 
 import Control.Exception (SomeAsyncException, SomeException, finally, fromException, throwIO, try)
+import Data.Bifunctor (first)
 import Data.ByteString.Char8 qualified as BS8
 import Data.List qualified as L
 import Data.Maybe (isJust)
@@ -215,40 +220,66 @@ renderMigrateError err =
     MigrateNotReady reason ->
       "database not reachable for migration: " <> T.unpack (reasonCode reason)
 
+{- | A failed migration run: its classification and, when PostgreSQL refused a
+statement, PostgreSQL's own message (kept for the operator, never dropped).
+-}
+data MigrateReport
+  = MigrateReport
+  { reportError :: MigrateError
+  , reportCause :: Maybe String
+  }
+  deriving (Eq, Show)
+
+-- | 'renderMigrateError', then PostgreSQL's message when there is one.
+renderMigrateReport :: MigrateReport -> String
+renderMigrateReport report =
+  renderMigrateError (reportError report)
+    <> maybe "" ("; PostgreSQL: " <>) (reportCause report)
+
 -- | Applies whatever the list has pending. No backup check.
 runMigrations :: [Migration] -> DatabaseRuntime -> IO (Either MigrateError [MigrationId])
-runMigrations list runtime = do
+runMigrations list runtime =
+  first reportError <$> runMigrationsReporting list runtime
+
+-- | 'runMigrations', keeping PostgreSQL's message with a failure.
+runMigrationsReporting :: [Migration] -> DatabaseRuntime -> IO (Either MigrateReport [MigrationId])
+runMigrationsReporting list runtime = do
   result <- applyPending (runtimeConfig runtime) list
   pure $
     case result of
       Right applied -> Right applied
-      Left (MigrateConnectionFailed message) -> Left (MigrateNotReady (classifyConnectionFailure message))
-      Left (MigratePlanRefused refusal) -> Left (MigrateRefused refusal)
-      Left (MigrationSqlFailed failed applied) -> Left (MigrateFailed failed applied)
-      Left (MigrateLedgerUnreadable _) -> Left (MigrateNotReady DatabaseError)
+      Left (MigrateConnectionFailed message) -> Left (MigrateReport (MigrateNotReady (classifyConnectionFailure message)) (Just message))
+      Left (MigratePlanRefused refusal) -> Left (MigrateReport (MigrateRefused refusal) Nothing)
+      Left (MigrationSqlFailed failed applied message) -> Left (MigrateReport (MigrateFailed failed applied) (Just message))
+      Left (MigrateLedgerUnreadable message) -> Left (MigrateReport (MigrateNotReady DatabaseError) (Just message))
 
 {- | 'runMigrations' under the backup policy (contract C-P1.2 E6): nothing
 pending is a no-op; an empty ledger needs no backup; otherwise a backup file
 newer than the last applied migration, or an explicit 'NoBackup', is required.
 -}
 migrateWithPolicy :: BackupPolicy -> [Migration] -> DatabaseRuntime -> IO (Either MigrateError [MigrationId])
-migrateWithPolicy policy list runtime = do
+migrateWithPolicy policy list runtime =
+  first reportError <$> migrateWithPolicyReporting policy list runtime
+
+-- | 'migrateWithPolicy', keeping PostgreSQL's message with a failure.
+migrateWithPolicyReporting :: BackupPolicy -> [Migration] -> DatabaseRuntime -> IO (Either MigrateReport [MigrationId])
+migrateWithPolicyReporting policy list runtime = do
   stateOrErr <- withDatabase runtime ((,) <$> Queries.readLedger <*> Queries.lastAppliedAt)
   case stateOrErr of
     Left reason ->
-      pure (Left (MigrateNotReady reason))
+      pure (Left (MigrateReport (MigrateNotReady reason) Nothing))
     Right (ledger, mbLastApplied) ->
       case planMigrations list ledger of
-        Left refusal -> pure (Left (MigrateRefused refusal))
+        Left refusal -> pure (Left (MigrateReport (MigrateRefused refusal) Nothing))
         Right [] -> pure (Right [])
         Right _ ->
           case mbLastApplied of
-            Nothing -> runMigrations list runtime
+            Nothing -> runMigrationsReporting list runtime
             Just lastApplied -> do
               allowed <- backupAllows policy lastApplied
               case allowed of
-                Left err -> pure (Left err)
-                Right () -> runMigrations list runtime
+                Left err -> pure (Left (MigrateReport err Nothing))
+                Right () -> runMigrationsReporting list runtime
 
 backupAllows :: BackupPolicy -> Time.UTCTime -> IO (Either MigrateError ())
 backupAllows policy lastApplied =

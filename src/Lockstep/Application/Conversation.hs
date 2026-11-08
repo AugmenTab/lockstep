@@ -41,7 +41,6 @@ import Lockstep.Kernel.Conversation
   , checkRequestText
   , choiceText
   , inputMessageKind
-  , inputText
   , messageKindName
   , messagePayloadText
   , mkChoice
@@ -49,7 +48,7 @@ import Lockstep.Kernel.Conversation
   , requestKindName
   , requestPayloadText
   , requestStateName
-  , stepRequest
+  , stepRequestChecked
   )
 import Lockstep.Kernel.Identity (parseUuid, uuidText)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
@@ -316,12 +315,11 @@ postMessage runtime key rawId sender input =
                   case kernelRequest row of
                     Nothing -> pure (Left (T.pack "integrity"))
                     Just current ->
-                      case stepRequest current (Command principal input) of
+                      case stepRequestChecked current (Command principal input) of
                         Left code -> pure (Left code)
-                        Right next -> do
+                        Right (next, body) -> do
                           messages <- Store.requestMessages requestId
                           let
-                            body = fromRight (inputText input) (checkRequestText (inputText input))
                             choice =
                               case requestState next of
                                 Answered c -> Just (choiceText c)
