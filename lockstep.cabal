@@ -201,6 +201,8 @@ library
     , time
     , unix
     , unliftio
+    , uuid
+    , uuid-types
     , wai
     , warp
   default-language: GHC2021

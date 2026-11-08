@@ -75,6 +75,8 @@ library:
     - time
     - unix
     - unliftio
+    - uuid
+    - uuid-types
     - wai
     - warp
 
