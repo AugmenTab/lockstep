@@ -143,6 +143,29 @@ tests:
     when:
       - condition: false
         other-modules: Paths_lockstep
+  # Stack-compliance pass (2026-11-07): behaviour checks for the Orville and
+  # Fleece conversions, kept apart from the frozen suites. Needs LOCKSTEP_TEST_PG_*.
+  lockstep-compliance:
+    main:        Main.hs
+    source-dirs: test/compliance
+    dependencies:
+      - lockstep
+      - bytestring
+      - crypton
+      - memory
+      - orville-postgresql
+      - tasty
+      - tasty-hunit
+      - text
+      - time
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-T
+      - -fplugin-opt=Henforcer:--config=henforcer-tests.toml
+    when:
+      - condition: false
+        other-modules: Paths_lockstep
   lockstep-integration:
     main:        Main.hs
     source-dirs: test/integration

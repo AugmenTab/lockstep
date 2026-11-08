@@ -14,8 +14,8 @@ module Lockstep.Persistence.DecisionReceipts
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
-import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
-import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
+
+import Lockstep.Persistence.Fields (ConflictTarget (..), insertIgnoringConflict, uuidField)
 
 data ReceiptRow
   = ReceiptRow
@@ -30,99 +30,76 @@ data ReceiptRow
   , receiptRowBasis :: Maybe T.Text
   }
 
-sql :: String -> RawSql.RawSql
-sql =
-  RawSql.fromString
-
-text :: T.Text -> RawSql.RawSql
-text =
-  RawSql.parameter . SqlValue.fromText
-
-columns :: String
-columns =
-  "idempotency_key, payload_digest, subject::text AS subject, choice, expected, outcome, refusal_code, actor, ledger_basis"
-
-marshaller :: O.AnnotatedSqlMarshaller ReceiptRow ReceiptRow
-marshaller =
-  O.annotateSqlMarshallerEmptyAnnotation $
+receiptTable :: O.TableDefinition O.NoKey ReceiptRow ReceiptRow
+receiptTable =
+  O.mkTableDefinitionWithoutKey "lockstep_decision_receipts" $
     ReceiptRow
-      <$> O.marshallField receiptRowKey (O.unboundedTextField "idempotency_key")
-      <*> O.marshallField receiptRowDigest (O.unboundedTextField "payload_digest")
-      <*> O.marshallField receiptRowSubject (O.unboundedTextField "subject")
+      <$> O.marshallField receiptRowKey keyField
+      <*> O.marshallField receiptRowDigest payloadDigestField
+      <*> O.marshallField receiptRowSubject subjectField
       <*> O.marshallField receiptRowChoice (O.unboundedTextField "choice")
       <*> O.marshallField receiptRowExpected (O.integerField "expected")
-      <*> O.marshallField receiptRowOutcome (O.unboundedTextField "outcome")
+      <*> O.marshallField receiptRowOutcome outcomeField
       <*> O.marshallField receiptRowRefusal (O.nullableField (O.unboundedTextField "refusal_code"))
       <*> O.marshallField receiptRowActor (O.unboundedTextField "actor")
       <*> O.marshallField receiptRowBasis (O.nullableField (O.unboundedTextField "ledger_basis"))
 
-select :: O.MonadOrville m => RawSql.RawSql -> m [ReceiptRow]
-select rest =
-  O.executeAndDecode O.SelectQuery (sql ("SELECT " <> columns <> " FROM lockstep_decision_receipts ") <> rest) marshaller
+keyField :: O.FieldDefinition O.NotNull T.Text
+keyField =
+  O.unboundedTextField "idempotency_key"
+
+payloadDigestField :: O.FieldDefinition O.NotNull T.Text
+payloadDigestField =
+  O.unboundedTextField "payload_digest"
+
+subjectField :: O.FieldDefinition O.NotNull T.Text
+subjectField =
+  uuidField "subject"
+
+outcomeField :: O.FieldDefinition O.NotNull T.Text
+outcomeField =
+  O.unboundedTextField "outcome"
+
+-- | The identity column; only ordered by.
+identityField :: O.FieldDefinition O.NotNull Int64
+identityField =
+  O.bigIntegerField "id"
 
 findReceipt :: O.MonadOrville m => T.Text -> m (Maybe ReceiptRow)
 findReceipt key =
-  headMay <$> select (sql "WHERE idempotency_key = " <> text key)
+  O.findFirstEntityBy receiptTable (O.where_ (O.fieldEquals keyField key))
 
 -- | The latest applied receipt for a subject, if any.
 latestReceiptFor :: O.MonadOrville m => T.Text -> m (Maybe ReceiptRow)
 latestReceiptFor subject =
-  headMay <$> select (sql "WHERE outcome = 'applied' AND subject = CAST(" <> text subject <> sql " AS uuid) ORDER BY id DESC LIMIT 1")
+  O.findFirstEntityBy
+    receiptTable
+    ( O.where_ (O.fieldEquals outcomeField (T.pack "applied") `O.andExpr` O.fieldEquals subjectField subject)
+        <> O.orderBy (O.orderByField identityField O.descendingOrder)
+    )
 
 -- | Inserts the receipt unless one with its key exists; True when this call inserted it.
 insertReceipt :: O.MonadOrville m => ReceiptRow -> m Bool
-insertReceipt row =
-  returnedAny
-    ( sql "INSERT INTO lockstep_decision_receipts (idempotency_key, payload_digest, subject, choice, expected, outcome, refusal_code, actor, ledger_basis) VALUES ("
-        <> text (receiptRowKey row)
-        <> sql ", "
-        <> text (receiptRowDigest row)
-        <> sql ", CAST("
-        <> text (receiptRowSubject row)
-        <> sql " AS uuid), "
-        <> text (receiptRowChoice row)
-        <> sql ", "
-        <> RawSql.parameter (SqlValue.fromInt32 (receiptRowExpected row))
-        <> sql ", "
-        <> text (receiptRowOutcome row)
-        <> sql ", "
-        <> maybe (sql "NULL") text (receiptRowRefusal row)
-        <> sql ", "
-        <> text (receiptRowActor row)
-        <> sql ", "
-        <> maybe (sql "NULL") text (receiptRowBasis row)
-        <> sql ") ON CONFLICT (idempotency_key) DO NOTHING RETURNING id"
-    )
+insertReceipt =
+  insertIgnoringConflict (ConflictOn "idempotency_key") receiptTable
+
+-- lockstep_decision_attempts -----------------------------------------------------
+
+-- | (key, payload digest, subject).
+attemptTable :: O.TableDefinition O.NoKey (T.Text, T.Text, T.Text) (T.Text, T.Text, T.Text)
+attemptTable =
+  O.mkTableDefinitionWithoutKey "lockstep_decision_attempts" $
+    (,,)
+      <$> O.marshallField (\(k, _, _) -> k) keyField
+      <*> O.marshallField (\(_, d, _) -> d) payloadDigestField
+      <*> O.marshallField (\(_, _, s) -> s) subjectField
 
 -- | The payload digest of the attempt started with this key, if one was.
 attemptDigest :: O.MonadOrville m => T.Text -> m (Maybe T.Text)
 attemptDigest key =
-  headMay
-    <$> O.executeAndDecode
-      O.SelectQuery
-      (sql "SELECT payload_digest FROM lockstep_decision_attempts WHERE idempotency_key = " <> text key)
-      (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.unboundedTextField "payload_digest")))
+  fmap (\(_, digest, _) -> digest) <$> O.findFirstEntityBy attemptTable (O.where_ (O.fieldEquals keyField key))
 
 -- | Records that an attempt with this key starts now; True when this call recorded it.
 insertAttempt :: O.MonadOrville m => T.Text -> T.Text -> T.Text -> m Bool
 insertAttempt key digest subject =
-  returnedAny
-    ( sql "INSERT INTO lockstep_decision_attempts (idempotency_key, payload_digest, subject) VALUES ("
-        <> text key
-        <> sql ", "
-        <> text digest
-        <> sql ", CAST("
-        <> text subject
-        <> sql " AS uuid)) ON CONFLICT (idempotency_key) DO NOTHING RETURNING id"
-    )
-
-returnedAny :: O.MonadOrville m => RawSql.RawSql -> m Bool
-returnedAny statement =
-  not . null
-    <$> O.executeAndDecode O.InsertQuery statement (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.bigIntegerField "id")))
-
-headMay :: [a] -> Maybe a
-headMay xs =
-  case xs of
-    [] -> Nothing
-    x : _ -> Just x
+  insertIgnoringConflict (ConflictOn "idempotency_key") attemptTable (key, digest, subject)

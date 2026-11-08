@@ -31,11 +31,42 @@ module Lockstep.Persistence.Transactions
   ) where
 
 import Data.List qualified as L
+import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Text qualified as T
+import Data.Time (UTCTime)
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
-import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
+import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
+
+import Lockstep.Persistence.Execution
+  ( admissionIdField
+  , admissionProjectField
+  , admissionTable
+  , admissionTaskField
+  , admissionWorkOrderField
+  , enablementEngineerField
+  , enablementFolderField
+  , enablementProjectField
+  , enablementRepositoryField
+  , enablementTable
+  )
+import Lockstep.Persistence.Fields
+  ( clockTimestamp
+  , forUpdate
+  , headMay
+  , joinedOn
+  , qualified
+  , qualifiedEquals
+  , qualifiedOrder
+  , qualifiedReference
+  , selectJoined
+  , selectValue
+  , setExpression
+  , setNow
+  , tableReference
+  , uuidField
+  )
 
 data TransactionRow
   = TransactionRow
@@ -116,291 +147,362 @@ data Finish
   }
   deriving (Eq)
 
-sql :: String -> RawSql.RawSql
-sql =
-  RawSql.fromString
-
-text :: T.Text -> RawSql.RawSql
-text =
-  RawSql.parameter . SqlValue.fromText
-
-maybeText :: Maybe T.Text -> RawSql.RawSql
-maybeText =
-  maybe (sql "NULL") text
-
-int :: Int32 -> RawSql.RawSql
-int =
-  RawSql.parameter . SqlValue.fromInt32
-
-maybeInt :: Maybe Int32 -> RawSql.RawSql
-maybeInt =
-  maybe (sql "NULL") int
-
-uuid :: T.Text -> RawSql.RawSql
-uuid value =
-  sql "CAST(" <> text value <> sql " AS uuid)"
-
-headMay :: [a] -> Maybe a
-headMay xs =
-  case xs of
-    [] -> Nothing
-    x : _ -> Just x
-
-commaSeparated :: [RawSql.RawSql] -> RawSql.RawSql
-commaSeparated parts =
-  case parts of
-    [] -> sql ""
-    p : rest -> p <> mconcat [sql ", " <> r | r <- rest]
-
 -- Transactions ---------------------------------------------------------------------
 
-transactionMarshaller :: O.AnnotatedSqlMarshaller TransactionRow TransactionRow
-transactionMarshaller =
-  O.annotateSqlMarshallerEmptyAnnotation $
+transactionTable :: O.TableDefinition (O.HasKey T.Text) TransactionRow TransactionRow
+transactionTable =
+  O.mkTableDefinition "lockstep_transactions" (O.primaryKey txIdField) $
     TransactionRow
-      <$> O.marshallField txRowId (O.unboundedTextField "id")
-      <*> O.marshallField txRowWorkOrder (O.unboundedTextField "work_order_id")
-      <*> O.marshallField txRowTask (O.unboundedTextField "task_id")
-      <*> O.marshallField txRowEngineer (O.unboundedTextField "engineer_name")
+      <$> O.marshallField txRowId txIdField
+      <*> O.marshallField txRowWorkOrder txWorkOrderField
+      <*> O.marshallField txRowTask (uuidField "task_id")
+      <*> O.marshallField txRowEngineer txEngineerField
       <*> O.marshallField txRowFolder (O.unboundedTextField "folder")
-      <*> O.marshallField txRowState (O.unboundedTextField "state")
-      <*> O.marshallField txRowStage (O.unboundedTextField "stage")
-      <*> O.marshallField txRowHaltCode (O.nullableField (O.unboundedTextField "halt_code"))
-      <*> O.marshallField txRowCandidates (O.integerField "candidates_made")
-      <*> O.marshallField txRowAttempts (O.integerField "attempts_made")
-      <*> O.marshallField txRowBasis (O.nullableField (O.unboundedTextField "basis_commit"))
-      <*> O.marshallField txRowBranch (O.nullableField (O.unboundedTextField "branch"))
-      <*> O.marshallField txRowFreeze (O.nullableField (O.unboundedTextField "freeze_commit"))
-      <*> O.marshallField txRowCandidate (O.nullableField (O.unboundedTextField "candidate_commit"))
-      <*> O.marshallField txRowAccepted (O.nullableField (O.unboundedTextField "accepted_commit"))
-      <*> O.marshallField txRowContract (O.nullableField (O.unboundedTextField "contract_digest"))
-      <*> O.marshallField txRowRevision (O.integerField "revision")
+      <*> O.marshallField txRowState txStateField
+      <*> O.marshallField txRowStage txStageField
+      <*> O.marshallField txRowHaltCode txHaltCodeField
+      <*> O.marshallField txRowCandidates txCandidatesField
+      <*> O.marshallField txRowAttempts txAttemptsField
+      <*> O.marshallField txRowBasis txBasisField
+      <*> O.marshallField txRowBranch txBranchField
+      <*> O.marshallField txRowFreeze txFreezeField
+      <*> O.marshallField txRowCandidate txCandidateField
+      <*> O.marshallField txRowAccepted txAcceptedField
+      <*> O.marshallField txRowContract txContractField
+      <*> O.marshallField txRowRevision txRevisionField
 
-selectTransactions :: O.MonadOrville m => RawSql.RawSql -> m [TransactionRow]
-selectTransactions rest =
-  O.executeAndDecode
-    O.SelectQuery
-    ( sql "SELECT id::text AS id, work_order_id::text AS work_order_id, task_id::text AS task_id, engineer_name, folder, state, stage, halt_code, candidates_made, attempts_made, basis_commit, branch, freeze_commit, candidate_commit, accepted_commit, contract_digest, revision FROM lockstep_transactions "
-        <> rest
-    )
-    transactionMarshaller
+txIdField :: O.FieldDefinition O.NotNull T.Text
+txIdField =
+  uuidField "id"
+
+txWorkOrderField :: O.FieldDefinition O.NotNull T.Text
+txWorkOrderField =
+  uuidField "work_order_id"
+
+txEngineerField :: O.FieldDefinition O.NotNull T.Text
+txEngineerField =
+  O.unboundedTextField "engineer_name"
+
+txStateField :: O.FieldDefinition O.NotNull T.Text
+txStateField =
+  O.unboundedTextField "state"
+
+txStageField :: O.FieldDefinition O.NotNull T.Text
+txStageField =
+  O.unboundedTextField "stage"
+
+txHaltCodeField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+txHaltCodeField =
+  O.nullableField (O.unboundedTextField "halt_code")
+
+txCandidatesField :: O.FieldDefinition O.NotNull Int32
+txCandidatesField =
+  O.integerField "candidates_made"
+
+txAttemptsField :: O.FieldDefinition O.NotNull Int32
+txAttemptsField =
+  O.integerField "attempts_made"
+
+txBasisField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+txBasisField =
+  O.nullableField (O.unboundedTextField "basis_commit")
+
+txBranchField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+txBranchField =
+  O.nullableField (O.unboundedTextField "branch")
+
+txFreezeField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+txFreezeField =
+  O.nullableField (O.unboundedTextField "freeze_commit")
+
+txCandidateField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+txCandidateField =
+  O.nullableField (O.unboundedTextField "candidate_commit")
+
+txAcceptedField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+txAcceptedField =
+  O.nullableField (O.unboundedTextField "accepted_commit")
+
+txContractField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+txContractField =
+  O.nullableField (O.unboundedTextField "contract_digest")
+
+txRevisionField :: O.FieldDefinition O.NotNull Int32
+txRevisionField =
+  O.integerField "revision"
+
+txCreatedAtField :: O.FieldDefinition O.NotNull UTCTime
+txCreatedAtField =
+  O.utcTimestampField "created_at"
+
+ofTransaction :: O.FieldDefinition nullability a -> O.QualifiedFieldDefinition O.TableIdentifier nullability a
+ofTransaction =
+  qualified transactionTable
+
+-- | Transactions, by start then id.
+inStartOrder :: O.SelectOptions
+inStartOrder =
+  O.orderBy (O.orderByField txCreatedAtField O.ascendingOrder <> O.orderByField txIdField O.ascendingOrder)
+
+-- | Still holding its Engineer's one writer: running or halted.
+holdsWriter :: Expr.BooleanExpr
+holdsWriter =
+  O.fieldIn txStateField (T.pack "running" :| [T.pack "halted"])
 
 insertTransaction :: O.MonadOrville m => TransactionRow -> m ()
-insertTransaction row =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_transactions (id, work_order_id, task_id, engineer_name, folder, state, stage, halt_code, candidates_made, attempts_made, basis_commit, branch, freeze_commit, candidate_commit, accepted_commit, contract_digest, revision) VALUES ("
-      <> commaSeparated
-        [ uuid (txRowId row)
-        , uuid (txRowWorkOrder row)
-        , uuid (txRowTask row)
-        , text (txRowEngineer row)
-        , text (txRowFolder row)
-        , text (txRowState row)
-        , text (txRowStage row)
-        , maybeText (txRowHaltCode row)
-        , int (txRowCandidates row)
-        , int (txRowAttempts row)
-        , maybeText (txRowBasis row)
-        , maybeText (txRowBranch row)
-        , maybeText (txRowFreeze row)
-        , maybeText (txRowCandidate row)
-        , maybeText (txRowAccepted row)
-        , maybeText (txRowContract row)
-        , int (txRowRevision row)
-        ]
-      <> sql ")"
+insertTransaction =
+  O.insertEntity transactionTable
 
 findTransaction :: O.MonadOrville m => T.Text -> m (Maybe TransactionRow)
 findTransaction txId =
-  headMay <$> selectTransactions (sql "WHERE id = " <> uuid txId)
+  O.findFirstEntityBy transactionTable (O.where_ (O.fieldEquals txIdField txId))
 
 -- | The transaction row, locked until the database transaction ends.
 lockTransaction :: O.MonadOrville m => T.Text -> m (Maybe TransactionRow)
 lockTransaction txId =
-  headMay <$> selectTransactions (sql "WHERE id = " <> uuid txId <> sql " FOR UPDATE")
+  O.findFirstEntityBy transactionTable (O.where_ (O.fieldEquals txIdField txId) <> forUpdate)
 
 findTransactionByWorkOrder :: O.MonadOrville m => T.Text -> m (Maybe TransactionRow)
 findTransactionByWorkOrder workOrder =
-  headMay <$> selectTransactions (sql "WHERE work_order_id = " <> uuid workOrder)
+  O.findFirstEntityBy transactionTable (O.where_ (O.fieldEquals txWorkOrderField workOrder))
 
 {- | C-P4.R1 R-O1: holds the Engineer's start lock until the database
 transaction ends, so two starts for one Engineer check and insert one after
 the other (the partial unique index refuses a second writer in any case).
+@pg_advisory_xact_lock(hashtextextended(engineer, 7371))@; it returns void,
+read as its (empty) text.
 -}
 lockEngineer :: O.MonadOrville m => T.Text -> m ()
 lockEngineer engineer =
-  O.executeVoid O.SelectQuery (sql "SELECT pg_advisory_xact_lock(hashtextextended(" <> text engineer <> sql ", 7371))")
+  void $
+    selectValue
+      ( Expr.functionCall
+          (Expr.functionName "pg_advisory_xact_lock")
+          [ Expr.functionCall
+              (Expr.functionName "hashtextextended")
+              [ Expr.cast (Expr.valueExpression (SqlValue.fromText engineer)) Expr.text
+              , Expr.cast (Expr.valueExpression (SqlValue.fromInt64 7371)) Expr.bigInt
+              ]
+          ]
+      )
+      (O.unboundedTextField "v")
 
 -- | The Engineer's transactions that still hold its one writer: running or halted.
 busyTransactions :: O.MonadOrville m => T.Text -> m [TransactionRow]
 busyTransactions engineer =
-  selectTransactions (sql "WHERE engineer_name = " <> text engineer <> sql " AND state IN ('running', 'halted') ORDER BY created_at, id")
+  O.findEntitiesBy transactionTable (O.where_ (O.fieldEquals txEngineerField engineer `O.andExpr` holdsWriter) <> inStartOrder)
 
 runningTransactions :: O.MonadOrville m => m [TransactionRow]
 runningTransactions =
-  selectTransactions (sql "WHERE state = 'running' ORDER BY created_at, id")
+  O.findEntitiesBy transactionTable (O.where_ (O.fieldEquals txStateField (T.pack "running")) <> inStartOrder)
 
 -- | Every running or halted transaction, in start order (C-P4.15 W1).
 activeTransactions :: O.MonadOrville m => m [TransactionRow]
 activeTransactions =
-  selectTransactions (sql "WHERE state IN ('running', 'halted') ORDER BY created_at, id")
+  O.findEntitiesBy transactionTable (O.where_ holdsWriter <> inStartOrder)
 
 -- | Rewrites the head row (call under 'lockTransaction').
 updateTransaction :: O.MonadOrville m => TransactionRow -> m ()
 updateTransaction row =
-  O.executeVoid O.UpdateQuery $
-    sql "UPDATE lockstep_transactions SET state = "
-      <> text (txRowState row)
-      <> sql ", stage = "
-      <> text (txRowStage row)
-      <> sql ", halt_code = "
-      <> maybeText (txRowHaltCode row)
-      <> sql ", candidates_made = "
-      <> int (txRowCandidates row)
-      <> sql ", attempts_made = "
-      <> int (txRowAttempts row)
-      <> sql ", basis_commit = "
-      <> maybeText (txRowBasis row)
-      <> sql ", branch = "
-      <> maybeText (txRowBranch row)
-      <> sql ", freeze_commit = "
-      <> maybeText (txRowFreeze row)
-      <> sql ", candidate_commit = "
-      <> maybeText (txRowCandidate row)
-      <> sql ", accepted_commit = "
-      <> maybeText (txRowAccepted row)
-      <> sql ", contract_digest = "
-      <> maybeText (txRowContract row)
-      <> sql ", revision = "
-      <> int (txRowRevision row)
-      <> sql ", updated_at = now() WHERE id = "
-      <> uuid (txRowId row)
+  O.updateFields
+    transactionTable
+    ( O.setField txStateField (txRowState row)
+        :| [ O.setField txStageField (txRowStage row)
+           , O.setField txHaltCodeField (txRowHaltCode row)
+           , O.setField txCandidatesField (txRowCandidates row)
+           , O.setField txAttemptsField (txRowAttempts row)
+           , O.setField txBasisField (txRowBasis row)
+           , O.setField txBranchField (txRowBranch row)
+           , O.setField txFreezeField (txRowFreeze row)
+           , O.setField txCandidateField (txRowCandidate row)
+           , O.setField txAcceptedField (txRowAccepted row)
+           , O.setField txContractField (txRowContract row)
+           , O.setField txRevisionField (txRowRevision row)
+           , setNow (O.utcTimestampField "updated_at")
+           ]
+    )
+    (Just (O.fieldEquals txIdField (txRowId row)))
 
 -- Records --------------------------------------------------------------------------
 
-recordMarshaller :: O.AnnotatedSqlMarshaller RecordRow RecordRow
-recordMarshaller =
-  O.annotateSqlMarshallerEmptyAnnotation $
+recordTable :: O.TableDefinition O.NoKey RecordRow RecordRow
+recordTable =
+  O.mkTableDefinitionWithoutKey "lockstep_transaction_records" $
     RecordRow
-      <$> O.marshallField recordRowTransaction (O.unboundedTextField "transaction_id")
-      <*> O.marshallField recordRowSequence (O.integerField "sequence")
+      <$> O.marshallField recordRowTransaction recordTransactionField
+      <*> O.marshallField recordRowSequence recordSequenceField
       <*> O.marshallField recordRowKind (O.unboundedTextField "kind")
       <*> O.marshallField recordRowPrincipal (O.unboundedTextField "principal")
       <*> O.marshallField recordRowStage (O.unboundedTextField "stage")
       <*> O.marshallField recordRowBody (O.unboundedTextField "body")
       <*> O.marshallField recordRowDigest (O.unboundedTextField "body_digest")
 
+recordTransactionField :: O.FieldDefinition O.NotNull T.Text
+recordTransactionField =
+  uuidField "transaction_id"
+
+recordSequenceField :: O.FieldDefinition O.NotNull Int32
+recordSequenceField =
+  O.integerField "sequence"
+
 transactionRecords :: O.MonadOrville m => T.Text -> m [RecordRow]
 transactionRecords txId =
-  O.executeAndDecode
-    O.SelectQuery
-    (sql "SELECT transaction_id::text AS transaction_id, sequence, kind, principal, stage, body, body_digest FROM lockstep_transaction_records WHERE transaction_id = " <> uuid txId <> sql " ORDER BY sequence")
-    recordMarshaller
+  O.findEntitiesBy
+    recordTable
+    (O.where_ (O.fieldEquals recordTransactionField txId) <> O.orderBy (O.orderByField recordSequenceField O.ascendingOrder))
 
 -- | Appends the next record (call under 'lockTransaction', so the sequence is the next one).
 appendRecord :: O.MonadOrville m => RecordRow -> m ()
-appendRecord row =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_transaction_records (transaction_id, sequence, kind, principal, stage, body, body_digest) VALUES ("
-      <> commaSeparated
-        [ uuid (recordRowTransaction row)
-        , int (recordRowSequence row)
-        , text (recordRowKind row)
-        , text (recordRowPrincipal row)
-        , text (recordRowStage row)
-        , text (recordRowBody row)
-        , text (recordRowDigest row)
-        ]
-      <> sql ")"
+appendRecord =
+  O.insertEntity recordTable
 
 -- Invocations ----------------------------------------------------------------------
 
-invocationMarshaller :: O.AnnotatedSqlMarshaller InvocationRow InvocationRow
-invocationMarshaller =
-  O.annotateSqlMarshallerEmptyAnnotation $
+invocationTable :: O.TableDefinition (O.HasKey T.Text) InvocationRow InvocationRow
+invocationTable =
+  O.mkTableDefinition "lockstep_invocations" (O.primaryKey invocationIdField) $
     InvocationRow
-      <$> O.marshallField invocationRowId (O.unboundedTextField "id")
-      <*> O.marshallField invocationRowTransaction (O.unboundedTextField "transaction_id")
+      <$> O.marshallField invocationRowId invocationIdField
+      <*> O.marshallField invocationRowTransaction invocationTransactionField
       <*> O.marshallField invocationRowStage (O.unboundedTextField "stage")
       <*> O.marshallField invocationRowWhat (O.unboundedTextField "what")
       <*> O.marshallField invocationRowRunner (O.unboundedTextField "runner")
       <*> O.marshallField invocationRowAdapter (O.unboundedTextField "adapter")
       <*> O.marshallField invocationRowArgv (O.unboundedTextField "argv")
-      <*> O.marshallField invocationRowOutcome (O.nullableField (O.unboundedTextField "outcome"))
-      <*> O.marshallField invocationRowExit (O.nullableField (O.integerField "exit_code"))
-      <*> O.marshallField invocationRowMillis (O.nullableField (O.integerField "millis"))
-      <*> O.marshallField invocationRowStdoutBytes (O.nullableField (O.integerField "stdout_bytes"))
-      <*> O.marshallField invocationRowStderrBytes (O.nullableField (O.integerField "stderr_bytes"))
-      <*> O.marshallField invocationRowStdoutDigest (O.nullableField (O.unboundedTextField "stdout_digest"))
-      <*> O.marshallField invocationRowStderrDigest (O.nullableField (O.unboundedTextField "stderr_digest"))
-      <*> O.marshallField invocationRowStdoutTail (O.nullableField (O.unboundedTextField "stdout_tail"))
-      <*> O.marshallField invocationRowStderrTail (O.nullableField (O.unboundedTextField "stderr_tail"))
+      <*> O.marshallField invocationRowOutcome invocationOutcomeField
+      <*> O.marshallField invocationRowExit invocationExitField
+      <*> O.marshallField invocationRowMillis invocationMillisField
+      <*> O.marshallField invocationRowStdoutBytes invocationStdoutBytesField
+      <*> O.marshallField invocationRowStderrBytes invocationStderrBytesField
+      <*> O.marshallField invocationRowStdoutDigest invocationStdoutDigestField
+      <*> O.marshallField invocationRowStderrDigest invocationStderrDigestField
+      <*> O.marshallField invocationRowStdoutTail invocationStdoutTailField
+      <*> O.marshallField invocationRowStderrTail invocationStderrTailField
       <*> O.marshallField invocationRowRevision (O.nullableField (O.integerField "tx_revision"))
-      <*> O.marshallField invocationRowAnswer (O.nullableField (O.unboundedTextField "answer"))
-      <*> O.marshallField invocationRowAnswerDigest (O.nullableField (O.unboundedTextField "answer_digest"))
+      <*> O.marshallField invocationRowAnswer invocationAnswerField
+      <*> O.marshallField invocationRowAnswerDigest invocationAnswerDigestField
 
-selectInvocations :: O.MonadOrville m => RawSql.RawSql -> m [InvocationRow]
-selectInvocations rest =
-  O.executeAndDecode
-    O.SelectQuery
-    ( sql "SELECT id::text AS id, transaction_id::text AS transaction_id, stage, what, runner, adapter, argv, outcome, exit_code, millis, stdout_bytes, stderr_bytes, stdout_digest, stderr_digest, stdout_tail, stderr_tail, tx_revision, answer, answer_digest FROM lockstep_invocations "
-        <> rest
-    )
-    invocationMarshaller
+invocationIdField :: O.FieldDefinition O.NotNull T.Text
+invocationIdField =
+  uuidField "id"
 
--- | Recorded before the run starts: the run has not ended until 'finishInvocation'.
+invocationTransactionField :: O.FieldDefinition O.NotNull T.Text
+invocationTransactionField =
+  uuidField "transaction_id"
+
+nullableText :: String -> O.FieldDefinition O.Nullable (Maybe T.Text)
+nullableText =
+  O.nullableField . O.unboundedTextField
+
+nullableInt :: String -> O.FieldDefinition O.Nullable (Maybe Int32)
+nullableInt =
+  O.nullableField . O.integerField
+
+invocationOutcomeField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+invocationOutcomeField =
+  nullableText "outcome"
+
+invocationExitField :: O.FieldDefinition O.Nullable (Maybe Int32)
+invocationExitField =
+  nullableInt "exit_code"
+
+invocationMillisField :: O.FieldDefinition O.Nullable (Maybe Int32)
+invocationMillisField =
+  nullableInt "millis"
+
+invocationStdoutBytesField :: O.FieldDefinition O.Nullable (Maybe Int32)
+invocationStdoutBytesField =
+  nullableInt "stdout_bytes"
+
+invocationStderrBytesField :: O.FieldDefinition O.Nullable (Maybe Int32)
+invocationStderrBytesField =
+  nullableInt "stderr_bytes"
+
+invocationStdoutDigestField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+invocationStdoutDigestField =
+  nullableText "stdout_digest"
+
+invocationStderrDigestField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+invocationStderrDigestField =
+  nullableText "stderr_digest"
+
+invocationStdoutTailField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+invocationStdoutTailField =
+  nullableText "stdout_tail"
+
+invocationStderrTailField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+invocationStderrTailField =
+  nullableText "stderr_tail"
+
+invocationAnswerField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+invocationAnswerField =
+  nullableText "answer"
+
+invocationAnswerDigestField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+invocationAnswerDigestField =
+  nullableText "answer_digest"
+
+invocationFinishedAtField :: O.FieldDefinition O.Nullable (Maybe UTCTime)
+invocationFinishedAtField =
+  O.nullableField (O.utcTimestampField "finished_at")
+
+-- | Invocations, by start then id.
+invocationOrder :: O.SelectOptions
+invocationOrder =
+  O.orderBy (O.orderByField (O.utcTimestampField "started_at") O.ascendingOrder <> O.orderByField invocationIdField O.ascendingOrder)
+
+{- | Recorded before the run starts: the run has not ended until
+'finishInvocation'. How it ended starts empty, whatever the row says, as the
+columns' defaults always made it.
+-}
 insertInvocation :: O.MonadOrville m => InvocationRow -> m ()
 insertInvocation row =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_invocations (id, transaction_id, stage, what, runner, adapter, argv, tx_revision) VALUES ("
-      <> commaSeparated
-        [ uuid (invocationRowId row)
-        , uuid (invocationRowTransaction row)
-        , text (invocationRowStage row)
-        , text (invocationRowWhat row)
-        , text (invocationRowRunner row)
-        , text (invocationRowAdapter row)
-        , text (invocationRowArgv row)
-        , maybeInt (invocationRowRevision row)
-        ]
-      <> sql ")"
+  O.insertEntity
+    invocationTable
+    row
+      { invocationRowOutcome = Nothing
+      , invocationRowExit = Nothing
+      , invocationRowMillis = Nothing
+      , invocationRowStdoutBytes = Nothing
+      , invocationRowStderrBytes = Nothing
+      , invocationRowStdoutDigest = Nothing
+      , invocationRowStderrDigest = Nothing
+      , invocationRowStdoutTail = Nothing
+      , invocationRowStderrTail = Nothing
+      , invocationRowAnswer = Nothing
+      , invocationRowAnswerDigest = Nothing
+      }
 
 -- | Writes how the invocation ended; a second finish is refused by the trigger.
 finishInvocation :: O.MonadOrville m => T.Text -> Finish -> m ()
 finishInvocation invocationId f =
-  O.executeVoid O.UpdateQuery $
-    sql "UPDATE lockstep_invocations SET finished_at = clock_timestamp(), outcome = "
-      <> text (finishOutcome f)
-      <> sql ", exit_code = "
-      <> maybeInt (finishExit f)
-      <> sql ", millis = "
-      <> maybeInt (finishMillis f)
-      <> sql ", stdout_bytes = "
-      <> maybeInt (finishStdoutBytes f)
-      <> sql ", stderr_bytes = "
-      <> maybeInt (finishStderrBytes f)
-      <> sql ", stdout_digest = "
-      <> maybeText (finishStdoutDigest f)
-      <> sql ", stderr_digest = "
-      <> maybeText (finishStderrDigest f)
-      <> sql ", stdout_tail = "
-      <> maybeText (finishStdoutTail f)
-      <> sql ", stderr_tail = "
-      <> maybeText (finishStderrTail f)
-      <> sql ", answer = "
-      <> maybeText (finishAnswer f)
-      <> sql ", answer_digest = "
-      <> maybeText (finishAnswerDigest f)
-      <> sql " WHERE id = "
-      <> uuid invocationId
+  O.updateFields
+    invocationTable
+    ( setExpression invocationFinishedAtField clockTimestamp
+        :| [ O.setField invocationOutcomeField (Just (finishOutcome f))
+           , O.setField invocationExitField (finishExit f)
+           , O.setField invocationMillisField (finishMillis f)
+           , O.setField invocationStdoutBytesField (finishStdoutBytes f)
+           , O.setField invocationStderrBytesField (finishStderrBytes f)
+           , O.setField invocationStdoutDigestField (finishStdoutDigest f)
+           , O.setField invocationStderrDigestField (finishStderrDigest f)
+           , O.setField invocationStdoutTailField (finishStdoutTail f)
+           , O.setField invocationStderrTailField (finishStderrTail f)
+           , O.setField invocationAnswerField (finishAnswer f)
+           , O.setField invocationAnswerDigestField (finishAnswerDigest f)
+           ]
+    )
+    (Just (O.fieldEquals invocationIdField invocationId))
 
 unfinishedInvocations :: O.MonadOrville m => T.Text -> m [InvocationRow]
 unfinishedInvocations txId =
-  selectInvocations (sql "WHERE transaction_id = " <> uuid txId <> sql " AND finished_at IS NULL ORDER BY started_at, id")
+  O.findEntitiesBy
+    invocationTable
+    (O.where_ (O.fieldEquals invocationTransactionField txId `O.andExpr` O.fieldIsNull invocationFinishedAtField) <> invocationOrder)
 
 transactionInvocations :: O.MonadOrville m => T.Text -> m [InvocationRow]
 transactionInvocations txId =
-  selectInvocations (sql "WHERE transaction_id = " <> uuid txId <> sql " ORDER BY started_at, id")
+  O.findEntitiesBy invocationTable (O.where_ (O.fieldEquals invocationTransactionField txId) <> invocationOrder)
 
 -- Facts from C-P4.1 -------------------------------------------------------------------
 
@@ -416,37 +518,66 @@ data AdmissionFacts
   }
   deriving (Eq)
 
+ofAdmission :: O.FieldDefinition nullability a -> O.QualifiedFieldDefinition O.TableIdentifier nullability a
+ofAdmission =
+  qualified admissionTable
+
+ofEnablement :: O.FieldDefinition nullability a -> O.QualifiedFieldDefinition O.TableIdentifier nullability a
+ofEnablement =
+  qualified enablementTable
+
 admissionFacts :: O.MonadOrville m => T.Text -> m (Maybe AdmissionFacts)
 admissionFacts workOrder =
   headMay
-    <$> O.executeAndDecode
-      O.SelectQuery
-      ( sql "SELECT a.work_order_id::text AS work_order_id, a.task_id::text AS task_id, a.project_id::text AS project_id, e.repository_id::text AS repository_id, e.engineer_name, e.folder FROM lockstep_bug_admissions a JOIN lockstep_execution_enablements e ON e.project_id = a.project_id WHERE a.work_order_id = "
-          <> uuid workOrder
+    <$> selectJoined
+      ( AdmissionFacts
+          <$> admissionColumn admissionWorkOrderField
+          <*> admissionColumn admissionTaskField
+          <*> admissionColumn admissionProjectField
+          <*> enablementColumn enablementRepositoryField
+          <*> enablementColumn enablementEngineerField
+          <*> enablementColumn enablementFolderField
       )
-      ( O.annotateSqlMarshallerEmptyAnnotation $
-          AdmissionFacts
-            <$> O.marshallField factWorkOrder (O.unboundedTextField "work_order_id")
-            <*> O.marshallField factTask (O.unboundedTextField "task_id")
-            <*> O.marshallField factProject (O.unboundedTextField "project_id")
-            <*> O.marshallField factRepository (O.unboundedTextField "repository_id")
-            <*> O.marshallField factEngineer (O.unboundedTextField "engineer_name")
-            <*> O.marshallField factFolder (O.unboundedTextField "folder")
+      ( joinedOn
+          admissionTable
+          [(Expr.innerJoinType, tableReference enablementTable, Expr.equals (qualifiedReference (ofEnablement enablementProjectField)) (qualifiedReference (ofAdmission admissionProjectField)))]
       )
+      (O.where_ (qualifiedEquals (ofAdmission admissionWorkOrderField) workOrder))
+
+-- | A column of @lockstep_bug_admissions@, read from a join.
+admissionColumn :: O.FieldDefinition nullability a -> O.SqlMarshaller w a
+admissionColumn field =
+  O.marshallQualifyFields (O.tableIdentifier admissionTable) (O.marshallReadOnlyField field)
+
+-- | A column of @lockstep_execution_enablements@, read from a join.
+enablementColumn :: O.FieldDefinition nullability a -> O.SqlMarshaller w a
+enablementColumn field =
+  O.marshallQualifyFields (O.tableIdentifier enablementTable) (O.marshallReadOnlyField field)
 
 -- | Whether Lockstep has started on any bug of the project (C-P4.16).
 projectStarted :: O.MonadOrville m => T.Text -> m Bool
 projectStarted project =
   not . L.null
-    <$> O.executeAndDecode
-      O.SelectQuery
-      (sql "SELECT t.id::text AS id FROM lockstep_transactions t JOIN lockstep_bug_admissions a ON a.work_order_id = t.work_order_id WHERE a.project_id = " <> uuid project <> sql " LIMIT 1")
-      (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.unboundedTextField "id")))
+    <$> selectJoined
+      (O.marshallQualifyFields (O.tableIdentifier transactionTable) (O.marshallReadOnlyField txIdField))
+      ( joinedOn
+          transactionTable
+          [(Expr.innerJoinType, tableReference admissionTable, Expr.equals (qualifiedReference (ofAdmission admissionWorkOrderField)) (qualifiedReference (ofTransaction txWorkOrderField)))]
+      )
+      (O.where_ (qualifiedEquals (ofAdmission admissionProjectField) project) <> O.limit 1)
 
--- | The admitted bug Work Orders that have no transaction yet, in hand-over order (C-P4.15 W1).
+{- | The admitted bug Work Orders that have no transaction yet, in hand-over
+order (C-P4.15 W1): admissions with no matching transaction in a left join
+(what @NOT EXISTS (SELECT 1 FROM lockstep_transactions ...)@ selected).
+-}
 pendingAdmissions :: O.MonadOrville m => m [T.Text]
 pendingAdmissions =
-  O.executeAndDecode
-    O.SelectQuery
-    (sql "SELECT a.work_order_id::text AS work_order_id FROM lockstep_bug_admissions a WHERE NOT EXISTS (SELECT 1 FROM lockstep_transactions t WHERE t.work_order_id = a.work_order_id) ORDER BY a.id")
-    (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.unboundedTextField "work_order_id")))
+  selectJoined
+    (O.marshallQualifyFields (O.tableIdentifier admissionTable) (O.marshallReadOnlyField admissionWorkOrderField))
+    ( joinedOn
+        admissionTable
+        [(Expr.leftJoinType, tableReference transactionTable, Expr.equals (qualifiedReference (ofTransaction txWorkOrderField)) (qualifiedReference (ofAdmission admissionWorkOrderField)))]
+    )
+    ( O.where_ (Expr.isNull (qualifiedReference (ofTransaction txIdField)))
+        <> O.orderBy (qualifiedOrder (ofAdmission admissionIdField) O.ascendingOrder)
+    )

@@ -37,10 +37,16 @@ module Lockstep.Persistence.Fields
   , tableReference
   , selectJoined
   , selectValue
+  , countOf
 
     -- * Writing
   , insertIgnoringConflict
   , ConflictTarget (..)
+  , Assignment
+  , assignValue
+  , assignExpression
+  , insertComputed
+  , minutes
   , returnedAny
   ) where
 
@@ -216,6 +222,11 @@ selectValue expression field =
         )
     )
 
+-- | @count(1)::integer AS alias@, for a grouped select.
+countOf :: String -> O.SqlMarshaller w Int32
+countOf alias =
+  O.marshallSyntheticField (O.syntheticField (Expr.cast Expr.count1AggregateFunction Expr.int) alias O.integer)
+
 -- | Which uniqueness an insert may run into without failing.
 data ConflictTarget
   = -- | any unique constraint (@ON CONFLICT DO NOTHING@)
@@ -246,6 +257,50 @@ insertIgnoringConflict target table row =
             (O.tableMarshaller table)
             (TableDefinition.mkInsertExpr Returning.WithReturning table (Just onConflict) (row :| []))
         )
+
+-- | One column of an insert whose value is an expression.
+data Assignment
+  = Assignment Expr.ColumnName Expr.ValueExpression
+
+-- | The column gets this Haskell value, encoded by the field's type.
+assignValue :: O.FieldDefinition nullability a -> a -> Assignment
+assignValue field value =
+  Assignment (O.fieldColumnName field) (Expr.valueExpression (O.sqlTypeToSql (O.fieldType field) value))
+
+-- | The column gets a value the server computes (for example from @now()@).
+assignExpression :: O.FieldDefinition nullability a -> Expr.ValueExpression -> Assignment
+assignExpression field =
+  Assignment (O.fieldColumnName field)
+
+{- | Inserts one row whose values may be computed by the server, and returns
+it through the table's marshaller. Orville's entity inserts take Haskell
+values only; this is the same insert built from 'Expr.valuesExprFromValueExpressions'.
+-}
+insertComputed :: O.MonadOrville m => O.TableDefinition key w r -> NonEmpty Assignment -> m [r]
+insertComputed table assignments =
+  let
+    columns = [Expr.unqualified column | Assignment column _ <- toList assignments]
+    values = fmap (\(Assignment _ value) -> value) assignments
+  in
+    Insert.executeInsertReturnEntities
+      ( Insert.rawInsertExpr
+          Returning.WithReturning
+          (O.tableMarshaller table)
+          ( Expr.insertExpr
+              (O.tableName table)
+              (Just (Expr.insertColumnList columns))
+              (Expr.valuesExprInsertSource (Expr.valuesExprFromValueExpressions (values :| [])))
+              Nothing
+              (TableDefinition.mkTableReturningClause Returning.WithReturning table)
+          )
+      )
+
+-- | @make_interval@ of whole minutes (the server adds it to its own clock).
+minutes :: Int32 -> Expr.ValueExpression
+minutes count =
+  Expr.functionCall
+    (Expr.functionName "make_interval")
+    [Expr.valueExpression (SqlValue.fromInt32 n) | n <- [0, 0, 0, 0, 0, count]]
 
 returnedAny :: [a] -> Bool
 returnedAny =

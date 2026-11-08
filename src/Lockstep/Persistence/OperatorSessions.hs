@@ -1,6 +1,6 @@
 {- | Storage for operator sign-in tokens and sessions (contract C-P1.3 E4, E5,
-E9, E10). Only SHA-256 digests reach the database; they are sent as hex text
-parameters and decoded by PostgreSQL.
+E9, E10). Only SHA-256 digests reach the database, in @bytea@ columns.
+Expiry times come from the database clock.
 -}
 module Lockstep.Persistence.OperatorSessions
   ( insertSignInToken
@@ -11,92 +11,108 @@ module Lockstep.Persistence.OperatorSessions
   , revokeLiveSessions
   ) where
 
-import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import Data.ByteString qualified as BS
-import Data.Text.Encoding qualified as TE
+import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Time qualified as Time
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
-import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
-import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
+import Orville.PostgreSQL.Expr qualified as Expr
 
-digestSql :: BS.ByteString -> RawSql.RawSql
-digestSql digest =
-  RawSql.fromString "decode("
-    <> RawSql.parameter (SqlValue.fromText (TE.decodeLatin1 (convertToBase Base16 digest)))
-    <> RawSql.fromString ", 'hex')"
+import Lockstep.Persistence.Fields (assignExpression, assignValue, digestField, headMay, insertComputed, minutes, setNow)
+
+-- | A token or session row: (digest, expiry).
+type Credential = (BS.ByteString, Time.UTCTime)
+
+credentialTable :: String -> O.FieldDefinition O.Nullable (Maybe Time.UTCTime) -> O.TableDefinition (O.HasKey BS.ByteString) Credential Credential
+credentialTable name endedField =
+  O.mkTableDefinition name (O.primaryKey credentialDigestField) $
+    (\digest expiresAt _ended -> (digest, expiresAt))
+      <$> O.marshallField fst credentialDigestField
+      <*> O.marshallField snd credentialExpiresAtField
+      <*> O.marshallReadOnlyField endedField
+
+credentialDigestField :: O.FieldDefinition O.NotNull BS.ByteString
+credentialDigestField =
+  digestField "digest"
+
+credentialExpiresAtField :: O.FieldDefinition O.NotNull Time.UTCTime
+credentialExpiresAtField =
+  O.utcTimestampField "expires_at"
+
+-- | The credential has not expired by the transaction's time.
+unexpired :: Expr.BooleanExpr
+unexpired =
+  Expr.greaterThan (O.fieldColumnReference credentialExpiresAtField) Expr.now
+
+-- | Inserts a credential that expires the given number of minutes after the transaction's time.
+insertCredential :: O.MonadOrville m => O.TableDefinition (O.HasKey BS.ByteString) Credential Credential -> BS.ByteString -> Int32 -> m [Credential]
+insertCredential table digest lifetime =
+  insertComputed
+    table
+    ( assignValue credentialDigestField digest
+        :| [assignExpression credentialExpiresAtField (Expr.plus Expr.now (minutes lifetime))]
+    )
+
+-- lockstep_operator_sign_in_tokens -------------------------------------------------
+
+signInTokenTable :: O.TableDefinition (O.HasKey BS.ByteString) Credential Credential
+signInTokenTable =
+  credentialTable "lockstep_operator_sign_in_tokens" consumedAtField
+
+consumedAtField :: O.FieldDefinition O.Nullable (Maybe Time.UTCTime)
+consumedAtField =
+  O.nullableField (O.utcTimestampField "consumed_at")
 
 -- | Stores a new sign-in token digest that expires 5 minutes from now.
 insertSignInToken :: O.MonadOrville m => BS.ByteString -> m ()
 insertSignInToken digest =
-  O.executeVoid O.InsertQuery $
-    RawSql.fromString "INSERT INTO lockstep_operator_sign_in_tokens (digest, expires_at) VALUES ("
-      <> digestSql digest
-      <> RawSql.fromString ", now() + interval '5 minutes')"
+  void (insertCredential signInTokenTable digest 5)
 
 {- | Marks the token consumed if it is unconsumed and unexpired; 'True' when
 this call consumed it. A concurrent consumer waits on the row lock and then
 finds it consumed.
 -}
 consumeSignInToken :: O.MonadOrville m => BS.ByteString -> m Bool
-consumeSignInToken digest = do
-  rows <-
-    O.executeAndDecode
-      O.UpdateQuery
-      ( RawSql.fromString "UPDATE lockstep_operator_sign_in_tokens SET consumed_at = now() WHERE digest = "
-          <> digestSql digest
-          <> RawSql.fromString " AND consumed_at IS NULL AND expires_at > now() RETURNING 1::integer AS v"
-      )
-      (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.integerField "v")))
-  pure (not (null rows))
+consumeSignInToken digest =
+  not . null
+    <$> O.updateFieldsAndReturnEntities
+      signInTokenTable
+      (setNow consumedAtField :| [])
+      (Just (O.fieldEquals credentialDigestField digest `O.andExpr` O.fieldIsNull consumedAtField `O.andExpr` unexpired))
+
+-- lockstep_operator_sessions -------------------------------------------------------
+
+sessionTable :: O.TableDefinition (O.HasKey BS.ByteString) Credential Credential
+sessionTable =
+  credentialTable "lockstep_operator_sessions" revokedAtField
+
+revokedAtField :: O.FieldDefinition O.Nullable (Maybe Time.UTCTime)
+revokedAtField =
+  O.nullableField (O.utcTimestampField "revoked_at")
 
 -- | Stores a new session digest with a 12-hour absolute expiry; returns it.
 insertSession :: O.MonadOrville m => BS.ByteString -> m (Maybe Time.UTCTime)
-insertSession digest = do
-  rows <-
-    O.executeAndDecode
-      O.InsertQuery
-      ( RawSql.fromString "INSERT INTO lockstep_operator_sessions (digest, expires_at) VALUES ("
-          <> digestSql digest
-          <> RawSql.fromString ", now() + interval '12 hours') RETURNING expires_at AS v"
-      )
-      (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.utcTimestampField "v")))
-  pure (headMay rows)
+insertSession digest =
+  fmap snd . headMay <$> insertCredential sessionTable digest (12 * 60)
+
+-- | The session is neither revoked nor expired.
+live :: Expr.BooleanExpr
+live =
+  O.fieldIsNull revokedAtField `O.andExpr` unexpired
 
 -- | The expiry of an unrevoked, unexpired session.
 liveSessionExpiry :: O.MonadOrville m => BS.ByteString -> m (Maybe Time.UTCTime)
-liveSessionExpiry digest = do
-  rows <-
-    O.executeAndDecode
-      O.SelectQuery
-      ( RawSql.fromString "SELECT expires_at AS v FROM lockstep_operator_sessions WHERE digest = "
-          <> digestSql digest
-          <> RawSql.fromString " AND revoked_at IS NULL AND expires_at > now()"
-      )
-      (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.utcTimestampField "v")))
-  pure (headMay rows)
+liveSessionExpiry digest =
+  fmap snd <$> O.findFirstEntityBy sessionTable (O.where_ (O.fieldEquals credentialDigestField digest `O.andExpr` live))
 
 revokeSession :: O.MonadOrville m => BS.ByteString -> m ()
 revokeSession digest =
-  O.executeVoid O.UpdateQuery $
-    RawSql.fromString "UPDATE lockstep_operator_sessions SET revoked_at = now() WHERE digest = "
-      <> digestSql digest
-      <> RawSql.fromString " AND revoked_at IS NULL"
+  O.updateFields
+    sessionTable
+    (setNow revokedAtField :| [])
+    (Just (O.fieldEquals credentialDigestField digest `O.andExpr` O.fieldIsNull revokedAtField))
 
 -- | Revokes every unrevoked, unexpired session; returns how many.
 revokeLiveSessions :: O.MonadOrville m => m Int
-revokeLiveSessions = do
-  rows <-
-    O.executeAndDecode
-      O.UpdateQuery
-      ( RawSql.fromString
-          "WITH revoked AS (UPDATE lockstep_operator_sessions SET revoked_at = now() WHERE revoked_at IS NULL AND expires_at > now() RETURNING 1) SELECT count(*)::integer AS v FROM revoked"
-      )
-      (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.integerField "v")))
-  pure (maybe 0 fromIntegral (headMay rows))
-
-headMay :: [a] -> Maybe a
-headMay xs =
-  case xs of
-    [] -> Nothing
-    x : _ -> Just x
+revokeLiveSessions =
+  O.updateFieldsAndReturnRowCount sessionTable (setNow revokedAtField :| []) (Just live)
