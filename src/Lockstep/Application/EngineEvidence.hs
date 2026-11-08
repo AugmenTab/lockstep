@@ -18,12 +18,20 @@ import Data.Maybe (catMaybes, isNothing)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Fleece.Aeson qualified as FA
-import Fleece.Core ((#+))
-import Fleece.Core qualified as FC
 import Flipstone.Prelude
 
 import Lockstep.Application.Engine (InvocationView (..), RecordView (..), TransactionView (..))
 import Lockstep.Application.EngineCandidate (recordedCandidate)
+import Lockstep.Application.EngineRecords
+  ( FindingRecord (FindingRecord)
+  , ReviewRecord (ReviewRecord)
+  , VerificationRun (VerificationRun)
+  , VerificationSummary (VerificationSummary)
+  , findingSchema
+  , reviewSchema
+  , verificationSchema
+  , verificationSummarySchema
+  )
 import Lockstep.Kernel.Roles (Candidate (..), CandidateTest (..), Criterion (..))
 
 -- | One command the Supervisor ran on the candidate commit, and what it did.
@@ -81,52 +89,8 @@ data Evidence
   }
 
 -- Documents -----------------------------------------------------------------------------
-
-data DocRun
-  = DocRun [T.Text] T.Text (Maybe Integer) T.Text T.Text
-
-runSchema :: FC.Fleece t => FC.Schema t DocRun
-runSchema =
-  FC.object $
-    FC.constructor DocRun
-      #+ FC.required "command" (\(DocRun c _ _ _ _) -> c) (FC.list FC.text)
-      #+ FC.required "outcome" (\(DocRun _ o _ _ _) -> o) FC.text
-      #+ FC.optional "exit" (\(DocRun _ _ x _ _) -> x) FC.integer
-      #+ FC.required "stdout_tail" (\(DocRun _ _ _ s _) -> s) FC.text
-      #+ FC.required "stderr_tail" (\(DocRun _ _ _ _ e) -> e) FC.text
-
-data DocSummary
-  = DocSummary T.Text Bool
-
-summarySchema :: FC.Fleece t => FC.Schema t DocSummary
-summarySchema =
-  FC.object $
-    FC.constructor DocSummary
-      #+ FC.required "commit" (\(DocSummary c _) -> c) FC.text
-      #+ FC.required "passed" (\(DocSummary _ p) -> p) FC.boolean
-
-data DocFinding
-  = DocFinding T.Text T.Text T.Text T.Text
-
-findingSchema :: FC.Fleece t => FC.Schema t DocFinding
-findingSchema =
-  FC.object $
-    FC.constructor DocFinding
-      #+ FC.required "requirement" (\(DocFinding r _ _ _) -> r) FC.text
-      #+ FC.required "claim" (\(DocFinding _ c _ _) -> c) FC.text
-      #+ FC.required "mutant" (\(DocFinding _ _ m _) -> m) FC.text
-      #+ FC.required "disposition" (\(DocFinding _ _ _ d) -> d) FC.text
-
-data DocReview
-  = DocReview T.Text T.Text [T.Text]
-
-reviewSchema :: FC.Fleece t => FC.Schema t DocReview
-reviewSchema =
-  FC.object $
-    FC.constructor DocReview
-      #+ FC.required "commit" (\(DocReview c _ _) -> c) FC.text
-      #+ FC.required "verdict" (\(DocReview _ v _) -> v) FC.text
-      #+ FC.required "reasons" (\(DocReview _ _ r) -> r) (FC.list FC.text)
+--
+-- Each record is read through the schema it is written with ("Lockstep.Application.EngineRecords").
 
 decodeWith :: (LBS.ByteString -> Either String a) -> RecordView -> Either Int a
 decodeWith decoder r =
@@ -140,12 +104,12 @@ transactionEvidence view =
     { evidenceCriteria = maybe [] candidateCriteria candidate
     , evidenceTests = maybe [] candidateTests candidate
     , evidenceCommands = maybe [] candidateVerification candidate
-    , evidenceRuns = [CheckRun c o x s e | Right (DocRun c o x s e) <- fmap snd runs]
-    , evidencePassed = (\(DocSummary c p) -> (c, p)) <$> lastRight (current summaries)
+    , evidenceRuns = [CheckRun c o x s e | Right (VerificationRun c o x s e) <- fmap snd runs]
+    , evidencePassed = (\(VerificationSummary c p) -> (c, p)) <$> lastRight (current summaries)
     , evidenceFindings =
-        [FindingView (T.pack "before") r c m d | Right (DocFinding r c m d) <- fmap snd (decodedKind (FA.decode findingSchema) (T.pack "finding"))]
-          <> [FindingView (T.pack "after") r c m d | Right (DocFinding r c m d) <- current (decodedKind (FA.decode findingSchema) (T.pack "post-finding"))]
-    , evidenceReview = (\(DocReview c v rs) -> ReviewView c v rs) <$> lastRight (current reviews)
+        [FindingView (T.pack "before") r c m d | Right (FindingRecord r c _ m d) <- fmap snd (decodedKind (FA.decode findingSchema) (T.pack "finding"))]
+          <> [FindingView (T.pack "after") r c m d | Right (FindingRecord r c _ m d) <- current (decodedKind (FA.decode findingSchema) (T.pack "post-finding"))]
+    , evidenceReview = (\(ReviewRecord c v rs _) -> ReviewView c v rs) <$> lastRight (current reviews)
     , evidenceUncertain = L.filter unsettled (viewInvocations view)
     , evidenceUnreadable =
         L.sort
@@ -164,7 +128,7 @@ transactionEvidence view =
   decodedKind :: (LBS.ByteString -> Either String a) -> T.Text -> [(Int, Either Int a)]
   decodedKind decoder kind = [(recordSequence r, decodeWith decoder r) | r <- ofKind kind]
   candidate = lastJust (fmap (recordedCandidate . recordBody) (ofKind (T.pack "candidate")))
-  summaries = decodedKind (FA.decode summarySchema) (T.pack "verification-summary")
+  summaries = decodedKind (FA.decode verificationSummarySchema) (T.pack "verification-summary")
   reviews = decodedKind (FA.decode reviewSchema) (T.pack "review")
   -- The latest attempt begins with the latest implementation record.
   attemptFrom = maybe 0 recordSequence (headOf (L.reverse (ofKind (T.pack "implementation"))))
@@ -179,7 +143,7 @@ transactionEvidence view =
           from = maybe attemptFrom recordSequence (headOf (L.reverse [r | r <- ofKind (T.pack "verification-summary"), recordSequence r < recordSequence lastSummary]))
         in
           [r | r <- ofKind (T.pack "verification"), recordSequence r > max from attemptFrom, recordSequence r < recordSequence lastSummary]
-  runs = [(recordSequence r, decodeWith (FA.decode runSchema) r) | r <- latestRuns]
+  runs = [(recordSequence r, decodeWith (FA.decode verificationSchema) r) | r <- latestRuns]
   unsettled i =
     invocationWhat i `L.elem` fmap T.pack ["planner", "challenger", "implementer", "reviewer"]
       && maybe True (T.isPrefixOf (T.pack "uncertain")) (invocationOutcome i)

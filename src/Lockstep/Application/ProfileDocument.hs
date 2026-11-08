@@ -4,6 +4,8 @@ validates names and policy.
 -}
 module Lockstep.Application.ProfileDocument
   ( decodeProfileDocument
+  , GateDocument (..)
+  , encodeProfileDocument
   ) where
 
 import Data.ByteString.Lazy qualified as LBS
@@ -15,6 +17,7 @@ import Fleece.Core ((#+))
 import Fleece.Core qualified as FC
 import Flipstone.Prelude
 
+import Lockstep.Foundation.Fleece (encodeText)
 import Lockstep.Kernel.Profile (RawGate (..), RawProfile (..), RawSpecialization (..))
 
 data DocGate
@@ -109,6 +112,52 @@ decodeProfileDocument bytes =
           , rawGates = gates
           , rawSpecializations = specializations
           }
+
+-- | A gate as a built-in document writes it: optional keys present exactly when given.
+data GateDocument
+  = GateDocument
+  { gateDocumentId :: T.Text
+  , gateDocumentStage :: T.Text
+  , gateDocumentArtifacts :: [T.Text]
+  , gateDocumentKinds :: Maybe [T.Text]
+  , gateDocumentClasses :: Maybe [T.Text]
+  , gateDocumentVerifiers :: [T.Text]
+  , gateDocumentApproval :: T.Text
+  , gateDocumentExceptionPath :: Maybe Bool
+  }
+
+{- | A Profile document with these gates and no optional top-level keys,
+through the schema 'decodeProfileDocument' reads (so the built-in Profiles
+are stored as the decoder's own document form; their stored digest is the
+SHA-256 of these bytes).
+-}
+encodeProfileDocument :: T.Text -> Integer -> [GateDocument] -> T.Text
+encodeProfileDocument profileId version gates =
+  encodeText
+    profileSchema
+    DocProfile
+      { docId = profileId
+      , docVersion = version
+      , docAllowsNonBehavioural = Nothing
+      , docInvariantExceptions = Nothing
+      , docGates =
+          [ DocGate
+              { docGateId = gateDocumentId g
+              , docGateStage = gateDocumentStage g
+              , docGateArtifacts = gateDocumentArtifacts g
+              , docGateKinds = gateDocumentKinds g
+              , docGateClasses = gateDocumentClasses g
+              , docGatePathClasses = Nothing
+              , docGateVerifiers = gateDocumentVerifiers g
+              , docGateApproval = gateDocumentApproval g
+              , docGateExceptionPath = gateDocumentExceptionPath g
+              , docGateExtra = Map.empty
+              }
+          | g <- gates
+          ]
+      , docSpecializations = Nothing
+      , docExtra = Map.empty
+      }
 
 known :: String -> Map.Map T.Text FC.AnyJSON -> Either T.Text ()
 known place extra =

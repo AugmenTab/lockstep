@@ -28,7 +28,7 @@ import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), checkReadiness, withDatabase)
 import Lockstep.Application.Identity (newUuid)
 import Lockstep.Application.Ledger (LedgerFailure (..), NewWorkOrder (..), createWorkOrderIn)
-import Lockstep.Application.ProfileDocument (decodeProfileDocument)
+import Lockstep.Application.ProfileDocument (GateDocument (..), decodeProfileDocument, encodeProfileDocument)
 import Lockstep.Application.Profiles (loadStoredDefinition, sha256Hasher)
 import Lockstep.Application.ProjectChecks (ExpectedChecks (..))
 import Lockstep.Application.Projects (ProjectFolders (..))
@@ -72,35 +72,34 @@ bugFixDocument :: LBS.ByteString
 bugFixDocument =
   LBS.fromStrict (TE.encodeUtf8 bugFixText)
 
+{- | The built-in Bug Profile document, through the Profile document schema.
+Its bytes are those the stored rows and their digests hold (checked by the
+lockstep-compliance suite).
+-}
 bugFixText :: T.Text
 bugFixText =
-  T.concat
-    [ T.pack "{\"id\":\"lockstep-bug-fix\",\"version\":1,\"gates\":["
-    , gate "bug-reproduction" "[\"reproduction\"]" "[\"deterministic-command\"]" True
-    , T.pack ","
-    , gate "bug-requirements" "[\"impact-assessment\",\"requirements-basis\"]" "[\"digest-check\"]" False
-    , T.pack ","
-    , gate "bug-regression-test" "[\"frozen-tests\"]" "[\"deterministic-command\",\"digest-check\"]" False
-    , T.pack ","
-    , gate "bug-verification" "[\"regression-evidence\",\"verification-record\"]" "[\"deterministic-command\"]" False
-    , T.pack ","
-    , gate "bug-review" "[\"review-record\"]" "[\"independent-review\"]" False
-    , T.pack "]}"
+  encodeProfileDocument
+    (T.pack "lockstep-bug-fix")
+    1
+    [ gate "bug-reproduction" ["reproduction"] ["deterministic-command"] True
+    , gate "bug-requirements" ["impact-assessment", "requirements-basis"] ["digest-check"] False
+    , gate "bug-regression-test" ["frozen-tests"] ["deterministic-command", "digest-check"] False
+    , gate "bug-verification" ["regression-evidence", "verification-record"] ["deterministic-command"] False
+    , gate "bug-review" ["review-record"] ["independent-review"] False
     ]
  where
-  gate :: String -> String -> String -> Bool -> T.Text
+  gate :: String -> [String] -> [String] -> Bool -> GateDocument
   gate name artifacts verifiers exceptionPath =
-    T.pack
-      ( "{\"id\":\""
-          <> name
-          <> "\",\"stage\":\"before-acceptance\",\"artifacts\":"
-          <> artifacts
-          <> ",\"kinds\":[\"engineering\"],\"classes\":[\"bug\"],\"verifiers\":"
-          <> verifiers
-          <> ",\"approval\":\"supervisor\",\"exception_path\":"
-          <> (if exceptionPath then "true" else "false")
-          <> "}"
-      )
+    GateDocument
+      { gateDocumentId = T.pack name
+      , gateDocumentStage = T.pack "before-acceptance"
+      , gateDocumentArtifacts = fmap T.pack artifacts
+      , gateDocumentKinds = Just [T.pack "engineering"]
+      , gateDocumentClasses = Just [T.pack "bug"]
+      , gateDocumentVerifiers = fmap T.pack verifiers
+      , gateDocumentApproval = T.pack "supervisor"
+      , gateDocumentExceptionPath = Just exceptionPath
+      }
 
 -- | The built-in definition, decoded from the stored document.
 bugFixStored :: Maybe ProfileDefinition

@@ -151,7 +151,9 @@ tests:
     dependencies:
       - lockstep
       - bytestring
+      - containers
       - crypton
+      - json-fleece-aeson
       - memory
       - orville-postgresql
       - tasty

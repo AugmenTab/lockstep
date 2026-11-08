@@ -50,6 +50,42 @@ import Lockstep.Application.Command (IdempotencyKey, mkIdempotencyKey)
 import Lockstep.Application.Conversation (NewHumanRequest (..), Sender (..), StoredRequest (..), openRequest, requestByKey, senderChannel, senderEvidence)
 import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason, Readiness (..), SessionLock (..), checkReadiness, withDatabase, withSessionLock)
 import Lockstep.Application.EngineCandidate (baselineJson, candidateJson, findingJson, frozenContract, recordedCandidate, testFiles, unchangedAtBasis)
+import Lockstep.Application.EngineRecords
+  ( AcceptanceRecord (AcceptanceRecord)
+  , BasisRecord (BasisRecord)
+  , Completion (Completion)
+  , FreezeRecord (FreezeRecord)
+  , Halt (Halt)
+  , ImplementationRecord (ImplementationRecord)
+  , InputRecord (InputRecord)
+  , Refusal (Refusal)
+  , Reproduction (..)
+  , Resume (Resume)
+  , ReviewRecord (ReviewRecord)
+  , Started (Started)
+  , Unfinished (Unfinished)
+  , VerificationRun (VerificationRun)
+  , VerificationSummary (..)
+  , acceptanceSchema
+  , argvText
+  , basisSchema
+  , completionSchema
+  , freezeSchema
+  , haltSchema
+  , implementationRefusedSchema
+  , implementationSchema
+  , inputSchema
+  , record
+  , refusalSchema
+  , reproductionSchema
+  , resumeSchema
+  , reviewSchema
+  , startedSchema
+  , unfinishedSchema
+  , verificationSchema
+  , verificationSummarySchema
+  )
+import Lockstep.Application.EngineRecords qualified as Records
 import Lockstep.Application.Identity (newUuid)
 import Lockstep.Application.Repositories (ownershipHolds)
 import Lockstep.Application.Tasks (TaskView (..), findTaskIn)
@@ -57,6 +93,7 @@ import Lockstep.Effects.GitSupervisor (Basis (..), CommitMeta (..), advanceBranc
 import Lockstep.Effects.Process (RunResult (..))
 import Lockstep.Effects.Roles (Adapter (..), Runner (..), RunnerFailure (..), Workspace (..), decodeAnswer, prepareRole, readAnswer, runPrepared)
 import Lockstep.Effects.Roles qualified as Roles
+import Lockstep.Foundation.Fleece (decodeText)
 import Lockstep.Foundation.Json (Json (..), renderJson, string, strings)
 import Lockstep.Foundation.RunnerProtocol (RunProfile (..))
 import Lockstep.Kernel.Candidate (MutantRun (..), classifyTest, disposeFinding, quoteGrounded)
@@ -331,7 +368,7 @@ startTransaction runtime raw =
                             }
                       Store.insertTransaction row
                       appendRecord txId 1 (T.pack "started") Supervisor StageBasis $
-                        JObject [(T.pack "work_order", string workOrder), (T.pack "engineer", string (Store.factEngineer f)), (T.pack "folder", string (Store.factFolder f))]
+                        record startedSchema (Started workOrder (Store.factEngineer f) (Store.factFolder f))
                       maybe (Left (T.pack "transaction-unreadable")) Right <$> loadView txId
 
 appendRecord :: T.Text -> Int32 -> T.Text -> Principal -> Stage -> Json -> O.Orville ()
@@ -392,9 +429,9 @@ applyLocked row principal input records change =
                 }
             halted =
               case txState next of
-                Halted s c -> [(T.pack "halt", JObject [(T.pack "stage", string (stageName s)), (T.pack "code", string c)])]
+                Halted s c -> [(T.pack "halt", record haltSchema (Halt (stageName s) c))]
                 _ -> []
-            inputRecord = (T.pack "input", JObject [(T.pack "input", string (txInputName input)), (T.pack "state", string stateName)])
+            inputRecord = (T.pack "input", record inputSchema (InputRecord (txInputName input) stateName))
             numbered = L.zip [fromIntegral (L.length existing) + 1 ..] (records <> [inputRecord] <> halted)
           Store.updateTransaction updated
           traverse_ (\(n, (kind, body)) -> appendRecord txId n kind principal stage body) numbered
@@ -479,7 +516,7 @@ advanceRow runtime engine row =
             Nothing -> idle (T.pack "halted")
             Just (request, choice, input) -> do
               let
-                body = JObject [(T.pack "request", string (storedRequestId request)), (T.pack "choice", string choice), (T.pack "revision", JNumber (fromIntegral (storedRevision request)))]
+                body = record resumeSchema (Resume (storedRequestId request) choice (fromIntegral (storedRevision request)))
               applied <- applyInput runtime (Store.txRowId row) (Store.txRowRevision row) Human input [(T.pack "resume", body)] id
               case applied of
                 Left c -> pure (Left c)
@@ -540,7 +577,7 @@ decideCompletion runtime raw sender choice =
           Just (Stopped _) -> refuse "closed"
           Just Accepted -> do
             let
-              body = JObject [(T.pack "choice", string choice), (T.pack "channel", string (senderChannel sender)), (T.pack "evidence", string (senderEvidence sender))]
+              body = record completionSchema (Completion choice (senderChannel sender) (senderEvidence sender))
             applied <- applyInput runtime txId (Store.txRowRevision row) Human input [(T.pack "completion", body)] id
             case applied of
               Left code -> pure (Right (Left code))
@@ -571,7 +608,7 @@ settleUnfinished runtime row _ =
                   (\i -> Store.finishInvocation (Store.invocationRowId i) (emptyFinish (T.pack (if isRole i then "uncertain" else "interrupted"))))
                   invocations
               input = RoleUncertain (T.pack "unfinished-invocation")
-              body = JObject [(T.pack "invocations", strings (fmap Store.invocationRowId roles))]
+              body = record unfinishedSchema (Unfinished (fmap Store.invocationRowId roles))
             case () of
               _
                 | L.null invocations -> pure (Right Nothing)
@@ -636,7 +673,7 @@ basisStage :: DatabaseRuntime -> Store.TransactionRow -> IO (Either T.Text TxInp
 basisStage runtime row = do
   let
     folder = T.unpack (Store.txRowFolder row)
-    refuse code = settle runtime row (BasisRefused code) [(T.pack "basis-refused", JObject [(T.pack "code", string code)])] id
+    refuse code = settle runtime row (BasisRefused code) [(T.pack "basis-refused", record refusalSchema (Refusal code))] id
   owned <-
     db runtime $ do
       facts <- Store.admissionFacts (Store.txRowWorkOrder row)
@@ -663,11 +700,7 @@ basisStage runtime row = do
                 BasisReady
                 [
                   ( T.pack "basis"
-                  , JObject
-                      [ (T.pack "commit", string (basisCommit basis))
-                      , (T.pack "tree", string (basisTree basis))
-                      , (T.pack "branch", string branch)
-                      ]
+                  , record basisSchema (BasisRecord (basisCommit basis) (basisTree basis) branch)
                   )
                 ]
                 (\r -> r {Store.txRowBasis = Just (basisCommit basis), Store.txRowBranch = Just branch})
@@ -765,18 +798,12 @@ citationsHold tree entries citations =
           Left (_ :: IOException) -> False
           Right b -> citationLast c <= L.length (T.lines (decodeLenient b))
 
--- | The discovery in its answer form (the invocation it came from is in the invocations).
+{- | The discovery in its answer form, through the answer schema (the
+invocation it came from is in the invocations).
+-}
 discoveryJson :: Discovery -> Json
-discoveryJson d =
-  JObject
-    ( [ (T.pack "kind", string (T.pack "discovery"))
-      , (T.pack "summary", string (discoverySummary d))
-      , (T.pack "hypothesis", string (discoveryHypothesis d))
-      , (T.pack "citations", JArray [JObject [(T.pack "path", string (citationPath c)), (T.pack "first", JNumber (toInteger (citationFirst c))), (T.pack "last", JNumber (toInteger (citationLast c)))] | c <- discoveryCitations d])
-      , (T.pack "allowed_paths", strings (discoveryAllowedPaths d))
-      ]
-        <> [(T.pack "reproduction", JObject [(T.pack "argv", strings (checkArgv c)), (T.pack "signature", string (checkSignature c))]) | Just c <- [discoveryReproduction d]]
-    )
+discoveryJson =
+  JRaw . Roles.encodeDiscovery
 
 -- | The discovery a record holds, read back through the answer decoder.
 recordedDiscovery :: T.Text -> Maybe Discovery
@@ -899,7 +926,7 @@ invocationRow row invocation stage what runner adapter argv =
     , Store.invocationRowWhat = what
     , Store.invocationRowRunner = runner
     , Store.invocationRowAdapter = adapter
-    , Store.invocationRowArgv = renderJson (strings argv)
+    , Store.invocationRowArgv = argvText argv
     , Store.invocationRowOutcome = Nothing
     , Store.invocationRowExit = Nothing
     , Store.invocationRowMillis = Nothing
@@ -933,7 +960,7 @@ reproductionStage runtime engine row = do
         [] -> settle runtime row (SupervisorFailed (T.pack "discovery-missing")) [] id
         d : _ ->
           case discoveryReproduction d of
-            Nothing -> settle runtime row NotReproduced [(T.pack "reproduction", JObject [(T.pack "command", JNull), (T.pack "reproduced", JBool False)])] id
+            Nothing -> settle runtime row NotReproduced [(T.pack "reproduction", record reproductionSchema (Reproduction Nothing Nothing Nothing Nothing False Nothing Nothing Nothing))] id
             Just check -> runCheck basis check
  where
   runCheck basis check = do
@@ -962,16 +989,18 @@ reproductionStage runtime engine row = do
                   err = decodeLenient (resultStderr result)
                   reproduced = reproduces check (resultOutcome result) out err
                   body =
-                    JObject
-                      [ (T.pack "command", strings (checkArgv check))
-                      , (T.pack "signature", string (checkSignature check))
-                      , (T.pack "outcome", string (outcomeName (resultOutcome result)))
-                      , (T.pack "exit", maybe JNull (JNumber . toInteger) (exitOf (resultOutcome result)))
-                      , (T.pack "reproduced", JBool reproduced)
-                      , (T.pack "stdout_tail", string (tailOf (resultStdout result)))
-                      , (T.pack "stderr_tail", string (tailOf (resultStderr result)))
-                      , (T.pack "invocation", string invocation)
-                      ]
+                    record
+                      reproductionSchema
+                      Reproduction
+                        { reproductionCommand = Just (checkArgv check)
+                        , reproductionSignature = Just (checkSignature check)
+                        , reproductionOutcome = Just (outcomeName (resultOutcome result))
+                        , reproductionExit = Just (toInteger <$> exitOf (resultOutcome result))
+                        , reproductionReproduced = reproduced
+                        , reproductionStdout = Just (tailOf (resultStdout result))
+                        , reproductionStderr = Just (tailOf (resultStderr result))
+                        , reproductionInvocation = Just invocation
+                        }
                 finished <- db runtime (Right <$> Store.finishInvocation invocation (finishOf (outcomeName (resultOutcome result)) result))
                 case finished of
                   Left code -> pure (Left code)
@@ -1087,8 +1116,8 @@ candidateStage runtime engine row =
     cited <- citationsHold (workspaceTree workspace) entries (L.concatMap criterionCitations (candidateCriteria c))
     unusable <- traverse (unusablePath (workspaceTree workspace) entries . testPath) (candidateTests c)
     let
-      record = (T.pack "candidate", candidateJson c)
-      rejected code = settle runtime row (CandidateRejected code) [record, (T.pack "candidate-rejected", JObject [(T.pack "code", string code)])] id
+      candidateRecord = (T.pack "candidate", candidateJson c)
+      rejected code = settle runtime row (CandidateRejected code) [candidateRecord, (T.pack "candidate-rejected", record refusalSchema (Refusal code))] id
       paths = fmap testPath (candidateTests c)
     case () of
       _
@@ -1096,7 +1125,7 @@ candidateStage runtime engine row =
         | not cited -> rejected (T.pack "citation-outside-source")
         | not (L.all protectedPathValid paths) -> rejected (T.pack "test-path-unsupported")
         | L.or unusable || L.any (foldsOnto entries paths) paths -> rejected (T.pack "test-path-unusable")
-        | otherwise -> baseline basis c entries [record]
+        | otherwise -> baseline basis c entries [candidateRecord]
   baseline basis c entries records = do
     runs <- traverse (baselineRun basis c) (candidateTests c)
     let
@@ -1285,7 +1314,7 @@ freezeStage runtime row = do
       runtime
       row
       TestsFrozen
-      [(T.pack "contract", contract), (T.pack "freeze", JObject [(T.pack "commit", string freeze), (T.pack "branch", string branch), (T.pack "contract_digest", string digest)])]
+      [(T.pack "contract", contract), (T.pack "freeze", record freezeSchema (FreezeRecord freeze branch digest))]
       (\r -> r {Store.txRowFreeze = Just freeze, Store.txRowContract = Just digest})
 
 -- The implementer (C-P4.10-14 I1) ---------------------------------------------------------
@@ -1333,7 +1362,7 @@ implementStage runtime engine row = do
             Right (Right (AnswerImplementation i, entries, workspace, invocation)) -> do
               found <- snapshotChanges entries (workspaceTree workspace)
               let
-                refused code paths = settle runtime row (ImplementationRefused code) [(T.pack "implementation-refused", JObject [(T.pack "code", string code), (T.pack "paths", strings paths), (T.pack "invocation", string invocation)])] id
+                refused code paths = settle runtime row (ImplementationRefused code) [(T.pack "implementation-refused", record implementationRefusedSchema (Records.ImplementationRefused code paths invocation))] id
               case found of
                 Left code -> refused code []
                 Right changes
@@ -1367,13 +1396,7 @@ implementStage runtime engine row = do
                                 Implemented
                                 [
                                   ( T.pack "implementation"
-                                  , JObject
-                                      [ (T.pack "summary", string (implementationSummary i))
-                                      , (T.pack "changed", strings (fmap changePath changes))
-                                      , (T.pack "candidate", string candidate)
-                                      , (T.pack "attempt", JNumber (toInteger attempt))
-                                      , (T.pack "invocation", string invocation)
-                                      ]
+                                  , record implementationSchema (ImplementationRecord (implementationSummary i) (fmap changePath changes) candidate (toInteger attempt) invocation)
                                   )
                                 ]
                                 (\r -> r {Store.txRowCandidate = Just candidate})
@@ -1411,8 +1434,8 @@ verifyStage runtime engine row = do
                   let
                     missing = L.any (either environmentMissing (const False)) runs
                     results = rights runs
-                    bodies = [(T.pack "verification", JObject ([(T.pack "command", strings argv), (T.pack "outcome", string (outcomeName (resultOutcome r)))] <> exitField (resultOutcome r) <> [(T.pack "stdout_tail", string (tailOf (resultStdout r))), (T.pack "stderr_tail", string (tailOf (resultStderr r)))])) | (argv, r) <- results]
-                    summary passed = (T.pack "verification-summary", JObject [(T.pack "commit", string candidate), (T.pack "passed", JBool passed)])
+                    bodies = [(T.pack "verification", record verificationSchema (VerificationRun argv (outcomeName (resultOutcome r)) (exitOf (resultOutcome r)) (tailOf (resultStdout r)) (tailOf (resultStderr r)))) | (argv, r) <- results]
+                    summary passed = (T.pack "verification-summary", record verificationSummarySchema (VerificationSummary candidate passed))
                   case () of
                     _
                       | missing || L.any ((== Exited 127) . resultOutcome . snd) results ->
@@ -1427,10 +1450,10 @@ verifyStage runtime engine row = do
     case outcome of
       Exited _ -> True
       _ -> False
-  exitField outcome =
+  exitOf outcome =
     case outcome of
-      Exited n -> [(T.pack "exit", JNumber (toInteger n))]
-      _ -> []
+      Exited n -> Just (toInteger n)
+      _ -> Nothing
 
 -- Challenge after the implementation (C-P4.10-14 C1) ----------------------------------------
 
@@ -1545,7 +1568,7 @@ reviewStage runtime engine row = do
                 Approve -> ReviewApproved
                 Reject -> ReviewRejected
                 NeedsHuman -> ReviewNeedsHuman
-          settle runtime row input [(T.pack "review", JObject [(T.pack "commit", string candidate), (T.pack "verdict", string (verdictName (reviewVerdict r))), (T.pack "reasons", strings (reviewReasons r)), (T.pack "invocation", string invocation)])] id
+          settle runtime row input [(T.pack "review", record reviewSchema (ReviewRecord candidate (verdictName (reviewVerdict r)) (reviewReasons r) (Just invocation)))] id
         Right (Right _) -> settle runtime row (RoleFailed (T.pack "answer-invalid wrong-stage")) [] id
 
 -- Acceptance (C-P4.10-14 A1) ------------------------------------------------------------------------
@@ -1573,8 +1596,9 @@ acceptStage runtime row = do
       let
         verified = latestRecord (T.pack "verification-summary") rs
         reviewed = latestRecord (T.pack "review") rs
-        passed = maybe False (\b -> T.pack "\"passed\":true" `T.isInfixOf` b && candidate `T.isInfixOf` b) verified
-        approved = maybe False (\b -> T.pack "\"verdict\":\"approve\"" `T.isInfixOf` b && candidate `T.isInfixOf` b) reviewed
+        -- Read through the records' own schemas: the latest verification passed on this commit, and the latest review approved it.
+        passed = L.any (\s -> summaryPassed s && summaryCommit s == candidate) (verified >>= either (const Nothing) Just . decodeText verificationSummarySchema)
+        approved = L.any (\r -> Records.reviewVerdict r == T.pack "approve" && Records.reviewCommit r == candidate) (reviewed >>= either (const Nothing) Just . decodeText reviewSchema)
       case () of
         _
           | not passed -> settle runtime row (SupervisorFailed (T.pack "verification-not-passed")) [] id
@@ -1588,7 +1612,7 @@ acceptStage runtime row = do
                     runtime
                     row
                     CommitAccepted
-                    [(T.pack "acceptance", JObject [(T.pack "commit", string candidate), (T.pack "branch", string branch), (T.pack "from", string freeze)])]
+                    [(T.pack "acceptance", record acceptanceSchema (AcceptanceRecord candidate branch freeze))]
                     (\r -> r {Store.txRowAccepted = Just candidate})
     _ -> settle runtime row (SupervisorFailed (T.pack "acceptance-inputs-missing")) [] id
 

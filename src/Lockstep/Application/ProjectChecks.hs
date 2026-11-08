@@ -33,7 +33,7 @@ import Text.Show (Show)
 
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, withDatabase)
 import Lockstep.Application.Ledger (SchedulePreview (..), ledgerFailureCode, previewSchedule)
-import Lockstep.Application.ProfileDocument (decodeProfileDocument)
+import Lockstep.Application.ProfileDocument (decodeProfileDocument, encodeProfileDocument)
 import Lockstep.Application.Profiles (loadStoredDefinition, sha256Hasher)
 import Lockstep.Application.Projects (ProjectView (..), findProject)
 import Lockstep.Kernel.Identity (WorkOrderId (..), uuidText)
@@ -71,9 +71,10 @@ basicChecksDocument :: LBS.ByteString
 basicChecksDocument =
   LBS.fromStrict (TE.encodeUtf8 basicChecksText)
 
+-- | The built-in basic checks document (no gates), through the Profile document schema.
 basicChecksText :: T.Text
 basicChecksText =
-  T.pack "{\"id\":\"lockstep-basic\",\"version\":1,\"gates\":[]}"
+  encodeProfileDocument basicChecksId 1 []
 
 basicDefinition :: Maybe ProfileDefinition
 basicDefinition =

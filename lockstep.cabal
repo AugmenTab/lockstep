@@ -41,6 +41,7 @@ library
       Lockstep.Application.Engine
       Lockstep.Application.EngineCandidate
       Lockstep.Application.EngineEvidence
+      Lockstep.Application.EngineRecords
       Lockstep.Application.EngineWorker
       Lockstep.Application.Execution
       Lockstep.Application.Executor
@@ -71,6 +72,7 @@ library
       Lockstep.Foundation.Config
       Lockstep.Foundation.ControlProtocol
       Lockstep.Foundation.EvidenceModel
+      Lockstep.Foundation.Fleece
       Lockstep.Foundation.FolderProtocol
       Lockstep.Foundation.InstallProtocol
       Lockstep.Foundation.Json
@@ -138,6 +140,7 @@ library
       Lockstep.Web.Common
       Lockstep.Web.Components.Page
       Lockstep.Web.Components.Page404
+      Lockstep.Web.Components.Shell
       Lockstep.Web.Control
       Lockstep.Web.DecisionPages
       Lockstep.Web.ExecutionPages
@@ -145,6 +148,7 @@ library
       Lockstep.Web.Handler.NoPermissionError
       Lockstep.Web.Handler.NoUser
       Lockstep.Web.Health
+      Lockstep.Web.Json
       Lockstep.Web.LedgerPage
       Lockstep.Web.Liveness
       Lockstep.Web.Operator
@@ -221,6 +225,7 @@ test-suite lockstep-compliance
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
+      Lockstep.Compliance.JsonTest
       Lockstep.Compliance.PersistenceTest
   hs-source-dirs:
       test/compliance
@@ -230,9 +235,11 @@ test-suite lockstep-compliance
   build-depends:
       base
     , bytestring
+    , containers
     , crypton
     , flipstone-prelude
     , henforcer
+    , json-fleece-aeson
     , lockstep
     , memory
     , orville-postgresql

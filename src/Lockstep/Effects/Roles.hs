@@ -31,6 +31,8 @@ module Lockstep.Effects.Roles
   , prepareRole
   , runPrepared
   , decodeAnswer
+  , encodeDiscovery
+  , encodeCandidate
   , readAnswer
   ) where
 
@@ -56,6 +58,7 @@ import Text.Show (Show)
 
 import Lockstep.Effects.HelperRunner (HelperFailure (..), PreparedRun (..), RunnerChannel, prepareRun, runnerDirectory, sendCancel, submitRun)
 import Lockstep.Effects.Process (Cancel, RunResult (..), runDirect)
+import Lockstep.Foundation.Fleece (encodeText)
 import Lockstep.Foundation.RunnerProtocol (RunProfile (..), isRunName)
 import Lockstep.Kernel.Roles
   ( Candidate (..)
@@ -75,6 +78,7 @@ import Lockstep.Kernel.Roles
   , RoleAnswer (..)
   , Verdict (..)
   , checkAnswer
+  , expectationName
   )
 import Lockstep.Kernel.Runner (Limits, RoleKind (..), RunOutcome (..), RunSpec (..), roleLimits, runnerEnvironment)
 
@@ -495,6 +499,10 @@ citationSchema =
       )
       (FC.additionalFields (\(DocCitation _ _ _ e) -> e) FC.anyJSON)
 
+toCitation :: Citation -> DocCitation
+toCitation c =
+  DocCitation (citationPath c) (toInteger (citationFirst c)) (toInteger (citationLast c)) Map.empty
+
 fromCitation :: DocCitation -> Either T.Text Citation
 fromCitation (DocCitation p f l extra) = do
   known extra
@@ -543,6 +551,23 @@ discoverySchema =
           #+ FC.required "allowed_paths" dAllowed (FC.list FC.text)
       )
       (FC.additionalFields dExtra FC.anyJSON)
+
+{- | A discovery in its answer form, through the schema 'decodeAnswer' reads
+it with (so a recorded discovery reads back as the same 'Discovery').
+-}
+encodeDiscovery :: Discovery -> T.Text
+encodeDiscovery d =
+  encodeText
+    discoverySchema
+    DocDiscovery
+      { dKind = T.pack "discovery"
+      , dSummary = discoverySummary d
+      , dHypothesis = discoveryHypothesis d
+      , dCitations = fmap toCitation (discoveryCitations d)
+      , dReproduction = (\c -> DocCheck (checkArgv c) (checkSignature c) Map.empty) <$> discoveryReproduction d
+      , dAllowed = discoveryAllowedPaths d
+      , dExtra = Map.empty
+      }
 
 fromDiscovery :: DocDiscovery -> Either T.Text Discovery
 fromDiscovery d = do
@@ -617,6 +642,20 @@ candidateSchema =
           #+ FC.required "tests" cTests (FC.list testSchema)
       )
       (FC.additionalFields cExtra FC.anyJSON)
+
+-- | A candidate in its answer form, through the schema 'decodeAnswer' reads it with.
+encodeCandidate :: Candidate -> T.Text
+encodeCandidate c =
+  encodeText
+    candidateSchema
+    DocCandidate
+      { cKind = T.pack "candidate"
+      , cCriteria = [DocCriterion (criterionId x) (criterionText x) (criterionTicketQuote x) (fmap toCitation (criterionCitations x)) Map.empty | x <- candidateCriteria c]
+      , cAllowed = candidateAllowedPaths c
+      , cVerification = candidateVerification c
+      , cTests = [DocTest (testPath t) (testContent t) (expectationName (testExpectation t)) (testArgv t) (testSignature t) Map.empty | t <- candidateTests c]
+      , cExtra = Map.empty
+      }
 
 fromCandidate :: DocCandidate -> Either T.Text Candidate
 fromCandidate c = do
