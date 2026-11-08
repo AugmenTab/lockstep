@@ -24,8 +24,11 @@ import Lockstep.Kernel.Effect
   , Intent (..)
   , IntentState (..)
   , Lease (..)
+  , Provenance (..)
+  , Reason (..)
   , effectSpecBudget
   , effectSpecClass
+  , reasonOf
   )
 import Lockstep.Kernel.Transition (Command (..), Principal (..))
 
@@ -98,7 +101,7 @@ carryChecked intent (Command principal request)
   attested =
     requestAttested request
       || case intentState intent of
-        IntentNotApplied reason -> T.pack "human-attested: " `T.isPrefixOf` reason
+        IntentNotApplied reason -> reasonProvenance (reasonOf reason) == HumanAttested
         _ -> False
   stateCheck =
     case intentState intent of

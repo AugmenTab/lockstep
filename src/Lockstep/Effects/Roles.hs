@@ -27,6 +27,7 @@ module Lockstep.Effects.Roles
   , scriptedAdapter
   , RoleOutcome (..)
   , roleOutcomeCode
+  , roleEndingOf
   , invokeRole
   , prepareRole
   , runPrepared
@@ -80,7 +81,7 @@ import Lockstep.Kernel.Roles
   , checkAnswer
   , expectationName
   )
-import Lockstep.Kernel.Runner (Limits, RoleKind (..), RunOutcome (..), RunSpec (..), roleLimits, runnerEnvironment)
+import Lockstep.Kernel.Runner (Limits, RoleEnding (..), RoleKind (..), RunOutcome (..), RunSpec (..), roleEndingText, roleLimits, runnerEnvironment)
 
 -- Runners -------------------------------------------------------------------------
 
@@ -341,12 +342,17 @@ data RoleOutcome
   | RoleUncertain T.Text
   deriving (Eq, Show)
 
+-- | The stored ending of an outcome ('roleEndingText').
 roleOutcomeCode :: RoleOutcome -> T.Text
-roleOutcomeCode outcome =
+roleOutcomeCode =
+  roleEndingText . roleEndingOf
+
+roleEndingOf :: RoleOutcome -> RoleEnding
+roleEndingOf outcome =
   case outcome of
-    RoleAnswered _ _ -> T.pack "answered"
-    RoleFailed code _ -> code
-    RoleUncertain code -> T.pack "uncertain " <> code
+    RoleAnswered _ _ -> RoleEndedAnswered
+    RoleFailed code _ -> RoleEndedFailed code
+    RoleUncertain code -> RoleEndedUncertain code
 
 {- | A5: runs the role once in the prepared workspace (its tree already
 written), with the context document as @context.json@ in its input.

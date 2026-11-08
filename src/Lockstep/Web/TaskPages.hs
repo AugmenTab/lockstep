@@ -26,7 +26,7 @@ import Text.Show (show)
 
 import Lockstep.Application.Projects (ProjectView (..))
 import Lockstep.Application.Tasks (TaskView (..), mostImportantReadyTask)
-import Lockstep.Kernel.Task (Priority (..), TaskReadiness (..), priorityCode, priorityOf, priorityWords, readinessWords)
+import Lockstep.Kernel.Task (Priority (..), TaskReadiness (..), TaskState (..), parseTaskState, priorityCode, priorityOf, priorityWords, readinessWords)
 import Lockstep.Web.Fragment (attr, cls, fragment, href)
 
 -- | What a task form shows: the values typed (or stored) and the creation key.
@@ -148,12 +148,18 @@ actions task =
     unblock = decide [action "unblock"] "Unblock" "task-unblock"
     cancel = decide [action "cancel"] "Cancel task…" "task-cancel"
   in
-    case T.unpack (taskState task) of
-      "proposed" -> [ready, block, cancel]
-      "blocked" -> [unblock, cancel]
-      "canceled" -> []
-      "done" -> []
-      _ -> [block, cancel]
+    -- The view carries the state's name; it is read once here. A name no state has offers nothing.
+    case parseTaskState (taskState task) of
+      Just TaskProposed -> [ready, block, cancel]
+      Just TaskBlocked -> [unblock, cancel]
+      Just TaskCanceledState -> []
+      Just TaskDone -> []
+      Just TaskReady -> [block, cancel]
+      Just TaskInProgress -> [block, cancel]
+      Just TaskCodeComplete -> [block, cancel]
+      Just TaskAwaitingReview -> [block, cancel]
+      Just TaskReadyForSignoff -> [block, cancel]
+      Nothing -> []
 
 {- | One task's page; @fixing@ is the C-P4.1 Fixing it section (empty when the
 project does not allow it); @underWay@: Lockstep has started on it (C-P4.16).
@@ -163,7 +169,7 @@ taskPage project siblings task underWay fixing notice =
   let
     others = [t | t <- siblings, taskId t /= taskId task]
     priority = priorityOf (taskPriority task)
-    editable = taskState task `L.notElem` ["canceled", "done"]
+    editable = parseTaskState (taskState task) `L.notElem` [Nothing, Just TaskCanceledState, Just TaskDone]
     form = TaskForm "" (taskTitle task) (taskAcceptance task) (priorityCode priority) (taskDependencies task)
   in
     fragment $
@@ -216,7 +222,12 @@ readinessClass readiness =
     ReadyToWork -> "ls-good-text"
     BlockedBecause _ -> "ls-notice"
     CannotStart _ -> "ls-notice"
-    _ -> "ls-state-line"
+    StateUnrecognised _ -> "ls-notice"
+    NotYetReady -> "ls-state-line"
+    WaitingFor _ -> "ls-state-line"
+    Finished -> "ls-state-line"
+    TaskCanceled -> "ls-state-line"
+    BeingWorkedOn -> "ls-state-line"
 
 -- | The project page's task section.
 projectTasks :: ProjectView -> [TaskView] -> [E.ChildHTML E.Division E.Body]

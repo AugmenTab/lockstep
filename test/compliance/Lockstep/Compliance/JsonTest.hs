@@ -21,12 +21,14 @@ module Lockstep.Compliance.JsonTest
 
 import Data.ByteString.Lazy qualified as LBS
 import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Fleece.Aeson qualified as FA
 import Flipstone.Prelude
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (testCase, (@?=))
+import Test.Tasty.HUnit (Assertion, assertBool, testCase, (@?=))
+import Text.Show (Show)
 
 import Lockstep.Application.EngineCandidate (candidateJson)
 import Lockstep.Application.EngineRecords
@@ -77,6 +79,7 @@ import Lockstep.Application.Execution (bugFixDocument)
 import Lockstep.Application.ProjectChecks (basicChecksDocument)
 import Lockstep.Effects.Roles (encodeDiscovery)
 import Lockstep.Foundation.Json (Json (..), renderJson, string, strings)
+import Lockstep.Kernel.Candidate (MutantRun (..), mutantRuns)
 import Lockstep.Kernel.Roles
   ( Candidate (..)
   , CandidateTest (..)
@@ -85,7 +88,10 @@ import Lockstep.Kernel.Roles
   , Criterion (..)
   , Discovery (..)
   , Expectation (..)
+  , Verdict (..)
   )
+import Lockstep.Kernel.Runner (OutcomeKind (..))
+import Lockstep.Kernel.Transaction (BaselineClass (..), Disposition (..), Stage (..), StateName (..))
 import Lockstep.Web.Json
   ( ErrorBody (..)
   , FolderEntry (..)
@@ -114,6 +120,82 @@ rendered :: Json -> T.Text
 rendered =
   renderJson
 
+{- | For every value of an enumeration field and the exact text 'FC.text'
+wrote for it before (the oracle, spelt out): the record's bytes equal the
+hand-built tree with that text; those bytes read back to the value; and the
+same tree with a name no value has does not read.
+-}
+enumField :: (Eq a, Show a) => [(a, T.Text)] -> (r -> Json) -> (LBS.ByteString -> Either String r) -> (a -> r) -> (r -> a) -> (T.Text -> [(T.Text, Json)]) -> Assertion
+enumField table encode decode build field oracle = do
+  traverse_
+    ( \(value, text) -> do
+        rendered (encode (build value)) @?= rendered (JObject (oracle text))
+        fmap field (decode (LBS.fromStrict (TE.encodeUtf8 (rendered (JObject (oracle text)))))) @?= Right value
+    )
+    table
+  assertBool "an unknown name does not read" (isLeft (decode (LBS.fromStrict (TE.encodeUtf8 (rendered (JObject (oracle "no-such-name")))))))
+
+stages :: [(Stage, T.Text)]
+stages =
+  [ (StageBasis, "basis")
+  , (StageDiscovery, "discovery")
+  , (StageReproduction, "reproduction")
+  , (StageCandidate, "candidate")
+  , (StageChallengePre, "challenge-pre")
+  , (StageFreeze, "freeze")
+  , (StageImplement, "implement")
+  , (StageVerify, "verify")
+  , (StageChallengePost, "challenge-post")
+  , (StageReview, "review")
+  , (StageAccept, "accept")
+  ]
+
+states :: [(StateName, T.Text)]
+states =
+  [(StateRunning, "running"), (StateHalted, "halted"), (StateAccepted, "accepted"), (StateDone, "done"), (StateStopped, "stopped")]
+
+outcomeKinds :: [(OutcomeKind, T.Text)]
+outcomeKinds =
+  [ (KindExited, "exited")
+  , (KindTimedOut, "timed-out")
+  , (KindOutputLimit, "output-limit")
+  , (KindOutputHeld, "output-held")
+  , (KindCancelled, "cancelled")
+  , (KindLaunchFailed, "launch-failed")
+  , (KindProviderStopped, "provider-stopped")
+  ]
+
+expectations :: [(Expectation, T.Text)]
+expectations =
+  [(ExpectRed, "red"), (ExpectGreen, "green")]
+
+classes :: [(BaselineClass, T.Text)]
+classes =
+  [ (RedConfirmed, "red-confirmed")
+  , (RedUnexpectedlyPassed, "red-unexpectedly-passed")
+  , (RedWrongReason, "red-wrong-reason")
+  , (GreenConfirmed, "green-confirmed")
+  , (GreenCandidateFailed, "green-candidate-failed")
+  , (RunFailed, "run-failed")
+  ]
+
+mutants :: [(MutantRun, T.Text)]
+mutants =
+  [ (NoMutant, "none")
+  , (MutantOutsideScope, "outside-scope")
+  , (MutantKilled, "killed")
+  , (MutantSurvived True, "survived-demonstrated")
+  , (MutantSurvived False, "survived-not-demonstrated")
+  ]
+
+dispositions :: [(Disposition, T.Text)]
+dispositions =
+  [(Confirmed, "CONFIRMED"), (Disproved, "DISPROVED"), (NeedsHumanFinding, "NEEDS_HUMAN"), (Inconclusive, "INCONCLUSIVE")]
+
+verdicts :: [(Verdict, T.Text)]
+verdicts =
+  [(Approve, "approve"), (Reject, "reject"), (NeedsHuman, "needs-human")]
+
 tests :: TestTree
 tests =
   testGroup
@@ -123,9 +205,9 @@ tests =
         [ testCase "started, halt, input, resume, completion, unfinished, refusal, basis" $ do
             rendered (record startedSchema (Started awkward "ada" "/p"))
               @?= rendered (JObject [("work_order", string awkward), ("engineer", string "ada"), ("folder", string "/p")])
-            rendered (record haltSchema (Halt "verify" awkward))
+            rendered (record haltSchema (Halt StageVerify awkward))
               @?= rendered (JObject [("stage", string "verify"), ("code", string awkward)])
-            rendered (record inputSchema (InputRecord "basis-ready" "running"))
+            rendered (record inputSchema (InputRecord "basis-ready" StateRunning))
               @?= rendered (JObject [("input", string "basis-ready"), ("state", string "running")])
             rendered (record resumeSchema (Resume "r1" awkward 7))
               @?= rendered (JObject [("request", string "r1"), ("choice", string awkward), ("revision", JNumber 7)])
@@ -144,7 +226,7 @@ tests =
               @?= rendered (JObject [("command", JNull), ("reproduced", JBool False)])
             let
               ran exit =
-                Reproduction (Just ["python3", awkward]) (Just awkward) (Just "exited") (Just exit) True (Just awkward) (Just "") (Just "inv")
+                Reproduction (Just ["python3", awkward]) (Just awkward) (Just KindExited) (Just exit) True (Just awkward) (Just "") (Just "inv")
               oracle exit =
                 JObject
                   [ ("command", strings ["python3", awkward])
@@ -159,9 +241,9 @@ tests =
             rendered (record reproductionSchema (ran (Just 1))) @?= rendered (oracle (Just 1))
             rendered (record reproductionSchema (ran Nothing)) @?= rendered (oracle Nothing)
         , testCase "baseline, finding, freeze, implementation-refused, implementation, acceptance" $ do
-            rendered (record baselineSchema (Baseline awkward "red" "red-reproduces" "exited" awkward "e"))
-              @?= rendered (JObject [("path", string awkward), ("expect", string "red"), ("class", string "red-reproduces"), ("outcome", string "exited"), ("stdout_tail", string awkward), ("stderr_tail", string "e")])
-            rendered (record findingSchema (FindingRecord "r" awkward (Just True) "killed" "DISPROVED"))
+            rendered (record baselineSchema (Baseline awkward ExpectRed RedConfirmed KindExited awkward "e"))
+              @?= rendered (JObject [("path", string awkward), ("expect", string "red"), ("class", string "red-confirmed"), ("outcome", string "exited"), ("stdout_tail", string awkward), ("stderr_tail", string "e")])
+            rendered (record findingSchema (FindingRecord "r" awkward (Just True) MutantKilled Disproved))
               @?= rendered (JObject [("requirement", string "r"), ("claim", string awkward), ("grounded", JBool True), ("mutant", string "killed"), ("disposition", string "DISPROVED")])
             rendered (record freezeSchema (FreezeRecord "f" awkward "d"))
               @?= rendered (JObject [("commit", string "f"), ("branch", string awkward), ("contract_digest", string "d")])
@@ -172,13 +254,13 @@ tests =
             rendered (record acceptanceSchema (AcceptanceRecord "c" awkward "f"))
               @?= rendered (JObject [("commit", string "c"), ("branch", string awkward), ("from", string "f")])
         , testCase "verification (exit only when it exited), verification-summary, review" $ do
-            rendered (record verificationSchema (VerificationRun ["sh", awkward] "exited" (Just 0) awkward ""))
+            rendered (record verificationSchema (VerificationRun ["sh", awkward] KindExited (Just 0) awkward ""))
               @?= rendered (JObject [("command", strings ["sh", awkward]), ("outcome", string "exited"), ("exit", JNumber 0), ("stdout_tail", string awkward), ("stderr_tail", string "")])
-            rendered (record verificationSchema (VerificationRun ["sh"] "timed-out" Nothing "" ""))
+            rendered (record verificationSchema (VerificationRun ["sh"] KindTimedOut Nothing "" ""))
               @?= rendered (JObject [("command", strings ["sh"]), ("outcome", string "timed-out"), ("stdout_tail", string ""), ("stderr_tail", string "")])
             rendered (record verificationSummarySchema (VerificationSummary "c" True))
               @?= rendered (JObject [("commit", string "c"), ("passed", JBool True)])
-            rendered (record reviewSchema (ReviewRecord "c" "approve" [awkward] (Just "inv")))
+            rendered (record reviewSchema (ReviewRecord "c" Approve [awkward] (Just "inv")))
               @?= rendered (JObject [("commit", string "c"), ("verdict", string "approve"), ("reasons", strings [awkward]), ("invocation", string "inv")])
         , testCase "the frozen Contract: its bytes, and so its contract_digest" $
             rendered (record contractSchema (ContractRecord "b" "f" [ContractCriterion "c1" awkward] ["calc.py"] [["python3", "-m", "unittest"]] [ContractTest awkward "abc" ["python3", awkward]]))
@@ -233,6 +315,46 @@ tests =
                 )
         , testCase "an invocation's argument vector" $
             argvText ["sh", "-c", awkward] @?= rendered (strings ["sh", "-c", awkward])
+        ]
+    , testGroup
+        "records: typed enumeration fields (Increment C) write the text they replaced, read it back, and refuse unknown names"
+        [ testCase "halt stage" $
+            enumField stages (record haltSchema) (FA.decode haltSchema) (`Halt` "c") haltStage (\t -> [("stage", string t), ("code", string "c")])
+        , testCase "input state" $
+            enumField states (record inputSchema) (FA.decode inputSchema) (InputRecord "i") inputState (\t -> [("input", string "i"), ("state", string t)])
+        , testCase "baseline expectation, class and outcome" $ do
+            let
+              baseline e c k = Baseline "p" e c k "o" "e"
+              oracle e c k = [("path", string "p"), ("expect", string e), ("class", string c), ("outcome", string k), ("stdout_tail", string "o"), ("stderr_tail", string "e")]
+            enumField expectations (record baselineSchema) (FA.decode baselineSchema) (\e -> baseline e RedConfirmed KindExited) baselineExpect (\t -> oracle t "red-confirmed" "exited")
+            enumField classes (record baselineSchema) (FA.decode baselineSchema) (\c -> baseline ExpectGreen c KindExited) baselineClass (\t -> oracle "green" t "exited")
+            enumField outcomeKinds (record baselineSchema) (FA.decode baselineSchema) (baseline ExpectRed RunFailed) baselineOutcome (oracle "red" "run-failed")
+        , testCase "reproduction outcome" $
+            enumField
+              outcomeKinds
+              (record reproductionSchema)
+              (FA.decode reproductionSchema)
+              (\k -> Reproduction (Just ["sh"]) (Just "s") (Just k) (Just (Just 1)) True (Just "o") (Just "e") (Just "inv"))
+              (fromMaybe KindCancelled . reproductionOutcome)
+              (\t -> [("command", strings ["sh"]), ("signature", string "s"), ("outcome", string t), ("exit", JNumber 1), ("reproduced", JBool True), ("stdout_tail", string "o"), ("stderr_tail", string "e"), ("invocation", string "inv")])
+        , testCase "finding mutant and disposition" $ do
+            let
+              oracle m d = [("requirement", string "r"), ("claim", string "c"), ("grounded", JBool False), ("mutant", string m), ("disposition", string d)]
+            enumField mutants (record findingSchema) (FA.decode findingSchema) (\m -> FindingRecord "r" "c" (Just False) m Confirmed) findingRecordMutant (`oracle` "CONFIRMED")
+            enumField dispositions (record findingSchema) (FA.decode findingSchema) (FindingRecord "r" "c" (Just False) NoMutant) findingRecordDisposition (oracle "none")
+        , testCase "verification outcome" $
+            enumField outcomeKinds (record verificationSchema) (FA.decode verificationSchema) (\k -> VerificationRun ["sh"] k (Just 1) "o" "e") runOutcome (\t -> [("command", strings ["sh"]), ("outcome", string t), ("exit", JNumber 1), ("stdout_tail", string "o"), ("stderr_tail", string "e")])
+        , testCase "review verdict" $
+            enumField verdicts (record reviewSchema) (FA.decode reviewSchema) (\v -> ReviewRecord "c" v ["x"] (Just "i")) reviewVerdict (\t -> [("commit", string "c"), ("verdict", string t), ("reasons", strings ["x"]), ("invocation", string "i")])
+        , testCase "every value of each enumeration is in its table" $ do
+            fmap fst stages @?= [minBound .. maxBound]
+            fmap fst states @?= [minBound .. maxBound]
+            fmap fst outcomeKinds @?= [minBound .. maxBound]
+            fmap fst expectations @?= [minBound .. maxBound]
+            fmap fst classes @?= [minBound .. maxBound]
+            fmap fst dispositions @?= [minBound .. maxBound]
+            fmap fst verdicts @?= [minBound .. maxBound]
+            fmap fst mutants @?= mutantRuns
         ]
     , testGroup
         "built-in Profile documents: the bytes stored rows and their digests hold"

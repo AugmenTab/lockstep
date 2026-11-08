@@ -235,6 +235,7 @@ test-suite lockstep-compliance
       Lockstep.Compliance.JsonTest
       Lockstep.Compliance.NegativeTypesTest
       Lockstep.Compliance.PersistenceTest
+      Lockstep.Compliance.StateTest
       Lockstep.Compliance.Support
   hs-source-dirs:
       test/compliance

@@ -27,12 +27,21 @@ module Lockstep.Kernel.Effect
   , Lease (..)
   , Observation (..)
   , Settlement (..)
+  , Provenance (..)
+  , Reason (..)
+  , attestedReasonText
+  , reasonOf
   , IntentState (..)
   , Intent (..)
   , newIntents
   , IntentInput (..)
   , stepIntent
   , intentStateName
+  , IntentStateName (..)
+  , intentStateNameOf
+  , intentStateNameText
+  , parseIntentStateName
+  , parseEffectClass
   , EffectRefusal (..)
   , effectRefusalCode
   ) where
@@ -180,6 +189,46 @@ data Settlement
   = SettledApplied T.Text
   | SettledNotApplied T.Text
   deriving (Eq, Show)
+
+{- | Where an outcome's reason comes from: the destination's own answer (or
+Lockstep's lookup of it), or a person who attested it (C-P2.7 R5; DG-04
+binding requirement 6).
+-}
+data Provenance
+  = Observed
+  | HumanAttested
+  deriving (Eq, Show)
+
+{- | An outcome's reason with its provenance. The states keep a reason as the
+text that is stored ('IntentNotApplied', 'Settlement'); an attested one is
+that text after 'attestedReasonText's marker. 'reasonOf' reads it back.
+-}
+data Reason
+  = Reason
+  { reasonProvenance :: Provenance
+  , reasonText :: T.Text
+  -- ^ the reason as stored (for an attested one, with its marker)
+  }
+  deriving (Eq, Show)
+
+-- | The stored reason of a person's attestation: the evidence after the fixed marker @human-attested: @.
+attestedReasonText :: T.Text -> T.Text
+attestedReasonText evidence =
+  attestedMarker <> evidence
+
+{- | The provenance of a stored reason, decided here and nowhere else: a reason
+'attestedReasonText' made is 'HumanAttested'; any other is 'Observed'. Only a
+person's resolution makes such a reason (the marker is written by
+'Lockstep.Kernel.Reconciliation.resolveIntent'); the attestation record of the
+resolution is the other, independent, source of the same fact.
+-}
+reasonOf :: T.Text -> Reason
+reasonOf text =
+  Reason (if attestedMarker `T.isPrefixOf` text then HumanAttested else Observed) text
+
+attestedMarker :: T.Text
+attestedMarker =
+  T.pack "human-attested: "
 
 data IntentState
   = IntentPending
@@ -344,17 +393,55 @@ inputName input =
       IntentAbandon _ -> "abandon"
 
 intentStateName :: IntentState -> T.Text
-intentStateName state =
+intentStateName =
+  intentStateNameText . intentStateNameOf
+
+-- | Which state an intent is in, without its lease or outcome (the stored @state@ column).
+data IntentStateName
+  = NamePending
+  | NameClaimed
+  | NameDispatched
+  | NameConfirmedApplied
+  | NameConfirmedNotApplied
+  | NameOutcomeUnknown
+  | NameSettled
+  | NameAbandoned
+  deriving (Eq, Show, Enum, Bounded)
+
+intentStateNameOf :: IntentState -> IntentStateName
+intentStateNameOf state =
+  case state of
+    IntentPending -> NamePending
+    IntentClaimed _ -> NameClaimed
+    IntentDispatched _ -> NameDispatched
+    IntentApplied _ -> NameConfirmedApplied
+    IntentNotApplied _ -> NameConfirmedNotApplied
+    IntentUnknown _ -> NameOutcomeUnknown
+    IntentSettled _ -> NameSettled
+    IntentAbandoned _ -> NameAbandoned
+
+intentStateNameText :: IntentStateName -> T.Text
+intentStateNameText name =
   T.pack $
-    case state of
-      IntentPending -> "pending"
-      IntentClaimed _ -> "claimed"
-      IntentDispatched _ -> "dispatched"
-      IntentApplied _ -> "confirmed-applied"
-      IntentNotApplied _ -> "confirmed-not-applied"
-      IntentUnknown _ -> "outcome-unknown"
-      IntentSettled _ -> "settled"
-      IntentAbandoned _ -> "abandoned"
+    case name of
+      NamePending -> "pending"
+      NameClaimed -> "claimed"
+      NameDispatched -> "dispatched"
+      NameConfirmedApplied -> "confirmed-applied"
+      NameConfirmedNotApplied -> "confirmed-not-applied"
+      NameOutcomeUnknown -> "outcome-unknown"
+      NameSettled -> "settled"
+      NameAbandoned -> "abandoned"
+
+-- | The state name of its text; derived from 'intentStateNameText'.
+parseIntentStateName :: T.Text -> Maybe IntentStateName
+parseIntentStateName text =
+  L.lookup text [(intentStateNameText n, n) | n <- [minBound .. maxBound]]
+
+-- | The effect class of its name; derived from 'effectClassName'.
+parseEffectClass :: T.Text -> Maybe EffectClass
+parseEffectClass text =
+  L.lookup text [(effectClassName c, c) | c <- [minBound .. maxBound]]
 
 data EffectRefusal
   = InvalidEffectSpec T.Text

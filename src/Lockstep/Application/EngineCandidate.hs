@@ -35,7 +35,7 @@ import Lockstep.Application.EngineRecords
 import Lockstep.Effects.GitSupervisor (blobId)
 import Lockstep.Effects.Roles (decodeAnswer, encodeCandidate)
 import Lockstep.Foundation.Json (Json (JRaw))
-import Lockstep.Kernel.Candidate (MutantRun (..))
+import Lockstep.Kernel.Candidate (MutantRun)
 import Lockstep.Kernel.GitBasis (TreeEntry (..))
 import Lockstep.Kernel.Roles
   ( Candidate (..)
@@ -43,9 +43,9 @@ import Lockstep.Kernel.Roles
   , Criterion (..)
   , Finding (..)
   , RoleAnswer (..)
-  , expectationName
   )
-import Lockstep.Kernel.Transaction (BaselineClass, Disposition, baselineClassName, dispositionName)
+import Lockstep.Kernel.Runner (OutcomeKind)
+import Lockstep.Kernel.Transaction (BaselineClass, Disposition)
 
 -- | The candidate a record holds, read back through the answer decoder.
 recordedCandidate :: T.Text -> Maybe Candidate
@@ -65,9 +65,9 @@ testFiles c =
   [(testPath t, TE.encodeUtf8 (testContent t)) | t <- candidateTests c]
 
 -- | One test's baseline result: its class and what the run showed.
-baselineJson :: CandidateTest -> BaselineClass -> T.Text -> T.Text -> T.Text -> Json
+baselineJson :: CandidateTest -> BaselineClass -> OutcomeKind -> T.Text -> T.Text -> Json
 baselineJson t cls outcome out err =
-  record baselineSchema (Baseline (testPath t) (expectationName (testExpectation t)) (baselineClassName cls) outcome out err)
+  record baselineSchema (Baseline (testPath t) (testExpectation t) cls outcome out err)
 
 -- | The test is already in the basis with exactly these bytes (a pre-existing test).
 unchangedAtBasis :: [TreeEntry] -> CandidateTest -> Bool
@@ -77,17 +77,7 @@ unchangedAtBasis entries t =
 -- | A finding as the Supervisor disposed of it.
 findingJson :: Finding -> Bool -> MutantRun -> Disposition -> Json
 findingJson f grounded run disposition =
-  record findingSchema (FindingRecord (findingRequirement f) (findingClaim f) (Just grounded) (mutantName run) (dispositionName disposition))
-
-mutantName :: MutantRun -> T.Text
-mutantName run =
-  T.pack $
-    case run of
-      NoMutant -> "none"
-      MutantOutsideScope -> "outside-scope"
-      MutantKilled -> "killed"
-      MutantSurvived True -> "survived-demonstrated"
-      MutantSurvived False -> "survived-not-demonstrated"
+  record findingSchema (FindingRecord (findingRequirement f) (findingClaim f) (Just grounded) run disposition)
 
 {- | The frozen Contract: the basis, the freeze commit, the criteria, the allowed
 implementation paths, the verification commands, and each test's path,

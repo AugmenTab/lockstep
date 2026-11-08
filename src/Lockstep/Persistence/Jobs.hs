@@ -5,7 +5,10 @@ the claim is conditional on the claiming owner, so a process that lost its
 lease cannot overwrite another's progress.
 -}
 module Lockstep.Persistence.Jobs
-  ( JobRow (..)
+  ( JobState (..)
+  , jobStateCode
+  , parseJobState
+  , JobRow (..)
   , insertNoopJob
   , findJobById
   , findJobByReceipt
@@ -34,17 +37,40 @@ import Orville.PostgreSQL qualified as O
 import Orville.PostgreSQL.Execution.SelectOptions qualified as SelectOptions
 import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
+import Text.Show (Show)
 
 import Lockstep.Kernel.Identity (JobId (..), ReceiptId)
 import Lockstep.Persistence.Commands (receiptIdField, receiptTable)
 import Lockstep.Persistence.Entity (EntityKey, foreignKeyTo, serialKeyField)
-import Lockstep.Persistence.Fields (digestField, forUpdateSkipLocked, headMay, increment, setExpression, setNow, tableReference)
+import Lockstep.Persistence.Fields (codeField, digestField, forUpdateSkipLocked, headMay, increment, setExpression, setNow, tableReference)
+
+-- | Where a no-op job stands (C-P1.5 E2): its stored @state@.
+data JobState
+  = JobQueued
+  | JobRunning
+  | JobSucceeded
+  | JobFailed
+  deriving (Eq, Show, Enum, Bounded)
+
+jobStateCode :: JobState -> T.Text
+jobStateCode state =
+  T.pack $
+    case state of
+      JobQueued -> "queued"
+      JobRunning -> "running"
+      JobSucceeded -> "succeeded"
+      JobFailed -> "failed"
+
+-- | The state of its code; derived from 'jobStateCode'.
+parseJobState :: T.Text -> Maybe JobState
+parseJobState code =
+  L.lookup code [(jobStateCode s, s) | s <- [minBound .. maxBound]]
 
 data JobRow
   = JobRow
   { jobRowId :: JobId
   , jobRowReceipt :: ReceiptId
-  , jobRowState :: T.Text
+  , jobRowState :: JobState
   , jobRowStepsTotal :: Int32
   , jobRowStepMillis :: Int32
   , jobRowFailAt :: Maybe Int32
@@ -73,7 +99,7 @@ jobTable =
       <$> O.marshallReadOnlyField jobIdField
       <*> O.marshallField newJobReceipt jobReceiptField
       <*> O.marshallField (const (T.pack "noop")) (O.unboundedTextField "kind")
-      <*> O.marshallField (const (T.pack "queued")) jobStateField
+      <*> O.marshallField (const JobQueued) jobStateField
       <*> O.marshallField newJobSteps jobStepsTotalField
       <*> O.marshallField newJobMillis jobStepMillisField
       <*> O.marshallField newJobFailAt (O.nullableField (O.integerField "fail_at_step"))
@@ -90,9 +116,10 @@ jobReceiptField :: O.FieldDefinition O.NotNull ReceiptId
 jobReceiptField =
   foreignKeyTo receiptTable receiptIdField "receipt_id"
 
-jobStateField :: O.FieldDefinition O.NotNull T.Text
+-- | The job's state; a code no state has fails the read.
+jobStateField :: O.FieldDefinition O.NotNull JobState
 jobStateField =
-  O.unboundedTextField "state"
+  codeField "job state" jobStateCode parseJobState "state"
 
 jobStepsTotalField :: O.FieldDefinition O.NotNull Int32
 jobStepsTotalField =
@@ -187,22 +214,22 @@ statement: the row is chosen (@FOR UPDATE SKIP LOCKED@) and claimed together.
 claimJob :: O.MonadOrville m => T.Text -> m (Maybe JobRow)
 claimJob owner =
   let
-    stateIs value = O.fieldEquals jobStateField (T.pack value)
+    stateIs = O.fieldEquals jobStateField
     claimable =
-      stateIs "queued"
-        `O.orExpr` Expr.parenthesized (stateIs "running" `O.andExpr` Expr.lessThan (O.fieldColumnReference jobLeaseUntilField) Expr.now)
+      stateIs JobQueued
+        `O.orExpr` Expr.parenthesized (stateIs JobRunning `O.andExpr` Expr.lessThan (O.fieldColumnReference jobLeaseUntilField) Expr.now)
     oldestClaimable =
       SelectOptions.selectOptionsQueryExpr
         (Expr.selectColumns [Expr.unqualified (O.fieldColumnName jobIdField)])
         (Expr.tableReferenceList [tableReference jobTable])
         (O.where_ claimable <> O.orderBy (O.orderByField jobIdField O.ascendingOrder) <> O.limit 1 <> forUpdateSkipLocked)
     wasRunning =
-      Expr.caseExpr (Expr.whenExpr (stateIs "running") (intValue 1) :| []) (Just (intValue 0))
+      Expr.caseExpr (Expr.whenExpr (stateIs JobRunning) (intValue 1) :| []) (Just (intValue 0))
   in
     headMay
       <$> O.updateFieldsAndReturnEntities
         jobTable
-        ( O.setField jobStateField (T.pack "running")
+        ( O.setField jobStateField JobRunning
             :| [ O.setField jobOwnerField (Just owner)
                , setExpression jobLeaseUntilField lease
                , increment jobAttemptsField
@@ -217,7 +244,7 @@ ownedBy :: JobId -> T.Text -> Expr.BooleanExpr
 ownedBy jobId owner =
   O.fieldEquals jobIdField jobId
     `O.andExpr` O.fieldEquals jobOwnerField (Just owner)
-    `O.andExpr` O.fieldEquals jobStateField (T.pack "running")
+    `O.andExpr` O.fieldEquals jobStateField JobRunning
 
 -- | Applies the changes if this owner still holds the running job; 'False' if the lease was lost.
 whileOwned :: O.MonadOrville m => JobId -> T.Text -> NonEmpty Expr.SetClause -> m Bool
@@ -229,8 +256,8 @@ recordStep :: O.MonadOrville m => JobId -> T.Text -> Int32 -> m Bool
 recordStep jobId owner step =
   whileOwned jobId owner (O.setField jobStepsDoneField step :| [setExpression jobLeaseUntilField lease])
 
--- | Sets a terminal state ('succeeded' or 'failed') with an optional error.
-finishJob :: O.MonadOrville m => JobId -> T.Text -> T.Text -> Maybe T.Text -> m Bool
+-- | Sets a terminal state ('JobSucceeded' or 'JobFailed') with an optional error.
+finishJob :: O.MonadOrville m => JobId -> T.Text -> JobState -> Maybe T.Text -> m Bool
 finishJob jobId owner state lastError =
   whileOwned
     jobId
@@ -249,7 +276,7 @@ update from the row's final values:
 @sha256(convert_to('lockstep-job-outcome-v1' || E'\\n' || id::text || E'\\n' || state || E'\\n' || steps_done::text || '/' || steps_total::text || E'\\n' || last_error, 'UTF8'))@,
 with an absent error as the empty text.
 -}
-outcomeDigest :: T.Text -> Maybe T.Text -> Expr.ValueExpression
+outcomeDigest :: JobState -> Maybe T.Text -> Expr.ValueExpression
 outcomeDigest state lastError =
   let
     newline = textValue (T.pack "\n")
@@ -261,7 +288,7 @@ outcomeDigest state lastError =
         [ newline
         , asText jobIdField
         , newline
-        , textValue state
+        , textValue (jobStateCode state)
         , newline
         , asText jobStepsDoneField
         , textValue (T.pack "/")
@@ -277,4 +304,4 @@ outcomeDigest state lastError =
 -- | Returns a running job to the queue (graceful shutdown).
 releaseJob :: O.MonadOrville m => JobId -> T.Text -> m Bool
 releaseJob jobId owner =
-  whileOwned jobId owner (O.setField jobStateField (T.pack "queued") :| [O.setField jobOwnerField Nothing, O.setField jobLeaseUntilField Nothing])
+  whileOwned jobId owner (O.setField jobStateField JobQueued :| [O.setField jobOwnerField Nothing, O.setField jobLeaseUntilField Nothing])

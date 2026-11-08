@@ -7,6 +7,7 @@ read back is reported as unreadable, never guessed at.
 module Lockstep.Application.EngineEvidence
   ( Evidence (..)
   , CheckRun (..)
+  , FindingTime (..)
   , FindingView (..)
   , ReviewView (..)
   , transactionEvidence
@@ -32,34 +33,44 @@ import Lockstep.Application.EngineRecords
   , verificationSchema
   , verificationSummarySchema
   )
-import Lockstep.Kernel.Roles (Candidate (..), CandidateTest (..), Criterion (..))
+import Lockstep.Kernel.Candidate (MutantRun)
+import Lockstep.Kernel.Roles (Candidate (..), CandidateTest (..), Criterion (..), Role (..), Verdict, roleName)
+import Lockstep.Kernel.Runner (OutcomeKind, RoleEnding (..), roleEndingFromText)
+import Lockstep.Kernel.Transaction (Disposition)
 
 -- | One command the Supervisor ran on the candidate commit, and what it did.
 data CheckRun
   = CheckRun
   { checkCommand :: [T.Text]
-  , checkOutcome :: T.Text
+  , checkOutcome :: OutcomeKind
   , checkExit :: Maybe Integer
   , checkStdout :: T.Text
   , checkStderr :: T.Text
   }
   deriving (Eq)
 
--- | A finding: before the freeze (@before@) or after the implementation (@after@).
+-- | When a finding was made.
+data FindingTime
+  = -- | before the freeze (a @finding@ record)
+    BeforeChange
+  | -- | after the implementation (a @post-finding@ record)
+    AfterChange
+  deriving (Eq)
+
 data FindingView
   = FindingView
-  { findingWhen :: T.Text
+  { findingWhen :: FindingTime
   , findingRequirementId :: T.Text
   , findingClaimText :: T.Text
-  , findingMutant :: T.Text
-  , findingDisposition :: T.Text
+  , findingMutant :: MutantRun
+  , findingDisposition :: Disposition
   }
   deriving (Eq)
 
 data ReviewView
   = ReviewView
   { reviewCommit :: T.Text
-  , reviewVerdict :: T.Text
+  , reviewVerdict :: Verdict
   , reviewReasons :: [T.Text]
   }
   deriving (Eq)
@@ -107,8 +118,8 @@ transactionEvidence view =
     , evidenceRuns = [CheckRun c o x s e | Right (VerificationRun c o x s e) <- fmap snd runs]
     , evidencePassed = (\(VerificationSummary c p) -> (c, p)) <$> lastRight (current summaries)
     , evidenceFindings =
-        [FindingView (T.pack "before") r c m d | Right (FindingRecord r c _ m d) <- fmap snd (decodedKind (FA.decode findingSchema) (T.pack "finding"))]
-          <> [FindingView (T.pack "after") r c m d | Right (FindingRecord r c _ m d) <- current (decodedKind (FA.decode findingSchema) (T.pack "post-finding"))]
+        [FindingView BeforeChange r c m d | Right (FindingRecord r c _ m d) <- fmap snd (decodedKind (FA.decode findingSchema) (T.pack "finding"))]
+          <> [FindingView AfterChange r c m d | Right (FindingRecord r c _ m d) <- current (decodedKind (FA.decode findingSchema) (T.pack "post-finding"))]
     , evidenceReview = (\(ReviewRecord c v rs _) -> ReviewView c v rs) <$> lastRight (current reviews)
     , evidenceUncertain = L.filter unsettled (viewInvocations view)
     , evidenceUnreadable =
@@ -144,9 +155,16 @@ transactionEvidence view =
         in
           [r | r <- ofKind (T.pack "verification"), recordSequence r > max from attemptFrom, recordSequence r < recordSequence lastSummary]
   runs = [(recordSequence r, decodeWith (FA.decode verificationSchema) r) | r <- latestRuns]
+  -- A role's run still going, or one whose ending is not known ('roleEndingFromText').
   unsettled i =
-    invocationWhat i `L.elem` fmap T.pack ["planner", "challenger", "implementer", "reviewer"]
-      && maybe True (T.isPrefixOf (T.pack "uncertain")) (invocationOutcome i)
+    invocationWhat i `L.elem` fmap roleName [Planner, Challenger, Implementer, Reviewer]
+      && maybe True (unknownEnding . roleEndingFromText) (invocationOutcome i)
+  unknownEnding ending =
+    case ending of
+      RoleEndedUnsettled -> True
+      RoleEndedUncertain _ -> True
+      RoleEndedAnswered -> False
+      RoleEndedFailed _ -> False
 
 lastRight :: [Either e a] -> Maybe a
 lastRight xs =

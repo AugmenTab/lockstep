@@ -8,6 +8,7 @@ that explains the change. Callers run these inside one transaction.
 -}
 module Lockstep.Persistence.Transactions
   ( TransactionRow (..)
+  , storedStage
   , RecordRow (..)
   , InvocationRow (..)
   , Finish (..)
@@ -42,7 +43,18 @@ import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
 
 import Lockstep.Kernel.Identity (InvocationId (..), ProjectId, RepositoryId, TaskId, TransactionId (..), WorkOrderId)
-import Lockstep.Kernel.Transaction (Stage, parseStage, stageName)
+import Lockstep.Kernel.Transaction
+  ( Stage
+  , StateName (..)
+  , TxState
+  , parseStage
+  , parseStateName
+  , stageName
+  , stateColumns
+  , stateFromColumns
+  , stateNameText
+  , stateStage
+  )
 import Lockstep.Persistence.Entity (EntityKey, Table, foreignKeyTo, keyField, mkEntityTable)
 import Lockstep.Persistence.Execution
   ( admissionIdField
@@ -82,9 +94,14 @@ data TransactionRow
   , txRowTask :: TaskId
   , txRowEngineer :: T.Text
   , txRowFolder :: T.Text
-  , txRowState :: T.Text
+  , txRowState :: TxState
+  {- ^ Read from the @state@, @stage@ and @halt_code@ columns together; a
+  combination no state has fails the read ('stateFromColumns').
+  -}
   , txRowStage :: Stage
-  , txRowHaltCode :: Maybe T.Text
+  {- ^ The stage it is at or was last at. What is stored is 'storedStage':
+  for any state but a stopped one, the state's own stage.
+  -}
   , txRowCandidates :: Int32
   , txRowAttempts :: Int32
   , txRowBasis :: Maybe T.Text
@@ -105,7 +122,7 @@ data RecordRow
   , recordRowSequence :: Int32
   , recordRowKind :: T.Text
   , recordRowPrincipal :: T.Text
-  , recordRowStage :: T.Text
+  , recordRowStage :: Stage
   , recordRowBody :: T.Text
   , recordRowDigest :: T.Text
   }
@@ -115,7 +132,7 @@ data InvocationRow
   = InvocationRow
   { invocationRowId :: InvocationId
   , invocationRowTransaction :: TransactionId
-  , invocationRowStage :: T.Text
+  , invocationRowStage :: Stage
   , invocationRowWhat :: T.Text
   , invocationRowRunner :: T.Text
   , invocationRowAdapter :: T.Text
@@ -163,15 +180,15 @@ data Finish
 transactionTable :: Table TransactionRow TransactionRow
 transactionTable =
   mkEntityTable "lockstep_transactions" txIdField $
-    TransactionRow
-      <$> O.marshallField txRowId txIdField
-      <*> O.marshallField txRowWorkOrder txWorkOrderField
-      <*> O.marshallField txRowTask (foreignKeyTo taskTable taskIdField "task_id")
-      <*> O.marshallField txRowEngineer txEngineerField
-      <*> O.marshallField txRowFolder (O.unboundedTextField "folder")
-      <*> O.marshallField txRowState txStateField
-      <*> O.marshallField txRowStage txStageField
-      <*> O.marshallField txRowHaltCode txHaltCodeField
+    uncurry
+      <$> ( TransactionRow
+              <$> O.marshallField txRowId txIdField
+              <*> O.marshallField txRowWorkOrder txWorkOrderField
+              <*> O.marshallField txRowTask (foreignKeyTo taskTable taskIdField "task_id")
+              <*> O.marshallField txRowEngineer txEngineerField
+              <*> O.marshallField txRowFolder (O.unboundedTextField "folder")
+          )
+      <*> stateMarshaller
       <*> O.marshallField txRowCandidates txCandidatesField
       <*> O.marshallField txRowAttempts txAttemptsField
       <*> O.marshallField txRowBasis txBasisField
@@ -194,9 +211,10 @@ txEngineerField :: O.FieldDefinition O.NotNull T.Text
 txEngineerField =
   O.unboundedTextField "engineer_name"
 
-txStateField :: O.FieldDefinition O.NotNull T.Text
+-- | The state's name; a name the Kernel does not know fails the read.
+txStateField :: O.FieldDefinition O.NotNull StateName
 txStateField =
-  O.unboundedTextField "state"
+  codeField "transaction state" stateNameText parseStateName "state"
 
 -- | The stage the transaction is or was last at; a code the Kernel does not know fails the read.
 txStageField :: O.FieldDefinition O.NotNull Stage
@@ -206,6 +224,38 @@ txStageField =
 txHaltCodeField :: O.FieldDefinition O.Nullable (Maybe T.Text)
 txHaltCodeField =
   O.nullableField (O.unboundedTextField "halt_code")
+
+{- | The stage column's value: the state's own stage, or for a stopped
+transaction the stage it was last at (T5, 'stateStage').
+-}
+storedStage :: TransactionRow -> Stage
+storedStage row =
+  stateStage (txRowStage row) (txRowState row)
+
+{- | The state and the stage, from the three columns that hold them, decoded
+in this one place: a combination no state has fails the read, naming the
+columns (C-P4.6 T5).
+-}
+stateMarshaller :: O.SqlMarshaller TransactionRow (TxState, Stage)
+stateMarshaller =
+  O.marshallPartial $
+    decode
+      <$> O.marshallField (fst . stateColumns . txRowState) txStateField
+      <*> O.marshallField storedStage txStageField
+      <*> O.marshallField (snd . stateColumns . txRowState) txHaltCodeField
+ where
+  decode name stage code =
+    case stateFromColumns name stage code of
+      Just state -> Right (state, stage)
+      Nothing ->
+        Left
+          ( "lockstep: columns state, stage and halt_code hold no transaction state: "
+              <> T.unpack (stateNameText name)
+              <> ", "
+              <> T.unpack (stageName stage)
+              <> ", "
+              <> maybe "null" T.unpack code
+          )
 
 txCandidatesField :: O.FieldDefinition O.NotNull Int32
 txCandidatesField =
@@ -259,7 +309,7 @@ inStartOrder =
 -- | Still holding its Engineer's one writer: running or halted.
 holdsWriter :: Expr.BooleanExpr
 holdsWriter =
-  O.fieldIn txStateField (T.pack "running" :| [T.pack "halted"])
+  O.fieldIn txStateField (StateRunning :| [StateHalted])
 
 insertTransaction :: O.MonadOrville m => TransactionRow -> m ()
 insertTransaction =
@@ -306,7 +356,7 @@ busyTransactions engineer =
 
 runningTransactions :: O.MonadOrville m => m [TransactionRow]
 runningTransactions =
-  O.findEntitiesBy transactionTable (O.where_ (O.fieldEquals txStateField (T.pack "running")) <> inStartOrder)
+  O.findEntitiesBy transactionTable (O.where_ (O.fieldEquals txStateField StateRunning) <> inStartOrder)
 
 -- | Every running or halted transaction, in start order (C-P4.15 W1).
 activeTransactions :: O.MonadOrville m => m [TransactionRow]
@@ -318,9 +368,9 @@ updateTransaction :: O.MonadOrville m => TransactionRow -> m ()
 updateTransaction row =
   O.updateFields
     transactionTable
-    ( O.setField txStateField (txRowState row)
-        :| [ O.setField txStageField (txRowStage row)
-           , O.setField txHaltCodeField (txRowHaltCode row)
+    ( O.setField txStateField (fst (stateColumns (txRowState row)))
+        :| [ O.setField txStageField (storedStage row)
+           , O.setField txHaltCodeField (snd (stateColumns (txRowState row)))
            , O.setField txCandidatesField (txRowCandidates row)
            , O.setField txAttemptsField (txRowAttempts row)
            , O.setField txBasisField (txRowBasis row)
@@ -345,7 +395,7 @@ recordTable =
       <*> O.marshallField recordRowSequence recordSequenceField
       <*> O.marshallField recordRowKind (O.unboundedTextField "kind")
       <*> O.marshallField recordRowPrincipal (O.unboundedTextField "principal")
-      <*> O.marshallField recordRowStage (O.unboundedTextField "stage")
+      <*> O.marshallField recordRowStage (codeField "record stage" stageName parseStage "stage")
       <*> O.marshallField recordRowBody (O.unboundedTextField "body")
       <*> O.marshallField recordRowDigest (O.unboundedTextField "body_digest")
 
@@ -376,7 +426,7 @@ invocationTable =
     InvocationRow
       <$> O.marshallField invocationRowId invocationIdField
       <*> O.marshallField invocationRowTransaction invocationTransactionField
-      <*> O.marshallField invocationRowStage (O.unboundedTextField "stage")
+      <*> O.marshallField invocationRowStage (codeField "invocation stage" stageName parseStage "stage")
       <*> O.marshallField invocationRowWhat (O.unboundedTextField "what")
       <*> O.marshallField invocationRowRunner (O.unboundedTextField "runner")
       <*> O.marshallField invocationRowAdapter (O.unboundedTextField "adapter")

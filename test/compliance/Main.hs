@@ -10,6 +10,7 @@ import Lockstep.Compliance.IdentityTest qualified as IdentityTest
 import Lockstep.Compliance.JsonTest qualified as JsonTest
 import Lockstep.Compliance.NegativeTypesTest qualified as NegativeTypesTest
 import Lockstep.Compliance.PersistenceTest qualified as PersistenceTest
+import Lockstep.Compliance.StateTest qualified as StateTest
 
 main :: IO ()
 main =
@@ -21,4 +22,5 @@ main =
       , DefectsTest.tests
       , IdentityTest.tests
       , NegativeTypesTest.tests
+      , StateTest.tests
       ]

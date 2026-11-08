@@ -29,7 +29,8 @@ import Lockstep.Persistence.Commands
   )
 import Lockstep.Persistence.Fields (countOf, hexDigest, joinedOn, qualified, qualifiedOrder, qualifiedReference, selectJoined, tableReference)
 import Lockstep.Persistence.Jobs
-  ( jobErrorField
+  ( JobState
+  , jobErrorField
   , jobIdField
   , jobOutcomeDigestField
   , jobReceiptField
@@ -47,14 +48,14 @@ data ActivityRow
   , activityActor :: T.Text
   , activityAcceptedAt :: Time.UTCTime
   , activityRevision :: Int64
-  , activityJobState :: Maybe T.Text
+  , activityJobState :: Maybe JobState
   }
 
 data JobEvidenceRow
   = JobEvidenceRow
   { evidenceJobId :: JobId
   , evidenceReceiptId :: ReceiptId
-  , evidenceState :: T.Text
+  , evidenceState :: JobState
   , evidenceStepsDone :: Int32
   , evidenceStepsTotal :: Int32
   , evidenceError :: Maybe T.Text
@@ -62,14 +63,14 @@ data JobEvidenceRow
   }
 
 -- | Rows per value of one column of a table.
-countsBy :: O.MonadOrville m => O.TableDefinition key w r -> O.FieldDefinition O.NotNull T.Text -> m [(T.Text, Int32)]
+countsBy :: O.MonadOrville m => O.TableDefinition key w r -> O.FieldDefinition O.NotNull a -> m [(a, Int32)]
 countsBy table field =
   selectJoined
     ((,) <$> O.marshallReadOnlyField field <*> countOf "n")
     (tableReference table)
     (O.groupBy (Expr.groupByColumnsExpr (Expr.unqualified (O.fieldColumnName field) :| [])))
 
-jobCounts :: O.MonadOrville m => m [(T.Text, Int32)]
+jobCounts :: O.MonadOrville m => m [(JobState, Int32)]
 jobCounts =
   countsBy jobTable jobStateField
 

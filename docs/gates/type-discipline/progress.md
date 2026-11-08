@@ -108,6 +108,42 @@ Qualification after the fixes (`.local/td-check-B2.log`, over `cd2aea5`): format
 PASSED; integration **570/571**, the one failure again the `LifecycleHelperTest` journal race (owner item above;
 group re-run 16/16, `.local/td-lifecycle-rerun-2.log`); compliance **42/42**.
 
+## Increment C — typed state and persistence boundaries
+
+- Transaction: Kernel `StateName`, `HaltCode` (one encoder `haltCodeText`, one total decoder; parameterised codes built
+  through it); `stateColumns` no longer carries the stage; typed `stateFromColumns` (also refuses accepted/done at a
+  stage other than accept); `TransactionRow.txRowState :: TxState` decoded with state, stage and halt code together
+  (`O.marshallPartial`), stage derived in one place; record and invocation stage columns typed.
+- Task: `TaskState`/`parseTaskState`; the `otherwise -> BeingWorkedOn` catch-all removed; an unknown state is
+  `StateUnrecognised` (admission `task-not-ready`; the page offers no actions).
+- Intents: state and class columns typed (`IntentStateName`, `EffectClass`); typed filters; `restoreIntent` matches
+  typed values.
+- Invocation outcomes: Kernel `RoleEnding`, `CommandEnding`, `OutcomeKind` with one encoder/decoder; no
+  `stripPrefix`/`isPrefixOf`; "executable missing" is a typed `CommandFailure` classified once (no `isInfixOf`).
+- Review verdict typed (`== Approve`); attested provenance: Kernel `Provenance`/`Reason`, one writer
+  (`attestedReasonText`) and one documented decoder (`reasonOf`); resolution basis typed (`ResolutionBasis`); job
+  state a typed column.
+- Fleece: every enum field of the engine records through `FC.boundedEnum` (mutant run through `FC.validate`).
+- Web: ExecutionPages and TaskPages parse state/stage/halt once and render an unrecognised one visibly.
+- Evidence: compliance `StateTest` (old string expressions as oracle: halt codes, recovery decoder, endings, every
+  state/task/intent/class/basis/job name; unknown values refused) and JsonTest enum group (record bytes equal the
+  hand-built literal tree for every value). Compliance **68/68**.
+- Behaviour changes: impossible state/stage/code combinations or unknown stored stages/enum names fail to read
+  (`database-corrupt` / `LedgerIntegrity` code `integrity`) instead of `transaction-unreadable`, silent acceptance or
+  "needs a person"; executable-missing is an exact code match; an unknown task state is shown as unrecognised.
+- Remaining Text (recorded): receipt outcome (`Outcome` sits above Persistence), subject kind, decision operation and
+  outcome columns, profile decision outcome, resume/completion choices, the `InputRecord` input name, the invocation
+  outcome column (holds both endings; typed at the Application boundary), `StoredRequest` text checks.
+- Frozen-pinned (amendment list): `TxState` `Halted Stage Text` / `Stopped Text` (unit `TransactionTest.hs:111-191`,
+  `CandidateTest.hs:111-120`); `TransactionView.viewState`/`viewStage`/`viewHalt` (`EngineTest.hs:227,267`…);
+  `TaskFacts`/`DependencyFact` text states (unit `TaskTest.hs:41-94`), `TaskView.taskState` (`TasksTest.hs:120`);
+  `IntentState` reasons carrying the marker text (unit `ReconciliationTest.hs:264-271`, `RemediationTest.hs:214-222`;
+  integration `ReconciliationTest.hs:258-274`); `StoredResolution.resolutionBasis :: Text` (`LedgerPageTest.hs:150`,
+  integration `ReconciliationTest.hs:260`); `RunnerFailure` constructors (`RolesTest`, `LiveAdapterTest`,
+  `EngineRecoveryTwoTest`); `roleOutcomeCode` text (`RolesTest.hs:147-203`).
+- Qualification (`.local/td-check-C.log`, working tree over `b187668`): format, lint, build, unit **870/870**, guard,
+  integration **571/571**, backup/restore — all PASSED.
+
 Behavioural differences (deliberate): an expected revision above `Int64` is refused (was wrapped); a Ledger revision
 or generation above `Int32` is refused before anything is written (was wrapped into a refusal or observation row); a
 corrupt setup or stage column is a read failure (was shown as organized / basis); `lockstep db migrate` prints

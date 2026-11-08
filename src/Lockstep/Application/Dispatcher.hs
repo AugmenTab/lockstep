@@ -36,32 +36,8 @@ import Text.Show (Show, show)
 
 import Lockstep.Application.Database (DatabaseRuntime, withDatabase)
 import Lockstep.Kernel.Identity (JobId, ReceiptId)
+import Lockstep.Persistence.Jobs (JobState (..), jobStateCode)
 import Lockstep.Persistence.Jobs qualified as Jobs
-
-data JobState
-  = JobQueued
-  | JobRunning
-  | JobSucceeded
-  | JobFailed
-  deriving (Eq, Show)
-
-jobStateCode :: JobState -> T.Text
-jobStateCode state =
-  T.pack $
-    case state of
-      JobQueued -> "queued"
-      JobRunning -> "running"
-      JobSucceeded -> "succeeded"
-      JobFailed -> "failed"
-
-parseJobState :: T.Text -> Maybe JobState
-parseJobState code =
-  case T.unpack code of
-    "queued" -> Just JobQueued
-    "running" -> Just JobRunning
-    "succeeded" -> Just JobSucceeded
-    "failed" -> Just JobFailed
-    _ -> Nothing
 
 data Job
   = Job
@@ -76,30 +52,29 @@ data Job
   }
   deriving (Eq, Show)
 
-fromRow :: Jobs.JobRow -> Maybe Job
-fromRow row = do
-  state <- parseJobState (Jobs.jobRowState row)
-  pure
-    Job
-      { jobId = Jobs.jobRowId row
-      , jobReceiptId = Jobs.jobRowReceipt row
-      , jobState = state
-      , jobStepsDone = fromIntegral (Jobs.jobRowStepsDone row)
-      , jobStepsTotal = fromIntegral (Jobs.jobRowStepsTotal row)
-      , jobAttempts = fromIntegral (Jobs.jobRowAttempts row)
-      , jobRecovered = fromIntegral (Jobs.jobRowRecovered row)
-      , jobError = Jobs.jobRowError row
-      }
+-- | Total: the state column is typed, so a row with a state no job has never reads.
+fromRow :: Jobs.JobRow -> Job
+fromRow row =
+  Job
+    { jobId = Jobs.jobRowId row
+    , jobReceiptId = Jobs.jobRowReceipt row
+    , jobState = Jobs.jobRowState row
+    , jobStepsDone = fromIntegral (Jobs.jobRowStepsDone row)
+    , jobStepsTotal = fromIntegral (Jobs.jobRowStepsTotal row)
+    , jobAttempts = fromIntegral (Jobs.jobRowAttempts row)
+    , jobRecovered = fromIntegral (Jobs.jobRowRecovered row)
+    , jobError = Jobs.jobRowError row
+    }
 
 findJob :: DatabaseRuntime -> JobId -> IO (Maybe Job)
 findJob runtime ident = do
   result <- withDatabase runtime (Jobs.findJobById ident)
-  pure (either (const Nothing) (>>= fromRow) result)
+  pure (either (const Nothing) (fmap fromRow) result)
 
 findJobForReceipt :: DatabaseRuntime -> ReceiptId -> IO (Maybe Job)
 findJobForReceipt runtime receipt = do
   result <- withDatabase runtime (Jobs.findJobByReceipt receipt)
-  pure (either (const Nothing) (>>= fromRow) result)
+  pure (either (const Nothing) (fmap fromRow) result)
 
 data Dispatcher
   = Dispatcher
@@ -179,12 +154,12 @@ runJob dispatcher runtime logLine owner row =
     total = Jobs.jobRowStepsTotal row
     micros = fromIntegral (Jobs.jobRowStepMillis row) * 1000
     finish state lastError = do
-      recorded <- withDatabase runtime (Jobs.finishJob ident owner (T.pack state) lastError)
+      recorded <- withDatabase runtime (Jobs.finishJob ident owner state lastError)
       logLine $
         "Dispatcher: job "
           <> show ident
           <> " "
-          <> state
+          <> T.unpack (jobStateCode state)
           <> case recorded of
             Right True -> ""
             Right False -> " (not recorded: the lease was lost)"
@@ -192,9 +167,9 @@ runJob dispatcher runtime logLine owner row =
       pure False
     go step
       | step > total =
-          finish "succeeded" Nothing
+          finish JobSucceeded Nothing
       | Just step == Jobs.jobRowFailAt row =
-          finish "failed" (Just (T.pack ("deterministic failure injected at step " <> show step)))
+          finish JobFailed (Just (T.pack ("deterministic failure injected at step " <> show step)))
       | otherwise = do
           stop <- waitOrStop dispatcher micros
           if stop

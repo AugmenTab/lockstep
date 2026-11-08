@@ -130,6 +130,8 @@ admissionBlock readiness =
       CannotStart _ -> Just "task-cannot-start"
       Finished -> Just "task-closed"
       TaskCanceled -> Just "task-closed"
+      -- Where it stands is not known: it is not handed over.
+      StateUnrecognised _ -> Just "task-not-ready"
 
 -- | X7: the canonical text of a request to let Lockstep work in a project.
 enablementRequestText :: T.Text -> T.Text -> T.Text

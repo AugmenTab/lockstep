@@ -9,6 +9,9 @@ module Lockstep.Kernel.Candidate
   , testStem
   , quoteGrounded
   , MutantRun (..)
+  , mutantRuns
+  , mutantRunName
+  , parseMutantRun
   , disposeFinding
   ) where
 
@@ -83,6 +86,27 @@ data MutantRun
   | -- | every candidate test passed; the flag: its demonstration failed on the mutant with its signature
     MutantSurvived Bool
   deriving (Eq, Show)
+
+-- | Every mutant run, for 'parseMutantRun'.
+mutantRuns :: [MutantRun]
+mutantRuns =
+  [NoMutant, MutantOutsideScope, MutantKilled, MutantSurvived True, MutantSurvived False]
+
+-- | The canonical name of a mutant run, as a finding record keeps it.
+mutantRunName :: MutantRun -> T.Text
+mutantRunName run =
+  T.pack $
+    case run of
+      NoMutant -> "none"
+      MutantOutsideScope -> "outside-scope"
+      MutantKilled -> "killed"
+      MutantSurvived True -> "survived-demonstrated"
+      MutantSurvived False -> "survived-not-demonstrated"
+
+-- | The mutant run of its name; derived from 'mutantRunName'.
+parseMutantRun :: T.Text -> Maybe MutantRun
+parseMutantRun text =
+  L.lookup text [(mutantRunName r, r) | r <- mutantRuns]
 
 {- | K3 (DG-07 as clarified): @CONFIRMED@ needs both a surviving mutant (or a
 failing counterexample) and a demonstration grounded in a named requirement;

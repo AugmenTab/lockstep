@@ -82,12 +82,14 @@ import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
 import System.IO.Error (userError)
 
-import Lockstep.Kernel.Effect (OperationId (..))
+import Lockstep.Kernel.Effect (EffectClass (..), IntentStateName (..), OperationId (..), effectClassName, intentStateNameText, parseEffectClass, parseIntentStateName)
 import Lockstep.Kernel.Identity (EngineerId, RepositoryId, TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..))
 import Lockstep.Kernel.Profile (ProfileId)
+import Lockstep.Kernel.Reconciliation (ResolutionBasis, parseResolutionBasis, resolutionBasisText)
 import Lockstep.Persistence.Entity (EntityKey, Table, foreignKeyTo, keyField, mkEntityTable, nullableForeignKeyTo)
 import Lockstep.Persistence.Fields
   ( clockTimestamp
+  , codeField
   , forUpdate
   , forUpdateOf
   , headMay
@@ -481,7 +483,7 @@ data IntentRow
   , intentRowKey :: T.Text
   , intentRowEvent :: Int64
   , intentRowSpecName :: T.Text
-  , intentRowClass :: T.Text
+  , intentRowClass :: EffectClass
   , intentRowBudget :: Int32
   , intentRowKeyLifetime :: Maybe Int64
   , intentRowRefusesChanged :: Maybe Bool
@@ -489,7 +491,10 @@ data IntentRow
   , intentRowLookupExcludesLate :: Maybe Bool
   , intentRowParameters :: T.Text
   , intentRowParametersDigest :: T.Text
-  , intentRowState :: T.Text
+  , intentRowState :: IntentStateName
+  {- ^ Which state; the lease, outcome and settlement columns that go with it
+  are checked together, in one place, when the intent is restored.
+  -}
   , intentRowGeneration :: Int32
   , intentRowDispatches :: Int32
   , intentRowLeaseOwner :: Maybe T.Text
@@ -549,17 +554,17 @@ intentSubjectField :: O.FieldDefinition O.NotNull Uuid
 intentSubjectField =
   subjectReferenceField "subject_id"
 
-intentClassField :: O.FieldDefinition O.NotNull T.Text
+intentClassField :: O.FieldDefinition O.NotNull EffectClass
 intentClassField =
-  O.unboundedTextField "effect_class"
+  codeField "effect class" effectClassName parseEffectClass "effect_class"
 
 intentBudgetField :: O.FieldDefinition O.NotNull Int32
 intentBudgetField =
   O.integerField "retry_budget"
 
-intentStateField :: O.FieldDefinition O.NotNull T.Text
+intentStateField :: O.FieldDefinition O.NotNull IntentStateName
 intentStateField =
-  O.unboundedTextField "state"
+  codeField "effect intent state" intentStateNameText parseIntentStateName "state"
 
 intentGenerationField :: O.FieldDefinition O.NotNull Int32
 intentGenerationField =
@@ -695,7 +700,7 @@ updateIntent row =
              , setNow intentUpdatedAtField
              ]
                <> [ setExpression intentFirstDispatchedField (Expr.coalesce (O.fieldColumnReference intentFirstDispatchedField :| [clockTimestamp]))
-                  | intentRowState row == T.pack "dispatched"
+                  | intentRowState row == NameDispatched
                   ]
            )
     )
@@ -759,7 +764,7 @@ intentSubject operation =
 runnableIntentIds :: O.MonadOrville m => m [OperationId]
 runnableIntentIds =
   let
-    stateIs value = qualifiedEquals (ofIntent intentStateField) (T.pack value)
+    stateIs = qualifiedEquals (ofIntent intentStateField)
     leaseEnded = Expr.lessThanOrEqualTo (qualifiedReference (ofIntent intentLeaseUntilField)) Expr.now
     retriesLeft = Expr.lessThanOrEqualTo (qualifiedReference (ofIntent intentDispatchesField)) (qualifiedReference (ofIntent intentBudgetField))
   in
@@ -770,9 +775,9 @@ runnableIntentIds =
           ( qualifiedEquals (ofSubject subjectKindField) (T.pack "work-order")
               `O.andExpr` qualifiedEquals (ofSubject subjectStateField) (T.pack "active")
               `O.andExpr` Expr.parenthesized
-                ( stateIs "pending"
-                    `O.orExpr` Expr.parenthesized (stateIs "claimed" `O.andExpr` leaseEnded)
-                    `O.orExpr` Expr.parenthesized (stateIs "confirmed-not-applied" `O.andExpr` retriesLeft)
+                ( stateIs NamePending
+                    `O.orExpr` Expr.parenthesized (stateIs NameClaimed `O.andExpr` leaseEnded)
+                    `O.orExpr` Expr.parenthesized (stateIs NameConfirmedNotApplied `O.andExpr` retriesLeft)
                 )
           )
           <> O.orderBy (qualifiedOrder (ofIntent sequenceField) O.ascendingOrder)
@@ -793,7 +798,7 @@ recoverableIntentIds :: O.MonadOrville m => m [OperationId]
 recoverableIntentIds =
   operationIds
     ( O.where_
-        ( O.fieldEquals intentStateField (T.pack "dispatched")
+        ( O.fieldEquals intentStateField NameDispatched
             `O.andExpr` Expr.lessThanOrEqualTo (O.fieldColumnReference intentLeaseUntilField) Expr.now
         )
         <> O.orderBy (O.orderByField sequenceField O.ascendingOrder)
@@ -832,11 +837,11 @@ reconcilableIntentIds :: O.MonadOrville m => m [OperationId]
 reconcilableIntentIds =
   operationIds
     ( O.where_
-        ( O.fieldEquals intentClassField (T.pack "queryable")
+        ( O.fieldEquals intentClassField Queryable
             `O.andExpr` Expr.parenthesized
-              ( O.fieldEquals intentStateField (T.pack "outcome-unknown")
+              ( O.fieldEquals intentStateField NameOutcomeUnknown
                   `O.orExpr` Expr.parenthesized
-                    ( O.fieldEquals intentStateField (T.pack "dispatched")
+                    ( O.fieldEquals intentStateField NameDispatched
                         `O.andExpr` Expr.lessThanOrEqualTo (O.fieldColumnReference intentLeaseUntilField) Expr.now
                     )
               )
@@ -847,7 +852,7 @@ reconcilableIntentIds =
 data ResolutionRow
   = ResolutionRow
   { resolutionRowGeneration :: Int32
-  , resolutionRowBasis :: T.Text
+  , resolutionRowBasis :: ResolutionBasis
   , resolutionRowDecision :: T.Text
   , resolutionRowAcknowledged :: Bool
   }
@@ -859,12 +864,12 @@ resolutionTable =
       <$> O.marshallField fst operationReferenceField
       <*> ( ResolutionRow
               <$> O.marshallField (resolutionRowGeneration . snd) (O.integerField "generation")
-              <*> O.marshallField (resolutionRowBasis . snd) (O.unboundedTextField "basis")
+              <*> O.marshallField (resolutionRowBasis . snd) (codeField "resolution basis" resolutionBasisText parseResolutionBasis "basis")
               <*> O.marshallField (resolutionRowDecision . snd) (O.unboundedTextField "decision")
               <*> O.marshallField (resolutionRowAcknowledged . snd) (O.booleanField "duplication_acknowledged")
           )
 
-insertResolution :: O.MonadOrville m => OperationId -> Int32 -> T.Text -> T.Text -> Bool -> m ()
+insertResolution :: O.MonadOrville m => OperationId -> Int32 -> ResolutionBasis -> T.Text -> Bool -> m ()
 insertResolution operation generation basis decision acknowledged =
   O.insertEntity resolutionTable (operation, ResolutionRow generation basis decision acknowledged)
 

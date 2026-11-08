@@ -9,6 +9,13 @@ module Lockstep.Kernel.Transaction
   , parseStage
   , TxState (..)
   , txStateName
+  , StateName (..)
+  , stateNameOf
+  , stateNameText
+  , parseStateName
+  , HaltCode (..)
+  , haltCodeText
+  , haltCodeFromText
   , Counters (..)
   , noCounters
   , Transaction (..)
@@ -39,13 +46,13 @@ import Lockstep.Kernel.Roles (Check (..))
 import Lockstep.Kernel.Runner (RunOutcome (..))
 import Lockstep.Kernel.Transition (Principal (..))
 
-{- | T5: the stored columns of a state: its name, its stage (the last stage for
-a closed one) and its halt or stop code.
+{- | T5: the stored columns of a state besides its stage: its name and its
+halt or stop code. The stage column is 'stateStage', the one place it is
+derived.
 -}
-stateColumns :: Stage -> TxState -> (T.Text, T.Text, Maybe T.Text)
-stateColumns lastStage state =
-  ( txStateName state
-  , stageName (stateStage lastStage state)
+stateColumns :: TxState -> (StateName, Maybe T.Text)
+stateColumns state =
+  ( stateNameOf state
   , case state of
       Halted _ code -> Just code
       Stopped code -> Just code
@@ -62,16 +69,18 @@ stateStage lastStage state =
     Done -> StageAccept
     Stopped _ -> lastStage
 
--- | The state of stored columns; nothing for columns that do not read back.
-stateFromColumns :: T.Text -> T.Text -> Maybe T.Text -> Maybe TxState
-stateFromColumns name stage code = do
-  s <- parseStage stage
-  case (T.unpack name, code) of
-    ("running", Nothing) -> Just (Running s)
-    ("halted", Just c) -> Just (Halted s c)
-    ("accepted", Nothing) -> Just Accepted
-    ("done", Nothing) -> Just Done
-    ("stopped", Just c) -> Just (Stopped c)
+{- | The state of stored columns (its name, its stage, its halt or stop code);
+nothing for a combination no state has: a halt or stop without its code, a
+code on any other state, or an accepted or done one not at the accept stage.
+-}
+stateFromColumns :: StateName -> Stage -> Maybe T.Text -> Maybe TxState
+stateFromColumns name stage code =
+  case (name, code) of
+    (StateRunning, Nothing) -> Just (Running stage)
+    (StateHalted, Just c) -> Just (Halted stage c)
+    (StateAccepted, Nothing) | stage == StageAccept -> Just Accepted
+    (StateDone, Nothing) | stage == StageAccept -> Just Done
+    (StateStopped, Just c) -> Just (Stopped c)
     _ -> Nothing
 
 {- | P4.6 R3: a reproduction holds only if the command ran and failed (not the
@@ -141,14 +150,88 @@ data TxState
   deriving (Eq, Show)
 
 txStateName :: TxState -> T.Text
-txStateName state =
+txStateName =
+  stateNameText . stateNameOf
+
+-- | T5: which state it is, without its stage or code (the stored @state@ column).
+data StateName
+  = StateRunning
+  | StateHalted
+  | StateAccepted
+  | StateDone
+  | StateStopped
+  deriving (Eq, Show, Enum, Bounded)
+
+stateNameOf :: TxState -> StateName
+stateNameOf state =
+  case state of
+    Running _ -> StateRunning
+    Halted _ _ -> StateHalted
+    Accepted -> StateAccepted
+    Done -> StateDone
+    Stopped _ -> StateStopped
+
+-- | The canonical text of a state name, as stored and as shown.
+stateNameText :: StateName -> T.Text
+stateNameText name =
   T.pack $
-    case state of
-      Running _ -> "running"
-      Halted _ _ -> "halted"
-      Accepted -> "accepted"
-      Done -> "done"
-      Stopped _ -> "stopped"
+    case name of
+      StateRunning -> "running"
+      StateHalted -> "halted"
+      StateAccepted -> "accepted"
+      StateDone -> "done"
+      StateStopped -> "stopped"
+
+-- | The state name of its canonical text; derived from 'stateNameText'.
+parseStateName :: T.Text -> Maybe StateName
+parseStateName text =
+  L.lookup text [(stateNameText n, n) | n <- [minBound .. maxBound]]
+
+{- | What a halt (or the stop that ended one) records. Three kinds carry the
+code of what failed after a fixed word; every other halt is its own code. The
+stored text is 'haltCodeText'; 'haltCodeFromText' is its one decoder.
+-}
+data HaltCode
+  = -- | @role-failed CODE@: a role failed in a known way.
+    HaltRoleFailed T.Text
+  | -- | @uncertain-invocation CODE@: whether a role finished is not known.
+    HaltUncertainInvocation T.Text
+  | -- | @supervisor-failed CODE@: Lockstep's own step could not be done.
+    HaltSupervisorFailed T.Text
+  | -- | any other halt or stop code, as it is (a refusal, an exhausted budget, a person's stop)
+    HaltPlain T.Text
+  deriving (Eq, Show)
+
+haltCodeText :: HaltCode -> T.Text
+haltCodeText code =
+  case code of
+    HaltRoleFailed c -> roleFailedWord <> c
+    HaltUncertainInvocation c -> uncertainWord <> c
+    HaltSupervisorFailed c -> supervisorFailedWord <> c
+    HaltPlain c -> c
+
+{- | The kind of a stored halt code: split once at its leading word. Total: a
+code with no such word is 'HaltPlain'. It inverts 'haltCodeText' for every
+code Lockstep makes (no plain code begins with one of the three words).
+-}
+haltCodeFromText :: T.Text -> HaltCode
+haltCodeFromText text
+  | Just c <- T.stripPrefix roleFailedWord text = HaltRoleFailed c
+  | Just c <- T.stripPrefix uncertainWord text = HaltUncertainInvocation c
+  | Just c <- T.stripPrefix supervisorFailedWord text = HaltSupervisorFailed c
+  | otherwise = HaltPlain text
+
+roleFailedWord :: T.Text
+roleFailedWord =
+  T.pack "role-failed "
+
+uncertainWord :: T.Text
+uncertainWord =
+  T.pack "uncertain-invocation "
+
+supervisorFailedWord :: T.Text
+supervisorFailedWord =
+  T.pack "supervisor-failed "
 
 data Counters
   = Counters
@@ -190,7 +273,7 @@ data BaselineClass
   | GreenConfirmed
   | GreenCandidateFailed
   | RunFailed
-  deriving (Eq, Show)
+  deriving (Eq, Show, Enum, Bounded)
 
 baselineClassName :: BaselineClass -> T.Text
 baselineClassName c =
@@ -213,7 +296,7 @@ data Disposition
   | Disproved
   | NeedsHumanFinding
   | Inconclusive
-  deriving (Eq, Show)
+  deriving (Eq, Show, Enum, Bounded)
 
 dispositionName :: Disposition -> T.Text
 dispositionName d =
@@ -320,9 +403,9 @@ stepTransaction principal input tx
   -- own step that could not be done, halts at its stage.
   roleEnd stage =
     case input of
-      RoleFailed code -> Just (to (Halted stage (T.pack "role-failed " <> code)))
-      RoleUncertain code -> Just (to (Halted stage (T.pack "uncertain-invocation " <> code)))
-      SupervisorFailed code -> Just (to (Halted stage (T.pack "supervisor-failed " <> code)))
+      RoleFailed code -> Just (to (Halted stage (haltCodeText (HaltRoleFailed code))))
+      RoleUncertain code -> Just (to (Halted stage (haltCodeText (HaltUncertainInvocation code))))
+      SupervisorFailed code -> Just (to (Halted stage (haltCodeText (HaltSupervisorFailed code))))
       _ -> Nothing
   anotherAttempt code =
     if attemptsMade counters < maxAttempts

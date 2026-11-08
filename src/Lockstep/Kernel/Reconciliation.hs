@@ -12,6 +12,9 @@ module Lockstep.Kernel.Reconciliation
   , reconcileIntent
   , Resolution (..)
   , resolveIntent
+  , ResolutionBasis (..)
+  , resolutionBasisText
+  , parseResolutionBasis
   , LateVerdict (..)
   , judgeLateObservation
   , renderLookup
@@ -21,6 +24,7 @@ module Lockstep.Kernel.Reconciliation
   ) where
 
 import Data.Char qualified as Char
+import Data.List qualified as L
 import Data.Text qualified as T
 import Data.Time (UTCTime)
 import Flipstone.Prelude
@@ -35,6 +39,7 @@ import Lockstep.Kernel.Effect
   , LookupTerms (..)
   , Observation (..)
   , Settlement (..)
+  , attestedReasonText
   , effectSpecBudget
   , effectSpecClass
   , effectSpecTerms
@@ -129,7 +134,39 @@ resolveIntent intent (Command principal (generation, choice))
         state -> Left (NotUnknown (intentStateName state))
  where
   to state = intent {intentState = state}
-  attested evidence = T.pack "human-attested: " <> evidence
+  attested = attestedReasonText
+
+-- | What decided an intent's resolution, as its record keeps it (the @basis@ of C-P2.7 §4, C-P2.9-R1).
+data ResolutionBasis
+  = -- | a lookup at the destination (R3)
+    ResolvedByLookup
+  | -- | a person attested whether it applied (R5)
+    ResolvedByAttestation
+  | -- | a person chose to retry, acknowledging the duplication risk (R5)
+    ResolvedByRetry
+  | -- | an applied observation that came late (R7)
+    ResolvedByLateObservation
+  | -- | a person abandoned it
+    ResolvedByAbandon
+  | -- | a person carried it into the work order's current activation
+    ResolvedByCarry
+  deriving (Eq, Show, Enum, Bounded)
+
+resolutionBasisText :: ResolutionBasis -> T.Text
+resolutionBasisText basis =
+  T.pack $
+    case basis of
+      ResolvedByLookup -> "lookup"
+      ResolvedByAttestation -> "human-attested"
+      ResolvedByRetry -> "human-retry"
+      ResolvedByLateObservation -> "late-observation"
+      ResolvedByAbandon -> "human-abandon"
+      ResolvedByCarry -> "human-carry"
+
+-- | The basis of its text; derived from 'resolutionBasisText'.
+parseResolutionBasis :: T.Text -> Maybe ResolutionBasis
+parseResolutionBasis text =
+  L.lookup text [(resolutionBasisText b, b) | b <- [minBound .. maxBound]]
 
 validEvidence :: T.Text -> Bool
 validEvidence text =

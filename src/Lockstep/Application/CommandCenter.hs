@@ -41,6 +41,7 @@ import Lockstep.Foundation.EvidenceModel
   )
 import Lockstep.Kernel.Identity (JobId, ReceiptId, jobIdNumber, receiptIdNumber)
 import Lockstep.Persistence.CommandCenter qualified as Store
+import Lockstep.Persistence.Jobs (JobState (..), jobStateCode)
 
 data SummaryRow
   = SummaryRow
@@ -122,7 +123,7 @@ loadCommandCenter runtime = do
                 CenterView
                   { centerSchema = schema
                   , centerSummary =
-                      fmap (summary (T.pack "jobs") jobs) jobStatuses
+                      fmap (summary (T.pack "jobs") [(jobStateCode s, n) | (s, n) <- jobs]) jobStatuses
                         <> fmap (summary (T.pack "receipts") receipts) receiptStatuses
                   , centerActivity = fmap toActivity activity
                   , centerEvidence = rows
@@ -142,7 +143,7 @@ toActivity row =
     , activityActor = Store.activityActor row
     , activityAcceptedAt = Store.activityAcceptedAt row
     , activityRevision = Store.activityRevision row
-    , activityJobState = Store.activityJobState row
+    , activityJobState = jobStateCode <$> Store.activityJobState row
     }
 
 -- | C-P1.6 E3: the canonical outcome text whose SHA-256 the dispatcher stores.
@@ -170,14 +171,15 @@ evidenceRow schema job =
     receipt = receiptIdNumber (Store.evidenceReceiptId job)
     done = fromIntegral (Store.evidenceStepsDone job)
     total = fromIntegral (Store.evidenceStepsTotal job)
-    state = Store.evidenceState job
+    state = jobStateCode (Store.evidenceState job)
     locator = T.pack ("db:lockstep_jobs/" <> show ident)
     recomputed = sha256Hex (jobOutcomeCanonical jobId state done total (Store.evidenceError job))
-    claimed
-      | state == T.pack "succeeded" = Passed
-      | state == T.pack "failed" = Failed
-      | state == T.pack "running" = NotRun (T.pack "in progress")
-      | otherwise = NotRun (T.pack "queued")
+    claimed =
+      case Store.evidenceState job of
+        JobSucceeded -> Passed
+        JobFailed -> Failed
+        JobRunning -> NotRun (T.pack "in progress")
+        JobQueued -> NotRun (T.pack "queued")
     actual =
       state
         <> T.pack (", " <> show done <> "/" <> show total <> " steps")

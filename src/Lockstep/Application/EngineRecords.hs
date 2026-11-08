@@ -64,6 +64,10 @@ import Flipstone.Prelude
 
 import Lockstep.Foundation.Fleece (encodeText, nullableOf)
 import Lockstep.Foundation.Json (Json (JRaw))
+import Lockstep.Kernel.Candidate (MutantRun, mutantRunName, parseMutantRun)
+import Lockstep.Kernel.Roles (Expectation, Verdict, expectationName, verdictName)
+import Lockstep.Kernel.Runner (OutcomeKind, outcomeKindName)
+import Lockstep.Kernel.Transaction (BaselineClass, Disposition, Stage, StateName, baselineClassName, dispositionName, stageName, stateNameText)
 
 {- | A record body for the transaction's records: the document its schema
 writes, kept as it is ('JRaw'), so a role's context can carry it verbatim.
@@ -71,6 +75,26 @@ writes, kept as it is ('JRaw'), so a role's context can carry it verbatim.
 record :: FC.Schema FA.Encoder a -> a -> Json
 record schema =
   JRaw . encodeText schema
+
+{- | Enumerations are written as their Kernel names ('FC.boundedEnum' of the
+name function), which are the strings 'FC.text' wrote before; reading a name
+the Kernel does not know fails the record's decoding.
+-}
+stageSchema :: FC.Fleece t => FC.Schema t Stage
+stageSchema =
+  FC.boundedEnum stageName
+
+outcomeKindSchema :: FC.Fleece t => FC.Schema t OutcomeKind
+outcomeKindSchema =
+  FC.boundedEnum outcomeKindName
+
+-- | A mutant run is not an 'Enum' (one constructor has a flag), so its names are listed ('parseMutantRun').
+mutantRunSchema :: FC.Fleece t => FC.Schema t MutantRun
+mutantRunSchema =
+  FC.validate
+    mutantRunName
+    (\name -> maybe (Left ("unknown mutant run: " <> T.unpack name)) Right (parseMutantRun name))
+    FC.text
 
 -- | An invocation's argument vector, as stored with it: a JSON list of strings.
 argvText :: [T.Text] -> T.Text
@@ -96,7 +120,7 @@ startedSchema =
 -- | @halt@: the stage the transaction halted at and why.
 data Halt
   = Halt
-  { haltStage :: T.Text
+  { haltStage :: Stage
   , haltCode :: T.Text
   }
 
@@ -104,14 +128,14 @@ haltSchema :: FC.Fleece t => FC.Schema t Halt
 haltSchema =
   FC.object $
     FC.constructor Halt
-      #+ FC.required "stage" haltStage FC.text
+      #+ FC.required "stage" haltStage stageSchema
       #+ FC.required "code" haltCode FC.text
 
 -- | @input@: the input applied and the state it led to.
 data InputRecord
   = InputRecord
   { inputName :: T.Text
-  , inputState :: T.Text
+  , inputState :: StateName
   }
 
 inputSchema :: FC.Fleece t => FC.Schema t InputRecord
@@ -119,7 +143,7 @@ inputSchema =
   FC.object $
     FC.constructor InputRecord
       #+ FC.required "input" inputName FC.text
-      #+ FC.required "state" inputState FC.text
+      #+ FC.required "state" inputState (FC.boundedEnum stateNameText)
 
 -- | @resume@: a person's answer to a halt's request.
 data Resume
@@ -201,7 +225,7 @@ data Reproduction
   = Reproduction
   { reproductionCommand :: Maybe [T.Text]
   , reproductionSignature :: Maybe T.Text
-  , reproductionOutcome :: Maybe T.Text
+  , reproductionOutcome :: Maybe OutcomeKind
   , reproductionExit :: Maybe (Maybe Integer)
   , reproductionReproduced :: Bool
   , reproductionStdout :: Maybe T.Text
@@ -215,7 +239,7 @@ reproductionSchema =
     FC.constructor Reproduction
       #+ FC.required "command" reproductionCommand (nullableOf (FC.list FC.text))
       #+ FC.optional "signature" reproductionSignature FC.text
-      #+ FC.optional "outcome" reproductionOutcome FC.text
+      #+ FC.optional "outcome" reproductionOutcome outcomeKindSchema
       #+ FC.optional "exit" reproductionExit (nullableOf FC.integer)
       #+ FC.required "reproduced" reproductionReproduced FC.boolean
       #+ FC.optional "stdout_tail" reproductionStdout FC.text
@@ -226,9 +250,9 @@ reproductionSchema =
 data Baseline
   = Baseline
   { baselinePath :: T.Text
-  , baselineExpect :: T.Text
-  , baselineClass :: T.Text
-  , baselineOutcome :: T.Text
+  , baselineExpect :: Expectation
+  , baselineClass :: BaselineClass
+  , baselineOutcome :: OutcomeKind
   , baselineStdout :: T.Text
   , baselineStderr :: T.Text
   }
@@ -238,9 +262,9 @@ baselineSchema =
   FC.object $
     FC.constructor Baseline
       #+ FC.required "path" baselinePath FC.text
-      #+ FC.required "expect" baselineExpect FC.text
-      #+ FC.required "class" baselineClass FC.text
-      #+ FC.required "outcome" baselineOutcome FC.text
+      #+ FC.required "expect" baselineExpect (FC.boundedEnum expectationName)
+      #+ FC.required "class" baselineClass (FC.boundedEnum baselineClassName)
+      #+ FC.required "outcome" baselineOutcome outcomeKindSchema
       #+ FC.required "stdout_tail" baselineStdout FC.text
       #+ FC.required "stderr_tail" baselineStderr FC.text
 
@@ -250,8 +274,8 @@ data FindingRecord
   { findingRecordRequirement :: T.Text
   , findingRecordClaim :: T.Text
   , findingRecordGrounded :: Maybe Bool
-  , findingRecordMutant :: T.Text
-  , findingRecordDisposition :: T.Text
+  , findingRecordMutant :: MutantRun
+  , findingRecordDisposition :: Disposition
   }
 
 findingSchema :: FC.Fleece t => FC.Schema t FindingRecord
@@ -261,8 +285,8 @@ findingSchema =
       #+ FC.required "requirement" findingRecordRequirement FC.text
       #+ FC.required "claim" findingRecordClaim FC.text
       #+ FC.optional "grounded" findingRecordGrounded FC.boolean
-      #+ FC.required "mutant" findingRecordMutant FC.text
-      #+ FC.required "disposition" findingRecordDisposition FC.text
+      #+ FC.required "mutant" findingRecordMutant mutantRunSchema
+      #+ FC.required "disposition" findingRecordDisposition (FC.boundedEnum dispositionName)
 
 -- | @freeze@: the freeze commit, its branch and the Contract's digest.
 data FreezeRecord
@@ -372,7 +396,7 @@ implementationSchema =
 data VerificationRun
   = VerificationRun
   { runCommand :: [T.Text]
-  , runOutcome :: T.Text
+  , runOutcome :: OutcomeKind
   , runExit :: Maybe Integer
   , runStdout :: T.Text
   , runStderr :: T.Text
@@ -383,7 +407,7 @@ verificationSchema =
   FC.object $
     FC.constructor VerificationRun
       #+ FC.required "command" runCommand (FC.list FC.text)
-      #+ FC.required "outcome" runOutcome FC.text
+      #+ FC.required "outcome" runOutcome outcomeKindSchema
       #+ FC.optional "exit" runExit FC.integer
       #+ FC.required "stdout_tail" runStdout FC.text
       #+ FC.required "stderr_tail" runStderr FC.text
@@ -406,7 +430,7 @@ verificationSummarySchema =
 data ReviewRecord
   = ReviewRecord
   { reviewCommit :: T.Text
-  , reviewVerdict :: T.Text
+  , reviewVerdict :: Verdict
   , reviewReasons :: [T.Text]
   , reviewInvocation :: Maybe T.Text
   }
@@ -416,7 +440,7 @@ reviewSchema =
   FC.object $
     FC.constructor ReviewRecord
       #+ FC.required "commit" reviewCommit FC.text
-      #+ FC.required "verdict" reviewVerdict FC.text
+      #+ FC.required "verdict" reviewVerdict (FC.boundedEnum verdictName)
       #+ FC.required "reasons" reviewReasons (FC.list FC.text)
       #+ FC.optional "invocation" reviewInvocation FC.text
 

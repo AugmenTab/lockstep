@@ -85,7 +85,7 @@ data Discovery
 data Expectation
   = ExpectRed
   | ExpectGreen
-  deriving (Eq, Show)
+  deriving (Eq, Show, Enum, Bounded)
 
 expectationName :: Expectation -> T.Text
 expectationName expectation =
@@ -166,7 +166,7 @@ data Verdict
   = Approve
   | Reject
   | NeedsHuman
-  deriving (Eq, Show)
+  deriving (Eq, Show, Enum, Bounded)
 
 verdictName :: Verdict -> T.Text
 verdictName verdict =

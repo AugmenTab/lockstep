@@ -89,26 +89,27 @@ import Lockstep.Application.Profiles (ProfileFailure (..), loadStoredDefinition,
 import Lockstep.Kernel.Activation (CarryInput (..), CarryRequest (..), carryChecked, carryRefusalCode)
 import Lockstep.Kernel.Effect
   ( ClassTerms (..)
+  , EffectClass (..)
   , EffectRefusal (..)
   , IdempotencyTerms (..)
   , Intent (..)
   , IntentInput (..)
   , IntentRequest
   , IntentState (..)
+  , IntentStateName (..)
   , Lease (..)
   , LookupTerms (..)
   , Observation (..)
   , OperationId (..)
   , Settlement (..)
   , SubjectRef (..)
-  , effectClassName
   , effectKeyText
   , effectRefusalCode
   , effectSpecBudget
   , effectSpecClass
   , effectSpecName
   , effectSpecTerms
-  , intentStateName
+  , intentStateNameOf
   , mkEffectKey
   , mkEffectSpec
   , newIntents
@@ -164,11 +165,13 @@ import Lockstep.Kernel.Reconciliation
   , ReconcileInput (..)
   , ReconcileRefusal
   , Resolution (..)
+  , ResolutionBasis (..)
   , judgeLateObservation
   , reconcileIntent
   , reconcileRefusalCode
   , renderLookup
   , renderResolution
+  , resolutionBasisText
   , resolveIntent
   )
 import Lockstep.Kernel.Recovery (Recovery (..), RecoveryInput (..), recoverIntent, recoveryIntent, recoveryRefusalCode, renderRecovery)
@@ -277,7 +280,11 @@ transaction runtime action = do
           case (injected, aborted) of
             (Just e, _) -> throwIO e
             (Nothing, Just failure) -> pure (Left failure)
-            (Nothing, Nothing) -> pure (Left (LedgerUnavailable (readinessCode (Database.NotReady reason))))
+            -- A stored value that does not decode (a typed column holding a code no value has) is
+            -- corrupt data: an integrity failure, as a row restoreIntent cannot rebuild is.
+            (Nothing, Nothing)
+              | Database.DatabaseCorrupt detail <- reason -> pure (Left (LedgerIntegrity detail))
+              | otherwise -> pure (Left (LedgerUnavailable (readinessCode (Database.NotReady reason))))
 
 -- | Aborts a transaction that found an integrity failure after writing.
 data RollBack
@@ -1186,7 +1193,7 @@ newIntentRow eventId intent =
         , Store.intentRowKey = effectKeyText (intentKey intent)
         , Store.intentRowEvent = eventId
         , Store.intentRowSpecName = effectSpecName spec
-        , Store.intentRowClass = effectClassName (effectSpecClass spec)
+        , Store.intentRowClass = effectSpecClass spec
         , Store.intentRowBudget = int32 (effectSpecBudget spec)
         , Store.intentRowKeyLifetime = lifetime
         , Store.intentRowRefusesChanged = refuses
@@ -1194,7 +1201,7 @@ newIntentRow eventId intent =
         , Store.intentRowLookupExcludesLate = excludesLate
         , Store.intentRowParameters = intentParameters intent
         , Store.intentRowParametersDigest = contentDigestText (intentParametersDigest intent)
-        , Store.intentRowState = T.empty
+        , Store.intentRowState = NamePending
         , Store.intentRowGeneration = 0
         , Store.intentRowDispatches = 0
         , Store.intentRowLeaseOwner = Nothing
@@ -1222,7 +1229,7 @@ lifecycleColumns intent row =
         IntentAbandoned r -> (Nothing, Just r, Nothing)
   in
     row
-      { Store.intentRowState = intentStateName (intentState intent)
+      { Store.intentRowState = intentStateNameOf (intentState intent)
       , Store.intentRowGeneration = int32 (intentGeneration intent)
       , Store.intentRowDispatches = int32 (intentDispatches intent)
       , Store.intentRowLeaseOwner = fmap leaseOwner lease
@@ -1231,7 +1238,12 @@ lifecycleColumns intent row =
       , Store.intentRowSettledApplied = settled
       }
 
--- | The intent rebuilt from its row; anything that does not reproduce is an integrity failure.
+{- | The intent rebuilt from its row; anything that does not reproduce is an
+integrity failure. The state and class columns are typed (a name no state or
+class has does not read); the combinations of the state with its lease,
+outcome and settlement columns, and of the class with its terms columns, that
+the database allows but no intent has are refused here, in this one place.
+-}
 restoreIntent :: Store.IntentRow -> Either LedgerFailure Intent
 restoreIntent row = do
   let
@@ -1244,11 +1256,11 @@ restoreIntent row = do
       _ -> unreadable
   key <- either (const unreadable) Right (mkEffectKey (Store.intentRowKey row))
   terms <-
-    case (T.unpack (Store.intentRowClass row), Store.intentRowKeyLifetime row, Store.intentRowRefusesChanged row, Store.intentRowLookupAuthoritative row, Store.intentRowLookupExcludesLate row) of
-      ("repeatable", Nothing, _, Nothing, _) -> Right TermsRepeatable
-      ("idempotent", Just lifetime, Just refuses, Nothing, _) -> Right (TermsIdempotent (IdempotencyTerms (toInteger lifetime) refuses))
-      ("queryable", Nothing, _, Just a, Just b) -> Right (TermsQueryable (LookupTerms a b))
-      ("unqueryable", Nothing, _, Nothing, _) -> Right TermsUnqueryable
+    case (Store.intentRowClass row, Store.intentRowKeyLifetime row, Store.intentRowRefusesChanged row, Store.intentRowLookupAuthoritative row, Store.intentRowLookupExcludesLate row) of
+      (Repeatable, Nothing, _, Nothing, _) -> Right TermsRepeatable
+      (Idempotent, Just lifetime, Just refuses, Nothing, _) -> Right (TermsIdempotent (IdempotencyTerms (toInteger lifetime) refuses))
+      (Queryable, Nothing, _, Just a, Just b) -> Right (TermsQueryable (LookupTerms a b))
+      (Unqueryable, Nothing, _, Nothing, _) -> Right TermsUnqueryable
       _ -> unreadable
   spec <- either (const unreadable) Right (mkEffectSpec (Store.intentRowSpecName row) terms (fromIntegral (Store.intentRowBudget row)))
   digest <- maybe unreadable Right (mkContentDigest (Store.intentRowParametersDigest row))
@@ -1258,16 +1270,16 @@ restoreIntent row = do
     lease = Lease <$> Store.intentRowLeaseOwner row <*> Just generation <*> Store.intentRowLeaseUntil row
     outcome = Store.intentRowOutcome row
   state <-
-    case (T.unpack (Store.intentRowState row), lease, outcome, Store.intentRowSettledApplied row) of
-      ("pending", Nothing, Nothing, Nothing) -> Right IntentPending
-      ("claimed", Just l, Nothing, Nothing) -> Right (IntentClaimed l)
-      ("dispatched", Just l, Nothing, Nothing) -> Right (IntentDispatched l)
-      ("confirmed-applied", Nothing, Just r, Nothing) -> Right (IntentApplied r)
-      ("confirmed-not-applied", Nothing, Just r, Nothing) -> Right (IntentNotApplied r)
-      ("outcome-unknown", Nothing, Just r, Nothing) -> Right (IntentUnknown r)
-      ("settled", Nothing, Just r, Just True) -> Right (IntentSettled (SettledApplied r))
-      ("settled", Nothing, Just r, Just False) -> Right (IntentSettled (SettledNotApplied r))
-      ("abandoned", Nothing, Just r, Nothing) -> Right (IntentAbandoned r)
+    case (Store.intentRowState row, lease, outcome, Store.intentRowSettledApplied row) of
+      (NamePending, Nothing, Nothing, Nothing) -> Right IntentPending
+      (NameClaimed, Just l, Nothing, Nothing) -> Right (IntentClaimed l)
+      (NameDispatched, Just l, Nothing, Nothing) -> Right (IntentDispatched l)
+      (NameConfirmedApplied, Nothing, Just r, Nothing) -> Right (IntentApplied r)
+      (NameConfirmedNotApplied, Nothing, Just r, Nothing) -> Right (IntentNotApplied r)
+      (NameOutcomeUnknown, Nothing, Just r, Nothing) -> Right (IntentUnknown r)
+      (NameSettled, Nothing, Just r, Just True) -> Right (IntentSettled (SettledApplied r))
+      (NameSettled, Nothing, Just r, Just False) -> Right (IntentSettled (SettledNotApplied r))
+      (NameAbandoned, Nothing, Just r, Nothing) -> Right (IntentAbandoned r)
       _ -> unreadable
   pure
     Intent
@@ -1397,7 +1409,7 @@ abandonIntentAcknowledged runtime operation reason acknowledged
               Left r -> pure (Left (effectRefused r))
               Right next -> do
                 Store.updateIntent (lifecycleColumns next row)
-                Store.insertResolution operation (int32 (intentGeneration intent)) (T.pack "human-abandon") (T.pack "abandoned reason=" <> quotedText reason) acknowledged
+                Store.insertResolution operation (int32 (intentGeneration intent)) ResolvedByAbandon (T.pack "abandoned reason=" <> quotedText reason) acknowledged
                 haltForIntentBy Human l (T.pack "abandoned") operation
                 pure (Right next)
 
@@ -1535,11 +1547,11 @@ liveSameKey row = do
       && Store.intentRowKey s == Store.intentRowKey row
       && Store.intentRowSettledApplied s /= Just False
   holds s
-    | Store.intentRowState s /= intentStateName (IntentAbandoned T.empty) = pure True
+    | Store.intentRowState s /= NameAbandoned = pure True
     | Store.intentRowDispatches s < 1 = pure False
     | otherwise = do
         resolutions <- Store.resolutionsOf (Store.intentRowOperation s)
-        pure (not (L.any (\r -> Store.resolutionRowBasis r == T.pack "human-abandon" && Store.resolutionRowAcknowledged r) resolutions))
+        pure (not (L.any (\r -> Store.resolutionRowBasis r == ResolvedByAbandon && Store.resolutionRowAcknowledged r) resolutions))
 
 claimForExecution :: DatabaseRuntime -> T.Text -> Int -> OperationId -> IO (Either LedgerFailure Intent)
 claimForExecution runtime owner seconds operation
@@ -1701,7 +1713,7 @@ lateConflict l row intent operation generation observation =
     LateConsistent -> pure ()
     LateConflict next -> do
       when (next /= intent) (Store.updateIntent (lifecycleColumns next row))
-      Store.insertResolution operation (int32 generation) (T.pack "late-observation") (T.pack "late-application " <> observationText observation) False
+      Store.insertResolution operation (int32 generation) ResolvedByLateObservation (T.pack "late-application " <> observationText observation) False
       haltForIntent l (T.pack "late-application") operation
 
 reconcileRefused :: ReconcileRefusal -> LedgerFailure
@@ -1736,7 +1748,7 @@ applyLookup runtime operation generation result =
             case reconcileIntent intent (Command Supervisor (ReconcileInput now result)) of
               Left r -> pure (Left (reconcileRefused r))
               Right next -> do
-                Store.insertResolution operation (int32 generation) (T.pack "lookup") (renderLookup result) False
+                Store.insertResolution operation (int32 generation) ResolvedByLookup (renderLookup result) False
                 let
                   settle = stepIntent next (Command Supervisor (IntentSettle (intentGeneration next)))
                   exhausted = intentDispatches next > effectSpecBudget (intentSpec next)
@@ -1782,8 +1794,9 @@ resolveOutcome runtime operation generation resolution =
             let
               (basis, acknowledged) =
                 case resolution of
-                  RetryAcknowledgingDuplication a -> (T.pack "human-retry", a)
-                  _ -> (T.pack "human-attested", False)
+                  RetryAcknowledgingDuplication a -> (ResolvedByRetry, a)
+                  AttestApplied _ -> (ResolvedByAttestation, False)
+                  AttestNotApplied _ -> (ResolvedByAttestation, False)
             Store.insertResolution operation (int32 generation) basis (renderResolution resolution) acknowledged
             pure (Right next)
 
@@ -1807,7 +1820,7 @@ intentResolutions runtime operation =
 storedResolutions :: OperationId -> O.Orville [StoredResolution]
 storedResolutions operation = do
   rows <- Store.resolutionsOf operation
-  pure [StoredResolution (fromIntegral (Store.resolutionRowGeneration r)) (Store.resolutionRowBasis r) (Store.resolutionRowDecision r) (Store.resolutionRowAcknowledged r) | r <- rows]
+  pure [StoredResolution (fromIntegral (Store.resolutionRowGeneration r)) (resolutionBasisText (Store.resolutionRowBasis r)) (Store.resolutionRowDecision r) (Store.resolutionRowAcknowledged r) | r <- rows]
 
 storedObservations :: OperationId -> O.Orville [StoredObservation]
 storedObservations operation = do
@@ -1952,7 +1965,7 @@ carryIntentChecked runtime principal operation expected acknowledged =
         now <- Store.databaseClock
         owners <- Store.activeOwners
         holders <- liveSameKey row
-        resolutions <- storedResolutions operation
+        resolutions <- Store.resolutionsOf operation
         let
           source = fromIntegral (Store.intentRowActivation row)
           target = currentActivation l
@@ -1965,7 +1978,7 @@ carryIntentChecked runtime principal operation expected acknowledged =
               { requestInput = input
               , requestExpected = expected
               , requestAcknowledged = acknowledged
-              , requestAttested = L.any ((== T.pack "human-attested") . resolutionBasis) resolutions
+              , requestAttested = L.any ((== ResolvedByAttestation) . Store.resolutionRowBasis) resolutions
               , requestConflict = conflict
               }
           owned =
@@ -1985,7 +1998,7 @@ carryIntentChecked runtime principal operation expected acknowledged =
                     Store.insertResolution
                       operation
                       (int32 (intentGeneration intent))
-                      (T.pack "human-carry")
+                      ResolvedByCarry
                       (T.pack ("carried principal=" <> T.unpack (principalName principal) <> " from-generation=" <> show source <> " to-generation=" <> show t))
                       acknowledged
                     pure (Right intent)

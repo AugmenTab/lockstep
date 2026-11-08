@@ -48,6 +48,7 @@ import Lockstep.Kernel.Effect
   )
 import Lockstep.Kernel.EffectView (EffectStatus, StatusFacts (..), effectStatus, effectStatusLabel, effectStatusReason)
 import Lockstep.Kernel.Identity (TicketId (..), WorkOrderId (..), uuidText)
+import Lockstep.Kernel.Reconciliation (ResolutionBasis (..), parseResolutionBasis)
 import Lockstep.Kernel.WorkOrder (WorkOrder (..), WorkOrderState (..), workOrderStateName)
 
 data TicketLine
@@ -148,7 +149,7 @@ project facts =
 -- | An attested application: the only resolution that settles an intent as applied without a destination's answer.
 attestedApplied :: StoredResolution -> Bool
 attestedApplied r =
-  resolutionBasis r == T.pack "human-attested" && T.pack "attested-applied" `T.isPrefixOf` resolutionDecision r
+  parseResolutionBasis (resolutionBasis r) == Just ResolvedByAttestation && T.pack "attested-applied" `T.isPrefixOf` resolutionDecision r
 
 -- | The projection's database time, ISO 8601 (for @ledger show@'s first line).
 projectionTimeText :: LedgerProjection -> T.Text

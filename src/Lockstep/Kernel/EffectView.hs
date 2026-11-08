@@ -24,9 +24,12 @@ import Lockstep.Kernel.Effect
   , Intent (..)
   , IntentState (..)
   , Lease (..)
+  , Provenance (..)
+  , Reason (..)
   , Settlement (..)
   , effectSpecBudget
   , effectSpecClass
+  , reasonOf
   )
 
 data EffectStatus
@@ -89,7 +92,7 @@ statusRow facts intent =
       | otherwise -> (StatusNotApplied, T.pack "not applied, no retry left: " <> r)
  where
   -- C-P2.9-R1 M4: the attestation record, or an outcome a human attested (either is enough).
-  attested r = factsHumanAttested facts || T.pack "human-attested: " `T.isPrefixOf` r
+  attested r = factsHumanAttested facts || reasonProvenance (reasonOf r) == HumanAttested
   byHuman r = T.pack "attested by a human, not observed: " <> r
   retryNote
     | intentDispatches intent <= effectSpecBudget (intentSpec intent) = T.pack "; a retry is left"
