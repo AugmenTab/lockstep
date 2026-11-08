@@ -13,6 +13,7 @@ module Lockstep.Application.Database
   , Readiness (..)
   , classifyConnectionFailure
   , readinessCode
+  , reasonDiagnosis
   , revisionNumber
   , checkReadiness
   , withDatabase
@@ -35,7 +36,7 @@ module Lockstep.Application.Database
   , withSessionLock
   ) where
 
-import Control.Exception (SomeAsyncException, SomeException, finally, fromException, throwIO, try)
+import Control.Exception (SomeAsyncException, SomeException, displayException, finally, fromException, throwIO, try)
 import Data.Bifunctor (first)
 import Data.ByteString.Char8 qualified as BS8
 import Data.List qualified as L
@@ -44,6 +45,7 @@ import Data.Text qualified as T
 import Data.Time qualified as Time
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
+import Orville.PostgreSQL.Marshall.MarshallError (MarshallError)
 import Orville.PostgreSQL.Raw.Connection qualified as Connection
 import System.Directory (doesFileExist, getFileSize, getModificationTime)
 import System.IO (FilePath)
@@ -52,6 +54,7 @@ import Text.Show (Show, show)
 import Lockstep.Foundation.Cli (BackupPolicy (..))
 import Lockstep.Foundation.SystemConfig (DatabaseConfig)
 import Lockstep.Persistence.Connection (connectionString, poolOptions)
+import Lockstep.Persistence.Integrity (IntegrityViolation (..))
 import Lockstep.Persistence.Migrate (MigrateFailure (..), applyPending)
 import Lockstep.Persistence.Migration
   ( Migration (..)
@@ -87,6 +90,10 @@ data NotReadyReason
   | SchemaBehind Int
   | SchemaInvalid MigrationRefusal
   | DatabaseError
+  | {- | Stored data the application's types or invariants reject (a row that
+    does not decode, an 'IntegrityViolation'); the diagnosis is kept.
+    -}
+    DatabaseCorrupt T.Text
   deriving (Eq, Show)
 
 data Readiness
@@ -132,6 +139,16 @@ reasonCode reason =
     SchemaBehind n -> "schema_behind " <> T.pack (show n)
     SchemaInvalid refusal -> "schema_invalid " <> refusalCode refusal
     DatabaseError -> "database_error"
+    DatabaseCorrupt _ -> "database_corrupt"
+
+{- | What is known about a reason, for a log or an operator: its code, then
+the diagnosis of corrupt data.
+-}
+reasonDiagnosis :: NotReadyReason -> T.Text
+reasonDiagnosis reason =
+  case reason of
+    DatabaseCorrupt detail -> reasonCode reason <> ": " <> detail
+    _ -> reasonCode reason
 
 refusalCode :: MigrationRefusal -> T.Text
 refusalCode refusal =
@@ -156,10 +173,11 @@ withDatabase runtime action = do
       | otherwise -> pure (Left (classifyException err))
 
 classifyException :: SomeException -> NotReadyReason
-classifyException err =
-  case fromException err of
-    Just connectionError -> classifyConnectionFailure (show (connectionError :: Connection.ConnectionError))
-    Nothing -> DatabaseError
+classifyException err
+  | Just connectionError <- fromException err = classifyConnectionFailure (show (connectionError :: Connection.ConnectionError))
+  | Just (IntegrityViolation detail) <- fromException err = DatabaseCorrupt detail
+  | Just marshallError <- fromException err = DatabaseCorrupt (T.pack (displayException (marshallError :: MarshallError)))
+  | otherwise = DatabaseError
 
 -- | Readiness against the binary's own migration list. Never throws.
 checkReadiness :: Maybe DatabaseRuntime -> IO Readiness

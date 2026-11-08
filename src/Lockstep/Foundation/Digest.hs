@@ -1,15 +1,18 @@
+{-# LANGUAGE DataKinds #-}
+
 {- | SHA-256 and lowercase hexadecimal, through crypton and memory.
 
-One digest type and one hex encoding for the whole application, so no stored
-or hashed value depends on a 'Text.Show.Show' instance (a diagnostic format,
-not a contract). 'convertToBase' 'Base16' writes lowercase hex, two characters
-per byte.
+One digest type and one hex encoding for the application, so no stored or
+hashed value depends on a 'Text.Show.Show' instance (a diagnostic format, not
+a contract). 'convertToBase' 'Base16' writes lowercase hex, two characters per
+byte.
 -}
 module Lockstep.Foundation.Digest
   ( Sha256
   , sha256
   , sha256Utf8
   , sha256Bytes
+  , sha256Sized
   , sha256Hex
   , hexText
   ) where
@@ -17,12 +20,13 @@ module Lockstep.Foundation.Digest
 import Crypto.Hash (Digest, SHA256 (SHA256), hashWith)
 import Data.ByteArray qualified as BA
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
+import Data.ByteArray.Sized (SizedByteArray, unsafeSizedByteArray)
 import Data.ByteString qualified as BS
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Flipstone.Prelude
 
--- | A SHA-256 digest: always 32 bytes.
+-- | A SHA-256 digest: always 32 bytes. Only 'sha256' makes one.
 newtype Sha256
   = Sha256 (Digest SHA256)
   deriving (Eq, Ord, BA.ByteArrayAccess)
@@ -40,6 +44,16 @@ sha256Utf8 =
 sha256Bytes :: Sha256 -> BS.ByteString
 sha256Bytes =
   BA.convert
+
+{- | The 32 bytes with their length in the type, for the Kernel's
+'Lockstep.Kernel.Profile.contentDigestFromBytes'. crypton fixes the length
+(@HashDigestSize SHA256 = 32@) but exposes it only as a type family, with no
+'Data.ByteArray.Sized.ByteArrayN' instance, so this is the one place that
+states it; the lockstep-compliance suite checks it.
+-}
+sha256Sized :: Sha256 -> SizedByteArray 32 BS.ByteString
+sha256Sized =
+  unsafeSizedByteArray . sha256Bytes
 
 -- | The 64-character lowercase hex form.
 sha256Hex :: Sha256 -> T.Text

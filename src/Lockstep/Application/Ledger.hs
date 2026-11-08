@@ -123,6 +123,8 @@ import Lockstep.Kernel.EventCodec
   , encodeWorkOrderEvent
   , parsePrincipal
   , principalName
+  , refusedTicketInputText
+  , refusedWorkOrderInputText
   , workOrderCreatedText
   )
 import Lockstep.Kernel.Identity (EngineerId (..), RepositoryId (..), TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..), parseUuid, uuidText)
@@ -185,7 +187,7 @@ import Lockstep.Kernel.Scheduler
   , schedulerRefusalCode
   , schedulingCommands
   )
-import Lockstep.Kernel.Ticket (TicketInput, TicketState (..), stepTicket, ticketInputName, ticketStateName)
+import Lockstep.Kernel.Ticket (TicketInput, TicketState (..), stepTicket, ticketStateName)
 import Lockstep.Kernel.Transition (Command (..), Principal (..), transitionRefusalCode)
 import Lockstep.Kernel.WorkOrder
   ( Claim (..)
@@ -196,7 +198,6 @@ import Lockstep.Kernel.WorkOrder
   , newWorkOrder
   , parseWorkOrderKind
   , stepWorkOrder
-  , workOrderInputName
   , workOrderKindName
   , workOrderStateName
   )
@@ -481,7 +482,7 @@ decideTicketWith afterEvent t expected command@(Command principal input) = withi
     Left failure -> pure (Left failure)
     Right (s, _, state, _) -> do
       let
-        refusal = Store.NewRefusal (tid t) (int32 expected) (principalName principal) (fromRight (ticketInputName input) (encodeTicketEvent (TicketStep input))) T.empty
+        refusal = Store.NewRefusal (tid t) (int32 expected) (principalName principal) (refusedTicketInputText input) T.empty
         revision = fromIntegral (Store.subjectRowRevision s)
       if revision /= expected
         then refuseWith refusal (LedgerRefused (T.pack "stale-revision") (T.pack "the ticket has moved on; re-read it"))
@@ -808,7 +809,7 @@ decideWorkOrder runtime faults w expected command@(Command principal input) requ
       Left failure -> pure (Left failure)
       Right l -> do
         let
-          refusal = Store.NewRefusal (wid w) (int32 expected) (principalName principal) (fromRight (workOrderInputName input) (encodeWorkOrderEvent (WorkOrderStep input))) T.empty
+          refusal = Store.NewRefusal (wid w) (int32 expected) (principalName principal) (refusedWorkOrderInputText input) T.empty
           revision = fromIntegral (Store.subjectRowRevision (loadedSubject l))
           decided = do
             when (revision /= expected) (refused (T.pack "stale-revision") "the work order has moved on; re-read it")

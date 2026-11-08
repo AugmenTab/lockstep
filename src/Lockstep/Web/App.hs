@@ -981,6 +981,7 @@ reasonText reason =
     SchemaBehind _ -> "the database needs an upgrade before this version can use it"
     SchemaInvalid _ -> "the database belongs to a different version of Lockstep"
     DatabaseError -> "the database reported an error"
+    DatabaseCorrupt _ -> "some stored data failed its integrity check"
 
 advanced :: DatabaseRuntime -> Session -> IO LBS.ByteString
 advanced db session = do

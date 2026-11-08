@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE RoleAnnotations #-}
 
 {- | SDLC Profile policy (contract C-P2.3, DG-05): declarative, versioned
@@ -113,8 +114,9 @@ module Lockstep.Kernel.Profile
   ) where
 
 import Control.Monad (foldM)
-import Data.ByteArray qualified as BA
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
+import Data.ByteArray.Sized (SizedByteArray, unSizedByteArray)
+import Data.ByteString qualified as BS
 import Data.Char qualified as Char
 import Data.List qualified as L
 import Data.Maybe (mapMaybe)
@@ -138,13 +140,13 @@ newtype ContentDigest
   = ContentDigest T.Text
   deriving (Eq, Ord, Show)
 
-{- | The digest a 'Hasher' computed, from its bytes: the lowercase hex
-encoding, two characters per byte (32 bytes of SHA-256 give 64). Total; the
+{- | The digest a 'Hasher' computed, from its 32 bytes (the length is in the
+type): their lowercase hex encoding, always 64 characters. Total; the
 boundary's hash function is trusted to be SHA-256, as everywhere else.
 -}
-contentDigestFromBytes :: BA.ByteArrayAccess ba => ba -> ContentDigest
+contentDigestFromBytes :: SizedByteArray 32 BS.ByteString -> ContentDigest
 contentDigestFromBytes =
-  ContentDigest . TE.decodeLatin1 . convertToBase Base16
+  ContentDigest . TE.decodeLatin1 . convertToBase Base16 . unSizedByteArray
 
 -- | Parses stored or supplied text: exactly 64 lowercase hex characters.
 mkContentDigest :: T.Text -> Maybe ContentDigest

@@ -12,6 +12,7 @@ module Lockstep.Compliance.DefectsTest
 
 import Control.Exception (SomeException, try)
 import Crypto.Hash (SHA256 (SHA256), hashWith)
+import Data.ByteString qualified as BS
 import Data.List qualified as L
 import Data.Maybe (isNothing)
 import Data.Text qualified as T
@@ -24,16 +25,19 @@ import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 import Text.Show (show)
 
 import Lockstep.Application.Command (Actor (..), InvalidReason (..), Revision (..), buildRename, mkRevision)
-import Lockstep.Application.Database (MigrateError (..), MigrateReport (..), openDatabase, runMigrationsReporting)
+import Lockstep.Application.Database (MigrateError (..), MigrateReport (..), NotReadyReason (..), openDatabase, reasonDiagnosis, runMigrationsReporting)
 import Lockstep.Application.Ledger (LedgerFailure (..), createTicket, decideTicket, noFaults)
 import Lockstep.Application.Profiles (sha256Hasher)
+import Lockstep.Application.Projects (ProjectView (..), findProject)
 import Lockstep.Compliance.Support (executeSql, textQuery, withFreshDatabase, withMigrated, withMigratedRuntime)
+import Lockstep.Foundation.Digest (sha256Bytes, sha256Utf8)
 import Lockstep.Kernel.Conversation (HumanRequest, RequestInput (..), RequestKind (..), newHumanRequest, stepRequest, stepRequestChecked)
 import Lockstep.Kernel.Effect (ClassTerms (..), IdempotencyTerms (..), mkEffectSpec)
-import Lockstep.Kernel.EventCodec (WorkOrderEvent (..), decodeWorkOrderEvent, encodeWorkOrderEvent, workOrderCreatedText)
+import Lockstep.Kernel.EventCodec (TicketEvent (..), WorkOrderEvent (..), decodeWorkOrderEvent, encodeTicketEvent, encodeWorkOrderEvent, refusedTicketInputText, workOrderCreatedText)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText, mkContentDigest)
 import Lockstep.Kernel.Project (SetupState (..), parseSetupState, setupStateCode)
 import Lockstep.Kernel.Ticket (TicketInput (..))
+import Lockstep.Kernel.Transaction (Stage, parseStage, stageName)
 import Lockstep.Kernel.Transition (Command (..), Principal (..))
 import Lockstep.Persistence.Fields (codeField)
 import Lockstep.Persistence.Integrity (IntegrityViolation (..), integrityViolation)
@@ -51,6 +55,8 @@ tests =
         digestOf "abc" @?= "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         traverse_ (\t -> digestOf t @?= showDigest t) samples
         traverse_ (\t -> fmap contentDigestText (mkContentDigest (digestOf t)) @?= Just (digestOf t)) samples
+        -- The one stated length (Foundation.Digest.sha256Sized): every digest is 32 bytes.
+        traverse_ (\t -> BS.length (sha256Bytes (sha256Utf8 t)) @?= 32) samples
     , testCase "2. an expected revision is range-checked before it is narrowed to Int64" $ do
         mkRevision (toInteger (maxBound :: Int64)) @?= Right (Revision maxBound)
         mkRevision 0 @?= Right (Revision 0)
@@ -68,9 +74,13 @@ tests =
         fmap snd (stepRequestChecked clarification (Command Human input)) @?= Right "first\nsecond"
         fmap fst (stepRequestChecked clarification (Command Human input)) @?= stepRequest clarification (Command Human input)
         fmap snd (stepRequestChecked clarification (Command Human (HumanSays 1 "   "))) @?= Left "text-empty"
-    , testCase "5. the creation event's text needs no fallback, and replays as a creation" $ do
-        encodeWorkOrderEvent WorkOrderCreated @?= Right workOrderCreatedText
-        decodeWorkOrderEvent workOrderCreatedText @?= Just WorkOrderCreated
+    , testCase "5. the creation event's text is the stored bytes \"create\", needs no fallback, and replays as a creation" $ do
+        workOrderCreatedText @?= "create"
+        encodeWorkOrderEvent WorkOrderCreated @?= Right "create"
+        decodeWorkOrderEvent "create" @?= Just WorkOrderCreated
+    , testCase "5b. a refused input that cannot be stored as an event is recorded by its name; a durable one by its event text" $ do
+        refusedTicketInputText TicketAccept @?= fromRight "accept" (encodeTicketEvent (TicketStep TicketAccept))
+        assertBool "the recorded text is never empty" (not (T.null (refusedTicketInputText TicketAccept)))
     , testCase "6. an integrity violation inside a transaction rolls the transaction back" $
         withMigrated $ \run -> do
           let
@@ -85,6 +95,11 @@ tests =
           decode = O.sqlTypeFromSql (O.fieldType field) . SqlValue.fromText
         traverse_ (\s -> decode (setupStateCode s) @?= Right s) [minBound .. maxBound :: SetupState]
         assertBool "an unknown code is a decoding failure" (isLeft (decode "ready"))
+        let
+          stage = codeField "transaction stage" stageName parseStage "stage"
+          decodeStage = O.sqlTypeFromSql (O.fieldType stage) . SqlValue.fromText
+        traverse_ (\s -> decodeStage (stageName s) @?= Right s) [minBound .. maxBound :: Stage]
+        assertBool "an unknown stage is a decoding failure" (isLeft (decodeStage "deploy"))
     , testCase "7b. a project row whose setup state is corrupt fails to read; it is not shown as organized" $
         withMigrated $ \run -> do
           let
@@ -96,6 +111,20 @@ tests =
           stored @?= ["bogus"]
           read' <- try (run (fmap (fmap rowSetup) (findProjectById projectId))) :: IO (Either SomeException (Maybe SetupState))
           assertBool "the corrupt row did not read as a project" (isLeft read')
+    , testCase "7c. through the application, a corrupt row is reported as corrupt data with its diagnosis (not organized, not 'unavailable')" $
+        withMigratedRuntime $ \runtime run -> do
+          let
+            projectId = "77777777-7777-4777-8777-777777777777"
+          run (insertProject projectId "compliance-project-0077" "Compliance" "outcome" (T.replicate 64 "a"))
+          run (executeSql "ALTER TABLE lockstep_projects DROP CONSTRAINT lockstep_projects_setup_check")
+          run (executeSql ("UPDATE lockstep_projects SET setup = 'bogus' WHERE id = '" <> T.unpack projectId <> "'"))
+          found <- findProject runtime projectId
+          case found of
+            Left (DatabaseCorrupt detail) ->
+              assertBool ("the diagnosis names the column and value: " <> T.unpack detail) ("setup" `T.isInfixOf` detail && "bogus" `T.isInfixOf` detail)
+            Left other -> assertFailure ("classified as " <> show other)
+            Right view -> assertFailure ("read as a project: " <> show (fmap projectSetup view))
+          reasonDiagnosis (DatabaseCorrupt "x") @?= "database_corrupt: x"
     , testCase "8. a failed migration reports PostgreSQL's error with the frozen classification" $
         withFreshDatabase $ \config -> do
           runtime <- openDatabase config

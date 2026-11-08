@@ -48,7 +48,7 @@ import Text.Show (Show, show)
 
 import Lockstep.Application.Command (IdempotencyKey, mkIdempotencyKey)
 import Lockstep.Application.Conversation (NewHumanRequest (..), Sender (..), StoredRequest (..), openRequest, requestByKey, senderChannel, senderEvidence)
-import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason, Readiness (..), SessionLock (..), checkReadiness, withDatabase, withSessionLock)
+import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason (DatabaseCorrupt), Readiness (..), SessionLock (..), checkReadiness, withDatabase, withSessionLock)
 import Lockstep.Application.EngineCandidate (baselineJson, candidateJson, findingJson, frozenContract, recordedCandidate, testFiles, unchangedAtBasis)
 import Lockstep.Application.EngineRecords
   ( AcceptanceRecord (AcceptanceRecord)
@@ -203,10 +203,17 @@ whenReady runtime action = do
     NotReady reason -> pure (Left reason)
     Ready _ -> action
 
--- | A database step inside a stage: unavailability becomes a refusal code.
+{- | A database step inside a stage: unavailability becomes a refusal code;
+stored data that does not read is @database-corrupt@, never "unavailable".
+-}
 db :: DatabaseRuntime -> O.Orville (Either T.Text a) -> IO (Either T.Text a)
-db runtime action =
-  fromRight (Left (T.pack "database-unavailable")) <$> withDatabase runtime action
+db runtime action = do
+  result <- withDatabase runtime action
+  pure $
+    case result of
+      Right answer -> answer
+      Left (DatabaseCorrupt _) -> Left (T.pack "database-corrupt")
+      Left _ -> Left (T.pack "database-unavailable")
 
 canonicalId :: T.Text -> Maybe T.Text
 canonicalId =

@@ -29,7 +29,7 @@ import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness
 import Lockstep.Application.Identity (newUuid)
 import Lockstep.Application.Ledger (LedgerFailure (..), NewWorkOrder (..), createWorkOrderIn)
 import Lockstep.Application.ProfileDocument (GateDocument (..), decodeProfileDocument, encodeProfileDocument)
-import Lockstep.Application.Profiles (loadStoredDefinition, sha256Hasher)
+import Lockstep.Application.Profiles (sha256Hasher, storedDefinition)
 import Lockstep.Application.ProjectChecks (ExpectedChecks (..))
 import Lockstep.Application.Projects (ProjectFolders (..))
 import Lockstep.Application.Repositories (ownershipHolds)
@@ -346,14 +346,16 @@ when switching to it loses no check and it holds every bug check; else
 decideChecks :: Maybe Profiles.ProfileRow -> [Profiles.ProfileRow] -> O.Orville (Either T.Text (Profiles.ProfileRow, Bool))
 decideChecks currentRow catalogRows = do
   registered <- Profiles.findProfile bugFixProfileId Nothing
+  -- A stored document that does not reproduce aborts the transaction (never "checks missing").
+  catalog <- Just <$> traverse storedDefinition catalogRows
+  currentDefinition <- traverse storedDefinition currentRow
+  registeredDefinition <- traverse storedDefinition registered
   let
-    catalog = definitions catalogRows
-    currentDefinition = currentRow >>= definitionOf
     -- The Bug Profile as it would be in force: the registered latest version, else the built-in one.
     candidate =
-      case registered of
-        Just row -> fmap (\d -> (Just row, d)) (definitionOf row)
-        Nothing -> fmap (\d -> (Nothing, d)) bugFixStored
+      case (registered, registeredDefinition) of
+        (Just row, Just d) -> Just (Just row, d)
+        _ -> fmap (\d -> (Nothing, d)) bugFixStored
     losesNothing bugDefinition =
       isNothing currentRow || maybe False (\d -> L.null (checksLost (Just d) bugDefinition)) currentDefinition
   case (currentRow, currentDefinition) of
@@ -368,11 +370,6 @@ decideChecks currentRow catalogRows = do
               row <- maybe registerBugFix (pure . Just) stored
               pure (maybe (refuse "bug-checks-missing") (\r -> Right (r, True)) row)
         _ -> pure (refuse "bug-checks-missing")
- where
-  definitionOf =
-    either (const Nothing) Just . loadStoredDefinition
-  definitions rows =
-    either (const Nothing) Just (traverse loadStoredDefinition rows)
 
 -- | Registers the built-in document as version 1, with its C-P2.3 decision row.
 registerBugFix :: O.Orville (Maybe Profiles.ProfileRow)
@@ -446,9 +443,8 @@ admitBug runtime folders key rawId expected
       Right () -> do
         (_, currentRow) <- currentChecks (enablementRepository enablement)
         catalogRows <- Profiles.latestProfiles
-        let
-          currentDefinition = currentRow >>= either (const Nothing) Just . loadStoredDefinition
-          catalog = either (const Nothing) Just (traverse loadStoredDefinition catalogRows)
+        currentDefinition <- traverse storedDefinition currentRow
+        catalog <- Just <$> traverse storedDefinition catalogRows
         if not (L.null (missingFor currentDefinition catalog))
           then pure (refuse "bug-checks-missing")
           else do
@@ -486,8 +482,9 @@ admitBug runtime folders key rawId expected
                     , Store.admissionRowActor = actor
                     , Store.admissionRowAt = T.empty
                     }
-                stored <- Store.findAdmissionByTask tid
-                pure (maybe (refuse "admission-refused") (Right . admissionOf) stored)
+                -- Inserted just above in this transaction: not finding it is a violation that rolls everything back.
+                stored <- maybe (integrityViolation "an admission inserted in this transaction cannot be read back") pure =<< Store.findAdmissionByTask tid
+                pure (Right (admissionOf stored))
 
 findAdmission :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe Admission))
 findAdmission runtime rawId =

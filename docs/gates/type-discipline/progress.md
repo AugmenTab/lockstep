@@ -29,9 +29,33 @@ Checked and not defects:
 - Orville 1.1.1 has no `bytea` SqlType (ghci: `Orville.PostgreSQL.Marshall.SqlType` exports none), so
   `Fields.digestField` stays (audit "not verified" item, now verified).
 
+### Independent review of `46c38b6` (read-only agent) and resolutions
+
+| Finding | Resolution |
+|---|---|
+| H1 corruption reduced to `DatabaseError`; one bad row stalls the engine worker silently | New `NotReadyReason` case `DatabaseCorrupt Text`: `withDatabase` classifies `IntegrityViolation` and Orville's `MarshallError` (row decode) with their message; `reasonDiagnosis`; the engine worker's pass reports a list it could not read (`PassDatabase`) and logs it with the diagnosis instead of `fromRight []`; Engine stages say `database-corrupt`, not `database-unavailable`. Compliance `7c.`: a corrupt row through `findProject` is `DatabaseCorrupt` naming column and value |
+| M1 siblings of defect 6 | `admitBug`: an admission not read back after its insert is an `IntegrityViolation` (was a committed refusal). `Profiles.storedDefinition`: a stored Profile that fails its digest aborts `decideChecks`/`handOver` (was "bug-checks-missing"). `Tasks.views`/`findTask`: a task whose Ticket does not replay is an `IntegrityViolation` (was dropped / "unknown"). `ProjectChecks.choiceOf` kept: the Checks page shows such a set as "damaged" explicitly |
+| M2 refusal-row command fallback | Kernel `refusedTicketInputText` / `refusedWorkOrderInputText`: one total, documented rule (the event text when durable, else the input's name); the Ledger uses them |
+| M3 `contentDigestFromBytes` accepted any length | It takes `SizedByteArray 32 ByteString` (memory); `Foundation.Digest.sha256Sized` is the single stated bridge from crypton's `Digest SHA256`, checked by compliance `1.` |
+| M4 weak tests | `5.` pins the stored bytes `"create"`; `5b.` the refusal text; `7a.` round-trips every `Stage`; `7c.` goes through the application. Not covered end to end (setup cost of a live transaction / open Human Request): the stored conversation body and a corrupt `stage` row through `advance`; their fields are covered by `4.` and `7a.` |
+| L1 hand-written SHA-256 hex remains | Recorded for Increment F (shared digest helpers) |
+| L2 stage has two sources of truth | Increment C (typed `stateFromColumns`) |
+| L3 `int32` unchecked | Increment C (typed revisions and generations) |
+| L4 conversation digest over raw input | Disposition: deliberate. The H5 idempotency digest is over the request as sent, so a replay of the same request matches; changing it would break existing receipts' keys |
+| L5 `reportCause` is a plain string | Accepted: PostgreSQL's message is free text; it goes only to the operator's terminal |
+
 Qualification (this Mac, Docker, `scripts/check --integration` on the Increment A working tree over `469c267`):
 format, lint and static checks, build, unit **870/870**, guard, integration **571/571**, backup/restore — all PASSED
 (`.local/td-check-A.log`); lockstep-compliance **32/32** (`.local/td-compliance-1.log`).
+
+After the review fixes and B1 (`scripts/check --integration`, working tree over `46c38b6`,
+`.local/td-check-A2.log`): format, lint, build, unit **870/870**, guard PASSED; integration **570/571** — the one
+failure, `LifecycleHelperTest` "service-stop on a running service stops it and says ok", is a pre-existing race between
+the frozen helper and the frozen test (`scripts/control-helper` `execute` writes the result, line 529, before the
+journal's `end` line, line 533; the test reads the journal as soon as it sees the result). The group re-run alone
+passed 16/16 (`.local/td-lifecycle-rerun.log`); no change here touches either file. **Owner item:** journal `end`
+before `write_result`, or the test waiting for the `end` line (both are protected files).
+lockstep-compliance **34/34** (`.local/td-compliance-2.log`).
 
 Behavioural differences (deliberate): an expected revision above `Int64` is refused (was wrapped); a Ledger revision
 or generation above `Int32` is refused before anything is written (was wrapped into a refusal or observation row); a

@@ -17,6 +17,7 @@ module Lockstep.Application.Profiles
   , setRepositoryProfile
   , resolveForEngineer
   , loadStoredDefinition
+  , storedDefinition
   ) where
 
 import Control.Exception (IOException, throwIO, try)
@@ -38,7 +39,7 @@ import Lockstep.Application.Database
   , withDatabase
   )
 import Lockstep.Application.ProfileDocument (decodeProfileDocument)
-import Lockstep.Foundation.Digest (sha256Utf8)
+import Lockstep.Foundation.Digest (sha256Sized, sha256Utf8)
 import Lockstep.Kernel.Profile
   ( Behaviour (..)
   , Hasher (..)
@@ -65,6 +66,7 @@ import Lockstep.Kernel.Profile
   )
 import Lockstep.Kernel.Transition (Principal (Human))
 import Lockstep.Kernel.WorkOrder (parseWorkOrderKind)
+import Lockstep.Persistence.Integrity (integrityViolation)
 import Lockstep.Persistence.Profiles qualified as Store
 
 {- | SHA-256 of the UTF-8 text, as 64 lowercase hex characters: the digest's
@@ -72,7 +74,7 @@ import Lockstep.Persistence.Profiles qualified as Store
 -}
 sha256Hasher :: Hasher
 sha256Hasher =
-  Hasher (contentDigestFromBytes . sha256Utf8)
+  Hasher (contentDigestFromBytes . sha256Sized . sha256Utf8)
 
 data ProfileFailure
   = -- | A refusal: code, reason and the decision row when one was recorded (exit 65).
@@ -214,6 +216,17 @@ loadStoredDefinition row =
             | fromIntegral (definitionVersion definition) /= Store.profileRowVersion row -> failure
             | contentDigestText (refDigest (profileRef sha256Hasher definition)) /= Store.profileRowDigest row -> failure
             | otherwise -> Right definition
+
+{- | 'loadStoredDefinition' inside a transaction: a stored document whose
+digest does not reproduce is an integrity violation that aborts it, never a
+profile that is merely absent.
+-}
+storedDefinition :: Store.ProfileRow -> O.Orville ProfileDefinition
+storedDefinition row =
+  case loadStoredDefinition row of
+    Right definition -> pure definition
+    Left (ProfileIntegrity message) -> integrityViolation (T.unpack message)
+    Left (ProfileRefused code message _) -> integrityViolation (T.unpack (code <> T.pack ": " <> message))
 
 showProfile :: DatabaseRuntime -> T.Text -> Maybe Integer -> IO (Either NotReadyReason (Either ProfileFailure (T.Text, T.Text)))
 showProfile runtime profileId version =

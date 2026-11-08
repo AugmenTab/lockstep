@@ -52,6 +52,7 @@ import Lockstep.Kernel.Task
   )
 import Lockstep.Kernel.Ticket (TicketInput (..))
 import Lockstep.Kernel.Transition (Command (..), Principal (Human))
+import Lockstep.Persistence.Integrity (integrityViolation)
 import Lockstep.Persistence.Projects qualified as Projects
 import Lockstep.Persistence.Tasks qualified as Store
 
@@ -294,10 +295,18 @@ listAllTasks :: DatabaseRuntime -> IO (Either NotReadyReason [TaskView])
 listAllTasks runtime =
   whenReady runtime (withDatabase runtime (Store.allTaskRows >>= views))
 
--- | Views of rows; a row whose Ticket cannot be replayed is left out rather than shown wrongly.
+{- | Views of rows. A row whose Ticket cannot be replayed is an integrity
+violation (reported as corrupt data with its code), never shown wrongly and
+never silently left out.
+-}
 views :: [Store.TaskRow] -> O.Orville [TaskView]
-views rows =
-  L.concatMap (either (const []) pure) <$> traverse loadView rows
+views =
+  traverse replayed
+
+-- | One row's view; a Ticket that does not replay aborts the read.
+replayed :: Store.TaskRow -> O.Orville TaskView
+replayed row =
+  loadView row >>= either (\code -> integrityViolation ("task " <> T.unpack (Store.rowTaskId row) <> " does not replay: " <> T.unpack code)) pure
 
 findTask :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe TaskView))
 findTask runtime rawId =
@@ -308,7 +317,7 @@ findTask runtime rawId =
         found <- Store.findTaskRow tid
         case found of
           Nothing -> pure Nothing
-          Just row -> either (const Nothing) Just <$> loadView row
+          Just row -> Just <$> replayed row
 
 -- | A task as it stands, inside the caller's transaction (C-P4.1 X6); a Ticket that does not replay is its code.
 findTaskIn :: T.Text -> O.Orville (Maybe (Either T.Text TaskView))
