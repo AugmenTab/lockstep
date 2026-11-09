@@ -27,7 +27,6 @@ import Brigid.HTML.Types qualified as HTML
 import Brigid.Types qualified as B
 import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as LBS
-import Data.Char qualified as Char
 import Data.List qualified as L
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe, isJust)
@@ -39,7 +38,6 @@ import Network.HTTP.Types qualified as HTTP
 import Network.Wai qualified as Wai
 import Shrubbery qualified
 import System.IO (FilePath)
-import Text.Read (readMaybe)
 import Text.Show (show)
 
 import Lockstep.Application.Activity (readActivity)
@@ -310,20 +308,6 @@ idempotencyKey :: Validator FormField IdempotencyKey
 idempotencyKey =
   V.text `V.chain` V.eitherValidator (either (const (Left "Not a form key.")) Right . mkIdempotencyKey)
 
-{- | A form's number: plain decimal digits only (no sign, space or other
-spelling), at most the stored range's largest value (C-C.R1 R3).
--}
-decimalUpTo :: Num a => Integer -> Validator FormField a
-decimalUpTo limit =
-  V.text `V.chain` V.maybeValidator parse "Not a number in range."
- where
-  parse t
-    | T.null t || T.length t > 19 || not (T.all Char.isDigit t) = Nothing
-    | otherwise =
-        case readMaybe (T.unpack t) :: Maybe Integer of
-          Just n | n <= limit -> Just (fromInteger n)
-          _ -> Nothing
-
 -- | The largest PostgreSQL @integer@ (expected values and Ticket revisions).
 integerMax :: Integer
 integerMax =
@@ -486,7 +470,8 @@ createProjectRoute ctx =
     let
       db = ctxDb ctx
       sent = V.runValidator projectFormValues fields
-      form = fromRight (ProjectForm "" "" "" "" "") sent
+      -- An unreadable form shows the empty form (its default folder chosen) with the key that was sent.
+      form = fromRight emptyForm {formKey = fromRight "" (V.runValidator (textOr keyField) fields)} sent
       again notice = htmlResponse HTTP.status200 <$> newProjectPage db (formKey form) form (Just notice)
       unreadable = again "Lockstep could not read this form. Open New project again."
     case (sent, V.runValidator newProjectRequest fields) of
@@ -513,7 +498,7 @@ connectProjectRoute ctx pid =
       Left _ -> pure notReady
       Right Nothing -> pure notFound
       Right (Just view) ->
-        case V.runValidator ((,) <$> revisionField `V.required` decimalUpTo bigintMax <*> folderChoice) fields of
+        case V.runValidator ((,) <$> revisionField `V.required` V.decimalUpTo bigintMax <*> folderChoice) fields of
           Left errs
             | hasError revisionField errs -> projectAnswer db view (Just unreadableTryAgain)
             | otherwise -> projectAnswer db view (Just "Choose where the project's files should live.")
@@ -573,7 +558,7 @@ editTaskRoute ctx tid =
       Left _ -> pure notReady
       Right Nothing -> pure notFound
       Right (Just task) ->
-        case (V.runValidator taskFormValues fields, V.runValidator ((,) <$> revisionField `V.required` decimalUpTo bigintMax <*> priorityField `V.required` priority) fields) of
+        case (V.runValidator taskFormValues fields, V.runValidator ((,) <$> revisionField `V.required` V.decimalUpTo bigintMax <*> priorityField `V.required` priority) fields) of
           (Left _, _) -> taskAnswer db task (Just unreadableTryAgain)
           (_, Left errs)
             | hasError revisionField errs -> taskAnswer db task (Just unreadableTryAgain)
@@ -609,7 +594,7 @@ decideTaskRoute ctx tid =
       Left _ -> pure notReady
       Right Nothing -> pure notFound
       Right (Just task) ->
-        case V.runValidator ((,) <$> ticketRevisionField `V.required` decimalUpTo integerMax <*> taskDecision) fields of
+        case V.runValidator ((,) <$> ticketRevisionField `V.required` V.decimalUpTo integerMax <*> taskDecision) fields of
           Left _ -> taskAnswer db task (Just unreadableTryAgain)
           Right (r, d) -> do
             decided <- decideTask db "application" (identityText tid) r d
@@ -678,7 +663,7 @@ admitBugRoute ctx tid =
       Left _ -> pure notReady
       Right Nothing -> pure notFound
       Right (Just task) ->
-        case V.runValidator ((,) <$> keyField `V.required` idempotencyKey <*> ticketRevisionField `V.required` decimalUpTo integerMax) fields of
+        case V.runValidator ((,) <$> keyField `V.required` idempotencyKey <*> ticketRevisionField `V.required` V.decimalUpTo integerMax) fields of
           Left _ -> taskAnswer db task (Just unreadableTryAgain)
           Right (k, r) -> do
             folders <- projectFoldersFromEnvironment
@@ -704,7 +689,7 @@ haltAnswer :: Validator Form HaltAnswer
 haltAnswer =
   HaltAnswer
     <$> keyField `V.required` idempotencyKey
-    <*> revisionField `V.required` decimalUpTo integerMax
+    <*> revisionField `V.required` V.decimalUpTo integerMax
     <*> requestField `V.required` V.text
     <*> choiceField `V.required` V.text
 
@@ -768,7 +753,7 @@ decisionAnswerForm :: Validator Form DecisionAnswer
 decisionAnswerForm =
   DecisionAnswer
     <$> keyField `V.required` idempotencyKey
-    <*> expectedField `V.required` decimalUpTo integerMax
+    <*> expectedField `V.required` V.decimalUpTo integerMax
     <*> choiceField `V.required` V.boundedEnum decisionChoiceCode
     <*> textOr textField
     <*> ticked acknowledgeField

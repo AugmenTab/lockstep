@@ -241,7 +241,7 @@ wording. `Conversation.postMessage` still answers `integrity` as a code when a s
 text state literal `active` in `runnableIntentIds`; integer `show` in canonical texts (a fixed decimal format); no
 end-to-end test of a corrupt intent through `executeOnce` (the setup of an order with intents in the compliance suite).
 
-## Increment E — typed web architecture (working tree over `867080c`, not committed)
+## Increment E — typed web architecture (`b6263f4`; review fixes in the working tree)
 
 - **E1 routing**: one Beeline route tree per area, each a Shrubbery `Union` of route types with every path defined
   once as a builder polymorphic in the router and used both to recognise requests (`R.RouteRecognizer`) and to
@@ -264,12 +264,54 @@ end-to-end test of a corrupt intent through `executeOnce` (the setup of an order
   (`attr`, `Operator.escapedValue`: Brigid 0.4 writes attribute values unescaped). The session cookie through
   `Web.Cookie.renderSetCookieBS`. `ProjectView.projectKey`, `TaskView.taskKey`/`taskProjectKey`,
   `TransactionView.viewKey` carry the typed identities beside the pinned text fields, so no page parses view text back.
-- **E2 / E5 not done (frozen conflicts, amendment request in the completion packet)**: see the Increment E report.
+- **E2 / E5 not done**: form routes conflict with frozen pins (a form error answers 200 with the page:
+  `GateCRemediationPageTest.hs:152-153,168,174-176,221`, `TasksPageTest.hs:198`, `ProjectsPageTest.hs:222`; Orb's
+  `FormDataRequestBody` answers 422; `Orb.getForm` throws on invalid UTF-8 where `OperatorTrustTest.hs:232-233` pins
+  4xx; the 413 limits and their order, `AppShellTest.hs:222-225`, `OperatorTrustTest.hs:236`). Body-less routes and
+  `app.js`: see the review table below.
 - Behaviour changes (all on malformed input): an `/app` form that is not UTF-8 or repeats a single-valued field is
   "could not read this form" (was decoded leniently / first value taken); an operator receipt address that is not a
-  receipt number is unrouted (404 before the guard and the session; was 401 without a session); an OPTIONS on
+  receipt number is unrouted (404 before the guard and the session, with the unrouted JSON 404 body and
+  `application/json` content type, no longer the HTML "no such receipt" page; was 401 without a session); an OPTIONS on
   `/api/handover/<x>` or `/api/requests/<x>` with a malformed id is 404 (was 405); the `Set-Cookie` attribute order is
   the cookie library's (`Path=/; Max-Age=…; HttpOnly; SameSite=Strict`).
 - Evidence: compliance `WebTest` (each generated link at its frozen address and recognised with its guard class; the
   decision key for both kinds; non-canonical ids, wrong methods and bad receipt numbers unrouted; strict UTF-8; errors
   accumulated per field name).
+
+### Independent review of `b6263f4` and resolutions
+
+| Finding | Resolution |
+|---|---|
+| M1 a non-UTF-8 operator form answered 403 (CSRF) | `Operator.withForm` hands `Maybe Form`; `withCsrfForm` answers 400 `invalidCommandPage` after the session and before the CSRF check; the sign-in exchange answers 400 `badLinkPage` (as before). A repeated `csrf` is still 403, as it was before E |
+| M2 body-less routes not on Orb | Deferred to the v3 restructuring (below). Not an Orb limitation for headers or HEAD: checked in ghci (`.local/ghci/tdE-6.ghci`), `Orb.return200WithHeaders` carries any header list after Orb's own `Content-Type` (which `addResponseBody200` takes as given, e.g. `text/html; charset=utf-8`), and `Orb.dispatch` does not look at the request method (a HEAD dispatched to a GET handler answered 200), so HEAD-as-GET stays in our recognition |
+| M3 `app.js` route table | Deferred to v3 (below) |
+| L4 lenient UTF-8 in the control pane | `Control.utf8` (`decodeUtf8'`): a requests, lifecycle, install or folder body that is not UTF-8 is 400 `unknown-operation`; a session body that is not UTF-8 is 403 `sign-in-refused` (it cannot be a token; no frozen test sends either) |
+| L5 three decimal parsers | One `Validation.digitsUpTo` (`Data.Text.Read.decimal`, ASCII digits only, at most 19 characters, at most a limit) and `Validation.decimalUpTo`; used by the app forms, the operator forms (limit 999 999 999 999 999 999) and `receiptIdParam` (same limit, then `toIntegralSized`). Behaviour change: an operator number or receipt address of exactly 19 characters with leading zeros (value within the limit) is now read (was refused for length) |
+| L6 two attribute escapers | `Operator.escapedValue` is `Fragment.attr "value"`. Brigid 0.4, checked in ghci (`.local/ghci/tdE-7.ghci`): `customAttribute` escapes only `"` and `'` (`&#34;`, `&#39;`), typed `A.value` escapes nothing, text escapes `&`, `<`, `>`. Operator pages now also escape `<`, `>` in values (as `&lt;`, `&gt;`) and write `"` as `&quot;` |
+| L7 dependency id from view text | `TaskPages` builds it from `identityText (taskKey t)` |
+| L8 unreadable new-project form | Falls back to `emptyForm` (default folder `new` checked) with the key that was sent |
+| L9 receipt 404 body | Recorded above (behaviour changes) |
+
+**Deferred to the v3 restructuring (recorded obstacles):**
+
+- **M2 (Orb handlers for the body-less routes).** The obstacle is the module layout, not the Orb API. An
+  `Orb.HasHandler`/`Orb.PermissionAction` instance must sit with its route type (an orphan instance fails `-Werror`
+  under `-Weverything`), the route types sit in `Web/Routes/*` because every page imports their links, and the handler
+  code (`projectPage`, `taskAnswer`, `decisionAnswer`, …) sits in `Web/App.hs`, which imports the pages: putting the
+  instances there needs Artificer's one-module-per-route layout (path builders shared, route type + handler together).
+  Two further points for that step: `Orb.Has500Response` fixes the `"500"` entry to `Orb.InternalServerError`, so the
+  ledger's deliberate HTML failure page (`Operator.ledgerView`, 500) cannot be a declared response distinct from Orb's
+  exception answer; and the control pane runs as its own WAI application over `PaneRuntime` in `IO`, with no monad
+  having `Orb.HasRequest`/`HasRespond`/`HasLogger`. Orb's exception handler also answers 500 without the security
+  headers `respondWith` adds.
+- **M3 (typed `hx-get`/`hx-post`/`hx-push-url` from the routes, shrinking `app.js`).** Not blocked outright by a pin,
+  but every swap and history step is pinned by the browser drivers and HTTP tests, so replacing `app.js`'s
+  form/link interception changes behaviour under: the shell identical and content-free for every address
+  (`AppShellTest.hs:99-117`), so the deep-link bootstrap (`routeFor`, address → fragment) has to stay client-side; the
+  address after a swap comes from `X-Lockstep-Path` (`ExecutionPageTest.hs:236,277`, `ProjectChecksPageTest.hs:212`,
+  `DecisionsPageTest.hs:184`, `EnginePageTest.hs:396,438`) and is checked in the browser
+  (`ProjectsBrowserTest.hs:115`, `ProjectChecksBrowserTest.hs:127`, `ExecutionBrowserTest.hs:143`,
+  `DecisionsBrowserTest.hs:107`, `ActivityBrowserTest.hs:100`, `TasksBrowserTest.hs:144`, `EndToEndTest.hs:296`); and
+  repeated `depends_on` values are sent as a list by `app.js`'s submit handler. Left for v3 with the drivers
+  re-qualified, as the owner prioritises a working harness.

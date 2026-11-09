@@ -12,12 +12,12 @@ module Lockstep.Web.Control
   ) where
 
 import Beeline.Routing qualified as R
+import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import Data.List qualified as L
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
-import Data.Text.Encoding.Error qualified as TEE
 import Flipstone.Prelude
 import Network.HTTP.Types qualified as HTTP
 import Network.Wai qualified as Wai
@@ -169,7 +169,8 @@ controlApplication port runtime request respond =
       . Shrubbery.branchBuild
       . Shrubbery.branch
         ( \Session -> withBody $ \bytes -> do
-            session <- exchangeSignIn runtime (TE.decodeUtf8With TEE.lenientDecode bytes)
+            -- A body that is not UTF-8 is no token: refused like any other.
+            session <- maybe (pure Nothing) (exchangeSignIn runtime) (utf8 bytes)
             respond $ case session of
               Just s -> jsonResponse HTTP.status200 sessionSchema (SessionBody s)
               Nothing -> errorJson HTTP.status403 "sign-in-refused"
@@ -181,7 +182,7 @@ controlApplication port runtime request respond =
         )
       . Shrubbery.branch
         ( \Requests -> withBody $ \bytes -> withSession $
-            case parseOp (TE.decodeUtf8With TEE.lenientDecode bytes) of
+            case utf8 bytes >>= parseOp of
               Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
               Just op -> do
                 submitted <- submitRequest runtime op
@@ -189,7 +190,7 @@ controlApplication port runtime request respond =
         )
       . Shrubbery.branch
         ( \Lifecycle -> withBody $ \bytes -> withSession $
-            case parseLifecycleBody (TE.decodeUtf8With TEE.lenientDecode bytes) of
+            case utf8 bytes >>= parseLifecycleBody of
               Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
               Just op -> do
                 submitted <- submitLifecycle runtime op
@@ -197,7 +198,7 @@ controlApplication port runtime request respond =
         )
       . Shrubbery.branch
         ( \Install -> withBody $ \bytes -> withSession $
-            case parseInstallBody (TE.decodeUtf8With TEE.lenientDecode bytes) of
+            case utf8 bytes >>= parseInstallBody of
               Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
               Just (op, expect) -> do
                 submitted <- submitInstall runtime op expect
@@ -219,7 +220,7 @@ controlApplication port runtime request respond =
         )
       . Shrubbery.branch
         ( \FoldersAdd -> withBody $ \bytes -> withSession $
-            case parseFolderBody (TE.decodeUtf8With TEE.lenientDecode bytes) of
+            case utf8 bytes >>= parseFolderBody of
               Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
               Just (expect, path) -> do
                 submitted <- submitFolder runtime expect path
@@ -242,6 +243,11 @@ controlApplication port runtime request respond =
               ResultDone result -> jsonResponse HTTP.status200 resultSchema (resultBody result)
         )
       $ Shrubbery.branchEnd
+
+-- | A request body as text: UTF-8 or nothing (a body that is not is an unknown operation, 400).
+utf8 :: BS.ByteString -> Maybe T.Text
+utf8 =
+  either (const Nothing) Just . TE.decodeUtf8'
 
 -- | A submitted request: 202 with its id, or the reason it was not written.
 accepted :: Either SubmitError RequestId -> Wai.Response

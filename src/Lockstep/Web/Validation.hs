@@ -18,6 +18,8 @@ module Lockstep.Web.Validation
   , text
   , list
   , boundedEnum
+  , digitsUpTo
+  , decimalUpTo
   , labelled
   , chain
   , maybeValidator
@@ -34,6 +36,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.NonEmptyText qualified as NET
 import Data.Text qualified as T
+import Data.Text.Read qualified as TR
 import Flipstone.Prelude
 
 import Lockstep.Kernel.Enum (parseEnumText)
@@ -128,6 +131,23 @@ list v =
     case input of
       ParamField ts -> traverse (runValidatorInternal v . ParamField . (:| [])) (NEL.toList ts)
       FileField _ -> failWith UnexpectedFileError
+
+{- | A number as the forms and addresses spell it (C-C.R1 R3): plain ASCII decimal
+digits only (no sign, space or other spelling), at most 19 of them, and at most
+@limit@. The one decimal reader of the web layer ('Data.Text.Read.decimal').
+-}
+digitsUpTo :: Integer -> T.Text -> Maybe Integer
+digitsUpTo limit t
+  | T.length t > 19 = Nothing
+  | otherwise =
+      case TR.decimal t of
+        Right (n, rest) | T.null rest, n <= limit -> Just n
+        _ -> Nothing
+
+-- | One value: 'digitsUpTo' the limit.
+decimalUpTo :: Num a => Integer -> Validator FormField a
+decimalUpTo limit =
+  text `chain` maybeValidator (fmap fromInteger . digitsUpTo limit) (T.pack "Not a number in range.")
 
 -- | One value, one of the type's canonical spellings.
 boundedEnum :: (Bounded a, Enum a) => (a -> T.Text) -> Validator FormField a

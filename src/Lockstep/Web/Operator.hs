@@ -24,14 +24,10 @@ import Brigid.HTML.Types qualified as HTML
 import Brigid.Types qualified as B
 import Control.Monad (unless)
 import Data.ByteString qualified as BS
-import Data.Char qualified as Char
 import Data.List qualified as L
-import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
 import Data.String.Interpolate qualified as Interpolate
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
-import Data.Text.Read qualified as TR
 import Data.Time qualified as Time
 import Flipstone.Prelude
 import Network.HTTP.Types qualified as HTTP
@@ -75,6 +71,7 @@ import Lockstep.Web.CommandCenter (commandCenterPage)
 import Lockstep.Web.Components.Page (page)
 import Lockstep.Web.Fields (csrfField, expectedRevisionField, failAtStepField, idempotencyKeyField, nameField, stepMsField, stepsField, tokenField)
 import Lockstep.Web.Form (Form, FormField, queryForm, readForm)
+import Lockstep.Web.Fragment (attr)
 import Lockstep.Web.LedgerPage (ledgerFailurePage, ledgerPage)
 import Lockstep.Web.RequestGuard (GuardRefusal (..))
 import Lockstep.Web.Routes.Operator
@@ -141,10 +138,10 @@ signInConfirm request =
 
 signInExchange :: Maybe DatabaseRuntime -> Wai.Request -> IO Wai.Response
 signInExchange db request =
-  withForm request $ \form ->
-    case V.runValidator signInToken form of
-      Left _ -> pure (refusal HTTP.status400 badLinkPage)
-      Right token ->
+  withForm request $ \sent ->
+    case sent >>= either (const Nothing) Just . V.runValidator signInToken of
+      Nothing -> pure (refusal HTTP.status400 badLinkPage)
+      Just token ->
         case db of
           Nothing -> pure (refusal HTTP.status503 notReadyPage)
           Just runtime -> do
@@ -162,14 +159,20 @@ operatorHome db request =
     operatorResponse HTTP.status200 formPagePolicy . operatorPage token session (either (const Nothing) Just workspace)
       <$> generateIdempotencyKey
 
--- | A state-changing form: the session, then the form, then its CSRF field (else 403).
+{- | A state-changing form: the session, then the form (a body that is not an
+UTF-8 form is an invalid command, 400, never reported as a forgery), then its
+CSRF field (else 403).
+-}
 withCsrfForm :: Maybe DatabaseRuntime -> Wai.Request -> (DatabaseRuntime -> RawToken -> Form -> IO Wai.Response) -> IO Wai.Response
 withCsrfForm db request action =
   withSession db request $ \runtime token _ ->
-    withForm request $ \form ->
-      case V.runValidator (csrfField `V.required` V.text) form of
-        Right csrf | csrfMatches token csrf -> action runtime token form
-        _ -> pure (refusal HTTP.status403 csrfPage)
+    withForm request $ \sent ->
+      case sent of
+        Nothing -> pure (refusal HTTP.status400 invalidCommandPage)
+        Just form ->
+          case V.runValidator (csrfField `V.required` V.text) form of
+            Right csrf | csrfMatches token csrf -> action runtime token form
+            _ -> pure (refusal HTTP.status403 csrfPage)
 
 renameCommand :: Maybe DatabaseRuntime -> Wai.Request -> IO Wai.Response
 renameCommand db request =
@@ -345,16 +348,14 @@ notFoundPage =
 
 -- * Request parsing
 
--- | One plain decimal number of at most 18 digits (no sign, space or other spelling).
+-- | The operator forms' numbers: at most 18 digits' worth (C-P1.4 E9; the commands check their own ranges).
+operatorNumberMax :: Integer
+operatorNumberMax =
+  999999999999999999
+
 decimal :: Validator FormField Integer
 decimal =
-  V.text `V.chain` V.maybeValidator parseDecimal "Not a number."
-
-parseDecimal :: T.Text -> Maybe Integer
-parseDecimal t =
-  case TR.decimal t of
-    Right (n, rest) | T.null rest, T.length t <= 18, T.all Char.isDigit t -> Just n
-    _ -> Nothing
+  V.decimalUpTo operatorNumberMax
 
 renameFields :: Validator Form (T.Text, Integer, T.Text)
 renameFields =
@@ -376,7 +377,7 @@ queueFields =
   failAt t =
     if T.null t
       then Just Nothing
-      else Just <$> parseDecimal t
+      else Just <$> V.digitsUpTo operatorNumberMax t
 
 formLimit :: Int
 formLimit =
@@ -388,15 +389,15 @@ drainLimit =
 
 {- | Reads an urlencoded form of at most 16 KiB; a larger body answers 413
 after being drained up to 1 MiB so the client can read the response. A body that
-is not an UTF-8 form reads as an empty form (every operator form refuses it).
+is not an UTF-8 form is 'Nothing'.
 -}
-withForm :: Wai.Request -> (Form -> IO Wai.Response) -> IO Wai.Response
+withForm :: Wai.Request -> (Maybe Form -> IO Wai.Response) -> IO Wai.Response
 withForm request action =
   let
     collect size chunks = do
       chunk <- Wai.getRequestBodyChunk request
       if BS.null chunk
-        then action (fromMaybe Map.empty (readForm (BS.concat (L.reverse chunks))))
+        then action (readForm (BS.concat (L.reverse chunks)))
         else
           let
             size' = size + BS.length chunk
@@ -442,14 +443,13 @@ withSession db request action =
 
 -- * Pages
 
-{- | A @value@ attribute, HTML-escaped. Brigid 0.4's 'A.value' writes its text
-unescaped (its custom attributes escape quotes), so a workspace name containing
-a double quote could break out of the attribute (Gate A, A1-12b).
+{- | A @value@ attribute, HTML-escaped by the one escaper ("Lockstep.Web.Fragment"
+'attr'): a workspace name containing a double quote cannot break out of the
+attribute (Gate A, A1-12b).
 -}
 escapedValue :: T.Text -> A.Attribute tag
 escapedValue =
-  -- Brigid's custom-attribute escaper encodes quotes; ampersands are encoded here.
-  A.customAttribute (T.pack "value") . T.replace (T.pack "&") (T.pack "&amp;")
+  attr (T.pack "value")
 
 hiddenField :: B.Name -> T.Text -> E.ChildHTML E.Form grandparent
 hiddenField name value =

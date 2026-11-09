@@ -22,16 +22,16 @@ module Lockstep.Web.Routes.Params
   ) where
 
 import Beeline.Routing qualified as R
+import Control.Monad ((<=<))
 import Data.Bits (toIntegralSized)
-import Data.Char qualified as Char
 import Data.Coerce (Coercible, coerce)
 import Data.Text qualified as T
-import Data.Text.Read qualified as TR
 import Flipstone.Prelude
 import Text.Show (show)
 
 import Lockstep.Kernel.Effect (OperationId (..))
 import Lockstep.Kernel.Identity (ProjectId (..), ReceiptId (..), TaskId (..), TransactionId (..), Uuid, WorkOrderId (..), identityText, parseIdentity, receiptIdNumber)
+import Lockstep.Web.Validation (digitsUpTo)
 
 identityParam :: Coercible Uuid identity => T.Text -> R.ParameterDefinition identity
 identityParam name =
@@ -87,23 +87,13 @@ decisionOperation :: DecisionKey -> OperationId
 decisionOperation =
   coerce
 
-{- | A receipt number: plain decimal digits, at most 18 of them, within the
+{- | A receipt number: plain decimal digits, at most 18 digits' worth, within the
 key's range; anything else is no receipt (it never wraps to another).
 -}
 receiptIdParam :: R.ParameterDefinition ReceiptId
 receiptIdParam =
   R.convertParam
     (Just "int64")
-    parseReceipt
+    (maybe (Left "not a receipt number") (Right . ReceiptId) . (toIntegralSized <=< digitsUpTo 999999999999999999))
     (T.pack . show . receiptIdNumber)
     (R.textParam "receiptId")
- where
-  parseReceipt t =
-    case TR.decimal t of
-      Right (n, rest)
-        | T.null rest
-        , T.length t <= 18
-        , T.all Char.isDigit t
-        , Just i <- toIntegralSized (n :: Integer) ->
-            Right (ReceiptId i)
-      _ -> Left "not a receipt number"

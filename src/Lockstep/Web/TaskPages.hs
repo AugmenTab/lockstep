@@ -28,6 +28,7 @@ import Text.Show (show)
 
 import Lockstep.Application.Projects (ProjectView (..))
 import Lockstep.Application.Tasks (TaskView (..), mostImportantReadyTask)
+import Lockstep.Kernel.Identity (TaskId (..), identityText)
 import Lockstep.Kernel.Task (Priority (..), TaskReadiness (..), TaskState (..), parseTaskState, priorityCode, priorityOf, priorityWords, readinessWords)
 import Lockstep.Web.Fields (acceptanceField, actionField, dependsOnField, keyField, priorityField, reasonField, revisionField, ticketRevisionField, titleField)
 import Lockstep.Web.Fragment (attr, cls, elementId, fragment)
@@ -116,8 +117,8 @@ dependencyChoices candidates selected =
                 ]
             | t <- candidates
             , let
-                -- A task id is a canonical UUID: nothing in it needs escaping.
-                dependencyId = elementId 'd' ("epends-" <> taskId t)
+                -- A task identity renders as a canonical UUID: nothing in it needs escaping.
+                dependencyId = elementId 'd' ("epends-" <> identityText (taskKey t))
             ]
     )
 

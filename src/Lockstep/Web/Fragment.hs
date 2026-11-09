@@ -57,7 +57,10 @@ cls =
 
 {- | An attribute whose value is escaped: ampersands, angle brackets and double
 quotes are escaped here (C-C.R1 R8), so typed text never appears as markup
-anywhere in a page and no value depends on Brigid escaping quotes.
+anywhere in a page and no value depends on Brigid escaping quotes. The one
+attribute escaper of the web layer. Checked in ghci (@.local/ghci/tdE-7.ghci@):
+Brigid 0.4's 'A.customAttribute' escapes only @\"@ and @'@ (as @&#34;@, @&#39;@),
+its typed 'A.value' escapes nothing, and its text escapes @&@, @<@ and @>@.
 -}
 attr :: T.Text -> T.Text -> A.Attribute tag
 attr name =
