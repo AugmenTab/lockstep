@@ -35,15 +35,17 @@ import Lockstep.Kernel.Roles (CandidateTest (..), Criterion (..), Verdict (..))
 import Lockstep.Kernel.Runner (OutcomeKind (..))
 import Lockstep.Kernel.Task (TaskReadiness (..))
 import Lockstep.Kernel.Transaction (Disposition (..), FixedHalt (..), HaltCode (..), Stage (..), StateName (..), haltCodeFromText, noCodingAgent, parseStage, parseStateName)
-import Lockstep.Web.Fragment (attr, cls)
+import Lockstep.Web.Fields (choiceField, expectedField, expectedSetField, keyField, requestField, revisionField, ticketRevisionField)
+import Lockstep.Web.Fragment (attr, cls, elementId)
+import Lockstep.Web.Routes.App (admitBugAction, completionAction, enableExecutionAction, haltDecisionAction)
 
 heading :: T.Text -> T.Text -> E.ChildHTML E.Division E.Body
 heading sectionId title =
   E.h2 [attr "id" sectionId] [E.text title]
 
-hidden :: T.Text -> T.Text -> E.ChildHTML E.Form E.Division
+hidden :: B.Name -> T.Text -> E.ChildHTML E.Form E.Division
 hidden name value =
-  E.input [A.type_ HTML.InputHidden, attr "name" name, attr "value" value]
+  E.input [A.type_ HTML.InputHidden, A.name name, attr "value" value]
 
 fact :: T.Text -> T.Text -> [E.ChildHTML E.DescriptionList E.Details]
 fact name value =
@@ -69,11 +71,11 @@ projectExecutionSection project status started key =
       , E.p [] [E.text "You can let Lockstep work on bugs you hand it in this project. Before it changes anything, each fix must reproduce the bug and have its tests agreed and frozen; then it must pass the automatic checks and an independent review, and only you decide when it is finished."]
       , E.p [cls "ls-muted"] [E.text "Allowing it changes nothing in the folder. The steps that do the work arrive in a later update of Lockstep."]
       , E.form
-          [attr "id" "enable-form", A.method B.FormPOST, A.action (B.mkRawURL ("/app/api/projects/" <> projectId project <> "/execution"))]
-          [ hidden "key" key
-          , hidden "expected" (maybe "none" profileIdText current)
-          , hidden "expected_set" (maybe "no" (const "yes") current)
-          , E.button [attr "id" "enable-execution", attr "type" "submit", cls "ls-primary"] [E.text "Let Lockstep fix bugs here"]
+          [A.id (elementId 'e' "nable-form"), A.method B.FormPOST, A.action (enableExecutionAction (projectKey project))]
+          [ hidden keyField key
+          , hidden expectedField (maybe "none" profileIdText current)
+          , hidden expectedSetField (maybe "no" (const "yes") current)
+          , E.button [A.id (elementId 'e' "nable-execution"), attr "type" "submit", cls "ls-primary"] [E.text "Let Lockstep fix bugs here"]
           ]
       ]
     Just (Enabled e) ->
@@ -128,10 +130,10 @@ taskFixingSection task status admission standing work key =
           [ heading "fixing" "Fixing it"
           , E.p [] [E.text "Lockstep may work on bugs in this project. Hand this task to it as a bug: before changing anything it must reproduce the bug and have its tests agreed."]
           , E.form
-              [attr "id" "admit-form", A.method B.FormPOST, A.action (B.mkRawURL ("/app/api/tasks/" <> taskId task <> "/bug"))]
-              [ hidden "key" key
-              , hidden "ticket_revision" (T.pack (show (taskTicketRevision task)))
-              , E.button [attr "id" "admit-bug", attr "type" "submit", cls "ls-primary"] [E.text "Ask Lockstep to fix this bug"]
+              [A.id (elementId 'a' "dmit-form"), A.method B.FormPOST, A.action (admitBugAction (taskKey task))]
+              [ hidden keyField key
+              , hidden ticketRevisionField (T.pack (show (taskTicketRevision task)))
+              , E.button [A.id (elementId 'a' "dmit-bug"), attr "type" "submit", cls "ls-primary"] [E.text "Ask Lockstep to fix this bug"]
               ]
           ]
       | otherwise ->
@@ -193,12 +195,12 @@ transactionSection a tx request key =
       Just r
         | storedState r == "open" ->
             [ E.form
-                [attr "id" "halt-form", A.method B.FormPOST, A.action (B.mkRawURL ("/app/api/transactions/" <> viewId tx <> "/decision"))]
-                [ hidden "key" key
-                , hidden "request" (storedRequestId r)
-                , hidden "revision" (T.pack (show (storedRevision r)))
+                [A.id (elementId 'h' "alt-form"), A.method B.FormPOST, A.action (haltDecisionAction (viewKey tx))]
+                [ hidden keyField key
+                , hidden requestField (storedRequestId r)
+                , hidden revisionField (T.pack (show (storedRevision r)))
                 , E.fieldset [] (E.legend [] [E.text "What should happen next?"] : fmap choice (storedChoices r))
-                , E.button [attr "id" "answer-halt", attr "type" "submit", cls "ls-primary"] [E.text "Record my decision"]
+                , E.button [A.id (elementId 'a' "nswer-halt"), attr "type" "submit", cls "ls-primary"] [E.text "Record my decision"]
                 ]
             ]
         | otherwise -> [E.p [cls "ls-muted"] [E.text "Your decision is recorded; Lockstep acts on it shortly."]]
@@ -206,27 +208,30 @@ transactionSection a tx request key =
   choice name =
     E.div
       [cls "ls-choice"]
-      [ E.input [A.type_ HTML.InputRadio, attr "id" ("halt-" <> name), attr "name" "choice", attr "value" name]
+      [ -- The choices are the stored request's text: their ids stay escaped attributes.
+        E.input [A.type_ HTML.InputRadio, attr "id" ("halt-" <> name), A.name choiceField, attr "value" name]
       , E.label [attr "for" ("halt-" <> name)] [E.text (choiceWords name)]
       ]
+  doneId = elementId 'c' "ompletion-done"
+  notDoneId = elementId 'c' "ompletion-not-done"
   completionForm =
     E.form
-      [attr "id" "completion-form", A.method B.FormPOST, A.action (B.mkRawURL ("/app/api/transactions/" <> viewId tx <> "/completion"))]
+      [A.id (elementId 'c' "ompletion-form"), A.method B.FormPOST, A.action (completionAction (viewKey tx))]
       [ E.fieldset
           []
           [ E.legend [] [E.text "Is this bug fixed?"]
           , E.div
               [cls "ls-choice"]
-              [ E.input [A.type_ HTML.InputRadio, attr "id" "completion-done", attr "name" "choice", attr "value" "done"]
-              , E.label [attr "for" "completion-done"] [E.text "Yes, it is fixed: mark it done"]
+              [ E.input [A.type_ HTML.InputRadio, A.id doneId, A.name choiceField, attr "value" "done"]
+              , E.label [A.for doneId] [E.text "Yes, it is fixed: mark it done"]
               ]
           , E.div
               [cls "ls-choice"]
-              [ E.input [A.type_ HTML.InputRadio, attr "id" "completion-not-done", attr "name" "choice", attr "value" "not-done"]
-              , E.label [attr "for" "completion-not-done"] [E.text "No, it is not fixed: stop here"]
+              [ E.input [A.type_ HTML.InputRadio, A.id notDoneId, A.name choiceField, attr "value" "not-done"]
+              , E.label [A.for notDoneId] [E.text "No, it is not fixed: stop here"]
               ]
           ]
-      , E.button [attr "id" "decide-completion", attr "type" "submit", cls "ls-primary"] [E.text "Record my decision"]
+      , E.button [A.id (elementId 'd' "ecide-completion"), attr "type" "submit", cls "ls-primary"] [E.text "Record my decision"]
       ]
   criteria =
     case evidenceCriteria ev of

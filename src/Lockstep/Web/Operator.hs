@@ -5,34 +5,39 @@
 exchange, the protected operator page and sign-out; and the typed command
 routes of C-P1.4 E9, which only parse input and call
 "Lockstep.Application.Command". Served at the WAI level,
-after route recognition and the request guard ("Lockstep.Web.Application").
+after route recognition (the typed tree of "Lockstep.Web.Routes.Operator") and
+the request guard ("Lockstep.Web.Application").
 The raw sign-in token appears only in the confirm page's hidden field.
 -}
 module Lockstep.Web.Operator
-  ( OperatorRoute (..)
+  ( Routes
   , matchOperatorRoute
   , handleOperator
   , guardRefusalResponse
   ) where
 
+import Beeline.Routing qualified as R
 import Brigid.HTML.Attributes qualified as A
 import Brigid.HTML.Elements qualified as E
 import Brigid.HTML.Render.ByteString (renderLazyHTML)
 import Brigid.HTML.Types qualified as HTML
 import Brigid.Types qualified as B
 import Control.Monad (unless)
-import Data.Bits (toIntegralSized)
 import Data.ByteString qualified as BS
+import Data.Char qualified as Char
 import Data.List qualified as L
+import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.String.Interpolate qualified as Interpolate
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
+import Data.Text.Read qualified as TR
 import Data.Time qualified as Time
 import Flipstone.Prelude
 import Network.HTTP.Types qualified as HTTP
 import Network.Wai qualified as Wai
-import Text.Show (Show, show)
+import Shrubbery qualified
+import Text.Show (show)
 import Web.Cookie qualified as Cookie
 
 import Lockstep.Application.Command
@@ -68,132 +73,167 @@ import Lockstep.Foundation.OperatorToken (RawToken, csrfFor, csrfMatches, decode
 import Lockstep.Kernel.Identity (ReceiptId (..), jobIdNumber)
 import Lockstep.Web.CommandCenter (commandCenterPage)
 import Lockstep.Web.Components.Page (page)
+import Lockstep.Web.Fields (csrfField, expectedRevisionField, failAtStepField, idempotencyKeyField, nameField, stepMsField, stepsField, tokenField)
+import Lockstep.Web.Form (Form, FormField, queryForm, readForm)
 import Lockstep.Web.LedgerPage (ledgerFailurePage, ledgerPage)
 import Lockstep.Web.RequestGuard (GuardRefusal (..))
+import Lockstep.Web.Routes.Operator
+  ( CenterView
+  , LedgerView
+  , OperatorHome
+  , QueueCommand
+  , QueueForm
+  , ReceiptView (..)
+  , RenameCommand
+  , Routes
+  , SignInConfirm
+  , SignInExchange
+  , SignOut
+  , centerLink
+  , operatorHomeLink
+  , queueAction
+  , queueFormLink
+  , receiptLink
+  , renameAction
+  , routes
+  , signInAction
+  , signOutAction
+  )
+import Lockstep.Web.Validation (Validator)
+import Lockstep.Web.Validation qualified as V
 
-data OperatorRoute
-  = SignInConfirm
-  | SignInExchange
-  | OperatorHome
-  | SignOut
-  | RenameCommand
-  | ReceiptView T.Text
-  | QueueCommand
-  | QueueForm
-  | CenterView
-  | LedgerView
-  deriving (Eq, Show)
-
-matchOperatorRoute :: HTTP.Method -> [T.Text] -> Maybe OperatorRoute
+-- | The route for a request, if it is an operator route (GET and POST only, as before).
+matchOperatorRoute :: HTTP.StdMethod -> [T.Text] -> Maybe Routes
 matchOperatorRoute method path =
-  case (path, method == HTTP.methodGet, method == HTTP.methodPost) of
-    (["operator", "sign-in"], True, _) -> Just SignInConfirm
-    (["operator", "sign-in"], _, True) -> Just SignInExchange
-    (["operator"], True, _) -> Just OperatorHome
-    (["operator", "sign-out"], _, True) -> Just SignOut
-    (["operator", "commands", "rename-workspace"], _, True) -> Just RenameCommand
-    (["operator", "receipts", receipt], True, _) -> Just (ReceiptView receipt)
-    (["operator", "commands", "queue-noop"], _, True) -> Just QueueCommand
-    (["operator", "jobs", "new"], True, _) -> Just QueueForm
-    (["operator", "center"], True, _) -> Just CenterView
-    (["operator", "ledger"], True, _) -> Just LedgerView
-    _ -> Nothing
+  either (const Nothing) Just (R.recognizeRoute routes method path)
 
-handleOperator :: Maybe DatabaseRuntime -> OperatorRoute -> Wai.Request -> IO Wai.Response
+handleOperator :: Maybe DatabaseRuntime -> Routes -> Wai.Request -> IO Wai.Response
 handleOperator db route request =
-  case route of
-    SignInConfirm ->
-      pure $
-        case singleValue (queryValues "token" request) >>= decodeText of
-          Just token -> confirmResponse token
-          Nothing -> refusal HTTP.status400 badLinkPage
-    SignInExchange ->
-      withForm request $ \form ->
-        case singleValue (formValues "token" form) >>= decodeText of
-          Nothing -> pure (refusal HTTP.status400 badLinkPage)
-          Just token ->
-            case db of
-              Nothing -> pure (refusal HTTP.status503 notReadyPage)
-              Just runtime -> do
-                result <- exchangeSignIn runtime token
-                pure $
-                  case result of
-                    Right session -> signedInResponse session
-                    Left SignInTokenRefused -> refusal HTTP.status403 refusedLinkPage
-                    Left (SignInNotReady _) -> refusal HTTP.status503 notReadyPage
-    OperatorHome ->
-      withSession db request $ \runtime token session -> do
-        workspace <- readWorkspace runtime
-        operatorResponse HTTP.status200 formPagePolicy . operatorPage token session (either (const Nothing) Just workspace)
-          <$> generateIdempotencyKey
-    RenameCommand ->
-      withSession db request $ \runtime token _ ->
-        withForm request $ \form ->
-          case singleValue (formValues "csrf" form) of
-            Just csrf | csrfMatches token (TE.decodeLatin1 csrf) ->
-              case renameFields form of
-                Nothing -> pure (refusal HTTP.status400 invalidCommandPage)
-                Just (key, expected, name) ->
-                  case buildRename ActorBrowserSession key expected name of
-                    Left _ -> pure (refusal HTTP.status400 invalidCommandPage)
-                    Right envelope -> commandResponse <$> submitCommand runtime envelope
-            _ ->
-              pure (refusal HTTP.status403 csrfPage)
-    ReceiptView idText ->
-      withSession db request $ \runtime _ _ ->
-        case parseReceiptId idText of
-          Nothing -> pure notFoundPage
-          Just receiptId -> do
-            found <- findReceipt runtime receiptId
-            case found of
-              Nothing -> pure notFoundPage
-              Just receipt -> do
-                job <- findJobForReceipt runtime receiptId
-                pure $ case job of
-                  Left _ -> refusal HTTP.status503 notReadyPage
-                  Right found' -> operatorResponse HTTP.status200 noReferrer (receiptPage receipt found')
-    QueueCommand ->
-      withSession db request $ \runtime token _ ->
-        withForm request $ \form ->
-          case singleValue (formValues "csrf" form) of
-            Just csrf | csrfMatches token (TE.decodeLatin1 csrf) ->
-              case queueFields form of
-                Nothing -> pure (refusal HTTP.status400 invalidCommandPage)
-                Just (key, expected, steps, millis, failAt) ->
-                  case buildQueue ActorBrowserSession key expected steps millis failAt of
-                    Left _ -> pure (refusal HTTP.status400 invalidCommandPage)
-                    Right envelope -> commandResponse <$> submitCommand runtime envelope
-            _ ->
-              pure (refusal HTTP.status403 csrfPage)
-    CenterView ->
-      withSession db request $ \runtime _ _ ->
-        operatorResponse HTTP.status200 noReferrer . commandCenterPage <$> loadCommandCenter runtime
-    LedgerView ->
-      withSession db request $ \runtime _ _ -> do
-        projected <- projectLedger runtime
-        pure $
-          case projected of
-            Right projection -> operatorResponse HTTP.status200 noReferrer (ledgerPage projection)
-            -- C-P2.8 V3: a failure to project is said, never a partial page.
-            Left _ -> operatorResponse HTTP.status500 noReferrer ledgerFailurePage
-    QueueForm ->
-      withSession db request $ \runtime token _ -> do
-        workspace <- readWorkspace runtime
-        operatorResponse HTTP.status200 formPagePolicy . queuePage token (either (const Nothing) Just workspace)
-          <$> generateIdempotencyKey
-    SignOut ->
-      withSession db request $ \runtime token _ ->
-        withForm request $ \form ->
-          case singleValue (formValues "csrf" form) of
-            Just csrf | csrfMatches token (TE.decodeLatin1 csrf) -> do
-              revoked <- revokeSession runtime token
-              pure $
-                case revoked of
-                  Right () -> redirect "/" [(hSetCookie, clearCookie)]
-                  -- Never claim a sign-out the database did not record (review finding 13).
-                  Left _ -> refusal HTTP.status503 notReadyPage
-            _ ->
-              pure (refusal HTTP.status403 csrfPage)
+  Shrubbery.dissect
+    ( Shrubbery.branchBuild
+        . Shrubbery.branch (\(_ :: SignInConfirm) -> signInConfirm request)
+        . Shrubbery.branch (\(_ :: SignInExchange) -> signInExchange db request)
+        . Shrubbery.branch (\(_ :: OperatorHome) -> operatorHome db request)
+        . Shrubbery.branch (\(_ :: SignOut) -> signOut db request)
+        . Shrubbery.branch (\(_ :: RenameCommand) -> renameCommand db request)
+        . Shrubbery.branch (\(ReceiptView rid) -> receiptView db request rid)
+        . Shrubbery.branch (\(_ :: QueueCommand) -> queueCommand db request)
+        . Shrubbery.branch (\(_ :: QueueForm) -> queueForm db request)
+        . Shrubbery.branch (\(_ :: CenterView) -> centerView db request)
+        . Shrubbery.branch (\(_ :: LedgerView) -> ledgerView db request)
+        $ Shrubbery.branchEnd
+    )
+    route
+
+-- * Handlers
+
+-- | The sign-in link's token: exactly one, well formed.
+signInToken :: Validator Form RawToken
+signInToken =
+  tokenField `V.required` (V.text `V.chain` V.maybeValidator decodeToken "Not a sign-in token.")
+
+signInConfirm :: Wai.Request -> IO Wai.Response
+signInConfirm request =
+  pure $
+    case queryForm request >>= either (const Nothing) Just . V.runValidator signInToken of
+      Just token -> confirmResponse token
+      Nothing -> refusal HTTP.status400 badLinkPage
+
+signInExchange :: Maybe DatabaseRuntime -> Wai.Request -> IO Wai.Response
+signInExchange db request =
+  withForm request $ \form ->
+    case V.runValidator signInToken form of
+      Left _ -> pure (refusal HTTP.status400 badLinkPage)
+      Right token ->
+        case db of
+          Nothing -> pure (refusal HTTP.status503 notReadyPage)
+          Just runtime -> do
+            result <- exchangeSignIn runtime token
+            pure $
+              case result of
+                Right session -> signedInResponse session
+                Left SignInTokenRefused -> refusal HTTP.status403 refusedLinkPage
+                Left (SignInNotReady _) -> refusal HTTP.status503 notReadyPage
+
+operatorHome :: Maybe DatabaseRuntime -> Wai.Request -> IO Wai.Response
+operatorHome db request =
+  withSession db request $ \runtime token session -> do
+    workspace <- readWorkspace runtime
+    operatorResponse HTTP.status200 formPagePolicy . operatorPage token session (either (const Nothing) Just workspace)
+      <$> generateIdempotencyKey
+
+-- | A state-changing form: the session, then the form, then its CSRF field (else 403).
+withCsrfForm :: Maybe DatabaseRuntime -> Wai.Request -> (DatabaseRuntime -> RawToken -> Form -> IO Wai.Response) -> IO Wai.Response
+withCsrfForm db request action =
+  withSession db request $ \runtime token _ ->
+    withForm request $ \form ->
+      case V.runValidator (csrfField `V.required` V.text) form of
+        Right csrf | csrfMatches token csrf -> action runtime token form
+        _ -> pure (refusal HTTP.status403 csrfPage)
+
+renameCommand :: Maybe DatabaseRuntime -> Wai.Request -> IO Wai.Response
+renameCommand db request =
+  withCsrfForm db request $ \runtime _ form ->
+    case V.runValidator renameFields form of
+      Left _ -> pure (refusal HTTP.status400 invalidCommandPage)
+      Right (key, expected, name) ->
+        case buildRename ActorBrowserSession key expected name of
+          Left _ -> pure (refusal HTTP.status400 invalidCommandPage)
+          Right envelope -> commandResponse <$> submitCommand runtime envelope
+
+receiptView :: Maybe DatabaseRuntime -> Wai.Request -> ReceiptId -> IO Wai.Response
+receiptView db request receiptId =
+  withSession db request $ \runtime _ _ -> do
+    found <- findReceipt runtime receiptId
+    case found of
+      Nothing -> pure notFoundPage
+      Just receipt -> do
+        job <- findJobForReceipt runtime receiptId
+        pure $ case job of
+          Left _ -> refusal HTTP.status503 notReadyPage
+          Right found' -> operatorResponse HTTP.status200 noReferrer (receiptPage receipt found')
+
+queueCommand :: Maybe DatabaseRuntime -> Wai.Request -> IO Wai.Response
+queueCommand db request =
+  withCsrfForm db request $ \runtime _ form ->
+    case V.runValidator queueFields form of
+      Left _ -> pure (refusal HTTP.status400 invalidCommandPage)
+      Right (key, expected, steps, millis, failAt) ->
+        case buildQueue ActorBrowserSession key expected steps millis failAt of
+          Left _ -> pure (refusal HTTP.status400 invalidCommandPage)
+          Right envelope -> commandResponse <$> submitCommand runtime envelope
+
+centerView :: Maybe DatabaseRuntime -> Wai.Request -> IO Wai.Response
+centerView db request =
+  withSession db request $ \runtime _ _ ->
+    operatorResponse HTTP.status200 noReferrer . commandCenterPage <$> loadCommandCenter runtime
+
+ledgerView :: Maybe DatabaseRuntime -> Wai.Request -> IO Wai.Response
+ledgerView db request =
+  withSession db request $ \runtime _ _ -> do
+    projected <- projectLedger runtime
+    pure $
+      case projected of
+        Right projection -> operatorResponse HTTP.status200 noReferrer (ledgerPage projection)
+        -- C-P2.8 V3: a failure to project is said, never a partial page.
+        Left _ -> operatorResponse HTTP.status500 noReferrer ledgerFailurePage
+
+queueForm :: Maybe DatabaseRuntime -> Wai.Request -> IO Wai.Response
+queueForm db request =
+  withSession db request $ \runtime token _ -> do
+    workspace <- readWorkspace runtime
+    operatorResponse HTTP.status200 formPagePolicy . queuePage token (either (const Nothing) Just workspace)
+      <$> generateIdempotencyKey
+
+signOut :: Maybe DatabaseRuntime -> Wai.Request -> IO Wai.Response
+signOut db request =
+  withCsrfForm db request $ \runtime token _ -> do
+    revoked <- revokeSession runtime token
+    pure $
+      case revoked of
+        Right () -> redirect "/" [(hSetCookie, clearCookie)]
+        -- Never claim a sign-out the database did not record (review finding 13).
+        Left _ -> refusal HTTP.status503 notReadyPage
 
 -- * Responses
 
@@ -257,22 +297,28 @@ confirmResponse token =
     )
     (confirmPage token)
 
+-- | The session cookie (C-P1.3 E4): host-only, every path, HttpOnly, SameSite=Strict, 12 hours.
+sessionCookie :: BS.ByteString -> Time.DiffTime -> BS.ByteString
+sessionCookie value maxAge =
+  Cookie.renderSetCookieBS
+    Cookie.defaultSetCookie
+      { Cookie.setCookieName = sessionCookieName
+      , Cookie.setCookieValue = value
+      , Cookie.setCookiePath = Just "/"
+      , Cookie.setCookieMaxAge = Just maxAge
+      , Cookie.setCookieHttpOnly = True
+      , Cookie.setCookieSameSite = Just Cookie.sameSiteStrict
+      }
+
 signedInResponse :: RawToken -> Wai.Response
 signedInResponse session =
   redirect
-    "/operator"
-    [
-      ( hSetCookie
-      , sessionCookieName
-          <> "="
-          <> TE.encodeUtf8 (encodeToken session)
-          <> "; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200"
-      )
-    ]
+    (TE.encodeUtf8 (B.relativeURLToText operatorHomeLink))
+    [(hSetCookie, sessionCookie (TE.encodeUtf8 (encodeToken session)) 43200)]
 
 clearCookie :: BS.ByteString
 clearCookie =
-  sessionCookieName <> "=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"
+  sessionCookie "" 0
 
 guardRefusalResponse :: GuardRefusal -> Wai.Response
 guardRefusalResponse reason =
@@ -288,14 +334,10 @@ commandResponse result =
       | receiptOutcome receipt == RefusedStale ->
           refusal HTTP.status409 (receiptPage receipt Nothing)
       | otherwise ->
-          redirect (TE.encodeUtf8 (receiptPath receipt)) []
+          redirect (TE.encodeUtf8 (B.relativeURLToText (receiptLink (ReceiptId (receiptId receipt))))) []
     Left CommandKeyConflict -> refusal HTTP.status409 keyConflictPage
     Left (CommandInvalid _) -> refusal HTTP.status400 invalidCommandPage
     Left (CommandNotReady _) -> refusal HTTP.status503 notReadyPage
-
-receiptPath :: Receipt -> T.Text
-receiptPath receipt =
-  "/operator/receipts/" <> T.pack (show (receiptId receipt))
 
 notFoundPage :: Wai.Response
 notFoundPage =
@@ -303,57 +345,38 @@ notFoundPage =
 
 -- * Request parsing
 
-renameFields :: [(BS.ByteString, BS.ByteString)] -> Maybe (T.Text, Integer, T.Text)
-renameFields form = do
-  key <- singleValue (formValues "idempotency_key" form) >>= utf8
-  expected <- singleValue (formValues "expected_revision" form) >>= decimal
-  name <- singleValue (formValues "name" form) >>= utf8
-  pure (key, expected, name)
- where
-  utf8 =
-    either (const Nothing) Just . TE.decodeUtf8'
+-- | One plain decimal number of at most 18 digits (no sign, space or other spelling).
+decimal :: Validator FormField Integer
+decimal =
+  V.text `V.chain` V.maybeValidator parseDecimal "Not a number."
 
-queueFields :: [(BS.ByteString, BS.ByteString)] -> Maybe (T.Text, Integer, Integer, Integer, Maybe Integer)
-queueFields form = do
-  key <- singleValue (formValues "idempotency_key" form) >>= either (const Nothing) Just . TE.decodeUtf8'
-  expected <- singleValue (formValues "expected_revision" form) >>= decimal
-  steps <- singleValue (formValues "steps" form) >>= decimal
-  millis <- singleValue (formValues "step_ms" form) >>= decimal
-  failAt <-
-    case singleValue (formValues "fail_at_step" form) of
-      Just "" -> Just Nothing
-      Just value -> Just <$> decimal value
-      Nothing -> Nothing
-  pure (key, expected, steps, millis, failAt)
-
-decimal :: BS.ByteString -> Maybe Integer
-decimal bytes =
-  if not (BS.null bytes) && BS.length bytes <= 18 && BS.all (\w -> w >= 48 && w <= 57) bytes
-    then Just (BS.foldl' (\acc w -> acc * 10 + toInteger (w - 48)) 0 bytes)
-    else Nothing
-
--- | A receipt number from the URL; one outside the key's range is no receipt (it never wraps to another).
-parseReceiptId :: T.Text -> Maybe ReceiptId
-parseReceiptId text =
-  ReceiptId <$> (toIntegralSized =<< decimal (TE.encodeUtf8 text))
-
-decodeText :: BS.ByteString -> Maybe RawToken
-decodeText bytes =
-  either (const Nothing) decodeToken (TE.decodeUtf8' bytes)
-
-singleValue :: [a] -> Maybe a
-singleValue values =
-  case values of
-    [value] -> Just value
+parseDecimal :: T.Text -> Maybe Integer
+parseDecimal t =
+  case TR.decimal t of
+    Right (n, rest) | T.null rest, T.length t <= 18, T.all Char.isDigit t -> Just n
     _ -> Nothing
 
-queryValues :: BS.ByteString -> Wai.Request -> [BS.ByteString]
-queryValues name request =
-  [fromMaybe "" value | (key, value) <- Wai.queryString request, key == name]
+renameFields :: Validator Form (T.Text, Integer, T.Text)
+renameFields =
+  (,,)
+    <$> idempotencyKeyField `V.required` V.text
+    <*> expectedRevisionField `V.required` decimal
+    <*> nameField `V.required` V.text
 
-formValues :: BS.ByteString -> [(BS.ByteString, BS.ByteString)] -> [BS.ByteString]
-formValues name form =
-  [value | (key, value) <- form, key == name]
+-- | The queue form; an empty @fail_at_step@ is no failure step.
+queueFields :: Validator Form (T.Text, Integer, Integer, Integer, Maybe Integer)
+queueFields =
+  (,,,,)
+    <$> idempotencyKeyField `V.required` V.text
+    <*> expectedRevisionField `V.required` decimal
+    <*> stepsField `V.required` decimal
+    <*> stepMsField `V.required` decimal
+    <*> failAtStepField `V.required` (V.text `V.chain` V.maybeValidator failAt "Not a step.")
+ where
+  failAt t =
+    if T.null t
+      then Just Nothing
+      else Just <$> parseDecimal t
 
 formLimit :: Int
 formLimit =
@@ -364,15 +387,16 @@ drainLimit =
   1048576
 
 {- | Reads an urlencoded form of at most 16 KiB; a larger body answers 413
-after being drained up to 1 MiB so the client can read the response.
+after being drained up to 1 MiB so the client can read the response. A body that
+is not an UTF-8 form reads as an empty form (every operator form refuses it).
 -}
-withForm :: Wai.Request -> ([(BS.ByteString, BS.ByteString)] -> IO Wai.Response) -> IO Wai.Response
+withForm :: Wai.Request -> (Form -> IO Wai.Response) -> IO Wai.Response
 withForm request action =
   let
     collect size chunks = do
       chunk <- Wai.getRequestBodyChunk request
       if BS.null chunk
-        then action (HTTP.parseSimpleQuery (BS.concat (L.reverse chunks)))
+        then action (fromMaybe Map.empty (readForm (BS.concat (L.reverse chunks))))
         else
           let
             size' = size + BS.length chunk
@@ -402,12 +426,16 @@ withSession db request action =
       , (name, value) <- Cookie.parseCookies header
       , name == sessionCookieName
       ]
+    token =
+      case cookies of
+        [value] -> either (const Nothing) decodeToken (TE.decodeUtf8' value)
+        _ -> Nothing
   in
-    case (db, singleValue cookies >>= decodeText) of
-      (Just runtime, Just token) -> do
-        found <- lookupSession runtime token
+    case (db, token) of
+      (Just runtime, Just t) -> do
+        found <- lookupSession runtime t
         case found of
-          Just session -> action runtime token session
+          Just session -> action runtime t session
           Nothing -> pure (refusal HTTP.status401 signedOutPage)
       _ ->
         pure (refusal HTTP.status401 signedOutPage)
@@ -423,6 +451,10 @@ escapedValue =
   -- Brigid's custom-attribute escaper encodes quotes; ampersands are encoded here.
   A.customAttribute (T.pack "value") . T.replace (T.pack "&") (T.pack "&amp;")
 
+hiddenField :: B.Name -> T.Text -> E.ChildHTML E.Form grandparent
+hiddenField name value =
+  E.input [A.type_ HTML.InputHidden, A.name name, escapedValue value]
+
 confirmPage :: RawToken -> E.HTML
 confirmPage token =
   page
@@ -437,12 +469,8 @@ confirmPage token =
             , E.text [Interpolate.i|. Confirm to start an operator session in this browser. If you did not run that command, close this page.|]
             ]
         , E.form
-            [A.method B.FormPOST, A.action (B.mkRawURL [Interpolate.i|/operator/sign-in|])]
-            [ E.input
-                [ A.type_ HTML.InputHidden
-                , A.customAttribute [Interpolate.i|name|] [Interpolate.i|token|]
-                , escapedValue (encodeToken token)
-                ]
+            [A.method B.FormPOST, A.action signInAction]
+            [ hiddenField tokenField (encodeToken token)
             , E.button [] [E.text [Interpolate.i|Sign in|]]
             ]
         ]
@@ -462,19 +490,15 @@ operatorPage token session workspace key =
             , E.text [Interpolate.i|.|]
             ]
         , E.form
-            [A.method B.FormPOST, A.action (B.mkRawURL [Interpolate.i|/operator/sign-out|])]
-            [ E.input
-                [ A.type_ HTML.InputHidden
-                , A.customAttribute [Interpolate.i|name|] [Interpolate.i|csrf|]
-                , escapedValue (csrfFor token)
-                ]
+            [A.method B.FormPOST, A.action signOutAction]
+            [ hiddenField csrfField (csrfFor token)
             , E.button [] [E.text [Interpolate.i|Sign out|]]
             ]
         , E.h2 [] [E.text [Interpolate.i|Workspace|]]
         , workspaceSection token workspace key
-        , E.p [] [E.a [A.href (B.mkRawURL [Interpolate.i|/operator/center|])] [E.text [Interpolate.i|Command center: status, activity and evidence|]]]
+        , E.p [] [E.a [A.href centerLink] [E.text [Interpolate.i|Command center: status, activity and evidence|]]]
         , E.h2 [] [E.text [Interpolate.i|Background jobs|]]
-        , E.p [] [E.a [A.href (B.mkRawURL [Interpolate.i|/operator/jobs/new|])] [E.text [Interpolate.i|Queue a no-op job|]]]
+        , E.p [] [E.a [A.href queueFormLink] [E.text [Interpolate.i|Queue a no-op job|]]]
         ]
     ]
 
@@ -492,16 +516,16 @@ queuePage token workspace key =
               E.p [] [E.text [Interpolate.i|Unavailable: the database is not ready.|]]
             Just current ->
               E.form
-                [A.method B.FormPOST, A.action (B.mkRawURL [Interpolate.i|/operator/commands/queue-noop|])]
-                [ numberField (T.pack "Steps (1-20) ") (T.pack "steps") (T.pack "3")
-                , numberField (T.pack "Milliseconds per step (0-5000) ") (T.pack "step_ms") (T.pack "100")
-                , numberField (T.pack "Fail at step (empty for none) ") (T.pack "fail_at_step") T.empty
-                , hiddenField (T.pack "expected_revision") (T.pack (show (revisionInt (workspaceRevision current))))
-                , hiddenField (T.pack "idempotency_key") (idempotencyKeyText key)
-                , hiddenField (T.pack "csrf") (csrfFor token)
+                [A.method B.FormPOST, A.action queueAction]
+                [ numberField (T.pack "Steps (1-20) ") stepsField (T.pack "3")
+                , numberField (T.pack "Milliseconds per step (0-5000) ") stepMsField (T.pack "100")
+                , numberField (T.pack "Fail at step (empty for none) ") failAtStepField T.empty
+                , hiddenField expectedRevisionField (T.pack (show (revisionInt (workspaceRevision current))))
+                , hiddenField idempotencyKeyField (idempotencyKeyText key)
+                , hiddenField csrfField (csrfFor token)
                 , E.button [] [E.text [Interpolate.i|Queue|]]
                 ]
-        , E.p [] [E.a [A.href (B.mkRawURL [Interpolate.i|/operator|])] [E.text [Interpolate.i|Back to the operator page|]]]
+        , E.p [] [E.a [A.href operatorHomeLink] [E.text [Interpolate.i|Back to the operator page|]]]
         ]
     ]
  where
@@ -509,10 +533,8 @@ queuePage token workspace key =
     E.label
       []
       [ E.text label
-      , E.input [A.type_ HTML.InputText, A.customAttribute [Interpolate.i|name|] name, escapedValue value]
+      , E.input [A.type_ HTML.InputText, A.name name, escapedValue value]
       ]
-  hiddenField name value =
-    E.input [A.type_ HTML.InputHidden, A.customAttribute [Interpolate.i|name|] name, escapedValue value]
 
 workspaceSection :: RawToken -> Maybe WorkspaceState -> IdempotencyKey -> E.ChildHTML E.Main grandparent
 workspaceSection token workspace key =
@@ -521,7 +543,7 @@ workspaceSection token workspace key =
       E.p [] [E.text [Interpolate.i|The workspace is unavailable: the database is not ready.|]]
     Just current ->
       E.form
-        [A.method B.FormPOST, A.action (B.mkRawURL [Interpolate.i|/operator/commands/rename-workspace|])]
+        [A.method B.FormPOST, A.action renameAction]
         [ E.p
             []
             [ E.text [Interpolate.i|Name: |]
@@ -535,25 +557,13 @@ workspaceSection token workspace key =
             [ E.text [Interpolate.i|New name |]
             , E.input
                 [ A.type_ HTML.InputText
-                , A.customAttribute [Interpolate.i|name|] [Interpolate.i|name|]
+                , A.name nameField
                 , escapedValue (workspaceName current)
                 ]
             ]
-        , E.input
-            [ A.type_ HTML.InputHidden
-            , A.customAttribute [Interpolate.i|name|] [Interpolate.i|expected_revision|]
-            , escapedValue (T.pack (show (revisionInt (workspaceRevision current))))
-            ]
-        , E.input
-            [ A.type_ HTML.InputHidden
-            , A.customAttribute [Interpolate.i|name|] [Interpolate.i|idempotency_key|]
-            , escapedValue (idempotencyKeyText key)
-            ]
-        , E.input
-            [ A.type_ HTML.InputHidden
-            , A.customAttribute [Interpolate.i|name|] [Interpolate.i|csrf|]
-            , escapedValue (csrfFor token)
-            ]
+        , hiddenField expectedRevisionField (T.pack (show (revisionInt (workspaceRevision current))))
+        , hiddenField idempotencyKeyField (idempotencyKeyText key)
+        , hiddenField csrfField (csrfFor token)
         , E.button [] [E.text [Interpolate.i|Rename|]]
         ]
 
@@ -579,7 +589,7 @@ receiptPage receipt job =
                   <> fact "Idempotency key" (receiptKey receipt)
                   <> foldMap jobFacts job
               )
-          , E.p [] [E.a [A.href (B.mkRawURL [Interpolate.i|/operator|])] [E.text [Interpolate.i|Back to the operator page|]]]
+          , E.p [] [E.a [A.href operatorHomeLink] [E.text [Interpolate.i|Back to the operator page|]]]
           ]
       ]
  where

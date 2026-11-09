@@ -240,3 +240,36 @@ message text; `Effects/Git.hs` ~218 matches git's messages — both predate this
 wording. `Conversation.postMessage` still answers `integrity` as a code when a stored request does not rebuild; the
 text state literal `active` in `runnableIntentIds`; integer `show` in canonical texts (a fixed decimal format); no
 end-to-end test of a corrupt intent through `executeOnce` (the setup of an order with intents in the compliance suite).
+
+## Increment E — typed web architecture (working tree over `867080c`, not committed)
+
+- **E1 routing**: one Beeline route tree per area, each a Shrubbery `Union` of route types with every path defined
+  once as a builder polymorphic in the router and used both to recognise requests (`R.RouteRecognizer`) and to
+  generate the links (`B.get` / `B.post`): `Web/Routes/App.hs` (pages → shell, fragments, actions; subrouters),
+  `Web/Routes/Operator.hs`, `Web/Routes/Control.hs` (each API path also yields its OPTIONS preflight). Typed path
+  parameters in `Web/Routes/Params.hs` (`R.convertParam` over the Kernel's `parseIdentity`; `ReceiptId`; the pane's
+  `RequestId`; sections and the pane's two assets as `boundedEnumParam`). Dispatch is `Shrubbery.dissect` over the
+  union in `Web/App.hs`, `Web/Operator.hs`, `Web/Control.hs`; the three `case pathInfo` routers and `validId` are gone.
+  The two-kind decision address (`/app/decisions/<uuid>`, pinned) is a `DecisionKey` built only from a `WorkOrderId`
+  (`stoppedWorkKey`) or an `OperationId` (`unknownOutcomeKey`); the request's kind comes from the typed
+  `DecisionChoice` checked against the open decision (`choiceFits`), never from a string.
+- **E3 validation**: `Web/Validation.hs` (Artificer/Launchpad applicative `Validator`, errors accumulated per field)
+  over `Orb.Form` read by `Web/Form.hs` (strict UTF-8, values in order; `Orb.getForm` is not used: it decodes with a
+  partial decoder and throws on invalid UTF-8); field names declared once in `Web/Fields.hs` and used by the pages'
+  `A.name` and the validators. Every `/app` and `/operator` form reads through validators (typed `IdempotencyKey`,
+  `FolderChoice`, `Priority`, `ExpectedChecks`, `TaskAction`, `DecisionChoice`, ranged decimals, the sign-in token).
+- **E4 rendering**: every internal link and form action is a typed URL from the routes (no `/app` or `/operator`
+  literal left in pages); ids, names and `for` through `B.Id` / `B.Name` (`Fragment.elementId`) where the id is made of
+  fixed words or a canonical identity (ids made from stored text stay the escaping `attr`); `value` stays escaped
+  (`attr`, `Operator.escapedValue`: Brigid 0.4 writes attribute values unescaped). The session cookie through
+  `Web.Cookie.renderSetCookieBS`. `ProjectView.projectKey`, `TaskView.taskKey`/`taskProjectKey`,
+  `TransactionView.viewKey` carry the typed identities beside the pinned text fields, so no page parses view text back.
+- **E2 / E5 not done (frozen conflicts, amendment request in the completion packet)**: see the Increment E report.
+- Behaviour changes (all on malformed input): an `/app` form that is not UTF-8 or repeats a single-valued field is
+  "could not read this form" (was decoded leniently / first value taken); an operator receipt address that is not a
+  receipt number is unrouted (404 before the guard and the session; was 401 without a session); an OPTIONS on
+  `/api/handover/<x>` or `/api/requests/<x>` with a malformed id is 404 (was 405); the `Set-Cookie` attribute order is
+  the cookie library's (`Path=/; Max-Age=…; HttpOnly; SameSite=Strict`).
+- Evidence: compliance `WebTest` (each generated link at its frozen address and recognised with its guard class; the
+  decision key for both kinds; non-canonical ids, wrong methods and bad receipt numbers unrouted; strict UTF-8; errors
+  accumulated per field name).

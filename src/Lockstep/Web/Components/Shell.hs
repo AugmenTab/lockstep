@@ -26,6 +26,7 @@ import Data.ByteString.Lazy qualified as LBS
 import Flipstone.Prelude
 import Ogma qualified
 
+import Lockstep.Web.Fragment (elementId)
 import Lockstep.Web.Static qualified as Static
 
 -- | The shell as a document (Brigid writes the doctype).
@@ -50,7 +51,7 @@ controlShell =
 container :: E.ChildHTML E.Body E.Html
 container =
   E.main
-    [A.customAttribute "id" "app", A.class_ (HTML.Class "control-main"), A.customAttribute "aria-live" "polite"]
+    [A.id (elementId 'a' "pp"), A.class_ (HTML.Class "control-main"), A.customAttribute "aria-live" "polite"]
     [E.p [] [E.text "Opening Lockstep\8230"]]
 
 noScriptNotice :: E.ChildHTML E.Body E.Html

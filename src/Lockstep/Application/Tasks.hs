@@ -97,6 +97,9 @@ data TaskView
   , taskReadinessOf :: TaskReadiness
   , taskRevision :: Int64
   , taskTicketRevision :: Int
+  , taskKey :: TaskId
+  -- ^ The typed identities 'taskId' and 'taskProject' are the text of (frozen-test boundaries).
+  , taskProjectKey :: ProjectId
   }
   deriving (Eq, Show)
 
@@ -146,7 +149,9 @@ loadView row = do
     dependencyFacts <- traverse (fmap (\(s, _, _, title) -> DependencyFact title s)) dependencies
     pure
       TaskView
-        { taskId = identityText (Store.rowTaskId row)
+        { taskKey = Store.rowTaskId row
+        , taskProjectKey = Store.rowProjectId row
+        , taskId = identityText (Store.rowTaskId row)
         , taskProject = identityText (Store.rowProjectId row)
         , taskTitle = Store.rowTitle row
         , taskAcceptance = Store.rowAcceptance row

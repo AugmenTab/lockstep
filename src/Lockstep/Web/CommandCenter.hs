@@ -14,7 +14,6 @@ import Brigid.HTML.Attributes qualified as A
 import Brigid.HTML.Elements qualified as E
 import Brigid.HTML.Render.ByteString (renderLazyHTML)
 import Brigid.HTML.Types qualified as HTML
-import Brigid.Types qualified as B
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import Data.Maybe (fromMaybe)
@@ -40,6 +39,7 @@ import Lockstep.Foundation.EvidenceModel
   )
 import Lockstep.Kernel.Identity (receiptIdNumber)
 import Lockstep.Web.Components.Page (page)
+import Lockstep.Web.Routes.Operator qualified as Operator
 
 data MatrixRow
   = MatrixRow
@@ -117,11 +117,11 @@ commandCenterPage center =
           , E.p
               []
               [ E.text (txt "Read from the database when this page was rendered. ")
-              , E.a [A.href (B.mkRawURL (txt "/operator/center"))] [E.text (txt "Refresh")]
+              , E.a [A.href Operator.centerLink] [E.text (txt "Refresh")]
               , E.text (txt " · ")
-              , E.a [A.href (B.mkRawURL (txt "/operator"))] [E.text (txt "Rename the workspace")]
+              , E.a [A.href Operator.operatorHomeLink] [E.text (txt "Rename the workspace")]
               , E.text (txt " · ")
-              , E.a [A.href (B.mkRawURL (txt "/operator/jobs/new"))] [E.text (txt "Queue a no-op job")]
+              , E.a [A.href Operator.queueFormLink] [E.text (txt "Queue a no-op job")]
               ]
           ]
             <> body center
@@ -185,7 +185,7 @@ activityTable rows =
             []
             [ E.th
                 [custom "scope" (txt "row")]
-                [E.a [A.href (B.mkRawURL (T.pack ("/operator/receipts/" <> show (receiptIdNumber (activityReceipt r)))))] [E.text (T.pack (show (receiptIdNumber (activityReceipt r))))]]
+                [E.a [A.href (Operator.receiptLink (activityReceipt r))] [E.text (T.pack (show (receiptIdNumber (activityReceipt r))))]]
             , E.td [] [E.text (activityKind r)]
             , E.td [] [E.code [] [E.text (activityOutcome r)]]
             , E.td [] [E.text (T.pack (show (activityRevision r)))]

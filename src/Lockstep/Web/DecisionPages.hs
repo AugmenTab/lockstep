@@ -11,6 +11,11 @@ module Lockstep.Web.DecisionPages
   ( decisionsOverview
   , decisionPage
   , donePage
+  , DecisionChoice (..)
+  , decisionChoiceCode
+  , choiceFits
+  , decisionRequest
+  , openDecisionKey
   ) where
 
 import Brigid.HTML.Attributes qualified as A
@@ -24,9 +29,64 @@ import Flipstone.Prelude
 import Text.Show (show)
 
 import Lockstep.Application.Decisions (DecisionReceipt (..), OpenDecision (..), StoppedFacts (..), UnknownFacts (..), decisionId)
-import Lockstep.Kernel.Decision (choiceWords)
+import Lockstep.Kernel.Decision (DecisionRequest (..), choiceWords)
 import Lockstep.Kernel.Identity (WorkOrderId (..), uuidText)
-import Lockstep.Web.Fragment (attr, cls, fragment, href)
+import Lockstep.Web.Fields (acknowledgeField, choiceField, expectedField, keyField, textField)
+import Lockstep.Web.Fragment (attr, cls, elementId, fragment)
+import Lockstep.Web.Routes.App (Section (Decisions), decideAction, decisionLink, sectionLink)
+import Lockstep.Web.Routes.Params (DecisionKey, decisionOperation, decisionWorkOrder, stoppedWorkKey, unknownOutcomeKey)
+
+{- | A person's answer to a decision (C-P3.8 M6), spelled as the form's
+@choice@ value. Stopped work is put back or canceled; an unknown outcome gets the
+other four.
+-}
+data DecisionChoice
+  = ChoosePutBack
+  | ChooseCancel
+  | ChooseHappened
+  | ChooseDidNotHappen
+  | ChooseTryAgain
+  | ChooseGiveUp
+  deriving (Eq, Enum, Bounded)
+
+decisionChoiceCode :: DecisionChoice -> T.Text
+decisionChoiceCode choice =
+  case choice of
+    ChoosePutBack -> "put-back"
+    ChooseCancel -> "cancel"
+    ChooseHappened -> "happened"
+    ChooseDidNotHappen -> "did-not-happen"
+    ChooseTryAgain -> "try-again"
+    ChooseGiveUp -> "give-up"
+
+-- | The address of an open decision: its work order, or its operation.
+openDecisionKey :: OpenDecision -> DecisionKey
+openDecisionKey decision =
+  case decision of
+    StoppedWork s -> stoppedWorkKey (stoppedOrder s)
+    UnknownOutcome u -> unknownOutcomeKey (unknownOperation u)
+
+-- | A choice belongs to its open decision.
+choiceFits :: DecisionChoice -> OpenDecision -> Bool
+choiceFits choice decision =
+  choice `L.elem` choicesFor decision
+
+{- | The request a choice makes about the decision at @key@: a stopped-work
+choice names a work order, an unknown-outcome choice an operation.
+-}
+decisionRequest :: DecisionChoice -> DecisionKey -> Int -> T.Text -> Bool -> DecisionRequest
+decisionRequest choice key expected text acknowledged =
+  case choice of
+    ChoosePutBack -> PutBackInLine (decisionWorkOrder key) expected
+    ChooseCancel -> CancelWork (decisionWorkOrder key) expected
+    ChooseHappened -> ItHappened (decisionOperation key) expected text
+    ChooseDidNotHappen -> ItDidNotHappen (decisionOperation key) expected text
+    ChooseTryAgain -> TryAgain (decisionOperation key) expected acknowledged
+    ChooseGiveUp -> GiveUp (decisionOperation key) expected text acknowledged
+
+backToDecisions :: E.ChildHTML E.Division E.Body
+backToDecisions =
+  E.p [] [E.a [A.href (sectionLink Decisions), A.id (elementId 'b' "ack-to-decisions")] [E.text "Back to Decisions"]]
 
 askWords :: OpenDecision -> T.Text
 askWords decision =
@@ -51,17 +111,17 @@ decisionsOverview open =
         Just ds ->
           E.ul
             [cls "ls-projects"]
-            [ E.li [] [E.a [href ("/app/decisions/" <> decisionId d)] [E.text (titleOf d)], E.text (" \8212 " <> askWords d)]
+            [ E.li [] [E.a [A.href (decisionLink (openDecisionKey d))] [E.text (titleOf d)], E.text (" \8212 " <> askWords d)]
             | d <- ds
             ]
     , E.p [cls "ls-muted"] [E.text "Approving work Lockstep does, signing finished work off and confirming changed checks arrive in a later update of Lockstep."]
     ]
 
-choicesFor :: OpenDecision -> [T.Text]
+choicesFor :: OpenDecision -> [DecisionChoice]
 choicesFor decision =
   case decision of
-    StoppedWork _ -> ["put-back", "cancel"]
-    UnknownOutcome _ -> ["happened", "did-not-happen", "try-again", "give-up"]
+    StoppedWork _ -> [ChoosePutBack, ChooseCancel]
+    UnknownOutcome _ -> [ChooseHappened, ChooseDidNotHappen, ChooseTryAgain, ChooseGiveUp]
 
 expectedOf :: OpenDecision -> Int
 expectedOf decision =
@@ -73,16 +133,20 @@ decisionPage :: OpenDecision -> T.Text -> Maybe T.Text -> LBS.ByteString
 decisionPage decision key notice =
   let
     subject = decisionId decision
-    choice name =
+    choice c =
       let
+        name = decisionChoiceCode c
         (label, consequence) = choiceWords name
+        choiceId = elementId 'c' ("hoice-" <> name)
       in
         E.div
           [cls "ls-choice"]
-          [ E.input [A.type_ HTML.InputRadio, attr "id" ("choice-" <> name), attr "name" "choice", attr "value" name]
-          , E.label [attr "for" ("choice-" <> name)] [E.text label]
+          [ E.input [A.type_ HTML.InputRadio, A.id choiceId, A.name choiceField, attr "value" name]
+          , E.label [A.for choiceId] [E.text label]
           , E.p [cls "ls-muted"] [E.text consequence]
           ]
+    textId = elementId 'd' "ecision-text"
+    acknowledgeId = elementId 'a' "cknowledge"
     story =
       case decision of
         StoppedWork s ->
@@ -99,13 +163,13 @@ decisionPage decision key notice =
         UnknownOutcome _ ->
           [ E.div
               [cls "ls-field"]
-              [ E.label [attr "for" "decision-text"] [E.text "What did you see, or why? (needed for It happened, It did not happen and Give up on it)"]
-              , E.textarea [attr "id" "decision-text", attr "name" "text", attr "rows" "3", attr "maxlength" "500"] ""
+              [ E.label [A.for textId] [E.text "What did you see, or why? (needed for It happened, It did not happen and Give up on it)"]
+              , E.textarea [A.id textId, A.name textField, attr "rows" "3", attr "maxlength" "500"] ""
               ]
           , E.div
               [cls "ls-choice"]
-              [ E.input [A.type_ HTML.InputCheckbox, attr "id" "acknowledge", attr "name" "acknowledge", attr "value" "yes"]
-              , E.label [attr "for" "acknowledge"] [E.text "I understand the step may already have happened, and could happen twice if it is tried again."]
+              [ E.input [A.type_ HTML.InputCheckbox, A.id acknowledgeId, A.name acknowledgeField, attr "value" "yes"]
+              , E.label [A.for acknowledgeId] [E.text "I understand the step may already have happened, and could happen twice if it is tried again."]
               ]
           ]
     facts =
@@ -135,16 +199,16 @@ decisionPage decision key notice =
         <> story
         <> [ E.h2 [] [E.text "What do you want to do?"]
            , E.form
-               [attr "id" "decision-form", A.method B.FormPOST, A.action (B.mkRawURL ("/app/api/decisions/" <> subject))]
-               ( [ E.input [A.type_ HTML.InputHidden, attr "name" "key", attr "value" key]
-                 , E.input [A.type_ HTML.InputHidden, attr "name" "expected", attr "value" (T.pack (show (expectedOf decision)))]
+               [A.id (elementId 'd' "ecision-form"), A.method B.FormPOST, A.action (decideAction (openDecisionKey decision))]
+               ( [ E.input [A.type_ HTML.InputHidden, A.name keyField, attr "value" key]
+                 , E.input [A.type_ HTML.InputHidden, A.name expectedField, attr "value" (T.pack (show (expectedOf decision)))]
                  , E.fieldset [] (E.legend [] [E.text "Your answer"] : fmap choice (choicesFor decision))
                  ]
                    <> extras
-                   <> [E.button [attr "id" "decide", attr "type" "submit", cls "ls-primary"] [E.text "Record my decision"]]
+                   <> [E.button [A.id (elementId 'd' "ecide"), attr "type" "submit", cls "ls-primary"] [E.text "Record my decision"]]
                )
            , E.details [] [E.summary [] [E.text "Technical details"], E.dl [cls "ls-facts"] facts]
-           , E.p [] [E.a [href "/app/decisions", attr "id" "back-to-decisions"] [E.text "Back to Decisions"]]
+           , backToDecisions
            ]
 
 {- | What was recorded; also the page of a decision that is no longer open. A
@@ -182,5 +246,5 @@ donePage receipt notice =
                    , E.dd [] [E.code [] [E.text (receiptSubject receipt <> " " <> receiptChoice receipt <> " expected=" <> T.pack (show (receiptExpected receipt)) <> " " <> receiptOutcome receipt)]]
                    ]
                ]
-           , E.p [] [E.a [href "/app/decisions", attr "id" "back-to-decisions"] [E.text "Back to Decisions"]]
+           , backToDecisions
            ]

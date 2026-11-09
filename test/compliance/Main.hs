@@ -12,6 +12,7 @@ import Lockstep.Compliance.JsonTest qualified as JsonTest
 import Lockstep.Compliance.NegativeTypesTest qualified as NegativeTypesTest
 import Lockstep.Compliance.PersistenceTest qualified as PersistenceTest
 import Lockstep.Compliance.StateTest qualified as StateTest
+import Lockstep.Compliance.WebTest qualified as WebTest
 
 main :: IO ()
 main =
@@ -25,4 +26,5 @@ main =
       , NegativeTypesTest.tests
       , StateTest.tests
       , FailureTest.tests
+      , WebTest.tests
       ]

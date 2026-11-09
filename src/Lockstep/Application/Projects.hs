@@ -111,13 +111,16 @@ data ProjectView
   , projectFolder :: Maybe T.Text
   , projectEngineer :: Maybe T.Text
   , projectRevision :: Int64
+  , projectKey :: ProjectId
+  -- ^ The typed identity 'projectId' is the text of (the text field is a frozen-test boundary).
   }
   deriving (Eq, Show)
 
 viewOf :: Store.ProjectRow -> ProjectView
 viewOf row =
   ProjectView
-    { projectId = identityText (Store.rowId row)
+    { projectKey = Store.rowId row
+    , projectId = identityText (Store.rowId row)
     , projectName = Store.rowName row
     , projectOutcome = Store.rowOutcome row
     , projectSetup = Store.rowSetup row

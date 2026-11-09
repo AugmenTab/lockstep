@@ -150,6 +150,8 @@ library
       Lockstep.Web.Control
       Lockstep.Web.DecisionPages
       Lockstep.Web.ExecutionPages
+      Lockstep.Web.Fields
+      Lockstep.Web.Form
       Lockstep.Web.Fragment
       Lockstep.Web.Handler.NoPermissionError
       Lockstep.Web.Handler.NoUser
@@ -161,11 +163,16 @@ library
       Lockstep.Web.Readiness
       Lockstep.Web.RequestGuard
       Lockstep.Web.Routes
+      Lockstep.Web.Routes.App
+      Lockstep.Web.Routes.Control
+      Lockstep.Web.Routes.Operator
+      Lockstep.Web.Routes.Params
       Lockstep.Web.SecureResponse
       Lockstep.Web.Server
       Lockstep.Web.Static
       Lockstep.Web.TaskPages
       Lockstep.Web.Types
+      Lockstep.Web.Validation
   other-modules:
       Paths_lockstep
   autogen-modules:
@@ -193,6 +200,7 @@ library
     , json-fleece-core
     , memory
     , mtl
+    , non-empty-text
     , ogma
     , orb
     , orville-postgresql
@@ -241,6 +249,7 @@ test-suite lockstep-compliance
       Lockstep.Compliance.PersistenceTest
       Lockstep.Compliance.StateTest
       Lockstep.Compliance.Support
+      Lockstep.Compliance.WebTest
   hs-source-dirs:
       test/compliance
   default-extensions:
@@ -248,11 +257,13 @@ test-suite lockstep-compliance
   ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T -fplugin-opt=Henforcer:--config=henforcer-tests.toml
   build-depends:
       base
+    , brigid
     , bytestring
     , containers
     , crypton
     , flipstone-prelude
     , henforcer
+    , http-types
     , json-fleece-aeson
     , lockstep
     , memory

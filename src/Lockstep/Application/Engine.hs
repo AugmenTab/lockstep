@@ -210,6 +210,8 @@ data TransactionView
   , viewAttempts :: Int
   , viewRecords :: [RecordView]
   , viewInvocations :: [InvocationView]
+  , viewKey :: TransactionId
+  -- ^ The typed identity 'viewId' is the text of (the text field is a frozen-test boundary).
   }
   deriving (Eq, Show)
 
@@ -262,7 +264,8 @@ lastStage =
 viewOf :: Store.TransactionRow -> [Store.RecordRow] -> [Store.InvocationRow] -> TransactionView
 viewOf row records invocations =
   TransactionView
-    { viewId = identityText (Store.txRowId row)
+    { viewKey = Store.txRowId row
+    , viewId = identityText (Store.txRowId row)
     , viewWorkOrder = identityText (Store.txRowWorkOrder row)
     , viewTask = Store.txRowTask row
     , viewEngineer = Store.txRowEngineer row

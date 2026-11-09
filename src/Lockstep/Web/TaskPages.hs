@@ -8,6 +8,8 @@ ordinary path; the exact ids, states and revisions are under Technical details.
 module Lockstep.Web.TaskPages
   ( TaskForm (..)
   , emptyTaskForm
+  , TaskAction (..)
+  , taskActionCode
   , newTaskPage
   , taskPage
   , projectTasks
@@ -27,7 +29,29 @@ import Text.Show (show)
 import Lockstep.Application.Projects (ProjectView (..))
 import Lockstep.Application.Tasks (TaskView (..), mostImportantReadyTask)
 import Lockstep.Kernel.Task (Priority (..), TaskReadiness (..), TaskState (..), parseTaskState, priorityCode, priorityOf, priorityWords, readinessWords)
-import Lockstep.Web.Fragment (attr, cls, fragment, href)
+import Lockstep.Web.Fields (acceptanceField, actionField, dependsOnField, keyField, priorityField, reasonField, revisionField, ticketRevisionField, titleField)
+import Lockstep.Web.Fragment (attr, cls, elementId, fragment)
+import Lockstep.Web.Routes.App (Section (Projects), createTaskAction, decideTaskAction, editTaskAction, newTaskLink, projectLink, sectionLink, taskLink)
+
+-- | What a task's state lets a person do (C-P3.6 K7), spelled as the form's @action@ value.
+data TaskAction
+  = ActionReady
+  | ActionBlock
+  | ActionUnblock
+  | ActionCancel
+  deriving (Eq, Enum, Bounded)
+
+taskActionCode :: TaskAction -> T.Text
+taskActionCode action =
+  case action of
+    ActionReady -> "ready"
+    ActionBlock -> "block"
+    ActionUnblock -> "unblock"
+    ActionCancel -> "cancel"
+
+backToProject :: ProjectView -> E.ChildHTML E.Division E.Body
+backToProject project =
+  E.p [] [E.a [A.href (projectLink (projectKey project)), A.id (elementId 'b' "ack-to-project")] [E.text ("Back to " <> projectName project)]]
 
 -- | What a task form shows: the values typed (or stored) and the creation key.
 data TaskForm
@@ -56,15 +80,17 @@ priorityChoices selected =
               [cls "ls-choice"]
               [ E.input
                   ( [ A.type_ HTML.InputRadio
-                    , attr "id" ("priority-" <> priorityCode p)
-                    , attr "name" "priority"
+                    , A.id choiceId
+                    , A.name priorityField
                     , attr "value" (priorityCode p)
                     ]
                       <> [attr "checked" "checked" | priorityCode p == selected]
                   )
-              , E.label [attr "for" ("priority-" <> priorityCode p)] [E.text (priorityWords p)]
+              , E.label [A.for choiceId] [E.text (priorityWords p)]
               ]
           | p <- [High, Normal, Low]
+          , let
+              choiceId = elementId 'p' ("riority-" <> priorityCode p)
           ]
     )
 
@@ -80,15 +106,18 @@ dependencyChoices candidates selected =
                 [cls "ls-choice"]
                 [ E.input
                     ( [ A.type_ HTML.InputCheckbox
-                      , attr "id" ("depends-" <> taskId t)
-                      , attr "name" "depends_on"
+                      , A.id dependencyId
+                      , A.name dependsOnField
                       , attr "value" (taskId t)
                       ]
                         <> [attr "checked" "checked" | taskId t `L.elem` selected]
                     )
-                , E.label [attr "for" ("depends-" <> taskId t)] [E.text (taskTitle t)]
+                , E.label [A.for dependencyId] [E.text (taskTitle t)]
                 ]
             | t <- candidates
+            , let
+                -- A task id is a canonical UUID: nothing in it needs escaping.
+                dependencyId = elementId 'd' ("epends-" <> taskId t)
             ]
     )
 
@@ -96,17 +125,20 @@ taskFields :: TaskForm -> [TaskView] -> [E.ChildHTML E.Form E.Division]
 taskFields form candidates =
   [ E.div
       [cls "ls-field"]
-      [ E.label [attr "for" "task-title"] [E.text "What needs doing"]
-      , E.input [A.type_ HTML.InputText, attr "id" "task-title", attr "name" "title", attr "value" (formTaskTitle form), attr "maxlength" "200", attr "required" "required"]
+      [ E.label [A.for titleId] [E.text "What needs doing"]
+      , E.input [A.type_ HTML.InputText, A.id titleId, A.name titleField, attr "value" (formTaskTitle form), attr "maxlength" "200", attr "required" "required"]
       ]
   , E.div
       [cls "ls-field"]
-      [ E.label [attr "for" "task-acceptance"] [E.text "What does done look like?"]
-      , E.textarea [attr "id" "task-acceptance", attr "name" "acceptance", attr "rows" "4", attr "maxlength" "4000"] (formTaskAcceptance form)
+      [ E.label [A.for acceptanceId] [E.text "What does done look like?"]
+      , E.textarea [A.id acceptanceId, A.name acceptanceField, attr "rows" "4", attr "maxlength" "4000"] (formTaskAcceptance form)
       ]
   , priorityChoices (formTaskPriority form)
   , dependencyChoices candidates (formTaskDependencies form)
   ]
+ where
+  titleId = elementId 't' "ask-title"
+  acceptanceId = elementId 't' "ask-acceptance"
 
 newTaskPage :: ProjectView -> [TaskView] -> TaskForm -> Maybe T.Text -> LBS.ByteString
 newTaskPage project others form notice =
@@ -116,12 +148,12 @@ newTaskPage project others form notice =
     ]
       <> notices notice
       <> [ E.form
-             [attr "id" "task-form", A.method B.FormPOST, A.action (B.mkRawURL ("/app/api/projects/" <> projectId project <> "/tasks"))]
-             ( [E.input [A.type_ HTML.InputHidden, attr "name" "key", attr "value" (formTaskKey form)]]
+             [A.id (elementId 't' "ask-form"), A.method B.FormPOST, A.action (createTaskAction (projectKey project))]
+             ( [E.input [A.type_ HTML.InputHidden, A.name keyField, attr "value" (formTaskKey form)]]
                  <> taskFields form others
-                 <> [E.button [attr "id" "create-task", attr "type" "submit", cls "ls-primary"] [E.text "Add task"]]
+                 <> [E.button [A.id (elementId 'c' "reate-task"), attr "type" "submit", cls "ls-primary"] [E.text "Add task"]]
              )
-         , E.p [] [E.a [href ("/app/projects/" <> projectId project), attr "id" "back-to-project"] [E.text ("Back to " <> projectName project)]]
+         , backToProject project
          ]
 
 -- | The forms for the actions the task's state allows.
@@ -130,23 +162,24 @@ actions task =
   let
     decide extra label buttonId =
       E.form
-        [A.method B.FormPOST, A.action (B.mkRawURL ("/app/api/tasks/" <> taskId task <> "/decide")), cls "ls-inline-form"]
-        ( [E.input [A.type_ HTML.InputHidden, attr "name" "ticket_revision", attr "value" (T.pack (show (taskTicketRevision task)))]]
+        [A.method B.FormPOST, A.action (decideTaskAction (taskKey task)), cls "ls-inline-form"]
+        ( [E.input [A.type_ HTML.InputHidden, A.name ticketRevisionField, attr "value" (T.pack (show (taskTicketRevision task)))]]
             <> extra
-            <> [E.button [attr "id" buttonId, attr "type" "submit"] [E.text label]]
+            <> [E.button [A.id buttonId, attr "type" "submit"] [E.text label]]
         )
-    action value = E.input [A.type_ HTML.InputHidden, attr "name" "action", attr "value" value]
-    ready = decide [action "ready"] "Mark as ready to work on" "task-ready"
+    action value = E.input [A.type_ HTML.InputHidden, A.name actionField, attr "value" (taskActionCode value)]
+    reasonId = elementId 'b' "lock-reason"
+    ready = decide [action ActionReady] "Mark as ready to work on" (elementId 't' "ask-ready")
     block =
       decide
-        [ action "block"
-        , E.label [attr "for" "block-reason", cls "ls-label"] [E.text "Why is it blocked?"]
-        , E.input [A.type_ HTML.InputText, attr "id" "block-reason", attr "name" "reason", attr "maxlength" "200"]
+        [ action ActionBlock
+        , E.label [A.for reasonId, cls "ls-label"] [E.text "Why is it blocked?"]
+        , E.input [A.type_ HTML.InputText, A.id reasonId, A.name reasonField, attr "maxlength" "200"]
         ]
         "Block…"
-        "task-block"
-    unblock = decide [action "unblock"] "Unblock" "task-unblock"
-    cancel = decide [action "cancel"] "Cancel task…" "task-cancel"
+        (elementId 't' "ask-block")
+    unblock = decide [action ActionUnblock] "Unblock" (elementId 't' "ask-unblock")
+    cancel = decide [action ActionCancel] "Cancel task…" (elementId 't' "ask-cancel")
   in
     -- The view carries the state's name; it is read once here. A name no state has offers nothing.
     case parseTaskState (taskState task) of
@@ -190,10 +223,10 @@ taskPage project siblings task underWay fixing notice =
                then
                  [ E.h2 [] [E.text "Change it"]
                  , E.form
-                     [attr "id" "edit-task", A.method B.FormPOST, A.action (B.mkRawURL ("/app/api/tasks/" <> taskId task <> "/edit"))]
-                     ( [E.input [A.type_ HTML.InputHidden, attr "name" "revision", attr "value" (T.pack (show (taskRevision task)))]]
+                     [A.id (elementId 'e' "dit-task"), A.method B.FormPOST, A.action (editTaskAction (taskKey task))]
+                     ( [E.input [A.type_ HTML.InputHidden, A.name revisionField, attr "value" (T.pack (show (taskRevision task)))]]
                          <> taskFields form others
-                         <> [E.button [attr "id" "save-task", attr "type" "submit"] [E.text "Save changes"]]
+                         <> [E.button [A.id (elementId 's' "ave-task"), attr "type" "submit"] [E.text "Save changes"]]
                      )
                  ]
                else []
@@ -213,7 +246,7 @@ taskPage project siblings task underWay fixing notice =
                    , E.dd [] [E.code [] [E.text (T.pack (show (taskPriority task)))]]
                    ]
                ]
-           , E.p [] [E.a [href ("/app/projects/" <> projectId project), attr "id" "back-to-project"] [E.text ("Back to " <> projectName project)]]
+           , backToProject project
            ]
 
 readinessClass :: TaskReadiness -> T.Text
@@ -233,13 +266,13 @@ readinessClass readiness =
 projectTasks :: ProjectView -> [TaskView] -> [E.ChildHTML E.Division E.Body]
 projectTasks project tasks =
   [ E.h2 [] [E.text "Tasks"]
-  , E.p [] [E.a [href ("/app/projects/" <> projectId project <> "/tasks/new"), attr "id" "new-task", cls "ls-button-link"] [E.text "New task"]]
+  , E.p [] [E.a [A.href (newTaskLink (projectKey project)), A.id (elementId 'n' "ew-task"), cls "ls-button-link"] [E.text "New task"]]
   ]
     <> [ E.ul
            [cls "ls-projects"]
            [ E.li
                []
-               [ E.a [href ("/app/tasks/" <> taskId t)] [E.text (taskTitle t)]
+               [ E.a [A.href (taskLink (taskKey t))] [E.text (taskTitle t)]
                , E.text (" \8212 " <> priorityWords (priorityOf (taskPriority t)) <> " \8212 " <> readinessWords (taskReadinessOf t))
                ]
            | t <- tasks
@@ -260,14 +293,14 @@ tasksOverview groups ready =
              then [E.p [cls "ls-notice"] [E.text "Lockstep's database is not ready, so the tasks cannot be shown. Run lockstep to see what to do."]]
              else
                if L.all (L.null . snd) groups
-                 then [E.p [] [E.text "There are no tasks yet. Open a project to add one: ", E.a [href "/app/projects"] [E.text "Projects"], E.text "."]]
+                 then [E.p [] [E.text "There are no tasks yet. Open a project to add one: ", E.a [A.href (sectionLink Projects)] [E.text "Projects"], E.text "."]]
                  else
                    L.concat
                      [ [ E.h2 [] [E.text (projectName p)]
-                       , E.p [] [E.a [href ("/app/projects/" <> projectId p)] [E.text ("Open " <> projectName p)]]
+                       , E.p [] [E.a [A.href (projectLink (projectKey p))] [E.text ("Open " <> projectName p)]]
                        , E.ul
                            [cls "ls-projects"]
-                           [ E.li [] [E.a [href ("/app/tasks/" <> taskId t)] [E.text (taskTitle t)], E.text (" \8212 " <> readinessWords (taskReadinessOf t))]
+                           [ E.li [] [E.a [A.href (taskLink (taskKey t))] [E.text (taskTitle t)], E.text (" \8212 " <> readinessWords (taskReadinessOf t))]
                            | t <- ts
                            ]
                        ]

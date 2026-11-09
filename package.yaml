@@ -63,6 +63,7 @@ library:
     - json-fleece-core
     - memory
     - mtl
+    - non-empty-text
     - ogma
     - orb
     - orville-postgresql
@@ -152,7 +153,9 @@ tests:
     source-dirs: test/compliance
     dependencies:
       - lockstep
+      - brigid
       - bytestring
+      - http-types
       - containers
       - crypton
       - json-fleece-aeson
