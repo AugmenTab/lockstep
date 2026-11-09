@@ -41,6 +41,8 @@ import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (Show)
 
+import Lockstep.Kernel.Enum (parseEnumText)
+
 newtype TaskTitle
   = TaskTitle T.Text
   deriving (Eq, Show)
@@ -125,8 +127,8 @@ priorityCode p =
       Low -> "low"
 
 parsePriority :: T.Text -> Maybe Priority
-parsePriority code =
-  L.find ((== code) . priorityCode) [minBound .. maxBound]
+parsePriority =
+  parseEnumText priorityCode
 
 priorityWords :: Priority -> T.Text
 priorityWords p =
@@ -196,8 +198,8 @@ taskStateName state =
 
 -- | The state of its name; derived from 'taskStateName'.
 parseTaskState :: T.Text -> Maybe TaskState
-parseTaskState name =
-  L.lookup name [(taskStateName s, s) | s <- [minBound .. maxBound]]
+parseTaskState =
+  parseEnumText taskStateName
 
 {- | Where a task stands, in the order of contract K4. The state names are read
 once; a name no state has is 'StateUnrecognised', never another state.

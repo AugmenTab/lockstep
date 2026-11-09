@@ -144,6 +144,27 @@ group re-run 16/16, `.local/td-lifecycle-rerun-2.log`); compliance **42/42**.
 - Qualification (`.local/td-check-C.log`, working tree over `b187668`): format, lint, build, unit **870/870**, guard,
   integration **571/571**, backup/restore — all PASSED.
 
+### Independent review of `ac0e158` and resolutions
+
+| Finding | Resolution |
+|---|---|
+| H1 attestation forgery: a destination's reason starting with the marker read as "attested by a human" | Closed on the writer side (the prefix reader is pinned by unit `RemediationTest.hs:219`): Kernel `observed` (`Effect.hs`) stores any observation reason carrying the marker as `IntentUnknown "malformed-answer"`; the same hole in reconciliation lookups (`LookupFound` → applied) guarded (`Reconciliation.hs`). Compliance negatives for forged not-applied, applied, no-answer and lookup answers; a person's attestation is still ATTESTED |
+| M1 halt-code spelling decisions; `haltCodeFromText` not injective | `HaltFixed FixedHalt` (the 15 codes Lockstep spells), `HaltRefused PlainCode` through `mkPlainCode`; decisions via the decoder; injective; ExecutionPages matches constructors; StateTest round-trips every code the state machine produces from every stage at the budget edges |
+| M2 text decisions | `factAttestedApplied` computed from typed resolution rows; `RecordKind` typed column; profile source `LayerLevel` typed (`override` refused). Deferred to D: refusal-code branching (Execution, Tasks, Projects), subject-kind literals, `ProjectChecks.levelText` |
+| M3 one corrupt row blocks all transactions | `activeTransactions` selects ids only. `busyTransactions` still decodes rows: a corrupt running/halted row for an Engineer fails that Engineer's next start closed (`DatabaseCorrupt`); others unaffected |
+| L1–L9 | `findJob`/`findJobForReceipt` return `Either NotReadyReason` (CLI prints the diagnosis; receipt page 503); `finishJob` takes `JobEnd`; per-state halt lines; one `Kernel.Enum.parseEnumText` (Foundation's protocol parsers keep theirs: henforcer forbids Foundation → Kernel); unused `commandEndingFromText` removed; an undecodable verification/review record at acceptance halts `supervisor-failed …-record-unreadable`; PostgreSQL test of corrupt state/stage/halt combinations |
+
+Behaviour changes: a destination or lookup answer carrying the marker is an unknown outcome; only the exact
+`no-coding-agent` code gets its words; `lockstep job show` reports an unreadable database; the receipt page answers
+503 when its job cannot be read; undecodable acceptance records halt with their own reason; a stored override level or
+unknown record kind fails to read.
+
+Qualification (`.local/td-check-C2.log`, over `ac0e158`): format, lint, build, unit **870/870**, guard PASSED;
+integration **570/571** — the failure is `ReconciliationTest` "two processes recover one crashed idempotent intent"
+(`refused lease-active`), the pre-existing race already recorded in the P4.L.R3 packet (two recoverers racing; the
+frozen P2.7 test does not list that legitimate code); re-run alone 2/2 (`.local/td-recover-rerun.log`). Owner item
+together with the lifecycle journal race. Compliance **77/77**.
+
 Behavioural differences (deliberate): an expected revision above `Int64` is refused (was wrapped); a Ledger revision
 or generation above `Int32` is refused before anything is written (was wrapped into a refusal or observation row); a
 corrupt setup or stage column is a read failure (was shown as organized / basis); `lockstep db migrate` prints

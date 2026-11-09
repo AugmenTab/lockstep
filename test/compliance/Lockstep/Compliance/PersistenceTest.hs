@@ -34,7 +34,7 @@ import Lockstep.Kernel.Identity (EngineerId (..), ProjectId (..), parseUuid, uui
 import Lockstep.Kernel.Project (SetupState (..))
 import Lockstep.Persistence.CommandCenter (JobEvidenceRow (..), recentJobs)
 import Lockstep.Persistence.Commands (NewReceipt (..), ReceiptRow (rowDigestHex), findReceiptByKey, insertReceipt)
-import Lockstep.Persistence.Jobs (JobRow (..), JobState (..), claimJob, finishJob, insertNoopJob)
+import Lockstep.Persistence.Jobs (JobEnd (..), JobRow (..), claimJob, finishJob, insertNoopJob)
 import Lockstep.Persistence.Ledger (SubjectRow (..), insertSubject, subjectRow)
 import Lockstep.Persistence.OperatorSessions (insertSession, liveSessionExpiry, revokeLiveSessions)
 import Lockstep.Persistence.Projects (ProjectRow (..), findProjectById, insertProject, updateProjectSetup)
@@ -109,7 +109,7 @@ tests =
           run (insertNoopJob receiptId 3 0 Nothing)
           claimed <- run (claimJob "compliance-owner")
           job <- maybe (assertFailure "nothing claimed") pure claimed
-          finished <- run (finishJob (jobRowId job) "compliance-owner" JobFailed (Just "boom"))
+          finished <- run (finishJob (jobRowId job) "compliance-owner" EndFailed (Just "boom"))
           assertBool "the owner finished its job" finished
           evidence <- run recentJobs
           let

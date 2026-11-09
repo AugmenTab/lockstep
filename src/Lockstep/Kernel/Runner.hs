@@ -25,7 +25,6 @@ module Lockstep.Kernel.Runner
   , roleEndingFromText
   , CommandEnding (..)
   , commandEndingText
-  , commandEndingFromText
   , outcomeSucceeded
   ) where
 
@@ -280,11 +279,6 @@ commandEndingText ending =
     CommandInterrupted -> T.pack "interrupted"
     CommandRunnerFailed -> T.pack "runner-failed"
     CommandRan kind -> outcomeKindName kind
-
--- | The one decoder of 'commandEndingText'; nothing for a word no command ending has.
-commandEndingFromText :: T.Text -> Maybe CommandEnding
-commandEndingFromText text =
-  L.lookup text [(commandEndingText e, e) | e <- [CommandInterrupted, CommandRunnerFailed] <> fmap CommandRan [minBound .. maxBound]]
 
 -- | The canonical name of an outcome kind ('outcomeName' is it for a run's outcome).
 outcomeKindName :: OutcomeKind -> T.Text

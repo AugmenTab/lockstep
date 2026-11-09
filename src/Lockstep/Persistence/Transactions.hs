@@ -44,11 +44,14 @@ import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
 
 import Lockstep.Kernel.Identity (InvocationId (..), ProjectId, RepositoryId, TaskId, TransactionId (..), WorkOrderId)
 import Lockstep.Kernel.Transaction
-  ( Stage
+  ( RecordKind
+  , Stage
   , StateName (..)
   , TxState
+  , parseRecordKind
   , parseStage
   , parseStateName
+  , recordKindText
   , stageName
   , stateColumns
   , stateFromColumns
@@ -120,7 +123,7 @@ data RecordRow
   = RecordRow
   { recordRowTransaction :: TransactionId
   , recordRowSequence :: Int32
-  , recordRowKind :: T.Text
+  , recordRowKind :: RecordKind
   , recordRowPrincipal :: T.Text
   , recordRowStage :: Stage
   , recordRowBody :: T.Text
@@ -359,9 +362,13 @@ runningTransactions =
   O.findEntitiesBy transactionTable (O.where_ (O.fieldEquals txStateField StateRunning) <> inStartOrder)
 
 -- | Every running or halted transaction, in start order (C-P4.15 W1).
-activeTransactions :: O.MonadOrville m => m [TransactionRow]
+
+{- | Only the ids: a row whose other columns do not read fails when that
+transaction is advanced, and does not keep the worker from every other one.
+-}
+activeTransactions :: O.MonadOrville m => m [TransactionId]
 activeTransactions =
-  O.findEntitiesBy transactionTable (O.where_ holdsWriter <> inStartOrder)
+  selectJoined (O.marshallReadOnlyField txIdField) (tableReference transactionTable) (O.where_ holdsWriter <> inStartOrder)
 
 -- | Rewrites the head row (call under 'lockTransaction').
 updateTransaction :: O.MonadOrville m => TransactionRow -> m ()
@@ -393,7 +400,7 @@ recordTable =
     RecordRow
       <$> O.marshallField recordRowTransaction recordTransactionField
       <*> O.marshallField recordRowSequence recordSequenceField
-      <*> O.marshallField recordRowKind (O.unboundedTextField "kind")
+      <*> O.marshallField recordRowKind (codeField "record kind" recordKindText parseRecordKind "kind")
       <*> O.marshallField recordRowPrincipal (O.unboundedTextField "principal")
       <*> O.marshallField recordRowStage (codeField "record stage" stageName parseStage "stage")
       <*> O.marshallField recordRowBody (O.unboundedTextField "body")

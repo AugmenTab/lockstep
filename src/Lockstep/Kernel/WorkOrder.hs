@@ -25,6 +25,7 @@ import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (Show)
 
+import Lockstep.Kernel.Enum (parseEnumText)
 import Lockstep.Kernel.Identity (EngineerId, WorkOrderId)
 import Lockstep.Kernel.Transition (Cell (..), Command (..), Principal (..), TransitionRefusal (..), decide)
 import Lockstep.Kernel.WorkUnitLifecycle (AcceptedWorkUnit)
@@ -57,8 +58,8 @@ workOrderKindName kind =
       SkillInstall -> "skill-install"
 
 parseWorkOrderKind :: T.Text -> Maybe WorkOrderKind
-parseWorkOrderKind text =
-  L.find ((== text) . workOrderKindName) [minBound .. maxBound]
+parseWorkOrderKind =
+  parseEnumText workOrderKindName
 
 data Claim
   = Claim

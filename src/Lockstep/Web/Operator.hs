@@ -149,7 +149,9 @@ handleOperator db route request =
               Nothing -> pure notFoundPage
               Just receipt -> do
                 job <- findJobForReceipt runtime receiptId
-                pure (operatorResponse HTTP.status200 noReferrer (receiptPage receipt job))
+                pure $ case job of
+                  Left _ -> refusal HTTP.status503 notReadyPage
+                  Right found' -> operatorResponse HTTP.status200 noReferrer (receiptPage receipt found')
     QueueCommand ->
       withSession db request $ \runtime token _ ->
         withForm request $ \form ->

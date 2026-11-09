@@ -8,6 +8,8 @@ module Lockstep.Persistence.Jobs
   ( JobState (..)
   , jobStateCode
   , parseJobState
+  , JobEnd (..)
+  , jobEndState
   , JobRow (..)
   , insertNoopJob
   , findJobById
@@ -39,6 +41,7 @@ import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
 import Text.Show (Show)
 
+import Lockstep.Kernel.Enum (parseEnumText)
 import Lockstep.Kernel.Identity (JobId (..), ReceiptId)
 import Lockstep.Persistence.Commands (receiptIdField, receiptTable)
 import Lockstep.Persistence.Entity (EntityKey, foreignKeyTo, serialKeyField)
@@ -63,8 +66,8 @@ jobStateCode state =
 
 -- | The state of its code; derived from 'jobStateCode'.
 parseJobState :: T.Text -> Maybe JobState
-parseJobState code =
-  L.lookup code [(jobStateCode s, s) | s <- [minBound .. maxBound]]
+parseJobState =
+  parseEnumText jobStateCode
 
 data JobRow
   = JobRow
@@ -256,20 +259,35 @@ recordStep :: O.MonadOrville m => JobId -> T.Text -> Int32 -> m Bool
 recordStep jobId owner step =
   whileOwned jobId owner (O.setField jobStepsDoneField step :| [setExpression jobLeaseUntilField lease])
 
--- | Sets a terminal state ('JobSucceeded' or 'JobFailed') with an optional error.
-finishJob :: O.MonadOrville m => JobId -> T.Text -> JobState -> Maybe T.Text -> m Bool
-finishJob jobId owner state lastError =
-  whileOwned
-    jobId
-    owner
-    ( O.setField jobStateField state
-        :| [ O.setField jobErrorField lastError
-           , setNow jobFinishedAtField
-           , O.setField jobOwnerField Nothing
-           , O.setField jobLeaseUntilField Nothing
-           , setExpression jobOutcomeDigestField (outcomeDigest state lastError)
-           ]
-    )
+-- | How a job ended: the terminal states only.
+data JobEnd
+  = EndSucceeded
+  | EndFailed
+  deriving (Eq, Show)
+
+jobEndState :: JobEnd -> JobState
+jobEndState end =
+  case end of
+    EndSucceeded -> JobSucceeded
+    EndFailed -> JobFailed
+
+-- | Sets the terminal state with an optional error.
+finishJob :: O.MonadOrville m => JobId -> T.Text -> JobEnd -> Maybe T.Text -> m Bool
+finishJob jobId owner end lastError =
+  let
+    state = jobEndState end
+  in
+    whileOwned
+      jobId
+      owner
+      ( O.setField jobStateField state
+          :| [ O.setField jobErrorField lastError
+             , setNow jobFinishedAtField
+             , O.setField jobOwnerField Nothing
+             , O.setField jobLeaseUntilField Nothing
+             , setExpression jobOutcomeDigestField (outcomeDigest state lastError)
+             ]
+      )
 
 {- | C-P1.6 E3: SHA-256 of the canonical outcome text, computed in the same
 update from the row's final values:

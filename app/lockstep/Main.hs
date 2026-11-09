@@ -45,6 +45,7 @@ import Lockstep.Application.Database
   , migrateWithPolicyReporting
   , openDatabase
   , readinessCode
+  , reasonDiagnosis
   , recordServiceStart
   , renderMigrateReport
   , revisionNumber
@@ -410,9 +411,11 @@ jobShow :: Integer -> DatabaseRuntime -> IO ()
 jobShow ident runtime = do
   found <- findJob runtime (JobId (fromInteger ident))
   case found of
-    Nothing ->
+    Left reason ->
+      refuse ("job " <> show ident <> " could not be read: " <> T.unpack (reasonDiagnosis reason))
+    Right Nothing ->
       refuse ("no job " <> show ident)
-    Just job -> do
+    Right (Just job) -> do
       putStrLn
         ( "job "
             <> show (jobIdNumber (jobId job))
@@ -436,7 +439,7 @@ submitAndReport runtime envelope expected = do
       suffix <-
         case receiptOutcome receipt of
           -- The receipt carries its id as a number (a frozen-test boundary); it is a receipt's id.
-          Queued -> maybe "" (\job -> " job " <> show (jobIdNumber (jobId job))) <$> findJobForReceipt runtime (ReceiptId (receiptId receipt))
+          Queued -> jobSuffix <$> findJobForReceipt runtime (ReceiptId (receiptId receipt))
           _ -> pure ""
       putStrLn (receiptLine receipt suffix)
       case receiptOutcome receipt of
@@ -456,6 +459,14 @@ submitAndReport runtime envelope expected = do
       refuse ("invalid command: " <> renderInvalidReason reason)
     Left (CommandNotReady reason) ->
       notReady reason
+
+-- | The queued job's id after a receipt; a job that could not be read says why.
+jobSuffix :: Either NotReadyReason (Maybe Job) -> String
+jobSuffix found =
+  case found of
+    Right (Just job) -> " job " <> show (jobIdNumber (jobId job))
+    Right Nothing -> ""
+    Left reason -> " (its job could not be read: " <> T.unpack (reasonDiagnosis reason) <> ")"
 
 receiptLine :: Receipt -> String -> String
 receiptLine receipt suffix =

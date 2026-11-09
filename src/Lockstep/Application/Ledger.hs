@@ -115,6 +115,7 @@ import Lockstep.Kernel.Effect
   , newIntents
   , stepIntent
   )
+import Lockstep.Kernel.Enum (parseEnumText)
 import Lockstep.Kernel.EventCodec
   ( TicketEvent (..)
   , WorkOrderEvent (..)
@@ -166,6 +167,7 @@ import Lockstep.Kernel.Reconciliation
   , ReconcileRefusal
   , Resolution (..)
   , ResolutionBasis (..)
+  , attestsApplied
   , judgeLateObservation
   , reconcileIntent
   , reconcileRefusalCode
@@ -577,15 +579,6 @@ resolveFor kind classes paths nonBehavioural defaultDefinition catalog = do
   kernel refusal =
     Left (LedgerRefused (profileRefusalCode refusal) (renderProfileRefusal refusal))
 
-levelName :: LayerLevel -> Maybe T.Text
-levelName level =
-  T.pack
-    <$> case level of
-      LayerBaseline -> Just "baseline"
-      LayerRepositoryDefault -> Just "repository-default"
-      LayerSpecialization -> Just "specialization"
-      LayerOverride -> Nothing
-
 createWorkOrder :: DatabaseRuntime -> NewWorkOrder -> IO (Either LedgerFailure WorkOrderId)
 createWorkOrder runtime request = do
   u <- newUuid
@@ -661,12 +654,17 @@ bindingFor w effective =
     Right
     (bindProfile sha256Hasher Human w operatorApprover effective [])
 
-storedSources :: EffectiveProfile -> Either LedgerFailure [(T.Text, ProfileRef)]
+-- | The sources as stored (C-P2.4): every level but an override, which is not durable in Phase 2.
+storedSources :: EffectiveProfile -> Either LedgerFailure [(LayerLevel, ProfileRef)]
 storedSources effective =
-  maybe
-    (integrity "an effective profile has an override source; overrides are not durable in Phase 2")
-    Right
-    (traverse (\(level, ref) -> fmap (\l -> (l, ref)) (levelName level)) (effectiveSources effective))
+  traverse durable (effectiveSources effective)
+ where
+  durable (level, ref) =
+    case level of
+      LayerOverride -> integrity "an effective profile has an override source; overrides are not durable in Phase 2"
+      LayerBaseline -> Right (level, ref)
+      LayerRepositoryDefault -> Right (level, ref)
+      LayerSpecialization -> Right (level, ref)
 
 joinNames :: [T.Text] -> T.Text
 joinNames =
@@ -714,11 +712,11 @@ loadBinding w row = do
     loaded <- sequenceA definitions
     kind <- maybe (integrity "a stored work order kind is unreadable") Right (parseWorkOrderKind (Store.workOrderRowKind row))
     defaultDefinition <-
-      case [d | (level, d) <- loaded, level == T.pack "repository-default"] of
+      case [d | (level, d) <- loaded, level == LayerRepositoryDefault] of
         [d] -> Right d
         _ -> integrity "a work order's profile sources have no single repository default"
     let
-      specializations = [d | (level, d) <- loaded, level == T.pack "specialization"]
+      specializations = [d | (level, d) <- loaded, level == LayerSpecialization]
     effective <-
       either
         (const (integrity "a work order's bound profile no longer resolves"))
@@ -736,7 +734,7 @@ loadBinding w row = do
   sourceKey source =
     (Store.sourceRowLevel source, Store.sourceRowProfile source, fromIntegral (Store.sourceRowVersion source), Store.sourceRowDigest source)
   definitionFor source
-    | Store.sourceRowLevel source == T.pack "baseline" = pure (checked source installationBaseline)
+    | Store.sourceRowLevel source == LayerBaseline = pure (checked source installationBaseline)
     | otherwise = do
         found <- Profiles.findProfile (Store.sourceRowProfile source) (Just (Store.sourceRowVersion source))
         pure $
@@ -897,8 +895,8 @@ approvalName approval =
       ApprovalHuman -> "human"
 
 parseBy :: (Enum a, Bounded a) => (a -> T.Text) -> T.Text -> Maybe a
-parseBy name text =
-  L.find ((== text) . name) [minBound .. maxBound]
+parseBy =
+  parseEnumText
 
 recordGateEvidence :: DatabaseRuntime -> Principal -> WorkOrderId -> GateEvidence -> IO (Either LedgerFailure ())
 recordGateEvidence runtime principal w evidence
@@ -1818,9 +1816,12 @@ intentResolutions runtime operation =
   transaction runtime $ \_ -> Right <$> storedResolutions operation
 
 storedResolutions :: OperationId -> O.Orville [StoredResolution]
-storedResolutions operation = do
-  rows <- Store.resolutionsOf operation
-  pure [StoredResolution (fromIntegral (Store.resolutionRowGeneration r)) (resolutionBasisText (Store.resolutionRowBasis r)) (Store.resolutionRowDecision r) (Store.resolutionRowAcknowledged r) | r <- rows]
+storedResolutions operation =
+  fmap storedResolution <$> Store.resolutionsOf operation
+
+storedResolution :: Store.ResolutionRow -> StoredResolution
+storedResolution r =
+  StoredResolution (fromIntegral (Store.resolutionRowGeneration r)) (resolutionBasisText (Store.resolutionRowBasis r)) (Store.resolutionRowDecision r) (Store.resolutionRowAcknowledged r)
 
 storedObservations :: OperationId -> O.Orville [StoredObservation]
 storedObservations operation = do
@@ -1840,6 +1841,8 @@ data IntentFacts
   , factObservations :: [StoredObservation]
   , factRecoveries :: [StoredRecovery]
   , factResolutions :: [StoredResolution]
+  , factAttestedApplied :: Bool
+  -- ^ A person attested that it applied (C-P2.9-R1 M4), from the typed resolution rows.
   }
 
 data OrderFacts
@@ -1924,8 +1927,10 @@ readLedger runtime =
       Right intent -> do
         observations <- storedObservations (intentOperation intent)
         recoveries <- storedRecoveries (intentOperation intent)
-        resolutions <- storedResolutions (intentOperation intent)
-        pure (Right (IntentFacts intent observations recoveries resolutions))
+        rows <- Store.resolutionsOf (intentOperation intent)
+        let
+          attested = L.any (\r -> Store.resolutionRowBasis r == ResolvedByAttestation && attestsApplied (Store.resolutionRowDecision r)) rows
+        pure (Right (IntentFacts intent observations recoveries (fmap storedResolution rows) attested))
 
 -- Carry-forward (C-P2.9-R1 M2, §2.1) -----------------------------------------------------
 

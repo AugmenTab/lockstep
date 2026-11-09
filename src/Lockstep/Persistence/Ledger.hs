@@ -58,6 +58,7 @@ module Lockstep.Persistence.Ledger
   , reconcilableIntentIds
   , insertResolution
   , ResolutionRow (..)
+  , durableLevel
   , resolutionsOf
   , EvidenceRow (..)
   , insertEvidence
@@ -83,8 +84,9 @@ import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
 import System.IO.Error (userError)
 
 import Lockstep.Kernel.Effect (EffectClass (..), IntentStateName (..), OperationId (..), effectClassName, intentStateNameText, parseEffectClass, parseIntentStateName)
+import Lockstep.Kernel.Enum (parseEnumText)
 import Lockstep.Kernel.Identity (EngineerId, RepositoryId, TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..))
-import Lockstep.Kernel.Profile (ProfileId)
+import Lockstep.Kernel.Profile (LayerLevel (..), ProfileId, layerName)
 import Lockstep.Kernel.Reconciliation (ResolutionBasis, parseResolutionBasis, resolutionBasisText)
 import Lockstep.Persistence.Entity (EntityKey, Table, foreignKeyTo, keyField, mkEntityTable, nullableForeignKeyTo)
 import Lockstep.Persistence.Fields
@@ -433,7 +435,8 @@ dependenciesOf workOrderId =
 
 data SourceRow
   = SourceRow
-  { sourceRowLevel :: T.Text
+  { sourceRowLevel :: LayerLevel
+  -- ^ A durable level: an override is never stored, and one does not read.
   , sourceRowProfile :: ProfileId
   , sourceRowVersion :: Int32
   , sourceRowDigest :: T.Text
@@ -447,11 +450,18 @@ sourceTable =
       <$> O.marshallField (\(w, _, _) -> w) sourceWorkOrderField
       <*> O.marshallField (\(_, p, _) -> p) sourcePositionField
       <*> ( SourceRow
-              <$> O.marshallField (\(_, _, s) -> sourceRowLevel s) (O.unboundedTextField "level")
+              <$> O.marshallField (\(_, _, s) -> sourceRowLevel s) (codeField "profile source level" layerName durableLevel "level")
               <*> O.marshallField (\(_, _, s) -> sourceRowProfile s) (profileIdColumn "profile_id")
               <*> O.marshallField (\(_, _, s) -> sourceRowVersion s) (O.integerField "version")
               <*> O.marshallField (\(_, _, s) -> sourceRowDigest s) (O.unboundedTextField "digest")
           )
+
+-- | The levels a Work Order's profile sources may have (the migration's CHECK); an override is not one.
+durableLevel :: T.Text -> Maybe LayerLevel
+durableLevel text =
+  case parseEnumText layerName text of
+    Just LayerOverride -> Nothing
+    level -> level
 
 sourceWorkOrderField :: O.FieldDefinition O.NotNull WorkOrderId
 sourceWorkOrderField =

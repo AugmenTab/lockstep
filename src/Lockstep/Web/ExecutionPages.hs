@@ -34,7 +34,7 @@ import Lockstep.Kernel.Profile (profileIdText)
 import Lockstep.Kernel.Roles (CandidateTest (..), Criterion (..), Verdict (..))
 import Lockstep.Kernel.Runner (OutcomeKind (..))
 import Lockstep.Kernel.Task (TaskReadiness (..))
-import Lockstep.Kernel.Transaction (Disposition (..), HaltCode (..), Stage (..), StateName (..), haltCodeFromText, parseStage, parseStateName)
+import Lockstep.Kernel.Transaction (Disposition (..), FixedHalt (..), HaltCode (..), Stage (..), StateName (..), haltCodeFromText, noCodingAgent, parseStage, parseStateName)
 import Lockstep.Web.Fragment (attr, cls)
 
 heading :: T.Text -> T.Text -> E.ChildHTML E.Division E.Body
@@ -169,14 +169,15 @@ transactionSection a tx request key =
   -- A name this page does not know is shown as such, never taken for another.
   state = parseStateName (viewState tx)
   stage = parseStage (viewStage tx)
-  -- Only a halted or stopped transaction has a code; for any other state it is not used.
-  halt = haltCodeFromText (fromMaybe "" (viewHalt tx))
+  -- A halted or stopped transaction always has its code (the stored state does not read without
+  -- it); a view without one says so rather than show another code's words.
+  haltLine words' = maybe "Lockstep did not record why." (words' . haltCodeFromText) (viewHalt tx)
   standingNow =
     case state of
       Just StateRunning -> [E.p [] [E.text ("Lockstep is working on this bug: " <> stepWords stage <> ".")]]
       Just StateHalted ->
         [ E.p [cls "ls-notice", attr "id" "fix-halted"] [E.text ("Lockstep stopped while " <> stepWords stage <> " and needs your decision.")]
-        , E.p [] [E.text (haltWords halt)]
+        , E.p [] [E.text (haltLine haltWords)]
         ]
           <> decisionForm
       Just StateAccepted ->
@@ -185,7 +186,7 @@ transactionSection a tx request key =
         , completionForm
         ]
       Just StateDone -> [E.p [cls "ls-good-text", attr "id" "fix-done"] [E.text "You marked this bug fixed."]]
-      Just StateStopped -> [E.p [cls "ls-muted", attr "id" "fix-stopped"] [E.text ("Lockstep stopped fixing this bug: " <> stoppedWords halt)]]
+      Just StateStopped -> [E.p [cls "ls-muted", attr "id" "fix-stopped"] [E.text ("Lockstep stopped fixing this bug: " <> haltLine stoppedWords)]]
       Nothing -> [E.p [cls "ls-notice", attr "id" "fix-state-unrecognised"] [E.text ("Lockstep cannot show where this fix stands: it recorded a state this page does not recognise (" <> viewState tx <> ").")]]
   decisionForm =
     case request of
@@ -340,28 +341,38 @@ haltWords :: HaltCode -> T.Text
 haltWords code =
   case code of
     HaltRoleFailed c
-      | "no-coding-agent" `T.isPrefixOf` c -> "No coding helper is set up for Lockstep."
+      | c == noCodingAgent -> "No coding helper is set up for Lockstep."
       | otherwise -> "One of Lockstep's helpers failed."
     HaltUncertainInvocation _ -> "Lockstep could not tell whether one of its helpers finished. It will not run it again by itself."
     HaltSupervisorFailed _ -> couldNotFinish
-    HaltPlain c ->
-      case T.unpack c of
-        "repository-dirty" -> "The project's folder has changes that are not committed. Commit or remove them, then try again."
-        "repository-missing" -> "The project's folder is not there any more."
-        "not-a-repository" -> "The project's folder is not a Git folder."
-        "reproduction-missing" -> "Lockstep could not make the bug happen. You can go on without reproducing it, try again, or stop."
-        "verification-environment-missing" -> "A program the checks need is not installed where the checks run."
-        "verification-run-failed" -> "The checks did not finish normally."
-        "protected-test-changed" -> "A test that was fixed in place was changed."
-        _ -> couldNotFinish
+    HaltFixed fixed ->
+      case fixed of
+        FixedRepositoryDirty -> "The project's folder has changes that are not committed. Commit or remove them, then try again."
+        FixedRepositoryMissing -> "The project's folder is not there any more."
+        FixedNotARepository -> "The project's folder is not a Git folder."
+        FixedReproductionMissing -> "Lockstep could not make the bug happen. You can go on without reproducing it, try again, or stop."
+        FixedVerificationEnvironmentMissing -> "A program the checks need is not installed where the checks run."
+        FixedVerificationRunFailed -> "The checks did not finish normally."
+        FixedProtectedTestChanged -> "A test that was fixed in place was changed."
+        FixedBaselineRunFailed -> couldNotFinish
+        FixedCandidatesExhausted -> couldNotFinish
+        FixedGreenRegressionFailed -> couldNotFinish
+        FixedFindingNeedsHuman -> couldNotFinish
+        FixedAttemptsExhausted -> couldNotFinish
+        FixedReviewNeedsHuman -> couldNotFinish
+        FixedStoppedByPerson -> couldNotFinish
+        FixedNotAcceptedByPerson -> couldNotFinish
+    -- Any other refusal: its exact code is under Technical details.
+    HaltRefused _ -> couldNotFinish
  where
   couldNotFinish = "Lockstep could not finish this step. The exact reason is under Technical details."
 
 stoppedWords :: HaltCode -> T.Text
 stoppedWords code =
   case code of
-    HaltPlain "not accepted by a person" -> "you said it is not fixed."
-    HaltPlain "stopped by a person" -> "you stopped it."
+    HaltFixed FixedNotAcceptedByPerson -> "you said it is not fixed."
+    HaltFixed FixedStoppedByPerson -> "you stopped it."
+    -- A stop from a halt keeps the halt's code (the Kernel's 'Stopped' after 'Halted').
     _ -> "you stopped it when it could not go on. " <> haltWords code
 
 findingTimeWords :: FindingTime -> T.Text

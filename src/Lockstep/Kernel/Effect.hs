@@ -54,6 +54,7 @@ import Data.Time (UTCTime)
 import Flipstone.Prelude
 import Text.Show (Show)
 
+import Lockstep.Kernel.Enum (parseEnumText)
 import Lockstep.Kernel.Identity (TicketId, Uuid, WorkOrderId)
 import Lockstep.Kernel.Profile (ContentDigest, Hasher (..))
 import Lockstep.Kernel.Transition (Command (..), Principal (..))
@@ -217,10 +218,14 @@ attestedReasonText evidence =
   attestedMarker <> evidence
 
 {- | The provenance of a stored reason, decided here and nowhere else: a reason
-'attestedReasonText' made is 'HumanAttested'; any other is 'Observed'. Only a
-person's resolution makes such a reason (the marker is written by
-'Lockstep.Kernel.Reconciliation.resolveIntent'); the attestation record of the
-resolution is the other, independent, source of the same fact.
+that begins with the marker of 'attestedReasonText' is 'HumanAttested'; any
+other is 'Observed'. The reader is the prefix rule the frozen suite pins (unit
+@RemediationTest@ "a 'human-attested:' outcome is ATTESTED without the
+record"), so the guarantee is on the writer side: only a person's resolution
+('Lockstep.Kernel.Reconciliation.resolveIntent') writes the marker, and an
+observation whose text carries it is refused as malformed where observations
+become reasons ('observed'). The resolution's attestation record is the other,
+independent, source of the same fact.
 -}
 reasonOf :: T.Text -> Reason
 reasonOf text =
@@ -374,13 +379,28 @@ cell intent input =
       IntentUnknown _ -> True
       _ -> False
 
--- | E6: a missing answer is an unknown outcome, never a failure.
+{- | E6: a missing answer is an unknown outcome, never a failure. This is the
+one place an observation's text becomes an intent's reason. A destination
+never speaks for a person (DG-04 binding requirement 6): an answer whose text
+carries the attestation marker ('attestedReasonText') is not stored as it
+came, since it would read back as attested ('reasonOf'); it is a malformed
+answer, an unknown outcome, as the executor makes any other invalid answer.
+-}
 observed :: Observation -> IntentState
 observed observation =
   case observation of
-    DestinationApplied result -> IntentApplied result
-    DestinationNotApplied reason -> IntentNotApplied reason
-    NoAnswer reason -> IntentUnknown reason
+    DestinationApplied result
+      | forged result -> malformed
+      | otherwise -> IntentApplied result
+    DestinationNotApplied reason
+      | forged reason -> malformed
+      | otherwise -> IntentNotApplied reason
+    NoAnswer reason
+      | forged reason -> malformed
+      | otherwise -> IntentUnknown reason
+ where
+  forged text = reasonProvenance (reasonOf text) == HumanAttested
+  malformed = IntentUnknown (T.pack "malformed-answer")
 
 inputName :: IntentInput -> T.Text
 inputName input =
@@ -435,13 +455,13 @@ intentStateNameText name =
 
 -- | The state name of its text; derived from 'intentStateNameText'.
 parseIntentStateName :: T.Text -> Maybe IntentStateName
-parseIntentStateName text =
-  L.lookup text [(intentStateNameText n, n) | n <- [minBound .. maxBound]]
+parseIntentStateName =
+  parseEnumText intentStateNameText
 
 -- | The effect class of its name; derived from 'effectClassName'.
 parseEffectClass :: T.Text -> Maybe EffectClass
-parseEffectClass text =
-  L.lookup text [(effectClassName c, c) | c <- [minBound .. maxBound]]
+parseEffectClass =
+  parseEnumText effectClassName
 
 data EffectRefusal
   = InvalidEffectSpec T.Text

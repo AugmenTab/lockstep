@@ -19,12 +19,12 @@ module Lockstep.Kernel.Reconciliation
   , judgeLateObservation
   , renderLookup
   , renderResolution
+  , attestsApplied
   , ReconcileRefusal (..)
   , reconcileRefusalCode
   ) where
 
 import Data.Char qualified as Char
-import Data.List qualified as L
 import Data.Text qualified as T
 import Data.Time (UTCTime)
 import Flipstone.Prelude
@@ -38,13 +38,17 @@ import Lockstep.Kernel.Effect
   , Lease (..)
   , LookupTerms (..)
   , Observation (..)
+  , Provenance (..)
+  , Reason (..)
   , Settlement (..)
   , attestedReasonText
   , effectSpecBudget
   , effectSpecClass
   , effectSpecTerms
   , intentStateName
+  , reasonOf
   )
+import Lockstep.Kernel.Enum (parseEnumText)
 import Lockstep.Kernel.Transition (Command (..), Principal (..))
 
 data LookupResult
@@ -95,7 +99,10 @@ reconcileIntent intent (Command principal input)
 reconciled :: LookupTerms -> LookupResult -> IntentState
 reconciled terms result =
   case result of
-    LookupFound r -> IntentApplied r
+    -- A destination never speaks for a person: a result carrying the attestation marker is malformed ('Lockstep.Kernel.Effect.reasonOf').
+    LookupFound r
+      | reasonProvenance (reasonOf r) == HumanAttested -> IntentUnknown (T.pack "malformed-answer")
+      | otherwise -> IntentApplied r
     LookupNotFound
       | not (lookupAuthoritative terms) -> IntentUnknown (T.pack "lookup: not found, not authoritative")
       | not (lookupExcludesLateApplication terms) -> IntentUnknown (T.pack "lookup: not found, late application not excluded")
@@ -165,8 +172,8 @@ resolutionBasisText basis =
 
 -- | The basis of its text; derived from 'resolutionBasisText'.
 parseResolutionBasis :: T.Text -> Maybe ResolutionBasis
-parseResolutionBasis text =
-  L.lookup text [(resolutionBasisText b, b) | b <- [minBound .. maxBound]]
+parseResolutionBasis =
+  parseEnumText resolutionBasisText
 
 validEvidence :: T.Text -> Bool
 validEvidence text =
@@ -230,10 +237,25 @@ renderLookup result =
 renderResolution :: Resolution -> T.Text
 renderResolution resolution =
   case resolution of
-    AttestApplied e -> T.pack "attested-applied evidence=" <> quoted e
+    AttestApplied e -> attestedAppliedWord <> T.pack " evidence=" <> quoted e
     AttestNotApplied e -> T.pack "attested-not-applied evidence=" <> quoted e
     RetryAcknowledgingDuplication True -> T.pack "retry duplication-acknowledged"
     RetryAcknowledgingDuplication False -> T.pack "retry duplication-not-acknowledged"
+
+{- | Whether a stored human record ('renderResolution', basis
+'ResolvedByAttestation') attests an application: the one reader of that
+text's leading word. The other attestation's word, @attested-not-applied@,
+does not begin with it.
+-}
+attestsApplied :: T.Text -> Bool
+attestsApplied text =
+  case T.stripPrefix attestedAppliedWord text of
+    Just rest -> T.isPrefixOf (T.pack " ") rest
+    Nothing -> False
+
+attestedAppliedWord :: T.Text
+attestedAppliedWord =
+  T.pack "attested-applied"
 
 quoted :: T.Text -> T.Text
 quoted text =

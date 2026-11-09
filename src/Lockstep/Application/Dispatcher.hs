@@ -34,7 +34,7 @@ import Flipstone.Prelude
 import System.Timeout (timeout)
 import Text.Show (Show, show)
 
-import Lockstep.Application.Database (DatabaseRuntime, withDatabase)
+import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, withDatabase)
 import Lockstep.Kernel.Identity (JobId, ReceiptId)
 import Lockstep.Persistence.Jobs (JobState (..), jobStateCode)
 import Lockstep.Persistence.Jobs qualified as Jobs
@@ -66,15 +66,16 @@ fromRow row =
     , jobError = Jobs.jobRowError row
     }
 
-findJob :: DatabaseRuntime -> JobId -> IO (Maybe Job)
-findJob runtime ident = do
-  result <- withDatabase runtime (Jobs.findJobById ident)
-  pure (either (const Nothing) (fmap fromRow) result)
+{- | The job, or none; a database that cannot be read (unavailable, or a row
+that does not decode: 'DatabaseCorrupt') is the reason, not "no such job".
+-}
+findJob :: DatabaseRuntime -> JobId -> IO (Either NotReadyReason (Maybe Job))
+findJob runtime ident =
+  fmap (fmap fromRow) <$> withDatabase runtime (Jobs.findJobById ident)
 
-findJobForReceipt :: DatabaseRuntime -> ReceiptId -> IO (Maybe Job)
-findJobForReceipt runtime receipt = do
-  result <- withDatabase runtime (Jobs.findJobByReceipt receipt)
-  pure (either (const Nothing) (fmap fromRow) result)
+findJobForReceipt :: DatabaseRuntime -> ReceiptId -> IO (Either NotReadyReason (Maybe Job))
+findJobForReceipt runtime receipt =
+  fmap (fmap fromRow) <$> withDatabase runtime (Jobs.findJobByReceipt receipt)
 
 data Dispatcher
   = Dispatcher
@@ -159,7 +160,7 @@ runJob dispatcher runtime logLine owner row =
         "Dispatcher: job "
           <> show ident
           <> " "
-          <> T.unpack (jobStateCode state)
+          <> T.unpack (jobStateCode (Jobs.jobEndState state))
           <> case recorded of
             Right True -> ""
             Right False -> " (not recorded: the lease was lost)"
@@ -167,9 +168,9 @@ runJob dispatcher runtime logLine owner row =
       pure False
     go step
       | step > total =
-          finish JobSucceeded Nothing
+          finish Jobs.EndSucceeded Nothing
       | Just step == Jobs.jobRowFailAt row =
-          finish JobFailed (Just (T.pack ("deterministic failure injected at step " <> show step)))
+          finish Jobs.EndFailed (Just (T.pack ("deterministic failure injected at step " <> show step)))
       | otherwise = do
           stop <- waitOrStop dispatcher micros
           if stop

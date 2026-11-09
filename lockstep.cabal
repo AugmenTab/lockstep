@@ -90,6 +90,7 @@ library
       Lockstep.Kernel.Delivery
       Lockstep.Kernel.Effect
       Lockstep.Kernel.EffectView
+      Lockstep.Kernel.Enum
       Lockstep.Kernel.EventCodec
       Lockstep.Kernel.Evidence
       Lockstep.Kernel.Execution

@@ -13,7 +13,16 @@ module Lockstep.Kernel.Transaction
   , stateNameOf
   , stateNameText
   , parseStateName
+  , RecordKind (..)
+  , recordKindText
+  , parseRecordKind
   , HaltCode (..)
+  , FixedHalt (..)
+  , fixedHaltText
+  , PlainCode
+  , plainCodeText
+  , mkPlainCode
+  , noCodingAgent
   , haltCodeText
   , haltCodeFromText
   , Counters (..)
@@ -38,10 +47,12 @@ module Lockstep.Kernel.Transaction
   ) where
 
 import Data.List qualified as L
+import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (Show)
 
+import Lockstep.Kernel.Enum (parseEnumText)
 import Lockstep.Kernel.Roles (Check (..))
 import Lockstep.Kernel.Runner (RunOutcome (..))
 import Lockstep.Kernel.Transition (Principal (..))
@@ -103,7 +114,7 @@ where reproduction is missing; otherwise retrying the stage or stopping.
 -}
 haltChoices :: Stage -> T.Text -> [T.Text]
 haltChoices stage code =
-  if stage == StageReproduction && code == T.pack "reproduction-missing"
+  if stage == StageReproduction && haltCodeFromText code == HaltFixed FixedReproductionMissing
     then [T.pack "accept-non-reproduction", T.pack "retry", T.pack "stop"]
     else [T.pack "retry", T.pack "stop"]
 
@@ -138,8 +149,8 @@ stageName stage =
       StageAccept -> "accept"
 
 parseStage :: T.Text -> Maybe Stage
-parseStage text =
-  L.lookup text [(stageName s, s) | s <- [minBound .. maxBound]]
+parseStage =
+  parseEnumText stageName
 
 data TxState
   = Running Stage
@@ -184,12 +195,14 @@ stateNameText name =
 
 -- | The state name of its canonical text; derived from 'stateNameText'.
 parseStateName :: T.Text -> Maybe StateName
-parseStateName text =
-  L.lookup text [(stateNameText n, n) | n <- [minBound .. maxBound]]
+parseStateName =
+  parseEnumText stateNameText
 
 {- | What a halt (or the stop that ended one) records. Three kinds carry the
-code of what failed after a fixed word; every other halt is its own code. The
-stored text is 'haltCodeText'; 'haltCodeFromText' is its one decoder.
+code of what failed after a fixed word; the codes Lockstep itself names are
+'FixedHalt's; any other refusal code is 'HaltRefused'. The stored text (the
+pinned @Text@ of 'Halted' and 'Stopped') is 'haltCodeText'; 'haltCodeFromText'
+is its one decoder, and the two are inverse for every value and every text.
 -}
 data HaltCode
   = -- | @role-failed CODE@: a role failed in a known way.
@@ -198,9 +211,73 @@ data HaltCode
     HaltUncertainInvocation T.Text
   | -- | @supervisor-failed CODE@: Lockstep's own step could not be done.
     HaltSupervisorFailed T.Text
-  | -- | any other halt or stop code, as it is (a refusal, an exhausted budget, a person's stop)
-    HaltPlain T.Text
+  | -- | a halt or stop Lockstep names itself
+    HaltFixed FixedHalt
+  | -- | any other refusal code a stage halted with, as it is
+    HaltRefused PlainCode
   deriving (Eq, Show)
+
+-- | The halts and stops whose code Lockstep spells itself (the Kernel's rules and the engine's checks).
+data FixedHalt
+  = FixedReproductionMissing
+  | FixedBaselineRunFailed
+  | FixedCandidatesExhausted
+  | FixedGreenRegressionFailed
+  | FixedFindingNeedsHuman
+  | FixedAttemptsExhausted
+  | FixedReviewNeedsHuman
+  | FixedStoppedByPerson
+  | FixedNotAcceptedByPerson
+  | FixedVerificationEnvironmentMissing
+  | FixedVerificationRunFailed
+  | FixedProtectedTestChanged
+  | FixedRepositoryDirty
+  | FixedRepositoryMissing
+  | FixedNotARepository
+  deriving (Eq, Show, Enum, Bounded)
+
+fixedHaltText :: FixedHalt -> T.Text
+fixedHaltText fixed =
+  T.pack $
+    case fixed of
+      FixedReproductionMissing -> "reproduction-missing"
+      FixedBaselineRunFailed -> "baseline-run-failed"
+      FixedCandidatesExhausted -> "candidates-exhausted"
+      FixedGreenRegressionFailed -> "green-regression-failed"
+      FixedFindingNeedsHuman -> "finding-needs-human"
+      FixedAttemptsExhausted -> "attempts-exhausted"
+      FixedReviewNeedsHuman -> "review-needs-human"
+      FixedStoppedByPerson -> "stopped by a person"
+      FixedNotAcceptedByPerson -> "not accepted by a person"
+      FixedVerificationEnvironmentMissing -> "verification-environment-missing"
+      FixedVerificationRunFailed -> "verification-run-failed"
+      FixedProtectedTestChanged -> "protected-test-changed"
+      FixedRepositoryDirty -> "repository-dirty"
+      FixedRepositoryMissing -> "repository-missing"
+      FixedNotARepository -> "not-a-repository"
+
+{- | A refusal code that no other kind of halt code spells; built only by
+'mkPlainCode' (or by 'haltCodeFromText'), so 'haltCodeText' is injective.
+-}
+newtype PlainCode
+  = PlainCode T.Text
+  deriving (Eq, Show)
+
+plainCodeText :: PlainCode -> T.Text
+plainCodeText (PlainCode c) =
+  c
+
+-- | Nothing for a text that 'haltCodeFromText' reads as another kind.
+mkPlainCode :: T.Text -> Maybe PlainCode
+mkPlainCode text =
+  case structuredHalt text of
+    Just _ -> Nothing
+    Nothing -> Just (PlainCode text)
+
+-- | The role-failure code of a role that has no coding agent set up (the engine's).
+noCodingAgent :: T.Text
+noCodingAgent =
+  T.pack "no-coding-agent"
 
 haltCodeText :: HaltCode -> T.Text
 haltCodeText code =
@@ -208,18 +285,23 @@ haltCodeText code =
     HaltRoleFailed c -> roleFailedWord <> c
     HaltUncertainInvocation c -> uncertainWord <> c
     HaltSupervisorFailed c -> supervisorFailedWord <> c
-    HaltPlain c -> c
+    HaltFixed f -> fixedHaltText f
+    HaltRefused p -> plainCodeText p
 
-{- | The kind of a stored halt code: split once at its leading word. Total: a
-code with no such word is 'HaltPlain'. It inverts 'haltCodeText' for every
-code Lockstep makes (no plain code begins with one of the three words).
+{- | The kind of a stored halt code: split once at its leading word, or one of
+the fixed codes; any other text is 'HaltRefused'. Total, and
+@haltCodeText . haltCodeFromText@ is the identity on text.
 -}
 haltCodeFromText :: T.Text -> HaltCode
-haltCodeFromText text
-  | Just c <- T.stripPrefix roleFailedWord text = HaltRoleFailed c
-  | Just c <- T.stripPrefix uncertainWord text = HaltUncertainInvocation c
-  | Just c <- T.stripPrefix supervisorFailedWord text = HaltSupervisorFailed c
-  | otherwise = HaltPlain text
+haltCodeFromText text =
+  fromMaybe (HaltRefused (PlainCode text)) (structuredHalt text)
+
+structuredHalt :: T.Text -> Maybe HaltCode
+structuredHalt text
+  | Just c <- T.stripPrefix roleFailedWord text = Just (HaltRoleFailed c)
+  | Just c <- T.stripPrefix uncertainWord text = Just (HaltUncertainInvocation c)
+  | Just c <- T.stripPrefix supervisorFailedWord text = Just (HaltSupervisorFailed c)
+  | otherwise = HaltFixed <$> parseEnumText fixedHaltText text
 
 roleFailedWord :: T.Text
 roleFailedWord =
@@ -232,6 +314,65 @@ uncertainWord =
 supervisorFailedWord :: T.Text
 supervisorFailedWord =
   T.pack "supervisor-failed "
+
+-- | T5: the kind of a transaction record (its stored @kind@).
+data RecordKind
+  = RecordStarted
+  | RecordHalt
+  | RecordInput
+  | RecordResume
+  | RecordCompletion
+  | RecordUncertain
+  | RecordBasisRefused
+  | RecordBasis
+  | RecordDiscovery
+  | RecordReproduction
+  | RecordCandidate
+  | RecordCandidateRejected
+  | RecordBaseline
+  | RecordFinding
+  | RecordContract
+  | RecordFreeze
+  | RecordImplementationRefused
+  | RecordImplementation
+  | RecordVerification
+  | RecordVerificationSummary
+  | RecordPostFinding
+  | RecordReview
+  | RecordAcceptance
+  deriving (Eq, Show, Enum, Bounded)
+
+recordKindText :: RecordKind -> T.Text
+recordKindText kind =
+  T.pack $
+    case kind of
+      RecordStarted -> "started"
+      RecordHalt -> "halt"
+      RecordInput -> "input"
+      RecordResume -> "resume"
+      RecordCompletion -> "completion"
+      RecordUncertain -> "uncertain"
+      RecordBasisRefused -> "basis-refused"
+      RecordBasis -> "basis"
+      RecordDiscovery -> "discovery"
+      RecordReproduction -> "reproduction"
+      RecordCandidate -> "candidate"
+      RecordCandidateRejected -> "candidate-rejected"
+      RecordBaseline -> "baseline"
+      RecordFinding -> "finding"
+      RecordContract -> "contract"
+      RecordFreeze -> "freeze"
+      RecordImplementationRefused -> "implementation-refused"
+      RecordImplementation -> "implementation"
+      RecordVerification -> "verification"
+      RecordVerificationSummary -> "verification-summary"
+      RecordPostFinding -> "post-finding"
+      RecordReview -> "review"
+      RecordAcceptance -> "acceptance"
+
+parseRecordKind :: T.Text -> Maybe RecordKind
+parseRecordKind =
+  parseEnumText recordKindText
 
 data Counters
   = Counters
@@ -392,7 +533,10 @@ stepTransaction principal input tx
   counters = txCounters tx
   to state = Right tx {txState = state}
   toWith state c = Right (Transaction state c)
-  halt stage code = to (Halted stage (T.pack code))
+  fixed = haltCodeText . HaltFixed
+  halt stage code = to (Halted stage (fixed code))
+  -- A refusal's code is kept as it is; it reads back as whatever kind it spells.
+  refusedAt stage code = to (Halted stage (haltCodeText (haltCodeFromText code)))
   illegal = Left (T.pack "illegal-input")
   closed s =
     case s of
@@ -418,7 +562,7 @@ stepTransaction principal input tx
   step state =
     case state of
       Running stage
-        | HumanStop <- input -> to (Stopped (T.pack "stopped by a person"))
+        | HumanStop <- input -> to (Stopped (fixed FixedStoppedByPerson))
         | Just next <- roleEnd stage -> next
         | otherwise -> running stage
       Halted stage code ->
@@ -426,21 +570,21 @@ stepTransaction principal input tx
           HumanStop -> to (Stopped code)
           HumanRetry -> to (Running stage)
           HumanAcceptNonReproduction
-            | stage == StageReproduction && code == T.pack "reproduction-missing" -> to (Running StageCandidate)
+            | stage == StageReproduction && haltCodeFromText code == HaltFixed FixedReproductionMissing -> to (Running StageCandidate)
           _ -> illegal
       Accepted ->
         case input of
           HumanDone -> to Done
-          HumanStop -> to (Stopped (T.pack "not accepted by a person"))
+          HumanStop -> to (Stopped (fixed FixedNotAcceptedByPerson))
           _ -> illegal
       _ -> illegal
   running stage =
     case (stage, input) of
       (StageBasis, BasisReady) -> to (Running StageDiscovery)
-      (StageBasis, BasisRefused code) -> to (Halted StageBasis code)
+      (StageBasis, BasisRefused code) -> refusedAt StageBasis code
       (StageDiscovery, DiscoveryAnswered) -> to (Running StageReproduction)
       (StageReproduction, Reproduced) -> to (Running StageCandidate)
-      (StageReproduction, NotReproduced) -> halt StageReproduction "reproduction-missing"
+      (StageReproduction, NotReproduced) -> halt StageReproduction FixedReproductionMissing
       (StageCandidate, CandidateClassified classes) ->
         let
           made = counters {candidatesMade = candidatesMade counters + 1}
@@ -449,24 +593,24 @@ stepTransaction principal input tx
             then toWith (Running StageChallengePre) made
             else
               if RunFailed `L.elem` classes
-                then toWith (Halted StageCandidate (T.pack "baseline-run-failed")) made
+                then toWith (Halted StageCandidate (fixed FixedBaselineRunFailed)) made
                 else
                   if candidatesMade made <= maxCorrections
                     then toWith (Running StageCandidate) made
-                    else toWith (Halted StageCandidate (T.pack "candidates-exhausted")) made
+                    else toWith (Halted StageCandidate (fixed FixedCandidatesExhausted)) made
       (StageCandidate, CandidateRejected _) ->
         let
           made = counters {candidatesMade = candidatesMade counters + 1}
         in
           if candidatesMade made <= maxCorrections
             then toWith (Running StageCandidate) made
-            else toWith (Halted StageCandidate (T.pack "candidates-exhausted")) made
-      (StageCandidate, VerificationInconclusive code) -> to (Halted StageCandidate code)
-      (StageCandidate, RegressionFailed) -> halt StageCandidate "green-regression-failed"
-      (StageCandidate, ScopeRefused code) -> to (Halted StageCandidate code)
+            else toWith (Halted StageCandidate (fixed FixedCandidatesExhausted)) made
+      (StageCandidate, VerificationInconclusive code) -> refusedAt StageCandidate code
+      (StageCandidate, RegressionFailed) -> halt StageCandidate FixedGreenRegressionFailed
+      (StageCandidate, ScopeRefused code) -> refusedAt StageCandidate code
       (StageChallengePre, ChallengeDisposed ds)
-        | Confirmed `L.elem` ds -> anotherCandidate "candidates-exhausted"
-        | NeedsHumanFinding `L.elem` ds -> halt StageChallengePre "finding-needs-human"
+        | Confirmed `L.elem` ds -> anotherCandidate FixedCandidatesExhausted
+        | NeedsHumanFinding `L.elem` ds -> halt StageChallengePre FixedFindingNeedsHuman
         | otherwise -> to (Running StageFreeze)
       (StageFreeze, TestsFrozen) -> to (Running StageImplement)
       (StageImplement, Implemented) ->
@@ -477,16 +621,16 @@ stepTransaction principal input tx
         in
           if attemptsMade c < maxAttempts
             then toWith (Running StageImplement) c
-            else toWith (Halted StageImplement (T.pack "attempts-exhausted")) c
+            else toWith (Halted StageImplement (fixed FixedAttemptsExhausted)) c
       (StageVerify, VerificationPassed) -> to (Running StageChallengePost)
-      (StageVerify, VerificationFailed) -> anotherAttempt "attempts-exhausted"
-      (StageVerify, VerificationInconclusive code) -> to (Halted StageVerify code)
+      (StageVerify, VerificationFailed) -> anotherAttempt FixedAttemptsExhausted
+      (StageVerify, VerificationInconclusive code) -> refusedAt StageVerify code
       (StageChallengePost, ChallengeDisposed ds)
-        | Confirmed `L.elem` ds -> anotherAttempt "attempts-exhausted"
-        | NeedsHumanFinding `L.elem` ds -> halt StageChallengePost "finding-needs-human"
+        | Confirmed `L.elem` ds -> anotherAttempt FixedAttemptsExhausted
+        | NeedsHumanFinding `L.elem` ds -> halt StageChallengePost FixedFindingNeedsHuman
         | otherwise -> to (Running StageReview)
       (StageReview, ReviewApproved) -> to (Running StageAccept)
-      (StageReview, ReviewRejected) -> anotherAttempt "attempts-exhausted"
-      (StageReview, ReviewNeedsHuman) -> halt StageReview "review-needs-human"
+      (StageReview, ReviewRejected) -> anotherAttempt FixedAttemptsExhausted
+      (StageReview, ReviewNeedsHuman) -> halt StageReview FixedReviewNeedsHuman
       (StageAccept, CommitAccepted) -> to Accepted
       _ -> illegal

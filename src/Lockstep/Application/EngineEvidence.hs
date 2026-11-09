@@ -36,7 +36,7 @@ import Lockstep.Application.EngineRecords
 import Lockstep.Kernel.Candidate (MutantRun)
 import Lockstep.Kernel.Roles (Candidate (..), CandidateTest (..), Criterion (..), Role (..), Verdict, roleName)
 import Lockstep.Kernel.Runner (OutcomeKind, RoleEnding (..), roleEndingFromText)
-import Lockstep.Kernel.Transaction (Disposition)
+import Lockstep.Kernel.Transaction (Disposition, RecordKind (..), recordKindText)
 
 -- | One command the Supervisor ran on the candidate commit, and what it did.
 data CheckRun
@@ -118,8 +118,8 @@ transactionEvidence view =
     , evidenceRuns = [CheckRun c o x s e | Right (VerificationRun c o x s e) <- fmap snd runs]
     , evidencePassed = (\(VerificationSummary c p) -> (c, p)) <$> lastRight (current summaries)
     , evidenceFindings =
-        [FindingView BeforeChange r c m d | Right (FindingRecord r c _ m d) <- fmap snd (decodedKind (FA.decode findingSchema) (T.pack "finding"))]
-          <> [FindingView AfterChange r c m d | Right (FindingRecord r c _ m d) <- current (decodedKind (FA.decode findingSchema) (T.pack "post-finding"))]
+        [FindingView BeforeChange r c m d | Right (FindingRecord r c _ m d) <- fmap snd (decodedKind (FA.decode findingSchema) RecordFinding)]
+          <> [FindingView AfterChange r c m d | Right (FindingRecord r c _ m d) <- current (decodedKind (FA.decode findingSchema) RecordPostFinding)]
     , evidenceReview = (\(ReviewRecord c v rs _) -> ReviewView c v rs) <$> lastRight (current reviews)
     , evidenceUncertain = L.filter unsettled (viewInvocations view)
     , evidenceUnreadable =
@@ -127,33 +127,34 @@ transactionEvidence view =
           ( lefts (fmap snd runs)
               <> lefts (fmap snd summaries)
               <> lefts (fmap snd reviews)
-              <> [n | k <- [T.pack "finding", T.pack "post-finding"], Left n <- fmap (decodeWith (FA.decode findingSchema)) (ofKind k)]
-              <> [recordSequence r | r <- ofKind (T.pack "candidate"), isNothing (recordedCandidate (recordBody r))]
+              <> [n | k <- [RecordFinding, RecordPostFinding], Left n <- fmap (decodeWith (FA.decode findingSchema)) (ofKind k)]
+              <> [recordSequence r | r <- ofKind RecordCandidate, isNothing (recordedCandidate (recordBody r))]
           )
-    , evidenceAttempts = L.length (ofKind (T.pack "implementation"))
+    , evidenceAttempts = L.length (ofKind RecordImplementation)
     }
  where
   records = viewRecords view
-  ofKind kind = L.filter ((== kind) . recordKind) records
+  -- The view keeps a record's kind as its stored text ('recordKindText').
+  ofKind kind = L.filter ((== recordKindText kind) . recordKind) records
   -- Each decoded record of a kind with its sequence number.
-  decodedKind :: (LBS.ByteString -> Either String a) -> T.Text -> [(Int, Either Int a)]
+  decodedKind :: (LBS.ByteString -> Either String a) -> RecordKind -> [(Int, Either Int a)]
   decodedKind decoder kind = [(recordSequence r, decodeWith decoder r) | r <- ofKind kind]
-  candidate = lastJust (fmap (recordedCandidate . recordBody) (ofKind (T.pack "candidate")))
-  summaries = decodedKind (FA.decode verificationSummarySchema) (T.pack "verification-summary")
-  reviews = decodedKind (FA.decode reviewSchema) (T.pack "review")
+  candidate = lastJust (fmap (recordedCandidate . recordBody) (ofKind RecordCandidate))
+  summaries = decodedKind (FA.decode verificationSummarySchema) RecordVerificationSummary
+  reviews = decodedKind (FA.decode reviewSchema) RecordReview
   -- The latest attempt begins with the latest implementation record.
-  attemptFrom = maybe 0 recordSequence (headOf (L.reverse (ofKind (T.pack "implementation"))))
+  attemptFrom = maybe 0 recordSequence (headOf (L.reverse (ofKind RecordImplementation)))
   current :: [(Int, b)] -> [b]
   current decoded = [d | (n, d) <- decoded, n > attemptFrom]
   -- The runs of the latest verification of this attempt: those after the summary before it.
   latestRuns =
-    case L.reverse [r | r <- ofKind (T.pack "verification-summary"), recordSequence r > attemptFrom] of
+    case L.reverse [r | r <- ofKind RecordVerificationSummary, recordSequence r > attemptFrom] of
       [] -> []
       lastSummary : _ ->
         let
-          from = maybe attemptFrom recordSequence (headOf (L.reverse [r | r <- ofKind (T.pack "verification-summary"), recordSequence r < recordSequence lastSummary]))
+          from = maybe attemptFrom recordSequence (headOf (L.reverse [r | r <- ofKind RecordVerificationSummary, recordSequence r < recordSequence lastSummary]))
         in
-          [r | r <- ofKind (T.pack "verification"), recordSequence r > max from attemptFrom, recordSequence r < recordSequence lastSummary]
+          [r | r <- ofKind RecordVerification, recordSequence r > max from attemptFrom, recordSequence r < recordSequence lastSummary]
   runs = [(recordSequence r, decodeWith (FA.decode verificationSchema) r) | r <- latestRuns]
   -- A role's run still going, or one whose ending is not known ('roleEndingFromText').
   unsettled i =

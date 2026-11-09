@@ -96,6 +96,7 @@ import Lockstep.Kernel.GitBasis
   , treePathValid
   )
 import Lockstep.Kernel.Runner (Limits (..), RunOutcome (..), RunSpec (..), outcomeName)
+import Lockstep.Kernel.Transaction (FixedHalt (..), HaltCode (..), haltCodeText)
 
 -- Running Git ------------------------------------------------------------------
 
@@ -181,7 +182,7 @@ observeBasis :: FilePath -> IO (Either T.Text Basis)
 observeBasis repo = do
   exists <- doesDirectoryExist repo
   if not exists
-    then pure (Left (T.pack "repository-missing"))
+    then pure (Left (haltCodeText (HaltFixed FixedRepositoryMissing)))
     else do
       inside <- gitText repo ["rev-parse", "--is-inside-work-tree"]
       case inside of
@@ -191,14 +192,14 @@ observeBasis repo = do
           case status of
             Left code -> pure (Left code)
             Right bytes
-              | not (BS.null bytes) -> pure (Left (T.pack "repository-dirty"))
+              | not (BS.null bytes) -> pure (Left (haltCodeText (HaltFixed FixedRepositoryDirty)))
               | otherwise -> do
                   commit <- gitText repo ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]
                   tree <- gitText repo ["rev-parse", "--verify", "--quiet", "HEAD^{tree}"]
                   pure $ case (commit, tree) of
                     (Right c, Right t') | isCommitId c && isCommitId t' -> Right (Basis c t')
                     _ -> Left (T.pack "no-commit")
-        _ -> pure (Left (T.pack "not-a-repository"))
+        _ -> pure (Left (haltCodeText (HaltFixed FixedNotARepository)))
 
 {- | C-P4.R1 R-G1: options that switch off every content filter driver named
 in the repository's configuration (any scope), so @git status@ compares the

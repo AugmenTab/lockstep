@@ -70,6 +70,7 @@ module Lockstep.Kernel.Profile
   , gateApplies
   , ResolutionInput (..)
   , LayerLevel (..)
+  , layerName
   , EffectiveProfile
   , resolveProfile
   , effectiveSources
@@ -128,6 +129,7 @@ import Data.Time.Format.ISO8601 (iso8601Show)
 import Flipstone.Prelude
 import Text.Show (Show, show)
 
+import Lockstep.Kernel.Enum (parseEnumText)
 import Lockstep.Kernel.Identity (WorkOrderId (..), WorkUnitId (..), uuidText)
 import Lockstep.Kernel.Transition (Principal (..))
 import Lockstep.Kernel.WorkOrder (WorkOrderKind, parseWorkOrderKind, workOrderKindName)
@@ -360,8 +362,8 @@ parsePathClass =
   parseBy pathClassName
 
 parseBy :: (Enum a, Bounded a) => (a -> T.Text) -> T.Text -> Maybe a
-parseBy name text =
-  L.find ((== text) . name) [minBound .. maxBound]
+parseBy =
+  parseEnumText
 
 -- Raw documents ---------------------------------------------------------------
 
