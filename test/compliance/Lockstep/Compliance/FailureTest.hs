@@ -18,6 +18,7 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 import Text.Show (show)
 
+import Lockstep.Application.Decisions (ReceiptOutcome (..), receiptOutcomeCode)
 import Lockstep.Application.Ledger (LedgerFailure (..), createTicket, showTicket)
 import Lockstep.Application.LedgerRefusal
   ( EvidenceRule (..)
@@ -46,8 +47,7 @@ import Lockstep.Kernel.Recovery (RecoveryRefusal (RecoveryLeaseActive), recovery
 import Lockstep.Kernel.Repository (RegistrationRefusal (AuthoritativeRemoteAmbiguous, AuthoritativeRemoteUnknown, NotAGitRepository), refusalCode, renderRefusal)
 import Lockstep.Kernel.Scheduler (SchedulerRefusal (InvalidPriority), schedulerRefusalCode)
 import Lockstep.Kernel.Transition (Principal (..), TransitionRefusal (IllegalTransition), principalLabel, transitionRefusalCode)
-import Lockstep.Persistence.Fields (codeField)
-import Lockstep.Persistence.Ledger (SubjectKind (..), subjectKindCode)
+import Lockstep.Persistence.Ledger (SubjectKind (..), subjectKindCode, subjectKindField)
 
 tests :: TestTree
 tests =
@@ -55,6 +55,14 @@ tests =
     "type-discipline Increment D: typed failures, the same codes and bytes"
     [ testCase "1. every Ledger refusal renders the code and words the string-built refusal had" $
         traverse_ (\(refusal, code, message) -> refusalFailure refusal @?= LedgerRefused code message) ledgerRefusals
+    , testCase "1a. the oracle covers every value of every rule a refusal carries" $ do
+        [r | (InvalidRecord r, _, _) <- ledgerRefusals] @?= [minBound .. maxBound]
+        [s | (StaleRevision s, _, _) <- ledgerRefusals] @?= [minBound .. maxBound]
+        [r | (InvalidFacts r, _, _) <- ledgerRefusals] @?= [minBound .. maxBound]
+        [r | (GateEvidenceInvalid r, _, _) <- ledgerRefusals] @?= [minBound .. maxBound]
+        [r | (RepositoryNotOwned r, _, _) <- ledgerRefusals] @?= [minBound .. maxBound]
+        [r | (SubjectNotActive r, _, _) <- ledgerRefusals] @?= [minBound .. maxBound]
+        [r | (IdempotencyKeyExpired r, _, _) <- ledgerRefusals] @?= [minBound .. maxBound]
     , testCase "1b. the effect-key and sandbox refusals build their words as the old expressions did" $ do
         holders <- traverse identity ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"] :: IO [OperationId]
         refusalFailure (EffectKeyInUse holders)
@@ -117,8 +125,8 @@ tests =
     , testCase "4. the subject kind is a typed column with the stored codes; an unknown kind is a decoding failure" $ do
         fmap subjectKindCode [minBound .. maxBound :: SubjectKind] @?= ["ticket", "work-order"]
         let
-          field = codeField "subject kind" subjectKindCode (\t -> L.find ((== t) . subjectKindCode) [minBound .. maxBound]) "kind"
-          decode = O.sqlTypeFromSql (O.fieldType field) . SqlValue.fromText
+          decode = O.sqlTypeFromSql (O.fieldType subjectKindField) . SqlValue.fromText
+        O.fieldNameToString (O.fieldName subjectKindField) @?= "kind"
         traverse_ (\k -> decode (subjectKindCode k) @?= Right k) [minBound .. maxBound :: SubjectKind]
         assertBool "an unknown kind does not decode" (isLeft (decode "task"))
     , testCase "4b. through the Ledger, a subject whose kind is corrupt is an integrity failure, not an unknown ticket" $
@@ -134,6 +142,7 @@ tests =
     , testCase "5. the project checks page's source levels are the Kernel's layer names, the bytes levelText wrote" $
         fmap layerName [LayerBaseline, LayerRepositoryDefault, LayerSpecialization, LayerOverride] @?= ["baseline", "repository-default", "specialization", "override"]
     , testCase "6. the checks and repository refusals keep their codes and words" $ do
+        fmap receiptOutcomeCode [minBound .. maxBound :: ReceiptOutcome] @?= ["applied", "refused"]
         fmap checksRefusalCode [minBound .. maxBound :: ChecksRefusal]
           @?= ["unknown-project", "checks-changed", "profile-unknown", "profile-integrity", "fewer-checks-unconfirmed", "project-has-no-folder"]
         let

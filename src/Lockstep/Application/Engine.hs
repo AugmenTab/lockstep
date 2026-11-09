@@ -44,9 +44,8 @@ import Data.Text.Encoding qualified as TE
 import Data.Text.Encoding.Error (lenientDecode)
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, pathIsSymbolicLink)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist)
 import System.IO (FilePath)
-import System.IO.Error (isDoesNotExistError)
 import Text.Show (Show, show)
 
 import Lockstep.Application.Command (IdempotencyKey, mkIdempotencyKey)
@@ -96,6 +95,7 @@ import Lockstep.Effects.GitSupervisor (Basis (..), CommitMeta (..), advanceBranc
 import Lockstep.Effects.Process (RunResult (..))
 import Lockstep.Effects.Roles (Adapter (..), Runner (..), RunnerFailure (..), Workspace (..), decodeAnswer, prepareRole, readAnswer, runPrepared)
 import Lockstep.Effects.Roles qualified as Roles
+import Lockstep.Foundation.Filesystem (linkedOrUnreadable)
 import Lockstep.Foundation.Fleece (decodeText)
 import Lockstep.Foundation.Json (Json (..), renderJson, string, strings)
 import Lockstep.Foundation.RunnerProtocol (RunProfile (..))
@@ -767,14 +767,6 @@ writeExtra tree (path, bytes)
         else do
           made <- try (traverse_ (createDirectoryIfMissing False) parents >> BS.writeFile target bytes)
           pure (either (\(_ :: IOException) -> False) (const True) made)
- where
-  -- A path that is not there yet is no link; one that cannot be checked is refused (fail closed).
-  linkedOrUnreadable p = do
-    checked <- try (pathIsSymbolicLink p)
-    pure $
-      case checked of
-        Right isLink -> isLink
-        Left e -> not (isDoesNotExistError e)
 
 -- Discovery (E6) -----------------------------------------------------------------------
 
@@ -1031,12 +1023,12 @@ reproductionStage runtime engine row = do
                 case finished of
                   Left code -> pure (Left code)
                   Right () -> settle runtime row (if reproduced then Reproduced else NotReproduced) [(RecordReproduction, body)] id
-  -- A finish that cannot be written answers with its code, and the invocation stays
-  -- unfinished: the next advance settles it ('settleUnfinished') before anything runs.
+  -- A finish that cannot be written answers with the database's code and the run's (both
+  -- kept), and the invocation stays unfinished: the next advance settles it ('settleUnfinished').
   finishAndHalt invocation code = do
     finished <- db runtime (Right <$> Store.finishInvocation invocation (emptyFinish (commandEndingText CommandRunnerFailed)))
     case finished of
-      Left c -> pure (Left c)
+      Left c -> pure (Left (commandFailureCode (FinishNotRecorded c (CommandNotRun code))))
       Right () -> settle runtime row (SupervisorFailed code) [] id
   exitOf outcome =
     case outcome of
@@ -1058,12 +1050,19 @@ data CommandFailure
   = ProgramMissing
   | -- | any other refusal, an unknown result, or a step before the run that failed: its code
     CommandNotRun T.Text
+  | {- | the run failed, and its finish could not be written either: the
+    database's code, and the run's own failure, both kept. The invocation stays
+    unfinished, so the next advance settles it ('settleUnfinished').
+    -}
+    FinishNotRecorded T.Text CommandFailure
 
+-- | The failure's code; for an unrecorded finish, the database's code and then the run's.
 commandFailureCode :: CommandFailure -> T.Text
 commandFailureCode failure =
   case failure of
     ProgramMissing -> executableMissing
     CommandNotRun code -> code
+    FinishNotRecorded code original -> code <> T.pack "-after-" <> commandFailureCode original
 
 executableMissing :: T.Text
 executableMissing =
@@ -1096,7 +1095,7 @@ runCommand runtime engine row stage what workspace argv = do
         -- unfinished and the next advance settles it ('settleUnfinished').
         failed failure = do
           finished <- db runtime (Right <$> Store.finishInvocation invocation (emptyFinish (commandEndingText CommandRunnerFailed)))
-          pure (Left (either CommandNotRun (const failure) finished))
+          pure (Left (either (`FinishNotRecorded` failure) (const failure) finished))
       case ran of
         Left (_ :: IOException) -> failed (CommandNotRun (T.pack "runner-exception"))
         Right (Left (RunnerRefused code))

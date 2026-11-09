@@ -20,7 +20,7 @@ import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
 import Text.Show (Show)
 
-import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), readinessCode, withDatabase)
+import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason (DatabaseCorrupt), Readiness (..), readinessCode, withDatabase)
 import Lockstep.Application.LedgerRefusal (LedgerFailure (..), LedgerRefusal (UnknownSandboxEffect), refusalFailure)
 import Lockstep.Effects.Executor (DestinationAnswer (..), EffectAdapter (..))
 import Lockstep.Effects.Reconciler (EffectReconciler (..), LookupAnswer (..))
@@ -175,5 +175,6 @@ sandboxApplications runtime = do
   result <- withDatabase runtime Store.applicationCounts
   pure $
     case result of
+      Left (DatabaseCorrupt detail) -> Left (LedgerIntegrity detail)
       Left reason -> Left (LedgerUnavailable (readinessCode (NotReady reason)))
       Right rows -> Right [(op, effect, fromIntegral n) | (op, effect, n) <- rows]

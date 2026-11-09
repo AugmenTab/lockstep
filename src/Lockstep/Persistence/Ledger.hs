@@ -8,6 +8,7 @@ Statements only: every decision is made by the Kernel and sequenced by
 module Lockstep.Persistence.Ledger
   ( SubjectKind (..)
   , subjectKindCode
+  , subjectKindField
   , SubjectRow (..)
   , lockSubject
   , lockSubjectsOfKind

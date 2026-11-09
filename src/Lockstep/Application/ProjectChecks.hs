@@ -21,6 +21,7 @@ module Lockstep.Application.ProjectChecks
   , projectChecks
   , chooseChecks
   , chooseChecksExpecting
+  , chooseChecksTyped
   ) where
 
 import Data.ByteString.Lazy qualified as LBS
@@ -305,13 +306,18 @@ chooseChecks :: DatabaseRuntime -> T.Text -> T.Text -> T.Text -> Bool -> IO (Eit
 chooseChecks runtime pid expected =
   chooseChecksExpecting runtime pid (if expected == T.pack "none" then ExpectNothing else ExpectProfile expected)
 
--- | L4, in its order; every refusal from @checks-changed@ on leaves a decision row.
+-- | L4 with the refusal as its code: the frozen shape over 'chooseChecksTyped'.
 chooseChecksExpecting :: DatabaseRuntime -> T.Text -> ExpectedChecks -> T.Text -> Bool -> IO (Either NotReadyReason (Either T.Text ChecksOutcome))
-chooseChecksExpecting runtime pid expected choice confirmed = do
+chooseChecksExpecting runtime pid expected choice confirmed =
+  fmap (either (Left . checksRefusalCode) Right) <$> chooseChecksTyped runtime pid expected choice confirmed
+
+-- | L4, in its order, with the typed refusal; every refusal from @checks-changed@ on leaves a decision row.
+chooseChecksTyped :: DatabaseRuntime -> T.Text -> ExpectedChecks -> T.Text -> Bool -> IO (Either NotReadyReason (Either ChecksRefusal ChecksOutcome))
+chooseChecksTyped runtime pid expected choice confirmed = do
   found <- findProject runtime pid
   case found of
     Left reason -> pure (Left reason)
-    Right Nothing -> pure (Right (Left (checksRefusalCode ChecksProjectUnknown)))
+    Right Nothing -> pure (Right (Left ChecksProjectUnknown))
     Right (Just view) ->
       withDatabase runtime . O.withTransaction $ do
         repository <- repositoryOf view
@@ -332,10 +338,8 @@ chooseChecksExpecting runtime pid expected choice confirmed = do
                   , Store.profileDecisionRefusal = Nothing
                   }
               refuse d refusal = do
-                let
-                  code = checksRefusalCode refusal
-                _ <- Store.insertProfileDecision d {Store.profileDecisionOutcome = T.pack "refused", Store.profileDecisionRefusal = Just code}
-                pure (Left code)
+                _ <- Store.insertProfileDecision d {Store.profileDecisionOutcome = T.pack "refused", Store.profileDecisionRefusal = Just (checksRefusalCode refusal)}
+                pure (Left refusal)
             if not (expectationMet currentId expected)
               then refuse decision ChecksChanged
               else do
@@ -369,7 +373,7 @@ chooseChecksExpecting runtime pid expected choice confirmed = do
                                   Store.insertRepositoryProfile repositoryId (Store.profileRowId r)
                                   _ <- Store.insertProfileDecision known
                                   pure (Right ChecksChosen)
-          _ -> pure (Left (checksRefusalCode ProjectHasNoFolder))
+          _ -> pure (Left ProjectHasNoFolder)
 
 -- | Registers the built-in document as version 1 when no @lockstep-basic@ exists, with its C-P2.3 decision row.
 registerBasic :: O.Orville ()

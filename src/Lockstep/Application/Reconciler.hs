@@ -103,19 +103,21 @@ reconcileOnce runtime reconciliation
       case listed of
         Left failure -> pure (Left failure)
         Right operations -> do
-          found <- findM served operations
+          found <- firstServed operations
           case found of
-            Nothing -> pure (Right Nothing)
-            Just operation -> fmap (fmap (Just . (,) operation)) (reconcileEffect runtime reconciliation operation)
+            Left failure -> pure (Left failure)
+            Right Nothing -> pure (Right Nothing)
+            Right (Just operation) -> fmap (fmap (Just . (,) operation)) (reconcileEffect runtime reconciliation operation)
  where
   names = fmap (effectSpecName . reconcilerSpec) (reconciliationReconcilers reconciliation)
-  served operation =
-    either (const False) (\intent -> effectSpecName (intentSpec intent) `L.elem` names) <$> loadIntent runtime operation
-
-findM :: (a -> IO Bool) -> [a] -> IO (Maybe a)
-findM predicate xs =
-  case xs of
-    [] -> pure Nothing
-    x : rest -> do
-      yes <- predicate x
-      if yes then pure (Just x) else findM predicate rest
+  -- An intent that cannot be loaded is the pass's failure, never skipped as nothing to do.
+  firstServed operations =
+    case operations of
+      [] -> pure (Right Nothing)
+      operation : rest -> do
+        loaded <- loadIntent runtime operation
+        case loaded of
+          Left failure -> pure (Left failure)
+          Right intent
+            | effectSpecName (intentSpec intent) `L.elem` names -> pure (Right (Just operation))
+            | otherwise -> firstServed rest

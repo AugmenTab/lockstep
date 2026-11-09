@@ -221,3 +221,22 @@ PostgreSQL's message after the existing sentence.
   `admission-refused`); a missing `now()`/`clock_timestamp()` row or receipt/decision row is `database-corrupt` (was
   `database-unavailable`); a corrupt subject kind is `LedgerIntegrity` (was `unknown-ticket`/`unknown-work-order`);
   `sandboxApplications` reports the readiness code (was `show` of the reason).
+
+### Independent review of `85fc72a` and resolutions
+
+| Finding | Resolution |
+|---|---|
+| M1 every halt refusal ignored | `haltForIntentBy` ignores only `IllegalTransition`/`AlreadyTerminal` (no halt from that state); any other refusal is an integrity violation with its words |
+| M2 corruption as unavailability / nothing to do | `Decisions`: `DatabaseCorrupt` → `LedgerIntegrity` (receipt read, decision lock); `receiptOf`/`currentBasis` return the failure (a Ledger refusal still means "no basis"). `executeOnce`/`reconcileOnce` (signatures unchanged) return an intent that fails to load as the pass's failure, never `Right Nothing`. `runnableIntents` propagates an order that does not replay |
+| M3 `GitSupervisor.safeParents` failed open | Shared `Foundation.Filesystem.linkedOrUnreadable` (fail closed except "does not exist"), used there and by `Engine.writeExtra` |
+| L1 | The settle integrity texts carry the refusal's code and words |
+| L2 finish failure masked the run's failure | `CommandFailure.FinishNotRecorded db original`; its code is `<db>-after-<run>`; `finishAndHalt` answers with the same |
+| L3 | `ProjectChecks.chooseChecksTyped` (typed `ChecksRefusal`) under the frozen `chooseChecksExpecting`; `Web/App` matches `FewerChecksUnconfirmed`. `Decisions.ReceiptOutcome`/`receiptOutcomeCode`/`receiptApplied` (receipt rows written through it); `Web/App` uses `receiptApplied` (`DecisionReceipt.receiptOutcome` stays `Text`) |
+| L4 | `sandboxApplications`: `DatabaseCorrupt` → `LedgerIntegrity` |
+| L5 | `FailureTest` decodes through the production `subjectKindField`, checks each rule enum's oracle covers `[minBound .. maxBound]`, pins receipt outcome codes |
+
+Remaining (recorded, not changed in D): `Database.classifyConnectionFailure` (`Database.hs` ~113-124) classifies libpq's
+message text; `Effects/Git.hs` ~218 matches git's messages — both predate this work and depend on external tools'
+wording. `Conversation.postMessage` still answers `integrity` as a code when a stored request does not rebuild; the
+text state literal `active` in `runnableIntentIds`; integer `show` in canonical texts (a fixed decimal format); no
+end-to-end test of a corrupt intent through `executeOnce` (the setup of an order with intents in the compliance suite).

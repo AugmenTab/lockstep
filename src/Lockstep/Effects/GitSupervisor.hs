@@ -61,7 +61,6 @@ import System.Directory
   , doesFileExist
   , getTemporaryDirectory
   , listDirectory
-  , pathIsSymbolicLink
   , removeDirectoryRecursive
   , removeFile
   )
@@ -82,6 +81,7 @@ import System.Posix.IO (OpenFileFlags (creat, exclusive, nofollow), OpenMode (Wr
 import Text.Show (Show, show)
 
 import Lockstep.Effects.Process (RunResult (..), newCancel, runDirect)
+import Lockstep.Foundation.Filesystem (linkedOrUnreadable)
 import Lockstep.Kernel.GitBasis
   ( Change (..)
   , TreeEntry (..)
@@ -450,7 +450,7 @@ safeParents dest relative = do
     parts = splitPath relative
     segments = L.take (L.length parts - 1) parts
     prefixes = L.drop 1 (L.scanl (\acc s -> acc <> "/" <> s) dest segments)
-  links <- traverse (\p -> fromRight False <$> (try (pathIsSymbolicLink p) :: IO (Either IOException Bool))) prefixes
+  links <- traverse linkedOrUnreadable prefixes
   pure (not (L.or links))
 
 splitPath :: FilePath -> [FilePath]

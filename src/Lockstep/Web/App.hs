@@ -40,12 +40,12 @@ import Lockstep.Application.Activity (readActivity)
 import Lockstep.Application.Command (WorkspaceState (..), generateIdempotencyKey, idempotencyKeyText, mkIdempotencyKey, readWorkspace)
 import Lockstep.Application.Conversation (Channel (..), Sender (..), StoredRequest (..), postMessage)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason (..), Readiness (..), checkReadiness, revisionNumber)
-import Lockstep.Application.Decisions (DecisionReceipt (..), OpenDecision (..), applyDecision, decidedReceipt, findDecision, listDecisions)
+import Lockstep.Application.Decisions (DecisionReceipt (..), OpenDecision (..), applyDecision, decidedReceipt, findDecision, listDecisions, receiptApplied)
 import Lockstep.Application.Engine (TransactionView (..), decideCompletion, haltRequest, projectStarted, transactionForWorkOrder, transactionView)
 import Lockstep.Application.Execution (Admission (..), admitBug, enableExecution, executionStatus, findAdmission)
 import Lockstep.Application.LedgerView (EffectLine (..), LedgerProjection (..), OrderLine (..), projectLedger)
 import Lockstep.Application.OperatorTrust (Session (..), exchangeSignIn, lookupSession, revokeSession)
-import Lockstep.Application.ProjectChecks (ChecksOutcome (..), ChecksRefusal (FewerChecksUnconfirmed), ExpectedChecks (..), ProjectChecks (..), QueueEntry (..), checksRefusalCode, chooseChecksExpecting, projectChecks)
+import Lockstep.Application.ProjectChecks (ChecksOutcome (..), ChecksRefusal (FewerChecksUnconfirmed), ExpectedChecks (..), ProjectChecks (..), QueueEntry (..), checksRefusalCode, chooseChecksTyped, projectChecks)
 import Lockstep.Application.Projects
   ( NewProject (..)
   , ProjectFolders (..)
@@ -408,19 +408,20 @@ handleWithDatabase db route request =
           (Left _, _, _) -> pure notReady
           (Right Nothing, _, _) -> pure (errorJson HTTP.status404 "not-found")
           (Right (Just before), Just expected, Just choice) -> do
-            chosen <- chooseChecksExpecting db pid expected choice confirmed
+            chosen <- chooseChecksTyped db pid expected choice confirmed
             case chosen of
               Left _ -> pure notReady
               Right (Right ChecksChosen) -> checksAnswer db pid before (Just "Saved.")
               Right (Right ChecksUnchanged) -> checksAnswer db pid before (Just "Saved. This was already the choice.")
-              Right (Left code) -> do
+              Right (Left refusal) -> do
                 let
                   losses = choiceLosses before choice
                   lost =
-                    if code == checksRefusalCode FewerChecksUnconfirmed && not (L.null losses)
-                      then " It would stop requiring " <> T.intercalate "; " (fmap lossWords losses) <> "."
-                      else ""
-                checksAnswer db pid before (Just (checksRefusalWords code <> lost))
+                    case refusal of
+                      FewerChecksUnconfirmed
+                        | not (L.null losses) -> " It would stop requiring " <> T.intercalate "; " (fmap lossWords losses) <> "."
+                      _ -> ""
+                checksAnswer db pid before (Just (checksRefusalWords (checksRefusalCode refusal) <> lost))
           (Right (Just before), _, _) -> checksAnswer db pid before (Just "Lockstep could not read this form. Try again.")
     EnableExecutionRoute pid ->
       withForm $ \fields -> do
@@ -542,7 +543,7 @@ handleWithDatabase db route request =
                     case result of
                       Left _ -> pure notReady
                       Right (Right receipt)
-                        | receiptOutcome receipt == "applied" -> pure (pathAnswer ("/app/decisions/" <> did) (donePage receipt Nothing))
+                        | receiptApplied receipt -> pure (pathAnswer ("/app/decisions/" <> did) (donePage receipt Nothing))
                         | otherwise -> decisionAnswer db did (Just (decisionRefusalWords (fromMaybe "" (receiptRefusal receipt))))
                       Right (Left code) -> decisionAnswer db did (Just (decisionRefusalWords code))
               _ -> decisionAnswer db did (Just "Lockstep could not read this form. Try again.")

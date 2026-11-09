@@ -123,6 +123,7 @@ import Lockstep.Kernel.Effect
   , SubjectRef (..)
   , effectKeyText
   , effectRefusalCode
+  , effectRefusalMessage
   , effectSpecBudget
   , effectSpecClass
   , effectSpecName
@@ -206,7 +207,7 @@ import Lockstep.Kernel.Scheduler
   , schedulingCommands
   )
 import Lockstep.Kernel.Ticket (TicketInput, TicketState (..), stepTicket, ticketStateName)
-import Lockstep.Kernel.Transition (Command (..), Principal (..))
+import Lockstep.Kernel.Transition (Command (..), Principal (..), TransitionRefusal (AlreadyTerminal, IllegalTransition), transitionRefusalMessage)
 import Lockstep.Kernel.WorkOrder
   ( Claim (..)
   , WorkOrder (..)
@@ -1602,9 +1603,12 @@ haltForIntentBy principal l code operation = do
     revision = fromIntegral (Store.subjectRowRevision (loadedSubject l))
   case (stepWorkOrder order (Command principal input), encodeWorkOrderEvent (WorkOrderStep input)) of
     (Right next, Right text) -> appendStep (workOrderId order) (revision + 1) principal text next
-    -- Kept by design: the order's lifecycle accepts no halt now (it is not active or is
-    -- already halted), so there is nothing to halt; the intent's own state records the outcome.
-    (Left _, _) -> pure ()
+    -- Nothing to halt: the order is in a state with no halt (pending, eligible, halted) or has
+    -- ended; the intent's own state records the outcome.
+    (Left (IllegalTransition _ _), _) -> pure ()
+    (Left (AlreadyTerminal _), _) -> pure ()
+    -- Any other refusal (a principal the halt does not permit, an agent): a defect, never ignored.
+    (Left refusal, _) -> integrityViolation ("the order's halt for an intent was refused: " <> T.unpack (transitionRefusalMessage refusal))
     -- The reason is a code and an operation id, always storable: a refusal here is a defect.
     (Right _, Left reason) -> integrityViolation ("a halt reason for an intent is not storable: " <> T.unpack reason)
 
@@ -1643,7 +1647,7 @@ concludeIntent runtime operation generation observation =
                 _ -> pure (Right observed)
             case final of
               -- C-P2.9-R1 §4.2 N5: the observation is written, so a refused settle rolls back.
-              Left r -> pure (integrity ("an observed intent could not be settled: " <> T.unpack (effectRefusalCode r)))
+              Left r -> pure (integrity ("an observed intent could not be settled: " <> T.unpack (effectRefusalCode r <> T.pack ": " <> effectRefusalMessage r)))
               Right next -> do
                 Store.updateIntent (lifecycleColumns next row)
                 pure (Right next)
@@ -1692,7 +1696,9 @@ runnableIntents :: DatabaseRuntime -> IO (Either LedgerFailure [OperationId])
 runnableIntents runtime =
   transaction runtime $ \_ -> do
     candidates <- Store.runnableIntentIds
-    Right <$> filterM current candidates
+    checked <- traverse current candidates
+    -- An order that does not replay is an integrity failure, never an intent quietly left out.
+    pure (fmap (\keep -> [o | (o, True) <- L.zip candidates keep]) (sequenceA checked))
  where
   current operation = do
     rows <- Store.findIntent operation
@@ -1700,9 +1706,9 @@ runnableIntents runtime =
       Just row -> do
         subject <- Store.subjectRow (Store.intentRowSubject row)
         case subject of
-          Nothing -> pure False
-          Just s -> either (const False) (`runsHere` row) <$> loadWorkOrder s
-      Nothing -> pure False
+          Nothing -> pure (Right False)
+          Just s -> fmap (`runsHere` row) <$> loadWorkOrder s
+      Nothing -> pure (Right False)
 
 recoverableIntents :: DatabaseRuntime -> IO (Either LedgerFailure [OperationId])
 recoverableIntents runtime =
@@ -1784,7 +1790,7 @@ applyLookup runtime operation generation result =
                     _ -> pure (Right next)
                 case final of
                   -- N5: the lookup is recorded, so a refused settle rolls back.
-                  Left r -> pure (integrity ("a looked-up intent could not be settled: " <> T.unpack (effectRefusalCode r)))
+                  Left r -> pure (integrity ("a looked-up intent could not be settled: " <> T.unpack (effectRefusalCode r <> T.pack ": " <> effectRefusalMessage r)))
                   Right written -> do
                     Store.updateIntent (lifecycleColumns written row)
                     pure (Right written)

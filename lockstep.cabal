@@ -74,6 +74,7 @@ library
       Lockstep.Foundation.ControlProtocol
       Lockstep.Foundation.Digest
       Lockstep.Foundation.EvidenceModel
+      Lockstep.Foundation.Filesystem
       Lockstep.Foundation.Fleece
       Lockstep.Foundation.FolderProtocol
       Lockstep.Foundation.InstallProtocol
