@@ -40,7 +40,6 @@ module Lockstep.Application.Command
   , findReceipt
   ) where
 
-import Control.Exception (throwIO)
 import Crypto.Hash (SHA256 (SHA256), hashWith)
 import Crypto.Random (getRandomBytes)
 import Data.ByteArray qualified as BA
@@ -52,7 +51,6 @@ import Data.Text.Encoding qualified as TE
 import Data.Time qualified as Time
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
-import System.IO.Error (userError)
 import Text.Show (Show, show)
 
 import Lockstep.Application.Database
@@ -64,6 +62,7 @@ import Lockstep.Application.Database
   )
 import Lockstep.Kernel.Identity (ReceiptId, receiptIdNumber)
 import Lockstep.Persistence.Commands qualified as Store
+import Lockstep.Persistence.Integrity (integrityViolation)
 import Lockstep.Persistence.Jobs qualified as Jobs
 
 -- | Who submitted the command; authority was checked by the caller (E1).
@@ -407,26 +406,24 @@ submitCommand runtime envelope = do
           }
     case inserted of
       -- An effect must never commit without its receipt: abort the transaction (review finding 7).
-      Nothing -> liftIO (throwIO (userError "lockstep: the command receipt insert returned no row"))
-      Just _ -> pure ()
-    pure $
-      case inserted of
-        Nothing -> Left (CommandNotReady DatabaseError)
-        Just (newId, acceptedAt) ->
-          Right
-            ( newId
-            , Receipt
-                { receiptId = receiptIdNumber newId
-                , receiptKey = key
-                , receiptKind = commandKind (envelopeCommand envelope)
-                , receiptOutcome = outcome
-                , receiptExpected = envelopeExpected envelope
-                , receiptRevision = revision
-                , receiptActor = envelopeActor envelope
-                , receiptAcceptedAt = acceptedAt
-                , receiptReplayed = False
-                }
-            )
+      Nothing -> integrityViolation "the command receipt insert returned no row"
+      Just (newId, acceptedAt) ->
+        pure
+          ( Right
+              ( newId
+              , Receipt
+                  { receiptId = receiptIdNumber newId
+                  , receiptKey = key
+                  , receiptKind = commandKind (envelopeCommand envelope)
+                  , receiptOutcome = outcome
+                  , receiptExpected = envelopeExpected envelope
+                  , receiptRevision = revision
+                  , receiptActor = envelopeActor envelope
+                  , receiptAcceptedAt = acceptedAt
+                  , receiptReplayed = False
+                  }
+              )
+          )
   admit = do
     locked <- Store.lockWorkspace
     row <- Store.findReceiptByKey key

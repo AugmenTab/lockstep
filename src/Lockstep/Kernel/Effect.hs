@@ -44,6 +44,7 @@ module Lockstep.Kernel.Effect
   , parseEffectClass
   , EffectRefusal (..)
   , effectRefusalCode
+  , effectRefusalMessage
   ) where
 
 import Data.Char qualified as Char
@@ -57,7 +58,7 @@ import Text.Show (Show)
 import Lockstep.Kernel.Enum (parseEnumText)
 import Lockstep.Kernel.Identity (TicketId, Uuid, WorkOrderId)
 import Lockstep.Kernel.Profile (ContentDigest, Hasher (..))
-import Lockstep.Kernel.Transition (Command (..), Principal (..))
+import Lockstep.Kernel.Transition (Command (..), Principal (..), principalLabel)
 
 data EffectClass
   = Repeatable
@@ -504,3 +505,25 @@ effectRefusalCode refusal =
       AlreadyObserved -> "already-observed"
       OutcomeUnknownBlocks -> "outcome-unknown"
       RetriesExhausted -> "retries-exhausted"
+
+-- | The refusal in words (its code is 'effectRefusalCode').
+effectRefusalMessage :: EffectRefusal -> T.Text
+effectRefusalMessage refusal =
+  case refusal of
+    InvalidEffectSpec reason -> T.pack "the effect spec is not valid: " <> reason
+    IdempotencyUndocumented -> T.pack "an idempotent effect must document its key lifetime"
+    UnsafeRetryBudget -> T.pack "this effect class may not be retried"
+    InvalidEffectKey reason -> T.pack "the effect key is not valid: " <> reason
+    InvalidEffectParameters -> T.pack "the effect parameters are not valid"
+    DuplicateEffectKey key -> T.pack "the effect key " <> effectKeyText key <> T.pack " is declared twice"
+    EffectAgentAssertion -> T.pack "an agent's assertion is never a command"
+    EffectAlreadySettled -> T.pack "the intent is already settled"
+    EffectNotAuthorized principal -> principalLabel principal <> T.pack " may not step an effect intent"
+    StaleClaim -> T.pack "the intent's claim has moved on"
+    IllegalIntentTransition state input -> T.pack "a " <> input <> T.pack " is not possible while the intent is " <> state
+    ClaimHeld -> T.pack "another claim on the intent is still held"
+    LeaseExpired -> T.pack "the intent's lease has expired"
+    DispatchedNeedsRecovery -> T.pack "the intent was dispatched and needs recovery first"
+    AlreadyObserved -> T.pack "the intent's outcome is already observed"
+    OutcomeUnknownBlocks -> T.pack "the intent's outcome is unknown; a person must resolve it"
+    RetriesExhausted -> T.pack "the intent's retries are spent"

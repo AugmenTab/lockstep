@@ -6,6 +6,9 @@ attempt that reaches the database leaves exactly one decision row.
 -}
 module Lockstep.Application.Repositories
   ( Refused (..)
+  , RepositoryRefusal (..)
+  , refusedCode
+  , refusedMessage
   , EngineerRecord (..)
   , RepositoryRecord (..)
   , RegisterRequest (..)
@@ -20,7 +23,6 @@ module Lockstep.Application.Repositories
   , ownershipHolds
   ) where
 
-import Control.Exception (throwIO)
 import Crypto.Hash (SHA256 (SHA256), hashWith)
 import Data.ByteArray qualified as BA
 import Data.ByteString qualified as BS
@@ -32,9 +34,8 @@ import Data.Text.Encoding qualified as TE
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
 import System.IO (FilePath)
-import System.IO.Error (userError)
 import Text.Read (readMaybe)
-import Text.Show (show)
+import Text.Show (Show, show)
 
 import Lockstep.Application.Database
   ( DatabaseRuntime
@@ -62,15 +63,44 @@ import Lockstep.Kernel.Repository
   , renderObservation
   , renderRefusal
   )
+import Lockstep.Persistence.Integrity (integrityViolation)
 import Lockstep.Persistence.Repositories qualified as Store
 
--- | A refusal with its stable code, a message and the decision row that records it.
+-- | Why an Engineer or a registration was refused: Lockstep's own checks, or the Kernel's decision.
+data RepositoryRefusal
+  = EngineerNameInvalid
+  | EngineerNameTaken
+  | EngineerUnknown
+  | RegistrationRefused RegistrationRefusal
+  deriving (Eq, Show)
+
+-- | A refusal and the decision row that records it.
 data Refused
   = Refused
-  { refusedCode :: T.Text
-  , refusedMessage :: T.Text
+  { refusedReason :: RepositoryRefusal
   , refusedDecision :: Int64
   }
+
+-- | The refusal's stable code, as the decision row stores it.
+refusedCode :: Refused -> T.Text
+refusedCode =
+  repositoryRefusalCode . refusedReason
+
+refusedMessage :: Refused -> T.Text
+refusedMessage refused =
+  case refusedReason refused of
+    EngineerNameInvalid -> T.pack "an Engineer name is a-z followed by up to 39 of a-z, 0-9 and -"
+    EngineerNameTaken -> T.pack "an Engineer with this name exists"
+    EngineerUnknown -> T.pack "there is no Engineer with this name"
+    RegistrationRefused r -> renderRefusal r
+
+repositoryRefusalCode :: RepositoryRefusal -> T.Text
+repositoryRefusalCode refusal =
+  case refusal of
+    EngineerNameInvalid -> T.pack "engineer-name-invalid"
+    EngineerNameTaken -> T.pack "engineer-name-taken"
+    EngineerUnknown -> T.pack "unknown-engineer"
+    RegistrationRefused r -> refusalCode r
 
 data EngineerRecord
   = EngineerRecord
@@ -113,12 +143,12 @@ validEngineerName name =
 record :: Store.NewDecision -> O.Orville Int64
 record decision = do
   inserted <- Store.insertDecision decision
-  maybe (liftIO (throwIO (userError "lockstep: the decision insert returned no row"))) pure inserted
+  maybe (integrityViolation "the decision insert returned no row") pure inserted
 
-refusedWith :: Store.NewDecision -> T.Text -> T.Text -> O.Orville (Either Refused a)
-refusedWith decision code message = do
-  n <- record decision {Store.decisionRefusal = Just code}
-  pure (Left (Refused code message n))
+refusedWith :: Store.NewDecision -> RepositoryRefusal -> O.Orville (Either Refused a)
+refusedWith decision refusal = do
+  n <- record decision {Store.decisionRefusal = Just (repositoryRefusalCode refusal)}
+  pure (Left (Refused refusal n))
 
 addEngineer :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Either Refused EngineerRecord))
 addEngineer runtime name = do
@@ -145,14 +175,11 @@ addEngineerIn engineerId name = do
         }
   if not (validEngineerName name)
     then
-      refusedWith
-        decision
-        (T.pack "engineer-name-invalid")
-        (T.pack "an Engineer name is a-z followed by up to 39 of a-z, 0-9 and -")
+      refusedWith decision EngineerNameInvalid
     else do
       inserted <- Store.insertEngineer engineerId name
       if not inserted
-        then refusedWith decision (T.pack "engineer-name-taken") (T.pack "an Engineer with this name exists")
+        then refusedWith decision EngineerNameTaken
         else do
           _ <- record decision {Store.decisionEngineerId = Just engineerId}
           pure (Right (EngineerRecord engineerId name))
@@ -206,10 +233,10 @@ registerObservedIn engineerName (Observed path remote repositoryId observed) = d
         , Store.decisionRepositoryId = Nothing
         , Store.decisionObservation = either (const Nothing) (Just . renderObservation) observed
         }
-    refuse refusal = refusedWith decision (refusalCode refusal) (renderRefusal refusal)
+    refuse = refusedWith decision . RegistrationRefused
   case (engineer, observed) of
     (Nothing, _) ->
-      refusedWith decision (T.pack "unknown-engineer") (T.pack "there is no Engineer with this name")
+      refusedWith decision EngineerUnknown
     (Just _, Left refusal) ->
       refuse refusal
     (Just engineerId, Right observation) -> do
@@ -217,7 +244,7 @@ registerObservedIn engineerName (Observed path remote repositoryId observed) = d
       let
         owned = mapMaybe ownedFromRow rows
       if L.length owned /= L.length rows
-        then liftIO (throwIO (userError "lockstep: a stored repository row is malformed"))
+        then integrityViolation "a stored repository row is malformed"
         else case decideRegistration owned (RegistrationRequest repositoryId engineerId observation) of
           Left refusal ->
             refuse refusal

@@ -6,7 +6,9 @@ Statements only: every decision is made by the Kernel and sequenced by
 "Lockstep.Application.Ledger" inside one transaction.
 -}
 module Lockstep.Persistence.Ledger
-  ( SubjectRow (..)
+  ( SubjectKind (..)
+  , subjectKindCode
+  , SubjectRow (..)
   , lockSubject
   , lockSubjectsOfKind
   , subjectsOfKind
@@ -72,7 +74,6 @@ module Lockstep.Persistence.Ledger
   , databaseNow
   ) where
 
-import Control.Exception (throwIO)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Maybe (isNothing)
 import Data.Text qualified as T
@@ -81,7 +82,7 @@ import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
 import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
-import System.IO.Error (userError)
+import Text.Show (Show)
 
 import Lockstep.Kernel.Effect (EffectClass (..), IntentStateName (..), OperationId (..), effectClassName, intentStateNameText, parseEffectClass, parseIntentStateName)
 import Lockstep.Kernel.Enum (parseEnumText)
@@ -106,6 +107,7 @@ import Lockstep.Persistence.Fields
   , setNow
   , tableReference
   )
+import Lockstep.Persistence.Integrity (integrityViolation)
 import Lockstep.Persistence.Profiles (profileIdColumn)
 import Lockstep.Persistence.Repositories (activeRepositoryCondition, engineerIdField, engineerTable, repositoryIdField, repositoryOwnerField, repositoryTable)
 
@@ -117,10 +119,24 @@ UUID), so this polymorphic table and the columns that refer to any subject
 (events, refusals, intents) hold the library 'Uuid', with the kind column
 deciding which identity it is.
 -}
+
+-- | Which identity a subject row holds: its stored code is the @kind@ column.
+data SubjectKind
+  = TicketSubject
+  | WorkOrderSubject
+  deriving (Eq, Show, Enum, Bounded)
+
+subjectKindCode :: SubjectKind -> T.Text
+subjectKindCode kind =
+  T.pack $
+    case kind of
+      TicketSubject -> "ticket"
+      WorkOrderSubject -> "work-order"
+
 data SubjectRow
   = SubjectRow
   { subjectRowId :: Uuid
-  , subjectRowKind :: T.Text
+  , subjectRowKind :: SubjectKind
   , subjectRowRevision :: Int32
   , subjectRowState :: T.Text
   }
@@ -145,9 +161,9 @@ subjectReferenceField :: String -> O.FieldDefinition O.NotNull Uuid
 subjectReferenceField =
   foreignKeyTo subjectTable subjectIdField
 
-subjectKindField :: O.FieldDefinition O.NotNull T.Text
+subjectKindField :: O.FieldDefinition O.NotNull SubjectKind
 subjectKindField =
-  O.unboundedTextField "kind"
+  codeField "subject kind" subjectKindCode (parseEnumText subjectKindCode) "kind"
 
 subjectRevisionField :: O.FieldDefinition O.NotNull Int32
 subjectRevisionField =
@@ -171,14 +187,14 @@ lockSubject subjectId =
   O.findFirstEntityBy subjectTable (O.where_ (O.fieldEquals subjectIdField subjectId) <> forUpdate)
 
 -- | Every subject of one kind, by id, locked until the transaction ends.
-lockSubjectsOfKind :: O.MonadOrville m => T.Text -> m [SubjectRow]
+lockSubjectsOfKind :: O.MonadOrville m => SubjectKind -> m [SubjectRow]
 lockSubjectsOfKind kind =
   O.findEntitiesBy
     subjectTable
     (O.where_ (O.fieldEquals subjectKindField kind) <> O.orderBy (O.orderByField subjectIdField O.ascendingOrder) <> forUpdate)
 
 -- | Every subject of one kind, by creation, without locking them (C-P2.8 V2).
-subjectsOfKind :: O.MonadOrville m => T.Text -> m [SubjectRow]
+subjectsOfKind :: O.MonadOrville m => SubjectKind -> m [SubjectRow]
 subjectsOfKind kind =
   O.findEntitiesBy
     subjectTable
@@ -186,7 +202,7 @@ subjectsOfKind kind =
         <> O.orderBy (O.orderByField subjectCreatedAtField O.ascendingOrder <> O.orderByField subjectIdField O.ascendingOrder)
     )
 
-insertSubject :: O.MonadOrville m => Uuid -> T.Text -> T.Text -> m ()
+insertSubject :: O.MonadOrville m => Uuid -> SubjectKind -> T.Text -> m ()
 insertSubject subjectId kind state =
   O.insertEntity subjectTable (SubjectRow subjectId kind 1 state)
 
@@ -488,7 +504,7 @@ data IntentRow
   = IntentRow
   { intentRowOperation :: OperationId
   , intentRowSubject :: Uuid
-  , intentRowSubjectKind :: T.Text
+  , intentRowSubjectKind :: SubjectKind
   , intentRowBasisRevision :: Int32
   , intentRowKey :: T.Text
   , intentRowEvent :: Int64
@@ -521,13 +537,13 @@ for that kind; 'intentRows' supplies it from the join. Its key is still
 'IntentRow''s ('EntityKey'); only the read type differs from 'Table', so it is
 built with 'O.mkTableDefinition' directly.
 -}
-intentTable :: O.TableDefinition (O.HasKey (EntityKey IntentRow)) IntentRow (T.Text -> IntentRow)
+intentTable :: O.TableDefinition (O.HasKey (EntityKey IntentRow)) IntentRow (SubjectKind -> IntentRow)
 intentTable =
   O.mkTableDefinition "lockstep_effect_intents" (O.primaryKey intentOperationField) intentColumns
 
 type instance EntityKey IntentRow = OperationId
 
-intentColumns :: O.SqlMarshaller IntentRow (T.Text -> IntentRow)
+intentColumns :: O.SqlMarshaller IntentRow (SubjectKind -> IntentRow)
 intentColumns =
   ( \operation subject basis key event spec class_ budget lifetime refuses authoritative excludesLate parameters digest state generation dispatches leaseOwner leaseUntil outcome settled activation firstDispatched kind ->
       IntentRow operation subject kind basis key event spec class_ budget lifetime refuses authoritative excludesLate parameters digest state generation dispatches leaseOwner leaseUntil outcome settled activation firstDispatched
@@ -689,7 +705,7 @@ readOnlySnapshot =
 databaseClock :: O.MonadOrville m => m UTCTime
 databaseClock = do
   rows <- selectValue clockTimestamp (O.utcTimestampField "v")
-  maybe (liftIO (throwIO (userError "lockstep: SELECT clock_timestamp() returned no row"))) pure (headMay rows)
+  maybe (integrityViolation "SELECT clock_timestamp() returned no row") pure (headMay rows)
 
 {- | Writes the lifecycle columns only; a trigger refuses any change to the
 identity, spec or parameters. The first time an intent is written as
@@ -782,7 +798,7 @@ runnableIntentIds =
       (O.marshallQualifyFields (O.tableIdentifier intentTable) (O.marshallReadOnlyField intentOperationField))
       intentsWithSubjects
       ( O.where_
-          ( qualifiedEquals (ofSubject subjectKindField) (T.pack "work-order")
+          ( qualifiedEquals (ofSubject subjectKindField) WorkOrderSubject
               `O.andExpr` qualifiedEquals (ofSubject subjectStateField) (T.pack "active")
               `O.andExpr` Expr.parenthesized
                 ( stateIs NamePending
@@ -998,4 +1014,4 @@ activeOwners =
 databaseNow :: O.MonadOrville m => m UTCTime
 databaseNow = do
   rows <- selectValue Expr.now (O.utcTimestampField "v")
-  maybe (liftIO (throwIO (userError "lockstep: SELECT now() returned no row"))) pure (headMay rows)
+  maybe (integrityViolation "SELECT now() returned no row") pure (headMay rows)

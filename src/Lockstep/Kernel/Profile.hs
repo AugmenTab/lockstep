@@ -131,7 +131,7 @@ import Text.Show (Show, show)
 
 import Lockstep.Kernel.Enum (parseEnumText)
 import Lockstep.Kernel.Identity (WorkOrderId (..), WorkUnitId (..), uuidText)
-import Lockstep.Kernel.Transition (Principal (..))
+import Lockstep.Kernel.Transition (Principal (..), principalLabel)
 import Lockstep.Kernel.WorkOrder (WorkOrderKind, parseWorkOrderKind, workOrderKindName)
 import Lockstep.Kernel.WorkUnit (AdmittedWorkUnit (..), WorkUnitRequest (..))
 
@@ -592,7 +592,8 @@ installationBaseline =
 
 -- Rendering (§3) --------------------------------------------------------------
 
-showText :: Show a => a -> T.Text
+-- | A number in the canonical texts: its decimal digits (base's 'show' for 'Int', a fixed format).
+showText :: Int -> T.Text
 showText =
   T.pack . show
 
@@ -1261,7 +1262,7 @@ renderProfileRefusal refusal =
     ProfileConflict subject -> T.pack "two sources at one level disagree on " <> subject
     WeakensNonBehaviouralPolicy -> T.pack "a later layer cannot permit non-behavioural work again"
     ProfileUnavailable p -> T.pack "the specialization profile " <> profileIdText p <> T.pack " is not registered"
-    UntrustedClassification p -> T.pack "only a human may classify work, not " <> showText p
+    UntrustedClassification p -> T.pack "only a human may classify work, not " <> principalLabel p
     NonBehaviouralRefused reason -> reason
     NonBehaviouralViolated paths -> T.pack "non-behavioural work changed " <> joined pathClassName paths
     ExceptionNotHuman -> T.pack "only a human may grant an exception"
@@ -1270,6 +1271,6 @@ renderProfileRefusal refusal =
     ExceptionNotPermitted g -> T.pack "gate " <> gateIdText g <> T.pack " has no exception path"
     ExceptionOutOfScope -> T.pack "the exception is for other work"
     ExceptionProfileMismatch -> T.pack "the exception was granted against another effective profile"
-    BindingNotAuthorized p -> T.pack "not authorized: " <> showText p
+    BindingNotAuthorized p -> T.pack "not authorized: " <> principalLabel p
     InvalidRecord reason -> reason
     InvalidFacts reason -> T.pack "invalid work facts: " <> reason

@@ -28,7 +28,7 @@ import Control.Concurrent (ThreadId, forkFinally, killThread, threadDelay)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, readMVar, tryPutMVar, tryReadMVar)
 import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
 import Control.Monad (unless)
-import Data.Maybe (isJust)
+import Data.Maybe (catMaybes, isJust)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import System.Timeout (timeout)
@@ -36,7 +36,7 @@ import Text.Show (Show)
 
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, reasonDiagnosis)
 import Lockstep.Application.Engine (Engine, StepReport (..), activeTransactionIds, advanceTransaction, pendingWorkOrders, startTransactionFor)
-import Lockstep.Kernel.Identity (TransactionId (..), identityText)
+import Lockstep.Kernel.Identity (TransactionId (..), WorkOrderId (..), identityText)
 
 data EngineWorker
   = EngineWorker
@@ -68,12 +68,21 @@ enginePass runtime engine stopping = do
   started <-
     case pending of
       Left reason -> pure [(T.pack "pending work orders", Left (PassDatabase reason))]
-      Right workOrders -> [] <$ traverse_ (startTransactionFor runtime) workOrders
+      Right workOrders -> catMaybes <$> traverse start workOrders
   active <- activeTransactionIds runtime
   case active of
     Left reason -> pure (started <> [(T.pack "active transactions", Left (PassDatabase reason))])
     Right ids -> (started <>) <$> each ids
  where
+  -- A start that happened is seen as its transaction's advance; one that did not is reported
+  -- (a refusal, such as an Engineer whose writer is busy, is tried again next pass).
+  start workOrder = do
+    started <- startTransactionFor runtime workOrder
+    pure $
+      case started of
+        Left reason -> Just (T.pack "start " <> identityText workOrder, Left (PassDatabase reason))
+        Right (Left code) -> Just (T.pack "start " <> identityText workOrder, Left (PassRefused code))
+        Right (Right _) -> Nothing
   each ids =
     case ids of
       [] -> pure []

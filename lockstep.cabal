@@ -47,6 +47,7 @@ library
       Lockstep.Application.Executor
       Lockstep.Application.Identity
       Lockstep.Application.Ledger
+      Lockstep.Application.LedgerRefusal
       Lockstep.Application.LedgerView
       Lockstep.Application.OperatorTrust
       Lockstep.Application.ProfileDocument
@@ -232,6 +233,7 @@ test-suite lockstep-compliance
   main-is: Main.hs
   other-modules:
       Lockstep.Compliance.DefectsTest
+      Lockstep.Compliance.FailureTest
       Lockstep.Compliance.IdentityTest
       Lockstep.Compliance.JsonTest
       Lockstep.Compliance.NegativeTypesTest

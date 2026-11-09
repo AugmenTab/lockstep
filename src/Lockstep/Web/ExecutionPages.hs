@@ -381,6 +381,9 @@ findingTimeWords time =
     BeforeChange -> "Before the change: "
     AfterChange -> "After the change: "
 
+{- | A halt request's choice, as stored with the request (text). A name without
+its own words is shown as it is: it is one of the request's own choices.
+-}
 choiceWords :: T.Text -> T.Text
 choiceWords name =
   case T.unpack name of

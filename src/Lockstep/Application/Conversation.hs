@@ -30,7 +30,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
-import Text.Show (Show, show)
+import Text.Show (Show)
 
 import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), checkReadiness, withDatabase)
@@ -55,7 +55,7 @@ import Lockstep.Kernel.Conversation
   )
 import Lockstep.Kernel.Identity (HumanRequestId (..), WorkOrderId (..), identityText, parseIdentity)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
-import Lockstep.Kernel.Transition (Command (..), Principal (..))
+import Lockstep.Kernel.Transition (Command (..), Principal (..), principalLabel)
 import Lockstep.Persistence.Conversation qualified as Store
 
 data Channel
@@ -302,7 +302,7 @@ openRequestAbout runtime key sender workOrder request =
                       , Store.messageRowKey = keyText
                       , Store.messageRowDigest = digest
                       , Store.messageRowKind = T.pack "opened"
-                      , Store.messageRowPrincipal = T.pack (show Supervisor)
+                      , Store.messageRowPrincipal = principalLabel Supervisor
                       , Store.messageRowEvidence = senderEvidence sender
                       , Store.messageRowChannel = senderChannel sender
                       , Store.messageRowRevision = 1
@@ -367,7 +367,7 @@ postMessage runtime key rawId sender input =
                                 , Store.messageRowKey = keyText
                                 , Store.messageRowDigest = digest
                                 , Store.messageRowKind = messageKindName (inputMessageKind input)
-                                , Store.messageRowPrincipal = T.pack (show principal)
+                                , Store.messageRowPrincipal = principalLabel principal
                                 , Store.messageRowEvidence = senderEvidence sender
                                 , Store.messageRowChannel = senderChannel sender
                                 , Store.messageRowRevision = Store.requestRowRevision row

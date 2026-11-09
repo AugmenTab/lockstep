@@ -6,6 +6,7 @@ import Flipstone.Prelude
 import Test.Tasty (defaultMain, testGroup)
 
 import Lockstep.Compliance.DefectsTest qualified as DefectsTest
+import Lockstep.Compliance.FailureTest qualified as FailureTest
 import Lockstep.Compliance.IdentityTest qualified as IdentityTest
 import Lockstep.Compliance.JsonTest qualified as JsonTest
 import Lockstep.Compliance.NegativeTypesTest qualified as NegativeTypesTest
@@ -23,4 +24,5 @@ main =
       , IdentityTest.tests
       , NegativeTypesTest.tests
       , StateTest.tests
+      , FailureTest.tests
       ]

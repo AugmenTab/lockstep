@@ -46,6 +46,7 @@ import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, pathIsSymbolicLink)
 import System.IO (FilePath)
+import System.IO.Error (isDoesNotExistError)
 import Text.Show (Show, show)
 
 import Lockstep.Application.Command (IdempotencyKey, mkIdempotencyKey)
@@ -153,7 +154,7 @@ import Lockstep.Kernel.Transaction
   , txInputName
   , txStateName
   )
-import Lockstep.Kernel.Transition (Principal (..))
+import Lockstep.Kernel.Transition (Principal (..), principalLabel)
 import Lockstep.Persistence.Transactions qualified as Store
 
 -- | What the engine runs roles with: the runner, and the adapter for a role's nth invocation.
@@ -401,7 +402,9 @@ appendRecord txId sequence kind principal stage body =
         { Store.recordRowTransaction = txId
         , Store.recordRowSequence = sequence
         , Store.recordRowKind = kind
-        , Store.recordRowPrincipal = T.toLower (T.pack (show principal))
+        , -- A record's principal is the constructor name in lower case ("deliveryadapter"), as
+          -- stored since C-P4.7; the Ledger's event principal is 'principalName' ("delivery-adapter").
+          Store.recordRowPrincipal = T.toLower (principalLabel principal)
         , Store.recordRowStage = stage
         , Store.recordRowBody = rendered
         , Store.recordRowDigest = sha256Hex (TE.encodeUtf8 rendered)
@@ -526,9 +529,11 @@ advanceRow runtime engine row =
             Right input -> report input
     Halted stage code -> do
       opened <- ensureRequest runtime row stage code
-      case either (const Nothing) resumeOf opened of
-        Nothing -> idle (T.pack "halted")
-        Just (request, choice, input) -> do
+      case fmap resumeOf opened of
+        -- The halt's request could not be opened or read: its code, never "idle".
+        Left c -> pure (Left c)
+        Right Nothing -> idle (T.pack "halted")
+        Right (Just (request, choice, input)) -> do
           let
             body = record resumeSchema (Resume (storedRequestId request) choice (fromIntegral (storedRevision request)))
           applied <- applyInput runtime (Store.txRowId row) (Store.txRowRevision row) Human input [(RecordResume, body)] id
@@ -548,7 +553,10 @@ advanceRow runtime engine row =
       Left code -> pure (Left code)
       Right r -> do
         case halt (Store.txRowState r) of
-          Just (s, c) -> () <$ ensureRequest runtime r s c
+          -- Kept: the step is committed and is what this advance reports. A request that
+          -- cannot be opened now is opened again by the halted transaction's next advance,
+          -- which answers with its failure code (the Halted case above).
+          Just (s, c) -> void (ensureRequest runtime r s c)
           Nothing -> pure ()
         fmap (Stepped (txInputName input)) <$> current
   halt state =
@@ -753,12 +761,20 @@ writeExtra tree (path, bytes)
         segments = T.splitOn (T.pack "/") path
         parents = L.drop 1 (L.scanl (\acc s -> acc <> "/" <> T.unpack s) tree (L.take (L.length segments - 1) segments))
         target = tree <> "/" <> T.unpack path
-      linked <- traverse (\p -> fromRight False <$> (try (pathIsSymbolicLink p) :: IO (Either IOException Bool))) (parents <> [target])
+      linked <- traverse linkedOrUnreadable (parents <> [target])
       if L.or linked
         then pure False
         else do
           made <- try (traverse_ (createDirectoryIfMissing False) parents >> BS.writeFile target bytes)
           pure (either (\(_ :: IOException) -> False) (const True) made)
+ where
+  -- A path that is not there yet is no link; one that cannot be checked is refused (fail closed).
+  linkedOrUnreadable p = do
+    checked <- try (pathIsSymbolicLink p)
+    pure $
+      case checked of
+        Right isLink -> isLink
+        Left e -> not (isDoesNotExistError e)
 
 -- Discovery (E6) -----------------------------------------------------------------------
 
@@ -1015,9 +1031,13 @@ reproductionStage runtime engine row = do
                 case finished of
                   Left code -> pure (Left code)
                   Right () -> settle runtime row (if reproduced then Reproduced else NotReproduced) [(RecordReproduction, body)] id
+  -- A finish that cannot be written answers with its code, and the invocation stays
+  -- unfinished: the next advance settles it ('settleUnfinished') before anything runs.
   finishAndHalt invocation code = do
-    _ <- db runtime (Right <$> Store.finishInvocation invocation (emptyFinish (commandEndingText CommandRunnerFailed)))
-    settle runtime row (SupervisorFailed code) [] id
+    finished <- db runtime (Right <$> Store.finishInvocation invocation (emptyFinish (commandEndingText CommandRunnerFailed)))
+    case finished of
+      Left c -> pure (Left c)
+      Right () -> settle runtime row (SupervisorFailed code) [] id
   exitOf outcome =
     case outcome of
       Exited n -> Just n
@@ -1072,9 +1092,11 @@ runCommand runtime engine row stage what workspace argv = do
     Right () -> do
       ran <- try (runnerRun (engineRunner engine) workspace ProfileVerify (roleLimits RoleCommand) argv [])
       let
+        -- A finish that cannot be written is the failure (its code); the invocation stays
+        -- unfinished and the next advance settles it ('settleUnfinished').
         failed failure = do
-          _ <- db runtime (Right <$> Store.finishInvocation invocation (emptyFinish (commandEndingText CommandRunnerFailed)))
-          pure (Left failure)
+          finished <- db runtime (Right <$> Store.finishInvocation invocation (emptyFinish (commandEndingText CommandRunnerFailed)))
+          pure (Left (either CommandNotRun (const failure) finished))
       case ran of
         Left (_ :: IOException) -> failed (CommandNotRun (T.pack "runner-exception"))
         Right (Left (RunnerRefused code))

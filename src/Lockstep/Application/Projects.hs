@@ -38,7 +38,7 @@ import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
 import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason, Readiness (..), SessionLock (..), checkReadiness, withDatabase, withSessionLock)
 import Lockstep.Application.Identity (newEngineerId, newIdentity)
 import Lockstep.Application.Profiles (sha256Hasher)
-import Lockstep.Application.Repositories (Observed, Refused (..), RepositoryRecord (..), addEngineerIn, observeRegistration, observedIdentity, registerObservedIn)
+import Lockstep.Application.Repositories (Observed, Refused (..), RepositoryRecord (..), RepositoryRefusal (..), addEngineerIn, observeRegistration, observedIdentity, refusedCode, registerObservedIn)
 import Lockstep.Effects.ProjectFolders (childFolders, gitIdentity, isProjectFolder, makeProjectFolder)
 import Lockstep.Foundation.FolderProtocol (validFolderPath)
 import Lockstep.Kernel.Identity (ProjectId (..), RepositoryId, identityText, parseIdentity)
@@ -56,6 +56,7 @@ import Lockstep.Kernel.Project
   , ruleErrorCode
   , slugCandidate
   )
+import Lockstep.Kernel.Repository (RegistrationRefusal (AuthoritativeRemoteAmbiguous, AuthoritativeRemoteUnknown))
 import Lockstep.Persistence.Projects qualified as Store
 
 -- | The folders the service may see: the projects folder (if any), then the added folders.
@@ -341,9 +342,10 @@ ensureEngineerIn view slug =
         added <- addEngineerIn engineerId name
         case added of
           Right _ -> pure (Right name)
-          Left refused
-            | refusedCode refused == T.pack "engineer-name-taken" -> go (n + 1)
-            | otherwise -> pure (Left (refusedCode refused))
+          Left refused ->
+            case refusedReason refused of
+              EngineerNameTaken -> go (n + 1)
+              _ -> pure (Left (refusedCode refused))
 
 {- | C-P2.1 registration; with several remotes and none chosen, @origin@ is tried
 once. C-C.R1 R6-2: right before an observation that succeeded is registered,
@@ -357,11 +359,11 @@ registerIn engineer path first fallback = do
   registered <- registerSame first
   case registered of
     Left (Right refused)
-      | refusedCode refused == T.pack "authoritative-remote-ambiguous" -> do
+      | RegistrationRefused (AuthoritativeRemoteAmbiguous _) <- refusedReason refused -> do
           second <- registerSame fallback
           pure $ case second of
             Left (Right again)
-              | refusedCode again == T.pack "authoritative-remote-unknown" -> Left (refusedCode refused)
+              | RegistrationRefused (AuthoritativeRemoteUnknown _) <- refusedReason again -> Left (refusedCode refused)
             other -> codeOf other
     other -> pure (codeOf other)
  where

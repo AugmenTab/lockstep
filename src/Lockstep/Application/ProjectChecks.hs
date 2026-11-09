@@ -16,6 +16,8 @@ module Lockstep.Application.ProjectChecks
   , ProjectChecks (..)
   , ChecksOutcome (..)
   , ExpectedChecks (..)
+  , ChecksRefusal (..)
+  , checksRefusalCode
   , projectChecks
   , chooseChecks
   , chooseChecksExpecting
@@ -41,7 +43,6 @@ import Lockstep.Kernel.Policy (checksLost)
 import Lockstep.Kernel.Profile
   ( Behaviour (..)
   , Gate
-  , LayerLevel (..)
   , ProfileDefinition
   , ProfileId
   , ProfileRef (..)
@@ -52,6 +53,7 @@ import Lockstep.Kernel.Profile
   , effectiveGates
   , effectiveSources
   , gateApplies
+  , layerName
   , mkProfileDefinition
   , mkProfileId
   , mkWorkFacts
@@ -186,15 +188,6 @@ repositoryOf view =
       owner <- Store.engineerRepository engineer
       pure (owner >>= Store.engineerRowRepository)
 
-levelText :: LayerLevel -> T.Text
-levelText level =
-  T.pack $
-    case level of
-      LayerBaseline -> "baseline"
-      LayerRepositoryDefault -> "repository-default"
-      LayerSpecialization -> "specialization"
-      LayerOverride -> "override"
-
 -- | L3: the effective Profile per kind, resolved as C-P2.5 @createWorkOrder@ does (no classes or path classes, behaviour-changing).
 rulesFor :: ProfileDefinition -> [Store.ProfileRow] -> WorkOrderKind -> KindRules
 rulesFor current catalogRows kind =
@@ -212,7 +205,7 @@ rulesFor current catalogRows kind =
                   EffectiveRules
                     { rulesDigest = contentDigestText (effectiveDigest effective)
                     , rulesSources =
-                        [ (levelText level, profileIdText (refId ref), refVersion ref, contentDigestText (refDigest ref))
+                        [ (layerName level, profileIdText (refId ref), refVersion ref, contentDigestText (refDigest ref))
                         | (level, ref) <- effectiveSources effective
                         ]
                     , rulesChecks = L.filter (gateApplies facts) (effectiveGates effective)
@@ -279,6 +272,30 @@ projectChecks runtime pid = do
               , checksQueue = queue
               }
 
+{- | Why a choice of checks was refused. 'chooseChecks' answers with the code
+(its frozen shape, @Either Text@; integration @GateCRemediationTest.hs:438@);
+a caller that branches on one compares it with 'checksRefusalCode'.
+-}
+data ChecksRefusal
+  = ChecksProjectUnknown
+  | ChecksChanged
+  | ProfileUnknown
+  | ProfileFailsIntegrity
+  | FewerChecksUnconfirmed
+  | ProjectHasNoFolder
+  deriving (Eq, Show, Enum, Bounded)
+
+checksRefusalCode :: ChecksRefusal -> T.Text
+checksRefusalCode refusal =
+  T.pack $
+    case refusal of
+      ChecksProjectUnknown -> "unknown-project"
+      ChecksChanged -> "checks-changed"
+      ProfileUnknown -> "profile-unknown"
+      ProfileFailsIntegrity -> "profile-integrity"
+      FewerChecksUnconfirmed -> "fewer-checks-unconfirmed"
+      ProjectHasNoFolder -> "project-has-no-folder"
+
 {- | L4 with the C-P3.7 text for what the page showed: @none@ is "nothing
 chosen" and only that (C-C.R1 R10), so when a set of checks called @none@ is
 the current one the request cannot be told apart and is refused
@@ -294,7 +311,7 @@ chooseChecksExpecting runtime pid expected choice confirmed = do
   found <- findProject runtime pid
   case found of
     Left reason -> pure (Left reason)
-    Right Nothing -> pure (Right (Left (T.pack "unknown-project")))
+    Right Nothing -> pure (Right (Left (checksRefusalCode ChecksProjectUnknown)))
     Right (Just view) ->
       withDatabase runtime . O.withTransaction $ do
         repository <- repositoryOf view
@@ -314,23 +331,25 @@ chooseChecksExpecting runtime pid expected choice confirmed = do
                   , Store.profileDecisionOutcome = T.pack "accepted"
                   , Store.profileDecisionRefusal = Nothing
                   }
-              refuse d code = do
+              refuse d refusal = do
+                let
+                  code = checksRefusalCode refusal
                 _ <- Store.insertProfileDecision d {Store.profileDecisionOutcome = T.pack "refused", Store.profileDecisionRefusal = Just code}
                 pure (Left code)
             if not (expectationMet currentId expected)
-              then refuse decision (T.pack "checks-changed")
+              then refuse decision ChecksChanged
               else do
                 when (choice == basicChecksId) registerBasic
                 -- A choice that is no Profile id names no registered Profile.
                 row <- maybe (pure Nothing) (`Store.findProfile` Nothing) (mkProfileId choice)
                 case row of
-                  Nothing -> refuse decision (T.pack "profile-unknown")
+                  Nothing -> refuse decision ProfileUnknown
                   Just r ->
                     let
                       known = decision {Store.profileDecisionVersion = Just (Store.profileRowVersion r), Store.profileDecisionDigest = Just (Store.profileRowDigest r)}
                     in
                       case loadStoredDefinition r of
-                        Left _ -> refuse known (T.pack "profile-integrity")
+                        Left _ -> refuse known ProfileFailsIntegrity
                         Right chosen
                           | currentId == Just (Store.profileRowId r) -> do
                               _ <- Store.insertProfileDecision known {Store.profileDecisionOutcome = T.pack "unchanged"}
@@ -345,12 +364,12 @@ chooseChecksExpecting runtime pid expected choice confirmed = do
                                     Just (Left _) -> True
                                     Just (Right currentDefinition) -> not (L.null (checksLost (Just currentDefinition) chosen))
                               if losing && not confirmed
-                                then refuse known (T.pack "fewer-checks-unconfirmed")
+                                then refuse known FewerChecksUnconfirmed
                                 else do
                                   Store.insertRepositoryProfile repositoryId (Store.profileRowId r)
                                   _ <- Store.insertProfileDecision known
                                   pure (Right ChecksChosen)
-          _ -> pure (Left (T.pack "project-has-no-folder"))
+          _ -> pure (Left (checksRefusalCode ProjectHasNoFolder))
 
 -- | Registers the built-in document as version 1 when no @lockstep-basic@ exists, with its C-P2.3 decision row.
 registerBasic :: O.Orville ()

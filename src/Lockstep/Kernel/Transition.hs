@@ -12,6 +12,8 @@ module Lockstep.Kernel.Transition
   , Command (..)
   , TransitionRefusal (..)
   , transitionRefusalCode
+  , transitionRefusalMessage
+  , principalLabel
   , TraceStep (..)
   , replay
   , replayTrace
@@ -65,6 +67,34 @@ transitionRefusalCode refusal =
       KindForbids _ -> "kind-forbids"
       AttemptBudgetExhausted -> "attempt-budget-exhausted"
       GatesPending -> "gates-pending"
+
+-- | The refusal in words, for the person who sent the command (its code is 'transitionRefusalCode').
+transitionRefusalMessage :: TransitionRefusal -> T.Text
+transitionRefusalMessage refusal =
+  case refusal of
+    AgentAssertion -> T.pack "an agent's assertion is never a command; the Supervisor submits what it validated"
+    AlreadyTerminal state -> T.pack "it is " <> state <> T.pack " and accepts no further command"
+    NotAuthorized principal input -> principalLabel principal <> T.pack " may not " <> input <> T.pack " here"
+    IllegalTransition state input -> T.pack "a " <> input <> T.pack " is not possible while it is " <> state
+    ClaimMismatch -> T.pack "the command names another claim than the current one"
+    BasisMismatch reason -> T.pack "the basis does not match: " <> reason
+    KindForbids reason -> T.pack "its kind forbids this: " <> reason
+    AttemptBudgetExhausted -> T.pack "its attempt budget is spent"
+    GatesPending -> T.pack "its gates are not all satisfied"
+
+{- | The principal spelled as its constructor name: the spelling of a stored
+conversation message's principal and of the H5 canonical message text (formerly
+written with 'show', whose bytes this keeps).
+-}
+principalLabel :: Principal -> T.Text
+principalLabel principal =
+  T.pack $
+    case principal of
+      Human -> "Human"
+      Supervisor -> "Supervisor"
+      Scheduler -> "Scheduler"
+      DeliveryAdapter -> "DeliveryAdapter"
+      Agent -> "Agent"
 
 {- | One table cell (§3): the principals permitted for this (state, input)
 pair and the outcome once authorization holds (an evidence refusal or the

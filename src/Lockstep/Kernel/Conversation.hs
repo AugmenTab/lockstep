@@ -38,7 +38,7 @@ import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (Show, show)
 
-import Lockstep.Kernel.Transition (Command (..), Principal (..))
+import Lockstep.Kernel.Transition (Command (..), Principal (..), principalLabel)
 
 -- | A choice a decision request offers: @^[a-z][a-z0-9-]{0,39}$@.
 newtype Choice
@@ -282,7 +282,7 @@ messagePayloadText requestId principal evidence input =
   T.unlines
     [ T.pack "lockstep-conversation-message-v1"
     , T.pack "request " <> requestId
-    , T.pack "principal " <> T.pack (show principal)
+    , T.pack "principal " <> principalLabel principal
     , T.pack "evidence " <> quoted evidence
     , T.pack "kind " <> messageKindName (inputMessageKind input)
     , T.pack "revision " <> T.pack (show (expectedOf input))

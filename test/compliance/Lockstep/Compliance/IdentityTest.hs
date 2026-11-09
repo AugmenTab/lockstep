@@ -42,7 +42,7 @@ import Lockstep.Kernel.Identity
   , uuidText
   )
 import Lockstep.Persistence.DecisionReceipts qualified as Receipts
-import Lockstep.Persistence.Ledger (TicketRow (..), findTicket, insertSubject, insertTicket)
+import Lockstep.Persistence.Ledger (SubjectKind (..), TicketRow (..), findTicket, insertSubject, insertTicket)
 import Lockstep.Persistence.Projects (ProjectRow (..), findProjectById, insertProject)
 
 canonical :: T.Text
@@ -114,7 +114,7 @@ tests =
           fmap ticketRowId missing @?= Nothing
           let
             TicketId subject = ticket
-          run (insertSubject subject "ticket" "proposed")
+          run (insertSubject subject TicketSubject "proposed")
           run (insertTicket ticket "A ticket")
           stored' <- run (findTicket ticket)
           fmap ticketRowId stored' @?= Just ticket

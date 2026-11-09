@@ -42,7 +42,7 @@ import Lockstep.Kernel.Transaction (Stage, parseStage, stageName)
 import Lockstep.Kernel.Transition (Command (..), Principal (..))
 import Lockstep.Persistence.Fields (codeField)
 import Lockstep.Persistence.Integrity (IntegrityViolation (..), integrityViolation)
-import Lockstep.Persistence.Ledger (insertSubject, subjectRow)
+import Lockstep.Persistence.Ledger (SubjectKind (..), insertSubject, subjectRow)
 import Lockstep.Persistence.Migration (Migration (..), checksumText, migrationChecksum, mkMigrationId)
 import Lockstep.Persistence.Migrations (migrations)
 import Lockstep.Persistence.Projects (ProjectRow (..), findProjectById, insertProject)
@@ -85,7 +85,7 @@ tests =
     , testCase "6. an integrity violation inside a transaction rolls the transaction back" $
         withMigrated $ \run -> do
           subject <- identity "5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a"
-          result <- try (run (O.withTransaction (insertSubject subject "ticket" "draft" >> integrityViolation "compliance: a required row is missing"))) :: IO (Either IntegrityViolation ())
+          result <- try (run (O.withTransaction (insertSubject subject TicketSubject "draft" >> integrityViolation "compliance: a required row is missing"))) :: IO (Either IntegrityViolation ())
           result @?= Left (IntegrityViolation "compliance: a required row is missing")
           found <- run (subjectRow subject)
           assertBool "the subject written before the violation was rolled back" (isNothing found)

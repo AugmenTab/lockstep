@@ -37,6 +37,7 @@ import Lockstep.Application.Ledger
   , resolveOutcome
   , showWorkOrder
   )
+import Lockstep.Application.LedgerRefusal (LedgerRefusal (StaleRevision), StaleSubject (StaleStep), refusalFailure)
 import Lockstep.Application.LedgerView (EffectLine (..), LedgerProjection (..), OrderLine (..), TicketLine (..), projectLedger)
 import Lockstep.Application.Profiles (sha256Hasher)
 import Lockstep.Kernel.Decision
@@ -293,7 +294,7 @@ perform runtime request =
       case current of
         Left failure -> pure (Left failure)
         Right intent
-          | intentGeneration intent /= n -> pure (Left (LedgerRefused (T.pack "stale-revision") (T.pack "the step changed since the page was shown")))
+          | intentGeneration intent /= n -> pure (Left (refusalFailure (StaleRevision StaleStep)))
           | otherwise -> step (abandonIntentAcknowledged runtime op (T.strip t) acknowledged)
  where
   order =

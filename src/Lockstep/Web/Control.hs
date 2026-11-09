@@ -84,7 +84,9 @@ runControlPane port state = do
     Right runtime -> do
       let
         settings =
-          Warp.setOnException (\_ _ -> pure ())
+          -- As 'lockstep serve' (C-P1.3 E11): a fixed line, never the request (which may hold a
+          -- query string); a client that went away is not reported.
+          Warp.setOnException (\_ err -> when (Warp.defaultShouldDisplayException err) (hPutStrLn stderr "lockstep: control pane: a request failed in the HTTP layer"))
             . Warp.setBeforeMainLoop (putStrLn ("Control pane listening on 127.0.0.1:" <> show (portNumber port)) >> hFlush stdout)
             $ serverSettings (ServeConfig Loopback port)
       Warp.runSettings settings (controlApplication port runtime)

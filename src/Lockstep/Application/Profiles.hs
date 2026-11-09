@@ -20,7 +20,7 @@ module Lockstep.Application.Profiles
   , storedDefinition
   ) where
 
-import Control.Exception (IOException, throwIO, try)
+import Control.Exception (IOException, try)
 import Data.ByteString.Lazy qualified as LBS
 import Data.List qualified as L
 import Data.Text qualified as T
@@ -28,7 +28,6 @@ import Data.Text.Encoding qualified as TE
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
 import System.IO (FilePath)
-import System.IO.Error (userError)
 import Text.Show (show)
 
 import Lockstep.Application.Database
@@ -124,7 +123,7 @@ refused code message =
 record :: Store.NewProfileDecision -> O.Orville Int64
 record decision = do
   inserted <- Store.insertProfileDecision decision
-  maybe (liftIO (throwIO (userError "lockstep: the decision insert returned no row"))) pure inserted
+  maybe (integrityViolation "the decision insert returned no row") pure inserted
 
 recordRefusal :: Store.NewProfileDecision -> T.Text -> T.Text -> O.Orville (Either ProfileFailure a)
 recordRefusal decision code message = do

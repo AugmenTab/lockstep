@@ -330,6 +330,9 @@ quotedText text =
       '\n' -> T.pack "\\n"
       _ -> T.singleton c
 
+{- | Words for a task refusal code, as the frozen @Either Text@ task boundary
+returns it; a code without its own words gets the one general sentence.
+-}
 taskRefusalWords :: T.Text -> T.Text
 taskRefusalWords code =
   fromMaybe (T.pack "Something went wrong. The exact reason is under Technical details.") (L.lookup code refusals)

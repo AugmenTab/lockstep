@@ -181,6 +181,9 @@ executionRefusalCodes :: [T.Text]
 executionRefusalCodes =
   fmap fst refusals
 
+{- | Words for an execution refusal code, as the frozen @Either Text@ admission
+boundary returns it; a code without its own words gets the one general sentence.
+-}
 executionRefusalWords :: T.Text -> T.Text
 executionRefusalWords code =
   fromMaybe (T.pack "Something went wrong. The exact reason is under Technical details.") (L.lookup code refusals)

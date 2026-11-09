@@ -25,6 +25,7 @@ import Lockstep.Application.Ledger
   , prepareLookup
   , reconcilableIntents
   )
+import Lockstep.Application.LedgerRefusal (LedgerRefusal (InvalidRecord, LookupNotQueryable, NoReconciler, ReconcilerMismatch), RecordRule (ReconciliationRule), refusalFailure)
 import Lockstep.Effects.Reconciler (EffectReconciler (..), invokeLookup)
 import Lockstep.Kernel.Effect (EffectClass (..), Intent (..), IntentState (..), OperationId, Settlement (..), effectSpecClass, effectSpecName)
 
@@ -41,9 +42,9 @@ data ReconcileOutcome
   | StillUnknown T.Text
   deriving (Eq, Show)
 
-refusal :: String -> String -> Either LedgerFailure a
-refusal code message =
-  Left (LedgerRefused (T.pack code) (T.pack message))
+refusal :: LedgerRefusal -> Either LedgerFailure a
+refusal =
+  Left . refusalFailure
 
 validReconciliation :: Reconciliation -> Bool
 validReconciliation reconciliation =
@@ -56,14 +57,14 @@ validReconciliation reconciliation =
 reconcilerFor :: Reconciliation -> Intent -> Either LedgerFailure EffectReconciler
 reconcilerFor reconciliation intent =
   case L.find ((== effectSpecName (intentSpec intent)) . effectSpecName . reconcilerSpec) (reconciliationReconcilers reconciliation) of
-    Nothing -> refusal "no-reconciler" "no reconciler serves the effect"
+    Nothing -> refusal NoReconciler
     Just reconciler
-      | reconcilerSpec reconciler /= intentSpec intent -> refusal "reconciler-mismatch" "the reconciler serves another spec than the intent declares"
+      | reconcilerSpec reconciler /= intentSpec intent -> refusal ReconcilerMismatch
       | otherwise -> Right reconciler
 
 reconcileEffect :: DatabaseRuntime -> Reconciliation -> OperationId -> IO (Either LedgerFailure ReconcileOutcome)
 reconcileEffect runtime reconciliation operation
-  | not (validReconciliation reconciliation) = pure (refusal "invalid-record" "a reconciliation needs a timeout of 1-600000 ms and one reconciler per spec")
+  | not (validReconciliation reconciliation) = pure (refusal (InvalidRecord ReconciliationRule))
   | otherwise = do
       loaded <- loadIntent runtime operation
       case loaded >>= queryable >>= (\intent -> fmap ((,) intent) (reconcilerFor reconciliation intent)) of
@@ -82,7 +83,7 @@ queryable :: Intent -> Either LedgerFailure Intent
 queryable intent =
   case effectSpecClass (intentSpec intent) of
     Queryable -> Right intent
-    _ -> refusal "not-queryable" "only a queryable effect can be looked up at its destination"
+    _ -> refusal LookupNotQueryable
 
 outcomeOf :: Intent -> Either LedgerFailure ReconcileOutcome
 outcomeOf intent =
@@ -96,7 +97,7 @@ outcomeOf intent =
 -- | R4: the oldest reconcilable intent this reconciliation serves, or nothing.
 reconcileOnce :: DatabaseRuntime -> Reconciliation -> IO (Either LedgerFailure (Maybe (OperationId, ReconcileOutcome)))
 reconcileOnce runtime reconciliation
-  | not (validReconciliation reconciliation) = pure (refusal "invalid-record" "a reconciliation needs a timeout of 1-600000 ms and one reconciler per spec")
+  | not (validReconciliation reconciliation) = pure (refusal (InvalidRecord ReconciliationRule))
   | otherwise = do
       listed <- reconcilableIntents runtime
       case listed of

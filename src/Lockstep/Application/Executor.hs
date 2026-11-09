@@ -32,6 +32,7 @@ import Lockstep.Application.Ledger
   , recoverableIntents
   , runnableIntents
   )
+import Lockstep.Application.LedgerRefusal (LedgerRefusal (AdapterMismatch, InvalidRecord, NoAdapter), RecordRule (ExecutorRule), refusalFailure)
 import Lockstep.Effects.Executor (EffectAdapter (..), invokeAdapter)
 import Lockstep.Kernel.Effect (EffectClass (..), Intent (..), IntentState (..), OperationId, Settlement (..), effectSpecClass, effectSpecName)
 
@@ -62,9 +63,9 @@ data RunOutcome
   | RanUnknown T.Text
   deriving (Eq, Show)
 
-refusal :: String -> String -> Either LedgerFailure a
-refusal code message =
-  Left (LedgerRefused (T.pack code) (T.pack message))
+refusal :: LedgerRefusal -> Either LedgerFailure a
+refusal =
+  Left . refusalFailure
 
 -- | X4.
 validExecutor :: Executor -> Bool
@@ -85,15 +86,15 @@ validExecutor executor =
 adapterFor :: Executor -> Intent -> Either LedgerFailure EffectAdapter
 adapterFor executor intent =
   case L.find ((== effectSpecName (intentSpec intent)) . effectSpecName . adapterSpec) (executorAdapters executor) of
-    Nothing -> refusal "no-adapter" "this executor has no adapter for the effect"
+    Nothing -> refusal NoAdapter
     Just adapter
-      | adapterSpec adapter /= intentSpec intent -> refusal "adapter-mismatch" "the adapter implements another spec than the intent declares"
+      | adapterSpec adapter /= intentSpec intent -> refusal AdapterMismatch
       | otherwise -> Right adapter
 
 -- | Loads the intent and finds its adapter, after the configuration check.
 prepared :: DatabaseRuntime -> Executor -> OperationId -> IO (Either LedgerFailure EffectAdapter)
 prepared runtime executor operation
-  | not (validExecutor executor) = pure (refusal "invalid-record" "an executor needs an owner, a lease of 1-3600 s, a timeout below the lease, and one adapter per spec")
+  | not (validExecutor executor) = pure (refusal (InvalidRecord ExecutorRule))
   | otherwise = fmap (>>= adapterFor executor) (loadIntent runtime operation)
 
 executeIntent :: DatabaseRuntime -> Executor -> ExecutorFaults -> OperationId -> IO (Either LedgerFailure RunOutcome)
@@ -155,7 +156,7 @@ executed; else nothing happens.
 -}
 executeOnce :: DatabaseRuntime -> Executor -> ExecutorFaults -> IO (Either LedgerFailure (Maybe (OperationId, RunOutcome)))
 executeOnce runtime executor faults
-  | not (validExecutor executor) = pure (refusal "invalid-record" "an executor needs an owner, a lease of 1-3600 s, a timeout below the lease, and one adapter per spec")
+  | not (validExecutor executor) = pure (refusal (InvalidRecord ExecutorRule))
   | otherwise = do
       recoverable <- recoverableIntents runtime >>= traverse (findM recoverableHere)
       case recoverable of

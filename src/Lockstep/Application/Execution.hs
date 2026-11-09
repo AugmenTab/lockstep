@@ -27,7 +27,7 @@ import Text.Show (Show)
 import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), checkReadiness, withDatabase)
 import Lockstep.Application.Identity (newUuid)
-import Lockstep.Application.Ledger (LedgerFailure (..), NewWorkOrder (..), createWorkOrderIn)
+import Lockstep.Application.Ledger (LedgerError (..), LedgerRefusal (RepositoryDefaultProfileUnset, TicketNotReady), NewWorkOrder (..), createWorkOrderIn)
 import Lockstep.Application.ProfileDocument (GateDocument (..), decodeProfileDocument, encodeProfileDocument)
 import Lockstep.Application.Profiles (sha256Hasher, storedDefinition)
 import Lockstep.Application.ProjectChecks (ExpectedChecks (..))
@@ -464,10 +464,11 @@ admitBug runtime folders key rawId expected
                   , newNonBehavioural = Nothing
                   }
             case created of
-              Left (LedgerRefused code _)
-                | code == T.pack "ticket-not-ready" -> pure (refuse "task-not-ready")
-                | code == T.pack "repository-default-profile-unset" -> pure (refuse "bug-checks-missing")
-              Left _ -> pure (refuse "admission-refused")
+              Left (LedgerRefusedBy TicketNotReady) -> pure (refuse "task-not-ready")
+              Left (LedgerRefusedBy RepositoryDefaultProfileUnset) -> pure (refuse "bug-checks-missing")
+              Left (LedgerRefusedBy _) -> pure (refuse "admission-refused")
+              -- A stored ticket or profile that does not reproduce: abort, never a refusal.
+              Left (LedgerCorrupt message) -> integrityViolation (T.unpack message)
               Right workOrder -> do
                 -- The work order was created in this transaction with its digest; none is an integrity violation, and the creation rolls back.
                 effective <- maybe (integrityViolation "a work order created in this transaction has no effective digest") pure =<< Store.workOrderEffectiveDigest workOrder

@@ -28,6 +28,7 @@ module Lockstep.Kernel.Scheduler
   , scheduleDigest
   , SchedulerRefusal (..)
   , schedulerRefusalCode
+  , schedulerRefusalMessage
   ) where
 
 import Data.Char qualified as Char
@@ -62,7 +63,7 @@ import Lockstep.Kernel.Profile
   , gateIdText
   , profileIdText
   )
-import Lockstep.Kernel.Transition (Command (..), Principal (..))
+import Lockstep.Kernel.Transition (Command (..), Principal (..), principalLabel)
 import Lockstep.Kernel.WorkOrder (WorkOrder (..), WorkOrderInput (..), WorkOrderState (..))
 
 -- | A human-approved priority, 0 to 999; higher is scheduled first (S2).
@@ -201,6 +202,15 @@ schedulerRefusalCode refusal =
       InvalidPriority _ -> "invalid-priority"
       InvalidResource _ -> "invalid-resource"
       ConflictingInput _ -> "conflicting-input"
+
+-- | The refusal in words (its code is 'schedulerRefusalCode').
+schedulerRefusalMessage :: SchedulerRefusal -> T.Text
+schedulerRefusalMessage refusal =
+  case refusal of
+    PriorityNotHuman principal -> T.pack "only a person sets a priority, not " <> principalLabel principal
+    InvalidPriority n -> T.pack "a priority is 0 to 999, not " <> T.pack (show n)
+    InvalidResource name -> T.pack "not a valid resource: " <> name
+    ConflictingInput what -> T.pack "the scheduler's input is contradictory: " <> what
 
 -- Deciding -------------------------------------------------------------------
 

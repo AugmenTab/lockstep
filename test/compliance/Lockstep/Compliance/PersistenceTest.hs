@@ -35,7 +35,7 @@ import Lockstep.Kernel.Project (SetupState (..))
 import Lockstep.Persistence.CommandCenter (JobEvidenceRow (..), recentJobs)
 import Lockstep.Persistence.Commands (NewReceipt (..), ReceiptRow (rowDigestHex), findReceiptByKey, insertReceipt)
 import Lockstep.Persistence.Jobs (JobEnd (..), JobRow (..), claimJob, finishJob, insertNoopJob)
-import Lockstep.Persistence.Ledger (SubjectRow (..), insertSubject, subjectRow)
+import Lockstep.Persistence.Ledger (SubjectKind (..), SubjectRow (..), insertSubject, subjectRow)
 import Lockstep.Persistence.OperatorSessions (insertSession, liveSessionExpiry, revokeLiveSessions)
 import Lockstep.Persistence.Projects (ProjectRow (..), findProjectById, insertProject, updateProjectSetup)
 import Lockstep.Persistence.Repositories (insertEngineer)
@@ -47,7 +47,7 @@ tests =
     [ testCase "uuid columns: the library UUID in and out, stored as the server's own uuid; malformed text has no UUID to send" $
         withMigrated $ \run -> do
           subject <- identity "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
-          run (insertSubject subject "ticket" "draft")
+          run (insertSubject subject TicketSubject "draft")
           found <- run (subjectRow subject)
           fmap subjectRowId found @?= Just subject
           oracle <- run (textQuery "SELECT id::text AS v FROM lockstep_subjects")

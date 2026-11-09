@@ -45,7 +45,7 @@ import Lockstep.Application.Engine (TransactionView (..), decideCompletion, halt
 import Lockstep.Application.Execution (Admission (..), admitBug, enableExecution, executionStatus, findAdmission)
 import Lockstep.Application.LedgerView (EffectLine (..), LedgerProjection (..), OrderLine (..), projectLedger)
 import Lockstep.Application.OperatorTrust (Session (..), exchangeSignIn, lookupSession, revokeSession)
-import Lockstep.Application.ProjectChecks (ChecksOutcome (..), ExpectedChecks (..), ProjectChecks (..), QueueEntry (..), chooseChecksExpecting, projectChecks)
+import Lockstep.Application.ProjectChecks (ChecksOutcome (..), ChecksRefusal (FewerChecksUnconfirmed), ExpectedChecks (..), ProjectChecks (..), QueueEntry (..), checksRefusalCode, chooseChecksExpecting, projectChecks)
 import Lockstep.Application.Projects
   ( NewProject (..)
   , ProjectFolders (..)
@@ -417,7 +417,7 @@ handleWithDatabase db route request =
                 let
                   losses = choiceLosses before choice
                   lost =
-                    if code == "fewer-checks-unconfirmed" && not (L.null losses)
+                    if code == checksRefusalCode FewerChecksUnconfirmed && not (L.null losses)
                       then " It would stop requiring " <> T.intercalate "; " (fmap lossWords losses) <> "."
                       else ""
                 checksAnswer db pid before (Just (checksRefusalWords code <> lost))
@@ -654,6 +654,10 @@ transactionAnswer db tx notice = do
     Right Nothing -> pure (errorJson HTTP.status404 "not-found")
     Left _ -> pure notReady
 
+{- | Words for the code of a refused halt answer and (below) completion: the
+codes of the frozen @Either Text@ conversation and completion boundaries. A code
+without its own words gets the one general sentence.
+-}
 haltAnswerWords :: T.Text -> T.Text
 haltAnswerWords code =
   case T.unpack code of

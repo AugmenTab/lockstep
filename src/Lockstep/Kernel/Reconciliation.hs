@@ -22,6 +22,7 @@ module Lockstep.Kernel.Reconciliation
   , attestsApplied
   , ReconcileRefusal (..)
   , reconcileRefusalCode
+  , reconcileRefusalMessage
   ) where
 
 import Data.Char qualified as Char
@@ -49,7 +50,7 @@ import Lockstep.Kernel.Effect
   , reasonOf
   )
 import Lockstep.Kernel.Enum (parseEnumText)
-import Lockstep.Kernel.Transition (Command (..), Principal (..))
+import Lockstep.Kernel.Transition (Command (..), Principal (..), principalLabel)
 
 data LookupResult
   = LookupFound T.Text
@@ -294,3 +295,18 @@ reconcileRefusalCode refusal =
       NotUnknown _ -> "not-unknown"
       InvalidEvidence -> "invalid-evidence"
       DuplicationNotAcknowledged -> "duplication-risk-not-acknowledged"
+
+-- | The refusal in words (its code is 'reconcileRefusalCode').
+reconcileRefusalMessage :: ReconcileRefusal -> T.Text
+reconcileRefusalMessage refusal =
+  case refusal of
+    ReconcileAgentAssertion -> T.pack "an agent's assertion is never a command"
+    ReconcileAlreadySettled -> T.pack "the intent is already settled"
+    ReconcileNotAuthorized principal -> principalLabel principal <> T.pack " may not reconcile an effect intent"
+    NotQueryable -> T.pack "only a queryable effect can be looked up at its destination"
+    NothingToReconcile state -> T.pack "an intent that is " <> state <> T.pack " has nothing to reconcile"
+    ReconcileLeaseActive -> T.pack "the intent's lease is still active"
+    ReconcileStaleClaim -> T.pack "the intent's claim has moved on"
+    NotUnknown state -> T.pack "only an unknown outcome is resolved; the intent is " <> state
+    InvalidEvidence -> T.pack "the resolution's evidence is not valid"
+    DuplicationNotAcknowledged -> T.pack "a retry must acknowledge the duplication risk"

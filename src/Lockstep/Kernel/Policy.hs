@@ -234,6 +234,10 @@ blockWords block =
     Unverified a _ -> T.pack "not yet checked: " <> artifactWords a
     NeedsApproval a _ -> T.pack "needs approval: " <> artifactWords a
 
+{- | Words for a checks refusal code, as the frozen @Either Text@ boundary of
+choosing checks returns it. A code without its own words gets the one general
+sentence (unit @PolicyTest.hs:220-223@ pins it).
+-}
 checksRefusalWords :: T.Text -> T.Text
 checksRefusalWords code =
   T.pack $

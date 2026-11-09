@@ -122,7 +122,10 @@ checkDecisionText request =
       | T.any Char.isControl t -> Left (T.pack "text-control")
       | otherwise -> Right ()
 
--- | A choice's label and what it will do.
+{- | A choice's label and what it will do. The name is text from a stored
+decision or receipt, so a name no choice has gets the one explicit "Unknown
+choice" pair.
+-}
 choiceWords :: T.Text -> (T.Text, T.Text)
 choiceWords name =
   case T.unpack name of
@@ -137,6 +140,10 @@ choiceWords name =
   pair a b =
     (T.pack a, T.pack b)
 
+{- | Words for a decision's refusal code: a stored receipt's code or a code the
+frozen @Either Text@ decision boundary returns. A code without its own words gets
+the one general sentence (unit @DecisionTest.hs:113-116@ pins it).
+-}
 decisionRefusalWords :: T.Text -> T.Text
 decisionRefusalWords code =
   T.pack $

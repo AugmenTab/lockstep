@@ -31,7 +31,8 @@ import Text.Show (Show)
 import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), checkReadiness, withDatabase)
 import Lockstep.Application.Identity (newUuid)
-import Lockstep.Application.Ledger (LedgerFailure (..), createTicketIn, decideTicketIn, ledgerFailureCode, reviseTicketIn, ticketFactsIn)
+import Lockstep.Application.Ledger (createTicketIn, decideTicketIn, reviseTicketIn, ticketFactsIn)
+import Lockstep.Application.LedgerRefusal (LedgerError (..), LedgerRefusal (StaleRevision), ledgerRefusalCode)
 import Lockstep.Application.Profiles (sha256Hasher)
 import Lockstep.Kernel.Evidence (mkHumanSignoff)
 import Lockstep.Kernel.Identity (ProjectId (..), TaskId (..), TicketId (..), identityText, parseIdentity)
@@ -114,6 +115,17 @@ refuse :: String -> Either T.Text a
 refuse =
   Left . T.pack
 
+{- | A Ledger step inside a task transaction: its refusal is the task's
+refusal code; stored state that does not reproduce aborts the transaction
+(an integrity violation, never a refusal the caller could act on).
+-}
+ledgerStep :: Either LedgerError a -> O.Orville (Either T.Text a)
+ledgerStep result =
+  case result of
+    Right value -> pure (Right value)
+    Left (LedgerRefusedBy refusal) -> pure (Left (ledgerRefusalCode refusal))
+    Left (LedgerCorrupt message) -> integrityViolation (T.unpack message)
+
 {- | A task's Ticket: the two are made together with one UUID (C-P3.6 K2), so
 the Ticket of a task is the identity of the same UUID, as a Ticket.
 -}
@@ -127,9 +139,11 @@ loadView row = do
   facts <- ticketFactsIn (taskTicket (Store.rowTaskId row))
   deps <- Store.dependenciesOf (Store.rowTaskId row)
   depFacts <- traverse (ticketFactsIn . taskTicket) deps
+  own <- ledgerStep facts
+  dependencies <- traverse ledgerStep depFacts
   pure $ do
-    (state, reason, revision, _) <- either (Left . ledgerFailureCode) Right facts
-    dependencyFacts <- traverse (either (Left . ledgerFailureCode) (\(s, _, _, title) -> Right (DependencyFact title s))) depFacts
+    (state, reason, revision, _) <- own
+    dependencyFacts <- traverse (fmap (\(s, _, _, title) -> DependencyFact title s)) dependencies
     pure
       TaskView
         { taskId = identityText (Store.rowTaskId row)
@@ -214,9 +228,9 @@ createTask runtime request =
                   case deps of
                     Left code -> pure (Left code)
                     Right ids -> do
-                      made <- createTicketIn u (taskTitleText title)
+                      made <- createTicketIn u (taskTitleText title) >>= ledgerStep
                       case made of
-                        Left failure -> pure (Left (ledgerFailureCode failure))
+                        Left code -> pure (Left code)
                         Right _ -> do
                           let
                             newId = TaskId u
@@ -249,10 +263,10 @@ editTask runtime rawId expected edit =
                       | otherwise -> do
                           revised <-
                             if taskTitleText title /= Store.rowTitle row
-                              then fmap (const ()) <$> reviseTicketIn (taskTicket tid) (taskTitleText title)
+                              then fmap (const ()) <$> (reviseTicketIn (taskTicket tid) (taskTitleText title) >>= ledgerStep)
                               else pure (Right ())
                           case revised of
-                            Left failure -> pure (Left (ledgerFailureCode failure))
+                            Left code -> pure (Left code)
                             Right () -> do
                               updated <- Store.updateTask tid expected acceptance (priorityValue (editPriority edit))
                               if not updated
@@ -281,10 +295,9 @@ decideTask runtime session rawId expected decision =
                 (Just row, Right ticketInput) -> do
                   decided <- decideTicketIn (taskTicket tid) expected (Command Human ticketInput)
                   case decided of
-                    Left (LedgerRefused code _)
-                      | code == T.pack "stale-revision" -> pure (refuse "stale-revision")
-                      | otherwise -> pure (refuse "not-allowed-now")
-                    Left failure -> pure (Left (ledgerFailureCode failure))
+                    Left (LedgerRefusedBy (StaleRevision _)) -> pure (refuse "stale-revision")
+                    Left (LedgerRefusedBy _) -> pure (refuse "not-allowed-now")
+                    Left (LedgerCorrupt message) -> integrityViolation (T.unpack message)
                     Right _ -> loadView row
       _ -> pure (Right (refuse "unknown-task"))
  where

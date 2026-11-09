@@ -169,3 +169,55 @@ Behavioural differences (deliberate): an expected revision above `Int64` is refu
 or generation above `Int32` is refused before anything is written (was wrapped into a refusal or observation row); a
 corrupt setup or stage column is a read failure (was shown as organized / basis); `lockstep db migrate` prints
 PostgreSQL's message after the existing sentence.
+
+## Increment D — typed failures (working tree over `1bf37a2`, not committed)
+
+- **Ledger refusals** (`Application/LedgerRefusal.hs`, new): `LedgerRefusal`, one constructor per Ledger decision
+  (multi-message codes carry a rule: `RecordRule`, `StaleSubject`, `FactsRule`, `EvidenceRule`, `OwnershipLoss`,
+  `InactiveFor`, `KeyExpiry`) or the Kernel's typed refusal (`TransitionRefused`, `EffectRefused`, `SchedulerRefused`,
+  `ProfileRuleRefused`, `RecoveryRefused`, `ReconcileRefused`, `CarryRefused`); one `ledgerRefusalCode` and one
+  `ledgerRefusalMessage`. Inside a transaction the Ledger works in `LedgerError = LedgerRefusedBy LedgerRefusal |
+  LedgerCorrupt Text`; `transaction` renders it once (`publicFailure`). The executor, reconciler, sandbox, decisions and
+  CLI build their refusals through it too. No code literal is left in the Ledger.
+- **Frozen pin kept**: `LedgerFailure = LedgerRefused Text Text | LedgerIntegrity Text | LedgerUnavailable Text`
+  (integration `LedgerTraceTest.hs:247-252` matches the three constructors exhaustively; `ledgerFailureCode` text in
+  `LedgerTest.hs:335,357`, `ReconciliationTest.hs:693,720,732`, `RemediationTest.hs:250,255`, `ExecutorTest.hs:568` and
+  others). It is now only the rendering; the unpinned `*In` functions (`createTicketIn`, `reviseTicketIn`,
+  `ticketFactsIn`, `decideTicketIn`, `createWorkOrderIn`) return the typed `LedgerError`.
+- **Branching on the typed refusal**: `Execution.admitBug` (`TicketNotReady`, `RepositoryDefaultProfileUnset`),
+  `Tasks.decideTask` (`StaleRevision _`), `Ledger.observeIntent` (`EffectRefused StaleClaim`), `Projects`
+  (`Repositories.RepositoryRefusal`: `EngineerNameTaken`, `RegistrationRefused (AuthoritativeRemoteAmbiguous _ /
+  AuthoritativeRemoteUnknown _)`). `Web/App` compares the frozen `Either Text` checks code (`GateCRemediationTest.hs:438`)
+  through `ProjectChecks.checksRefusalCode FewerChecksUnconfirmed`.
+- **Kernel refusal words**: `transitionRefusalMessage`, `effectRefusalMessage`, `schedulerRefusalMessage`,
+  `recoveryRefusalMessage`, `reconcileRefusalMessage`, `carryRefusalMessage` replace `T.pack (show r)` (no frozen test
+  pins those messages; only codes are pinned, e.g. `ProfileRegistryTest.hs:310`). Integrity texts no longer embed `show`.
+- **Stringly exceptions**: `Persistence.Ledger.databaseClock`/`databaseNow`, `Profiles.record`, `Repositories.record` and
+  its malformed-row check, `Command` receipt insert → `integrityViolation` (so `withDatabase` gives `DatabaseCorrupt`
+  with the message). The sandbox adapter throws a typed `SandboxFailure` (still `adapter-failed` to the executor).
+- **Swallowed results**: an advance of a halted transaction whose request cannot be opened answers with its code (was
+  "idle halted"); a command finish that cannot be written is the failure (was dropped before halting / returning); the
+  worker reports each start that failed (`start <id>`; database failures are logged with the diagnosis) instead of
+  `[] <$ traverse_`; the workspace symlink check fails closed on an error other than "does not exist" (was
+  `fromRight False`); the control pane logs a fixed line as `lockstep serve` does (was `\_ _ -> pure ()`); a halt for an
+  intent whose reason cannot be stored is an integrity violation, a halt the lifecycle refuses is kept, commented. Kept,
+  commented: the request opened after a committed step (the next advance reopens it and reports).
+- **Text-keyed word tables**: every remaining one takes text from a stored row or a frozen `Either Text` boundary and
+  is pinned with its general sentence (`ActivityTest.hs:95-97`, `DecisionTest.hs:113-116`, `PolicyTest.hs:220-223`);
+  each now says so. No caller holding the ADT uses a text table.
+- **`show` in stored/hashed forms**: Kernel `principalLabel` (the constructor spelling) for conversation message rows,
+  the H5 canonical message text and (lower-cased) transaction records; Profile refusal words; `Profile.showText` is
+  `Int`-only.
+- **Deferred C items**: `Persistence.Ledger.SubjectKind` (typed `kind` column via `codeField`; the intent join reads it
+  typed); `ProjectChecks.levelText` removed for the Kernel's `layerName`.
+- **Kernel `Either Text` refusals** (Transaction, Conversation, Roles, Runner, GitBasis, Decision): no caller branches
+  on them except the runner's `executable-missing`, classified once in Increment C; left as text (they cross frozen
+  `Either Text` boundaries).
+- Evidence: compliance `FailureTest` (old expressions as oracle: every Ledger refusal's code and words, the effect-key
+  and sandbox words, Kernel codes unchanged, `principalLabel == show` for every principal and in the H5 text, Profile
+  refusal words, subject-kind codes and a corrupt kind through the Ledger, `layerName`, checks and repository codes).
+- Behaviour changes: Kernel refusal messages are words, not `show` text; a corrupt stored ticket/profile reached
+  through a task, an admission or a Ledger `*In` step aborts as `database-corrupt` (was the code `integrity` or
+  `admission-refused`); a missing `now()`/`clock_timestamp()` row or receipt/decision row is `database-corrupt` (was
+  `database-unavailable`); a corrupt subject kind is `LedgerIntegrity` (was `unknown-ticket`/`unknown-work-order`);
+  `sandboxApplications` reports the readiness code (was `show` of the reason).

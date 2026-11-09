@@ -255,7 +255,10 @@ quotedText text =
       '\n' -> T.pack "\\n"
       _ -> T.singleton c
 
--- | The plain words for a refusal code; a general sentence for a code without its own words.
+{- | The plain words for a refusal code; a general sentence for a code without
+its own words. The code is text: a stored setup refusal or a code the frozen
+@Either Text@ project boundary returns, which may come from another version.
+-}
 refusalWords :: T.Text -> T.Text
 refusalWords code =
   fromMaybe

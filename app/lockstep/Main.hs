@@ -76,6 +76,7 @@ import Lockstep.Application.Ledger
   , showWorkOrder
   )
 import Lockstep.Application.Ledger qualified as Ledger
+import Lockstep.Application.LedgerRefusal (LedgerRefusal (InvalidKind, WorkOrderNotClaimed), refusalFailure)
 import Lockstep.Application.LedgerView (projectLedger, projectionTimeText, renderProjection)
 import Lockstep.Application.OperatorTrust (issueSignIn, revokeAllSessions, signInUrl)
 import Lockstep.Application.Profiles
@@ -98,6 +99,8 @@ import Lockstep.Application.Repositories
   , RepositoryRecord (..)
   , addEngineer
   , listRepositories
+  , refusedCode
+  , refusedMessage
   , registerRepository
   )
 import Lockstep.Application.Sandbox (sandboxAdapters, sandboxApplications, sandboxReconcilers, sandboxRequest)
@@ -664,7 +667,7 @@ ledgerCommand command runtime =
     WorkOrderCreate args -> do
       u <- uuidArgument (orderTicket args)
       case parseWorkOrderKind (T.pack (orderKind args)) of
-        Nothing -> ledgerOutcome (Left (LedgerRefused (T.pack "invalid-kind") (T.pack ("no work order kind " <> orderKind args))))
+        Nothing -> ledgerOutcome (Left (refusalFailure (InvalidKind (T.pack (orderKind args)))))
         Just kind -> do
           created <-
             createWorkOrder
@@ -721,7 +724,7 @@ ledgerCommand command runtime =
                         : L.zipWith (\(OperationId o) request -> "intent " <> uuidString o <> " effect " <> T.unpack (effectKeyText (requestKey request))) (Ledger.receiptOperations r) requests
                   )
                   receipt
-            Right _ -> ledgerOutcome (Left (LedgerRefused (T.pack "work-order-not-claimed") (T.pack "only a claimed work order can be started")))
+            Right _ -> ledgerOutcome (Left (refusalFailure WorkOrderNotClaimed))
     SupervisorExecuteOnce args -> do
       adapters <- sandboxAdapters runtime
       let
