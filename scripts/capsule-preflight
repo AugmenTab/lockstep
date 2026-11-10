@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# Dev Capsule preflight (Phase 5, handoff §14; contract C-P5.10): before any model usage, check every
+# prerequisite of a capsule-backed transaction and name the exact one that fails. Read-only toward the
+# project; it starts a stopped capsule, runs a fixed probe in the guest, and nothing else.
+#
+#   scripts/capsule-preflight --helper-state DIR [--repo PATH] [--toolchain-probe FILE] [--allow-loopback PORTS]
+#
+#   --helper-state   the helper's state directory (holds capsule/config, runner/, provider/)
+#   --repo           the Supervisor's canonical repository (its Git authority is checked)
+#   --toolchain-probe  a trusted script run in the capsule; exit 0 = the project's tools are usable
+#   --allow-loopback  comma-separated host loopback ports the owner accepts while a capsule runs (D4,
+#                     escalation-host-network.md option B); any other listener on the host's loopback
+#                     fails the preflight
+#
+# Prints one line per check, "PASS name" or "FAIL name: reason", and exits 0 only if all pass.
+set -u
+export LC_ALL=C
+here=$(cd "$(dirname "$0")" && pwd -P)
+root=$(dirname "$here")
+rt=$root/scripts/capsule-runtime
+
+hstate="" repo="" probe="" allow=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    --helper-state) hstate=$2; shift 2 ;;
+    --repo) repo=$2; shift 2 ;;
+    --toolchain-probe) probe=$2; shift 2 ;;
+    --allow-loopback) allow=$2; shift 2 ;;
+    *) echo "usage: scripts/capsule-preflight --helper-state DIR [--repo PATH] [--toolchain-probe FILE] [--allow-loopback PORTS]" >&2; exit 64 ;;
+  esac
+done
+[ -n "$hstate" ] || { echo "capsule-preflight: --helper-state is required" >&2; exit 64; }
+case $allow in "" | *[!0-9,]*) [ -z "$allow" ] || { echo "capsule-preflight: --allow-loopback takes port numbers" >&2; exit 64; } ;; esac
+
+failures=0
+pass() { printf 'PASS %s\n' "$1"; }
+fail() { printf 'FAIL %s: %s\n' "$1" "$2"; failures=$((failures + 1)); }
+
+# ---- configuration
+cfg=$hstate/capsule/config
+if [ ! -f "$cfg" ]; then
+  fail capsule-config "missing $cfg (capsule mode is off)"
+  echo "capsule-preflight: $failures failure(s)"
+  exit 1
+fi
+cstate=$(sed -n 's/^runtime-state //p' "$cfg")
+cap=$(sed -n 's/^capsule //p' "$cfg")
+proj=$(sed -n 's/^project //p' "$cfg")
+vcap=$(sed -n 's/^verify-capsule //p' "$cfg")
+case $(stat -f %Lp "$cfg" 2>/dev/null || stat -c %a "$cfg") in 600) pass capsule-config ;; *) fail capsule-config "$cfg must be mode 0600" ;; esac
+
+# ---- the capsule: exists, belongs to the project, audited, healthy
+"$rt" --state "$cstate" start "$cap" "$proj" > /dev/null 2>&1
+out=$("$rt" --state "$cstate" inspect "$cap" "$proj" 2>&1)
+case $out in
+  *"inspect ok"*"status=Running"*"audit=ok"*) pass capsule-healthy ;;
+  *"capsule-owned-by-another-project"*) fail capsule-ownership "the capsule belongs to another project" ;;
+  *) fail capsule-healthy "$out" ;;
+esac
+case $out in *"project=$proj"*) pass capsule-ownership ;; esac
+
+# ---- inside the guest: workspace, disk, Docker, no credentials, no host mounts
+probe_script=$(mktemp "${TMPDIR:-/tmp}/lockstep-preflight.XXXXXX")
+trap 'rm -f "$probe_script"' EXIT
+cat > "$probe_script" <<'EOF'
+mkdir -p /work/tree && touch /work/tree/.lockstep-preflight && rm -f /work/tree/.lockstep-preflight && echo workspace-writable
+echo "disk-free-mib=$(df --output=avail -m /work | tail -n 1 | tr -d ' ')"
+docker run --rm busybox:1.36 true >/dev/null 2>&1 && echo docker-ok || { docker info >/dev/null 2>&1 && echo docker-daemon-ok-no-pull; }
+[ -e /auth ] || [ -e "$HOME/.claude/.credentials.json" ] || [ -n "${ANTHROPIC_API_KEY:-}${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && echo credential-present || echo credential-absent
+[ -z "$(findmnt -rn -t virtiofs,9p,fuse.sshfs,nfs,cifs -o TARGET)" ] && echo no-host-mounts
+test -x /opt/lockstep/guest-exec && echo guest-exec-present
+EOF
+"$rt" --state "$cstate" run "$cap" "$proj" "$probe_script" 300 > /dev/null 2>&1
+gout=$cstate/capsules/records/$cap.run.out
+grep -q workspace-writable "$gout" 2>/dev/null && pass workspace-writable || fail workspace-writable "cannot write /work/tree in the capsule"
+free=$(sed -n 's/^disk-free-mib=//p' "$gout" 2>/dev/null)
+if [ -n "$free" ] && [ "$free" -ge 4096 ]; then pass disk-space; else fail disk-space "only ${free:-unknown} MiB free in the capsule (4096 needed)"; fi
+if grep -q docker-ok "$gout" 2>/dev/null; then pass guest-docker
+elif grep -q docker-daemon-ok-no-pull "$gout" 2>/dev/null; then fail guest-docker "the daemon runs but cannot pull (network policy?)"
+else fail guest-docker "the guest's Docker daemon does not answer"
+fi
+grep -q credential-absent "$gout" 2>/dev/null && pass credential-not-in-guest || fail credential-not-in-guest "a provider credential is visible in the capsule"
+grep -q no-host-mounts "$gout" 2>/dev/null && pass no-host-mounts || fail no-host-mounts "a host directory is mounted in the capsule"
+grep -q guest-exec-present "$gout" 2>/dev/null && pass bridge-executor || fail bridge-executor "/opt/lockstep/guest-exec is missing in the capsule"
+
+# ---- the project's toolchain (a trusted, project-declared probe)
+if [ -n "$probe" ]; then
+  if "$rt" --state "$cstate" run "$cap" "$proj" "$probe" 3600 > /dev/null 2>&1; then pass toolchain
+  else fail toolchain "the project's toolchain probe failed: $(tail -n 3 "$gout" 2>/dev/null | tr '\n' ' ' | cut -c 1-200)"
+  fi
+fi
+
+# ---- tool routing: the helper runs roles with the bridge only
+[ -x "$root/scripts/runner/provider/capsule-bridge" ] && pass bridge-present || fail bridge-present "scripts/runner/provider/capsule-bridge is missing"
+if grep -q "^lockstep-capsule 1 $cap\$" "$hstate/runner/capsule" 2>/dev/null; then pass tool-routing
+else fail tool-routing "the helper has not announced capsule mode for $cap (start it with --runner)"
+fi
+
+# ---- verification environment
+if [ -z "$vcap" ]; then
+  fail verification-environment "no verify-capsule in $cfg"
+elif [ -f "$cstate/capsules/snapshots/$vcap/verify.disk" ] && "$rt" --state "$cstate" inspect "$vcap" "$proj" 2>&1 | grep -q 'audit=ok'; then
+  pass verification-environment
+else
+  fail verification-environment "the verification capsule $vcap or its 'verify' snapshot is missing or not audited"
+fi
+
+# ---- Supervisor Git authority
+if [ -n "$repo" ]; then
+  if [ -d "$repo/.git" ] && [ -z "$(git -C "$repo" -c core.fsmonitor=false status --porcelain 2>/dev/null)" ]; then pass git-authority
+  else fail git-authority "$repo is missing or has uncommitted changes"
+  fi
+fi
+
+# ---- D4: host loopback listeners a capsule could reach (escalation-host-network.md)
+unexpected=""
+while read -r addr; do
+  port=${addr##*:}
+  case ",$allow," in *",$port,"*) continue ;; esac
+  unexpected="$unexpected $port"
+done < <(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 && ($9 ~ /^127\.0\.0\.1:/ || $9 ~ /^\[::1\]:/ || $9 ~ /^\*:/) { print $9 }' | sort -u)
+if [ -z "$unexpected" ]; then pass host-loopback-exposure
+else fail host-loopback-exposure "listening on the host (reachable from the guest):$unexpected; stop them or accept them with --allow-loopback"
+fi
+
+echo "capsule-preflight: $failures failure(s)"
+[ "$failures" = 0 ]

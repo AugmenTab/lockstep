@@ -25,12 +25,17 @@ import time
 PROTOCOL = "2025-06-18"
 # Read-only roles inspect files only: a command in the Engineer's own VM could use guest sudo or Docker
 # to change the working state, so no command tool is offered until a separate review capsule exists.
-OPS_READONLY = ("read", "list", "search")
-OPS_WRITE = ("read", "list", "search", "write", "edit", "exec")
+OPS_READONLY = ("read", "list", "search", "answer")
+OPS_WRITE = ("read", "list", "search", "write", "edit", "exec", "answer")
 # The channel: requests/ is written here; results/ is mounted read-only into this container and
 # written only by the host executor.
 
 TOOLS = {
+    "answer": {
+        "description": "Write your role's answer: the whole JSON document, saved as /output/result.json "
+        "(the only file this tool writes; call it once, at the end).",
+        "inputSchema": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]},
+    },
     "read": {
         "description": "Read a text file in the project workspace of your Dev Capsule (a Linux VM). "
         "Paths are relative to the workspace root or absolute inside the VM.",

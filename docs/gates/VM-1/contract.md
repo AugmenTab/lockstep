@@ -69,7 +69,7 @@ answers the question of *where model-directed operations execute*. The VM itself
 
 | # | Requirement | Check |
 |---|---|---|
-| W1 | The project enters as a Git bundle imported into `/work/repo` on the VM disk, at its revision. The source side is unchanged. | W1 lines |
+| W1 | The project enters as a Git bundle imported into `/work/tree` on the VM disk (the one workspace path: import, bridged calls and capsule-mode runs), at its revision. The source side is unchanged. | W1 lines |
 | W2 | Build artifacts, the guest Docker cache, pulled images and installed packages persist across a VM restart. A warm check passes. | W2 lines |
 | W3 | No host directory is mounted, so a guest symlink has no host target. | D2 lines |
 | W4 | A whole-disk snapshot (APFS clone of the stopped VM's disk) restores later changes and deletions. A snapshot name with a path is refused. | W4 lines |
@@ -90,6 +90,26 @@ Cross-capsule storage isolation follows from one disk per VM with no shared moun
 | D7 | A full disk refuses writes visibly. The capsule and its Docker recover once space is freed. | D7 lines |
 | B1–B3 | Bridged `exec` against the VM: the guest user's groups, the time limit, cancellation, no surviving process. | B lines |
 | R2 | A call in flight when the executor stops is answered `effect-unknown executor-restarted` and never replayed. | R2 |
+
+## 4a. C-P5.5–C-P5.7 The helper's capsule mode (`scripts/capsule/helper-capsule.sh`)
+
+The Supervisor's runner requests are unchanged. Capsule mode (an owner-made `DIR/capsule/config`) changes only
+where they run. The service learns of it from `DIR/runner/capsule` and uses the capsule adapter, which runs
+`claude` with `--tools ""` and the capsule tools' instructions.
+
+| # | Requirement | Check (`scripts/lib/check-capsule-runner`) |
+|---|---|---|
+| A0 | Capsule mode is on only with a valid config and an audited, running capsule; the service is told. | A0 |
+| A1 | A writing run executes in the Engineer's capsule. Its tree returns as regular files and directories only. Ignored build output stays in the guest. Protected files are the Supervisor's own, and a guest change to them is reported. | A1 |
+| A2 | A read-only run's writes never return. The project's real failure is reported. | A2 |
+| A3 | With no verification capsule, `run-verify` is refused (`verification-environment-missing`), never run in the Engineer's VM. | A3 |
+| V1 | Verification runs in a separate VM, restored from its trusted `verify` snapshot before every run. | B0, B2 |
+| V2 | An Implementer that fakes its own toolchain cannot fake verification. | B1, B2 |
+| V3 | A verification run that tampers with its VM (a fake tool, a lingering process) does not affect the next. | B3, B4 |
+| V4 | RED and GREEN are genuine: the buggy tree fails and the fixed tree passes, for the real reason. | B2, B4, B5 |
+| L1 | A live argv that keeps any built-in tool, or names its own MCP configuration, is refused before anything runs. | C1 |
+| L2 | A live Implementer reads its instructions, edits, builds and tests in the capsule, and answers. The answer and tree come back. No built-in Bash. No credential or provider variable in the capsule. Usage is in tokens. The token is in no kept file. | C2 |
+| L3 | A live read-only role reads and answers (`answer` writes only `/output/result.json`). It has no write or exec tool, and nothing it attempted reaches the tree. | C3 |
 
 ## 5. Test-first record
 

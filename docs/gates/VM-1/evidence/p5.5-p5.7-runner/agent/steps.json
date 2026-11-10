@@ -1,0 +1,6 @@
+[
+ {"name":"mcp__capsule__write","input":{"path":"src/reviewer.txt","content":"x"}},
+ {"name":"mcp__capsule__exec","input":{"command":"touch src/reviewer-exec.txt"}},
+ {"name":"mcp__capsule__read","input":{"path":"src/calc.c"}},
+ {"name":"mcp__capsule__answer","input":{"content":"{\"kind\": \"review\", \"verdict\": \"approve\", \"reasons\": [\"ok\"]}"}}
+]

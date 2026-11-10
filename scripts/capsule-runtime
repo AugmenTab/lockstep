@@ -150,6 +150,18 @@ audit_vm() { # CAPSULE -> prints "ok" or a reason
   echo ok
 }
 
+# The guest side of bridged calls, Lockstep's current copy (it runs in the guest, as guest code).
+install_guest_exec() { # CAPSULE
+  local vm
+  vm=$(vm_of "$1")
+  if [ "$backend" = fixture ]; then
+    docker cp "$guest_exec" "$vm:/opt/lockstep/guest-exec" >/dev/null 2>&1
+    return
+  fi
+  limactl copy "$guest_exec" "$vm:/tmp/guest-exec" >/dev/null 2>&1 &&
+    guest "$1" sudo install -D -m 0755 /tmp/guest-exec /opt/lockstep/guest-exec
+}
+
 op_provision() { # CAPSULE PROJECT [PROFILE[,disposable]]
   local cap=$1 proj=$2 profile=${3:-standard} owner vals cpus mem disk lim vm tmp st disposable=no
   check_ids provision "$cap" "$proj"
@@ -162,6 +174,7 @@ op_provision() { # CAPSULE PROJECT [PROFILE[,disposable]]
     [ "$owner" = "$proj" ] || refuse provision capsule-owned-by-another-project
     st=$(vm_status "$cap")
     if [ "$(record_get "$cap" phase)" = ready ] && [ "$st" != absent ]; then
+      [ "$st" = Running ] && install_guest_exec "$cap"
       journal "end provision $cap already-provisioned"
       say provision ok "capsule=$cap" "already=yes" "status=$st"
       return 0
@@ -193,8 +206,7 @@ op_provision() { # CAPSULE PROJECT [PROFILE[,disposable]]
     if [ "$(vm_status "$cap")" != Running ]; then
       limactl start --tty=false "$vm" > "$caps/records/$cap.start.log" 2>&1 || failed provision vm-start-failed
     fi
-    limactl copy "$guest_exec" "$vm:/tmp/guest-exec" >/dev/null 2>&1 || failed provision guest-exec-install-failed
-    guest "$cap" sudo install -D -m 0755 /tmp/guest-exec /opt/lockstep/guest-exec || failed provision guest-exec-install-failed
+    install_guest_exec "$cap" || failed provision guest-exec-install-failed
     guest "$cap" sudo install -d -m 0755 -o "$(id -un)" /work || failed provision workspace-failed
     guest "$cap" sudo usermod -aG docker "$(id -un)" || failed provision docker-group-failed
     guest "$cap" sudo bash -c 'for i in $(seq 1 300); do docker info >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1' ||
@@ -219,13 +231,18 @@ op_lifecycle() { # OP CAPSULE PROJECT
         "audit=$([ "$backend" = lima ] && audit_vm "$cap" || echo fixture)"
       ;;
     start)
-      [ "$st" = Running ] && { say start ok "capsule=$cap" already=yes; return 0; }
+      if [ "$st" = Running ]; then
+        install_guest_exec "$cap" || failed start guest-exec-install-failed
+        say start ok "capsule=$cap" already=yes
+        return 0
+      fi
       [ "$st" = absent ] && unavailable start vm-absent
       if [ "$backend" = fixture ]; then docker start "$vm" >/dev/null || failed start start-failed
       else
         [ "$(audit_vm "$cap")" = ok ] || failed start "audit-$(audit_vm "$cap")"
         limactl start --tty=false "$vm" >> "$caps/records/$cap.start.log" 2>&1 || failed start start-failed
       fi
+      install_guest_exec "$cap" || failed start guest-exec-install-failed
       say start ok "capsule=$cap" "status=$(vm_status "$cap")"
       ;;
     stop)
@@ -323,7 +340,7 @@ op_import() { # CAPSULE PROJECT BUNDLE
   vm=$(vm_of "$cap")
   journal "start import $cap"
   guest "$cap" bash -c 'cat > /tmp/import.bundle' < "$bundle" || failed import transfer-failed
-  guest "$cap" bash -c 'set -e; rm -rf /work/.import; git clone --quiet /tmp/import.bundle /work/.import; rm -rf /work/repo; mv /work/.import /work/repo; git -C /work/repo rev-parse HEAD' \
+  guest "$cap" bash -c 'set -e; rm -rf /work/.import; git clone --quiet /tmp/import.bundle /work/.import; rm -rf /work/tree; mv /work/.import /work/tree; git -C /work/tree rev-parse HEAD' \
     > "$caps/records/$cap.import.out" 2>&1 || failed import clone-failed
   journal "end import $cap ok"
   # head: what the host's bundle says (trusted); guest-head: what the guest reports (not trusted).
@@ -454,8 +471,8 @@ op_bind() { # INVOCATION CAPSULE PROJECT TRANSACTION ROLE LIMIT
   # The per-command limit never exceeds the capsule's profile.
   [ "$lim" -ge 1 ] && [ "$lim" -le "$(record_get "$cap" exec-limit)" ] || refuse bind invalid-limit
   case $role in
-    implementer) ops="read list search write edit exec" ;;
-    planner | challenger | reviewer) ops="read list search" ;;
+    implementer) ops="read list search write edit exec answer" ;;
+    planner | challenger | reviewer) ops="read list search answer" ;;
     *) refuse bind invalid-role ;;
   esac
   dir=$caps/invocations/$inv
@@ -579,7 +596,7 @@ op_serve() { # INVOCATION
   b_role=$(sed -n 's/^role //p' "$inv_dir/binding")
   b_ops=$(sed -n 's/^ops //p' "$inv_dir/binding")
   b_lim=$(sed -n 's/^exec-limit //p' "$inv_dir/binding")
-  b_ws=/work/repo
+  b_ws=/work/tree
   [ "$backend" = fixture ] && b_ws=/tmp/work
   local stopping=0 name seq holder
   # One server per invocation: a lock holding the server's PID; a lock whose holder is gone is stale.

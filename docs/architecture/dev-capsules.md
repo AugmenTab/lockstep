@@ -40,7 +40,7 @@ the egress filter; one writer per repository.
    serve: one invocation's channel, bound by its record ----------> limactl shell (SSH) --> Dev Capsule VM
         ^ files: requests/N.json, results/N.json              |       guest-exec: read, list, search,
         |                                                     |       write, edit, exec
- provider container  lockstep-provider:claude-2.1.312         |       workspace /work/repo, caches,
+ provider container  lockstep-provider:claude-2.1.312         |       workspace /work/tree, caches,
    CLI (uid 2000000000, not dumpable), --tools ""             |       guest Docker Engine + Compose,
    capsule-bridge (MCP stdio, the CLI's only tool source)     |       guest root: the Engineer's own
    auth volume (the CLI's own token), egress filter           |
@@ -72,7 +72,7 @@ on every operation and never cached as truth.
 
 - One VM disk per capsule (Lima `diffdisk`, VZ), under the runtime's own `LIMA_HOME`
   (`<state>/capsules/lima`), never `~/.lima`. Lockstep cannot see or touch the owner's other VMs.
-- The project lives at `/work/repo` on the VM disk. It is a **clone imported from a Git bundle** that the Supervisor
+- The project lives at `/work/tree` on the VM disk. It is a **clone imported from a Git bundle** that the Supervisor
   makes from the canonical repository at the transaction's basis (`import`). The owner's checkout is never mounted.
 - Caches (`~/.stack`, `~/.cargo`, `~/.npm`, Docker images and volumes) live on the same disk and persist across
   sessions, stops and host reboots.
@@ -123,8 +123,8 @@ that channel and nothing else.
 
 | Role | Operations |
 |---|---|
-| implementer | `read`, `list`, `search`, `write`, `edit`, `exec` |
-| planner, challenger, reviewer | `read`, `list`, `search` (no command: guest sudo or Docker would make any command mutating in the Engineer's VM; a separate review capsule is future work) |
+| implementer | `read`, `list`, `search`, `write`, `edit`, `exec`, `answer` |
+| planner, challenger, reviewer | `read`, `list`, `search`, `answer` (`answer` writes only `/output/result.json`; no command: guest sudo or Docker would make any command mutating in the Engineer's VM; a separate review capsule is future work) |
 
 **The channel.** `requests/` is mounted read-write into the provider's container. `results/` is mounted
 **read-only**, so only the runtime writes a result. The runtime moves each request into the invocation's private
@@ -188,7 +188,7 @@ guest. Output: 1 MiB per stream in the guest, 4 MiB total at the host. Cancellat
 
 ## 9. Supervisor Git integration
 
-- The canonical repository stays on the host, owned by the Supervisor (unchanged). The capsule's `/work/repo` is a
+- The canonical repository stays on the host, owned by the Supervisor (unchanged). The capsule's `/work/tree` is a
   clone for development. Its commits, branches, remotes, hooks and config are the Engineer's scratch, with no
   authority.
 - **Acceptance** (P5.8): the Supervisor builds a trusted temporary repository from the verified basis, writes the

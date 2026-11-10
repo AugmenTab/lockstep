@@ -183,7 +183,7 @@ before=$(git -C "$proj_src" rev-parse HEAD)
 timed import R import "$cap" "$proj" "$work/project.bundle" > "$work/import.txt" 2>&1
 expect "W1 the project was imported into the VM's workspace at its revision" grep -q "import ok .*head=$before" "$work/import.txt"
 cat > "$work/build-cold.sh" <<'EOF'
-cd /work/repo && scripts/test
+cd /work/tree && scripts/test
 EOF
 timed build-test-cold guest_run build-cold 1500
 expect "D5 the project-defined build and test ran (native compile)" out_has build-cold "PASS add"
@@ -193,7 +193,7 @@ expect "D5 the whole project check passed" out_has build-cold "project-test-ok"
 expect "W1 the owner-side source was not changed by the import" test "$(git -C "$proj_src" rev-parse HEAD)" = "$before"
 
 cat > "$work/script.sh" <<'EOF'
-cd /work/repo
+cd /work/tree
 f() { local x; for x in "$@"; do printf '<%s>' "$x"; done; echo; }
 f "a b" c | tr '<' '[' > out.txt && cat out.txt
 ( cd /tmp && pwd ) ; { echo grouped; } 2>&1 | sed 's/grouped/grouped-ok/'
@@ -211,7 +211,7 @@ expect "L2 normal shutdown" grep -q 'stop ok .*status=Stopped' "$work/stop.txt"
 timed start-warm R start "$cap" "$proj" > "$work/start.txt" 2>&1
 expect "L2 restart" grep -q 'start ok .*status=Running' "$work/start.txt"
 cat > "$work/persist.sh" <<'EOF'
-test -x /work/repo/build/test && echo build-artifact-kept
+test -x /work/tree/build/test && echo build-artifact-kept
 docker image inspect capsule-test-app >/dev/null 2>&1 && echo docker-image-kept
 docker image inspect redis:7-alpine >/dev/null 2>&1 && echo pulled-image-kept
 command -v tree >/dev/null && echo installed-package-kept
@@ -229,14 +229,14 @@ expect "W2 the warm project check passes" out_has build-warm "project-test-ok"
 timed snapshot R snapshot "$cap" "$proj" work-0000beef > "$work/snapshot.txt" 2>&1
 expect "W4 a snapshot of the whole VM disk was taken" grep -q 'snapshot ok' "$work/snapshot.txt"
 cat > "$work/mutate.sh" <<'EOF'
-echo changed > /work/repo/after-snapshot.txt && rm -f /work/repo/src/calc.c && echo mutated
+echo changed > /work/tree/after-snapshot.txt && rm -f /work/tree/src/calc.c && echo mutated
 EOF
 guest_run mutate 60
 timed restore R restore "$cap" "$proj" work-0000beef > "$work/restore.txt" 2>&1
 expect "W4 the snapshot was restored" grep -q 'restore ok .*status=Running' "$work/restore.txt"
 cat > "$work/restored.sh" <<'EOF'
-test -e /work/repo/after-snapshot.txt && echo marker-present || echo marker-absent
-test -f /work/repo/src/calc.c && echo source-back
+test -e /work/tree/after-snapshot.txt && echo marker-present || echo marker-absent
+test -f /work/tree/src/calc.c && echo source-back
 EOF
 guest_run restored 60
 expect "W4 restoring undid the later changes" out_has restored "marker-absent"
@@ -262,10 +262,10 @@ submit 1 '{"command": "hostname; id -nG"}' exec
 await 1
 expect "B1 a bridged exec ran in the VM" grep -q "lima-lockstep-$cap" "$chan/results/1.json"
 expect "B1 with the guest user's docker group" grep -q 'docker' "$chan/results/1.json"
-submit 2 '{"command": "sleep 100; touch /work/repo/late-timeout", "timeout_seconds": 3}' exec
+submit 2 '{"command": "sleep 100; touch /work/tree/late-timeout", "timeout_seconds": 3}' exec
 await 2
 expect "B2 a command over its limit is timed out" grep -q '"outcome": "timed-out"' "$chan/results/2.json"
-submit 3 '{"command": "sleep 100; touch /work/repo/late-cancel"}' exec
+submit 3 '{"command": "sleep 100; touch /work/tree/late-cancel"}' exec
 sleep 2
 : > "$chan/requests/3.cancel"
 await 3
@@ -273,12 +273,12 @@ expect "B3 a cancelled command is reported cancelled" grep -q 'cancelled' "$chan
 sleep 4
 R run "$cap" "$proj" "$work/restored.sh" 30 > /dev/null 2>&1
 cat > "$work/late.sh" <<'EOF'
-ls /work/repo/late-timeout /work/repo/late-cancel 2>&1; pgrep -fa 'sleep 100' || echo no-sleepers
+ls /work/tree/late-timeout /work/tree/late-cancel 2>&1; pgrep -fa 'sleep 100' || echo no-sleepers
 EOF
 guest_run late 30
 expect "B2/B3 the ended commands left no process and wrote nothing" out_has late "no-sleepers"
-expect "B2 the timed-out command wrote no late file" out_has late "cannot access '/work/repo/late-timeout'"
-expect "B3 the cancelled command wrote no late file" out_has late "cannot access '/work/repo/late-cancel'"
+expect "B2 the timed-out command wrote no late file" out_has late "cannot access '/work/tree/late-timeout'"
+expect "B3 the cancelled command wrote no late file" out_has late "cannot access '/work/tree/late-cancel'"
 submit 4 '{"command": "sleep 20; echo finished"}' exec
 sleep 2
 # A crash, not a polite stop: the executor dies with call 4 in flight.

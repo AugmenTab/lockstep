@@ -1,0 +1,62 @@
+PASS A0 the helper's capsule mode is on
+PASS A0 the service is told (runner/capsule)
+PASS A1 a writing run in the capsule exited 0 (exited 0)
+PASS A1 it ran in the Engineer's capsule
+PASS A1 its output came back (the guest-built test passed)
+PASS A1 the fix came back to the Supervisor's tree
+PASS A1 a new file came back
+PASS A1 the protected test is the Supervisor's own, not the guest's
+PASS A1 the change to it is reported (protected-changed 1)
+PASS A1 ignored build output stayed in the guest
+PASS A1 nothing but regular files and directories came back
+PASS A2 a read-only run reports the project's own failure (RED: 2)
+PASS A2 its write did not come back
+PASS A2 the failure is the real one
+PASS A3 with no verification capsule, verification is refused
+PASS B0 the verification capsule has its trusted snapshot
+PASS B0 capsule mode names the verification capsule
+PASS B1 the Implementer can fake its own toolchain (its capsule is untrusted)
+PASS B2 verification ran in the verification capsule
+PASS B2 the buggy tree is RED there (exit 2)
+PASS B2 the Implementer's fake did not reach verification
+PASS B3 a verification run tampers with its own VM
+PASS B4 the next verification starts from the trusted snapshot: still RED
+PASS B4 no fake toolchain
+PASS B4 no lingering process
+PASS B5 the fixed tree is GREEN in verification
+PASS B5 for the real reason
+PASS C0 native offline-test mode and capsule mode are both on
+PASS C1 built-in tools in capsule mode are refused
+PASS C1 nothing reached the provider
+PASS C1 an argument vector naming its own MCP configuration is refused
+PASS C2 the live run exited 0 (exited 0)
+PASS C2 it read its instructions in the capsule
+PASS C2 it built and tested in the capsule
+PASS C2 the tools ran in the Engineer's VM
+PASS C2 the provider credential is not in the capsule
+PASS C2 nor any provider variable
+PASS C2 the CLI had no built-in Bash
+PASS C2 the answer came back
+PASS C2 the fix came back to the Supervisor's tree
+PASS C2 usage in tokens (840)
+PASS C2 the synthetic token is in no kept file
+PASS C3 the read-only live run exited 0
+PASS C3 it has no write or exec tool
+PASS C3 it read the tree
+PASS C3 its answer came back
+PASS C3 nothing it attempted reached the tree
+PASS D1 preflight capsule-config passes
+PASS D1 preflight capsule-healthy passes
+PASS D1 preflight capsule-ownership passes
+PASS D1 preflight workspace-writable passes
+PASS D1 preflight disk-space passes
+PASS D1 preflight guest-docker passes
+PASS D1 preflight credential-not-in-guest passes
+PASS D1 preflight no-host-mounts passes
+PASS D1 preflight bridge-executor passes
+PASS D1 preflight toolchain passes
+PASS D1 preflight bridge-present passes
+PASS D1 preflight tool-routing passes
+PASS D1 preflight verification-environment passes
+PASS D2 preflight names each host loopback listener a capsule could reach (pass or named failure)
+PASS D3 a missing toolchain is named exactly

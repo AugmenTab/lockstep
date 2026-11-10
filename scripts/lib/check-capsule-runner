@@ -1,0 +1,341 @@
+#!/usr/bin/env bash
+# P5.5-P5.7 qualification of the runner channel's capsule mode (contracts C-P5.5, C-P5.6, C-P5.7):
+# the real helper (scripts/control-helper --runner) with DIR/capsule/config, the real Capsule Runtime and
+# real Lima VMs, signed runner requests exactly as the service sends them. Model-free: scripted argument
+# vectors, and for the live path the real Claude Code CLI driven by the stand-in upstream (synthetic
+# credential, internal network, the helper's offline-test native mode). Needs check-capsule-vm's capsule
+# (state .local/cvm, capsule vmq1, project vmq-project), which it reuses; makes a verification capsule
+# vmv1 the first time.
+#
+#   A  scripted runs in the Engineer's capsule: a writing run's tree comes back (regular files, ignored
+#      build output left in the guest, protected files kept); a read-only run changes nothing; with no
+#      verification capsule, run-verify is refused
+#   B  independent verification: a separate VM restored from its trusted snapshot before every run; an
+#      Implementer that fakes its own toolchain cannot fake verification; a verification run that
+#      tampers with its VM cannot affect the next one; RED and GREEN are genuine
+#   C  a live role in capsule mode: the CLI's built-in tools refused unless off; tools run in the capsule;
+#      the answer and the tree come back; a read-only role answers but cannot write the tree
+#
+# Results: .local/evidence/capsule-runner-<stamp>/results.txt
+set -uo pipefail
+cd "$(dirname "$0")/../.."
+root=$PWD
+
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+work=$root/.local/evidence/capsule-runner-$stamp
+state=$root/.local/ccr-$stamp
+cstate=$root/.local/cvm
+mkdir -p "$work/agent"
+results=$work/results.txt
+: > "$results"
+failures=0
+instance=p5cr
+image=lockstep-provider:claude-2.1.312
+model=claude-sonnet-5-5
+effort=medium
+cli_uid=2000000000
+cap=vmq1
+vcap=vmv1
+proj=vmq-project
+rt=$root/scripts/capsule-runtime
+vol=lockstep-provider-auth-$instance
+net=lockstep-ccr-$stamp
+agent=lockstep-ccr-agent-$stamp
+helper_pid=""
+
+record() { printf '%s %s\n' "$1" "$2" | tee -a "$results"; [ "$1" = PASS ] || failures=$((failures + 1)); }
+expect() { local d=$1; shift; if "$@"; then record PASS "$d"; else record FAIL "$d"; fi; }
+if command -v sha256sum >/dev/null 2>&1; then sha256() { sha256sum | cut -d ' ' -f 1; }; else sha256() { shasum -a 256 | cut -d ' ' -f 1; }; fi
+new_id() { head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+
+stop_helper() { if [ -n "$helper_pid" ]; then kill "$helper_pid" 2>/dev/null; wait "$helper_pid" 2>/dev/null; helper_pid=""; fi; }
+cleanup() {
+  stop_helper
+  docker ps -aq --filter "name=^lockstep-run-$instance-" | while read -r c; do docker rm -f "$c" >/dev/null 2>&1; done
+  docker ps -aq --filter "name=^lockstep-egress-$instance-" | while read -r c; do docker rm -f "$c" >/dev/null 2>&1; done
+  docker network ls -q --filter "name=^lockstep-live-$instance-" | while read -r n; do docker network rm "$n" >/dev/null 2>&1; done
+  docker rm -f "$agent" >/dev/null 2>&1
+  docker network rm "$net" >/dev/null 2>&1
+  docker volume rm -f "$vol" >/dev/null 2>&1
+  [ -f "$state/helper/helper.log" ] && cp "$state/helper/helper.log" "$work/helper.log"
+  "$rt" --state "$cstate" stop "$vcap" "$proj" > /dev/null 2>&1
+  rm -rf "$state" "$work/ca.key"
+}
+trap cleanup EXIT
+
+[ -f "$cstate/capsules/records/$cap" ] || { echo "NOT_RUN: run scripts/lib/check-capsule-vm --keep first" >&2; exit 2; }
+docker image inspect "$image" >/dev/null 2>&1 || { echo "NOT_RUN: $image is missing" >&2; exit 2; }
+
+umask 077
+mkdir -p "$state/helper" "$state/pane" "$state/capsule"
+chmod 700 "$state" "$state/helper" "$state/pane" "$state/capsule"
+head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$state/helper/channel.key"
+capsule_config() { # [VERIFY]
+  {
+    printf 'lockstep-capsule 1\nruntime-state %s\ncapsule %s\nproject %s\n' "$cstate" "$cap" "$proj"
+    [ -n "${1:-}" ] && printf 'verify-capsule %s\n' "$1"
+  } > "$state/capsule/config"
+  chmod 600 "$state/capsule/config"
+}
+
+log_mark=0
+start_helper() {
+  log_mark=0
+  [ -f "$state/helper/helper.log" ] && log_mark=$(wc -l < "$state/helper/helper.log" | tr -d ' ')
+  "$root/scripts/control-helper" --state "$state" --instance "$instance" --runner < /dev/null >> "$work/helper.out" 2>&1 &
+  helper_pid=$!
+  for _ in $(seq 1 1200); do grep -q "started (pid $helper_pid" "$state/helper/helper.log" 2>/dev/null && break; sleep 0.1; done
+  local key i=0 b
+  key=$(head -c 64 "$state/runner/channel.key")
+  ipad=""; opad=""
+  while [ $i -lt 64 ]; do
+    if [ $i -lt 32 ]; then b=$((16#${key:$((i * 2)):2})); else b=0; fi
+    ipad="$ipad$(printf '\\x%02x' $((b ^ 0x36)))"; opad="$opad$(printf '\\x%02x' $((b ^ 0x5c)))"; i=$((i + 1))
+  done
+}
+since() { tail -n "+$((log_mark + 1))" "$state/helper/helper.log"; }
+hex_escapes() { local h=$1 o="" j=0; while [ $j -lt ${#h} ]; do o="$o\\x${h:$j:2}"; j=$((j + 2)); done; printf '%s' "$o"; }
+hmac() { local inner; inner=$({ printf "$ipad"; cat; } | sha256); { printf "$opad"; printf "$(hex_escapes "$inner")"; } | sha256; }
+
+# The synthetic project: add() is wrong; tests/test.c is protected; build/ is ignored.
+seed_tree() { # DIR FIXED(yes|no)
+  mkdir -p "$1/src" "$1/tests"
+  if [ "$2" = yes ]; then printf 'int add(int a, int b) { return a + b; }\n' > "$1/src/calc.c"
+  else printf 'int add(int a, int b) { return a - b; }\n' > "$1/src/calc.c"; fi
+  printf '#include <stdio.h>\nint add(int, int);\nint main(void) { if (add(2, 3) != 5) { puts("FAIL add"); return 1; } puts("PASS add"); return 0; }\n' > "$1/tests/test.c"
+  printf 'build/test: src/calc.c tests/test.c\n\tmkdir -p build && cc -o build/test src/calc.c tests/test.c\ntest: build/test\n\t./build/test\n.PHONY: test\n' > "$1/Makefile"
+  printf 'build/\n' > "$1/.gitignore"
+}
+# submit OP RUN ARGV... : a signed request for a prepared run directory; waits; sets res
+submit() {
+  local op=$1 run=$2 id body tmp n=0 dir
+  shift 2
+  dir=$state/runner/work/$run
+  : > "$dir/argv"
+  for a in "$@"; do printf '%s\0' "$a" >> "$dir/argv"; done
+  id=$(new_id)
+  body=$(printf 'lockstep-runner-request 1\nid %s\nissued %s\nop %s\nexpect run-%s\nargv %s\n' "$id" "$(date +%s)" "$op" "$run" "$(sha256 < "$dir/argv")")
+  tmp=$state/runner/requests/.$id
+  printf '%s\n' "$body" > "$tmp"
+  printf 'mac %s\n' "$(printf '%s\n' "$body" | hmac)" >> "$tmp"
+  mv "$tmp" "$state/runner/requests/$id.rreq"
+  res=$state/runner/results/$id.res
+  while [ ! -f "$res" ] && [ $n -lt 9000 ]; do sleep 0.2; n=$((n + 1)); done
+  cp "$res" "$work/res-$op-$run.txt" 2>/dev/null
+}
+new_run() { # FIXED -> sets run, dir
+  run=$(new_id)
+  dir=$state/runner/work/$run
+  mkdir -p "$dir/tree" "$dir/input" "$dir/output"
+  seed_tree "$dir/tree" "$1"
+  printf '{"role":"implementer"}\n' > "$dir/input/context.json"
+}
+field() { sed -n "s/^$1 //p" "$res" | head -n 1; }
+fieldline() { sed -n "s/^field $1 //p" "$res" | head -n 1; }
+outcome_is() { [ "$(field outcome) $(fieldline exit)" = "$1" ]; }
+outcome_not_zero() { [ "$(field outcome)" = exited ] && [ "$(fieldline exit)" != 0 ]; }
+refused_with() { [ "$(field outcome) $(field reason)" = "refused $1" ]; }
+has() { grep -qF -- "$2" "$1"; }
+lacks() { ! grep -qF -- "$2" "$1" 2>/dev/null; }
+
+# ================================================================ A
+capsule_config ""
+start_helper
+expect "A0 the helper's capsule mode is on" bash -c "tail -n 50 '$state/helper/helper.log' | grep -q 'capsule mode on: capsule $cap'"
+expect "A0 the service is told (runner/capsule)" grep -qx "lockstep-capsule 1 $cap" "$state/runner/capsule"
+
+new_run no
+printf 'tests/test.c\n' > "$dir/protected"
+submit run-write "$run" bash -c "sed -i 's/a - b/a + b/' src/calc.c && echo '/* tamper */' >> tests/test.c && make test && echo made > src/new.txt"
+expect "A1 a writing run in the capsule exited 0 ($(field outcome) $(fieldline exit))" outcome_is "exited 0"
+expect "A1 it ran in the Engineer's capsule" test "$(fieldline capsule)" = "$cap"
+expect "A1 its output came back (the guest-built test passed)" has "$dir/stdout" "PASS add"
+expect "A1 the fix came back to the Supervisor's tree" grep -q 'a + b' "$dir/tree/src/calc.c"
+expect "A1 a new file came back" test -f "$dir/tree/src/new.txt"
+expect "A1 the protected test is the Supervisor's own, not the guest's" lacks "$dir/tree/tests/test.c" tamper
+expect "A1 the change to it is reported (protected-changed 1)" test "$(fieldline protected-changed)" = 1
+expect "A1 ignored build output stayed in the guest" test ! -e "$dir/tree/build"
+expect "A1 nothing but regular files and directories came back" test -z "$(find "$dir/tree" ! -type f ! -type d)"
+
+new_run no
+submit run-readonly "$run" bash -c "echo x > src/readonly-wrote.txt; make test"
+expect "A2 a read-only run reports the project's own failure (RED: $(fieldline exit))" outcome_not_zero
+expect "A2 its write did not come back" test ! -e "$dir/tree/src/readonly-wrote.txt"
+expect "A2 the failure is the real one" has "$dir/stdout" "FAIL add"
+
+new_run yes
+submit run-verify "$run" make test
+expect "A3 with no verification capsule, verification is refused" refused_with verification-environment-missing
+stop_helper
+
+# ================================================================ B
+if [ ! -f "$cstate/capsules/records/$vcap" ]; then
+  "$rt" --state "$cstate" provision "$vcap" "$proj" "small,disposable" > "$work/vprovision.txt" 2>&1
+fi
+"$rt" --state "$cstate" start "$vcap" "$proj" > /dev/null 2>&1
+if [ ! -f "$cstate/capsules/snapshots/$vcap/verify.disk" ]; then
+  # The verification environment's trusted setup: here the template's toolchain is enough.
+  printf 'cc --version | head -n 1; make --version | head -n 1\n' > "$work/vsetup.sh"
+  "$rt" --state "$cstate" run "$vcap" "$proj" "$work/vsetup.sh" 300 > "$work/vsetup.txt" 2>&1
+  "$rt" --state "$cstate" snapshot "$vcap" "$proj" verify > "$work/vsnapshot.txt" 2>&1
+fi
+expect "B0 the verification capsule has its trusted snapshot" test -f "$cstate/capsules/snapshots/$vcap/verify.disk"
+capsule_config "$vcap"
+start_helper
+expect "B0 capsule mode names the verification capsule" bash -c "tail -n 50 '$state/helper/helper.log' | grep -q 'verification $vcap'"
+
+new_run no
+submit run-write "$run" bash -c "printf '#!/bin/sh\necho FAKE-PASS\nexit 0\n' | sudo tee /usr/local/bin/make > /dev/null && sudo chmod 755 /usr/local/bin/make && hash -r && make test"
+expect "B1 the Implementer can fake its own toolchain (its capsule is untrusted)" has "$dir/stdout" "FAKE-PASS"
+new_run no
+submit run-verify "$run" make test
+expect "B2 verification ran in the verification capsule" test "$(fieldline capsule)" = "$vcap"
+expect "B2 the buggy tree is RED there (exit $(fieldline exit))" outcome_not_zero
+expect "B2 the Implementer's fake did not reach verification" lacks "$dir/stdout" "FAKE-PASS"
+new_run no
+submit run-verify "$run" bash -c "printf '#!/bin/sh\necho FAKE-PASS\nexit 0\n' | sudo tee /usr/local/bin/make > /dev/null; sudo chmod 755 /usr/local/bin/make; nohup sleep 600 > /dev/null 2>&1 & echo planted"
+expect "B3 a verification run tampers with its own VM" has "$dir/stdout" "planted"
+new_run no
+submit run-verify "$run" bash -c "pgrep -x sleep > /dev/null && echo LINGERING; make test"
+expect "B4 the next verification starts from the trusted snapshot: still RED" outcome_not_zero
+expect "B4 no fake toolchain" lacks "$dir/stdout" "FAKE-PASS"
+expect "B4 no lingering process" lacks "$dir/stdout" "LINGERING"
+new_run yes
+submit run-verify "$run" make test
+expect "B5 the fixed tree is GREEN in verification" outcome_is "exited 0"
+expect "B5 for the real reason" has "$dir/stdout" "PASS add"
+# Undo B1's fake in the Engineer's capsule.
+printf 'sudo rm -f /usr/local/bin/make\n' > "$work/unfake.sh"
+"$rt" --state "$cstate" run "$cap" "$proj" "$work/unfake.sh" 60 > /dev/null 2>&1
+stop_helper
+
+# ================================================================ C  live roles in capsule mode (stand-in)
+mkdir -p "$state/provider"
+chmod 700 "$state/provider"
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$work/ca.key" -out "$work/ca.pem" -days 2 \
+  -subj /CN=api.anthropic.com -addext subjectAltName=DNS:api.anthropic.com >/dev/null 2>&1
+chmod 644 "$work/ca.pem" "$work/ca.key"
+chmod 777 "$work/agent"
+docker volume rm -f "$vol" >/dev/null 2>&1
+docker volume create "$vol" >/dev/null
+docker run --rm --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --security-opt no-new-privileges \
+  --mount "type=volume,source=$vol,target=/auth" "$image" sh -c "chown $cli_uid:$cli_uid /auth && chmod 700 /auth" >/dev/null
+token=sk-ant-oat01-fake-$(new_id)
+printf '%s' '{"claudeAiOauth":{"accessToken":"'"$token"'","refreshToken":"sk-ant-ort01-fake","expiresAt":9999999999999,"scopes":["user:inference"],"subscriptionType":"max"}}' > "$work/creds.json"
+chmod 644 "$work/creds.json"
+docker run --rm --user "$cli_uid:$cli_uid" --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+  --mount "type=volume,source=$vol,target=/auth" --mount "type=bind,source=$work/creds.json,target=/tmp/c.json,readonly" \
+  "$image" cp /tmp/c.json /auth/.credentials.json >/dev/null
+rm -f "$work/creds.json"
+cat > "$state/provider/config" <<EOF
+lockstep-provider 1
+provider claude-code
+model $model
+effort $effort
+billing subscription
+token-limit 100000000
+invocation-limit 1000
+request-max-tokens 16000
+invocation-output-tokens 60000
+invocation-requests 50
+EOF
+chmod 600 "$state/provider/config"
+printf 'api.anthropic.com\n' > "$state/provider/egress-hosts"
+chmod 600 "$state/provider/egress-hosts"
+docker network create --internal "$net" >/dev/null
+printf 'lockstep-offline-test 1\nupstream standin:8443\nca %s\negress-network %s\n' "$work/ca.pem" "$net" > "$state/provider/offline-test"
+chmod 600 "$state/provider/offline-test"
+start_standin() { # NAME STEPS
+  docker rm -f "$agent" >/dev/null 2>&1
+  printf '%s' "$2" > "$work/agent/steps.json"; chmod 644 "$work/agent/steps.json"
+  slog=$work/agent/standin-$1.jsonl
+  : > "$slog"; chmod 666 "$slog"
+  docker run -d --name "$agent" --network "$net" --network-alias standin --read-only --user "$(id -u):$(id -g)" \
+    --cap-drop ALL \
+    --mount "type=bind,source=$root/scripts/lib/live-standin-secret,target=/opt/standin,readonly" \
+    --mount "type=bind,source=$work/ca.pem,target=/etc/standin.pem,readonly" \
+    --mount "type=bind,source=$work/ca.key,target=/etc/standin.key,readonly" \
+    --mount "type=bind,source=$work/agent,target=/log" \
+    "$image" python3 /opt/standin --cert /etc/standin.pem --key /etc/standin.key --log "/log/standin-$1.jsonl" \
+    --steps /log/steps.json >/dev/null
+  sleep 1.5
+}
+said() { grep -qF -- "$1" "$slog"; }
+capsule_argv() { # RUN -> the capsule adapter's argument vector (claudeCapsuleArgv)
+  local s="${1:0:8}-${1:8:4}-${1:12:4}-${1:16:4}-${1:20:12}"
+  capsule_args=(claude -p --model "$model" --effort "$effort" --tools "" --dangerously-skip-permissions
+    --no-session-persistence --output-format json --strict-mcp-config --disable-slash-commands --session-id "$s"
+    "Your instructions are in /input/role.md. Read that file first with the mcp__capsule__read tool and follow it exactly.")
+}
+capsule_config "$vcap"
+start_helper
+expect "C0 native offline-test mode and capsule mode are both on" bash -c "since() { tail -n 80 '$state/helper/helper.log'; }; since | grep -q 'live runs on (OFFLINE TEST' && since | grep -q 'capsule mode on'"
+
+# C1 an argument vector that keeps the built-in tools is refused before anything runs.
+start_standin c1 '[]'
+new_run no
+submit run-live-write "$run" claude -p --model "$model" --effort "$effort" --tools "Read Edit Bash" --dangerously-skip-permissions "x"
+expect "C1 built-in tools in capsule mode are refused" refused_with built-in-tools-not-disabled
+expect "C1 nothing reached the provider" test ! -s "$slog"
+new_run no
+capsule_argv "$run"
+submit run-live-write "$run" "${capsule_args[@]:0:1}" --mcp-config '{"mcpServers":{}}' "${capsule_args[@]:1}"
+expect "C1 an argument vector naming its own MCP configuration is refused" refused_with argv-not-allowed-in-capsule-mode
+
+# C2 the Implementer, live: reads its instructions, fixes the bug, builds and tests in the capsule, answers.
+start_standin c2 '[
+ {"name":"mcp__capsule__read","input":{"path":"/input/role.md"}},
+ {"name":"mcp__capsule__edit","input":{"path":"src/calc.c","old_string":"a - b","new_string":"a + b"}},
+ {"name":"mcp__capsule__exec","input":{"command":"make test && hostname && cat /auth/.credentials.json 2>&1; echo env-keys=$(env | grep -ci -e anthropic -e oauth)"}},
+ {"name":"Bash","input":{"command":"echo should-not-run","description":"x"}},
+ {"name":"mcp__capsule__answer","input":{"content":"{\"kind\": \"implementation\", \"summary\": \"add adds\"}"}}
+]'
+new_run no
+printf 'Fix add. ROLE-MARKER-c2\n' > "$dir/input/role.md"
+printf 'tests/test.c\n' > "$dir/protected"
+capsule_argv "$run"
+submit run-live-write "$run" "${capsule_args[@]}"
+cp "$slog" "$work/standin-c2.jsonl"
+expect "C2 the live run exited 0 ($(field outcome) $(fieldline exit))" outcome_is "exited 0"
+expect "C2 it read its instructions in the capsule" said "ROLE-MARKER-c2"
+expect "C2 it built and tested in the capsule" said "PASS add"
+expect "C2 the tools ran in the Engineer's VM" said "lima-lockstep-$cap"
+expect "C2 the provider credential is not in the capsule" said "No such file"
+expect "C2 nor any provider variable" said "env-keys=0"
+expect "C2 the CLI had no built-in Bash" said "No such tool available: Bash"
+expect "C2 the answer came back" grep -q '"implementation"' "$dir/output/result.json"
+expect "C2 the fix came back to the Supervisor's tree" grep -q 'a + b' "$dir/tree/src/calc.c"
+expect "C2 usage in tokens ($(fieldline egress.tokens))" test "$(fieldline egress.tokens)" -gt 0 2>/dev/null
+expect "C2 the synthetic token is in no kept file" test -z "$(grep -r -l -F "$token" "$state/runner" "$state/helper" "$work/helper.out" "$work/agent" 2>/dev/null)"
+
+# C3 a read-only role, live: can read and answer, cannot write the tree or run commands.
+start_standin c3 '[
+ {"name":"mcp__capsule__write","input":{"path":"src/reviewer.txt","content":"x"}},
+ {"name":"mcp__capsule__exec","input":{"command":"touch src/reviewer-exec.txt"}},
+ {"name":"mcp__capsule__read","input":{"path":"src/calc.c"}},
+ {"name":"mcp__capsule__answer","input":{"content":"{\"kind\": \"review\", \"verdict\": \"approve\", \"reasons\": [\"ok\"]}"}}
+]'
+new_run yes
+capsule_argv "$run"
+submit run-live-readonly "$run" "${capsule_args[@]}"
+cp "$slog" "$work/standin-c3.jsonl"
+expect "C3 the read-only live run exited 0" outcome_is "exited 0"
+expect "C3 it has no write or exec tool" bash -c "grep -o 'No such tool available' '$slog' | head -n 2 | wc -l | grep -q 2"
+expect "C3 it read the tree" said "a + b"
+expect "C3 its answer came back" grep -q '"review"' "$dir/output/result.json"
+expect "C3 nothing it attempted reached the tree" test ! -e "$dir/tree/src/reviewer.txt"
+
+# ================================================================ D  preflight (P5.10), with the helper up
+printf 'cc --version >/dev/null && make --version >/dev/null\n' > "$work/toolchain-probe.sh"
+"$root/scripts/capsule-preflight" --helper-state "$state" --toolchain-probe "$work/toolchain-probe.sh" > "$work/preflight.txt" 2>&1
+for c in capsule-config capsule-healthy capsule-ownership workspace-writable disk-space guest-docker credential-not-in-guest no-host-mounts bridge-executor toolchain bridge-present tool-routing verification-environment; do
+  expect "D1 preflight $c passes" grep -qx "PASS $c" "$work/preflight.txt"
+done
+expect "D2 preflight names each host loopback listener a capsule could reach (pass or named failure)" grep -qE '^(PASS host-loopback-exposure|FAIL host-loopback-exposure: listening on the host)' "$work/preflight.txt"
+printf 'false\n' > "$work/bad-probe.sh"
+"$root/scripts/capsule-preflight" --helper-state "$state" --toolchain-probe "$work/bad-probe.sh" > "$work/preflight-bad.txt" 2>&1
+expect "D3 a missing toolchain is named exactly" grep -q '^FAIL toolchain:' "$work/preflight-bad.txt"
+stop_helper
+
+echo "check-capsule-runner: $failures failure(s); results in $results"
+[ "$failures" = 0 ]

@@ -21,6 +21,8 @@ import time
 
 # Per-user state for cancellation (the guest user runs both the call and its cancel).
 STATE = os.path.join(os.path.expanduser("~"), ".cache", "lockstep-exec")
+# Where a role's answer goes (the run's /output, which the helper brings back).
+ANSWER_DIR = "/output"
 
 
 def no_duplicates(pairs):
@@ -93,6 +95,17 @@ def op_write(ws, a, _limit):
     with open(p, "w", encoding="utf-8") as f:
         f.write(content)
     return {"stdout": "wrote %d bytes to %s" % (len(content.encode()), p)}
+
+
+def op_answer(_ws, a, _limit):
+    # The role's answer, and nothing else: one fixed file outside the project's tree.
+    content = a.get("content")
+    if not isinstance(content, str) or content == "" or len(content.encode()) > 262144:
+        raise ValueError("bad answer")
+    os.makedirs(ANSWER_DIR, exist_ok=True)
+    with open(os.path.join(ANSWER_DIR, "result.json"), "w", encoding="utf-8") as f:
+        f.write(content)
+    return {"stdout": "answer saved (%d bytes)" % len(content.encode())}
 
 
 def op_edit(ws, a, _limit):
@@ -223,6 +236,8 @@ def main():
             body = op_edit(ws, args, limit)
         elif op == "exec":
             body = op_exec(ws, args, limit, deadline, seq)
+        elif op == "answer":
+            body = op_answer(ws, args, limit)
         else:
             print(json.dumps(result(seq, "refused", detail="unknown-op")))
             return 0

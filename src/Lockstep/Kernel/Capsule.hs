@@ -104,6 +104,7 @@ data CapsuleOperation
   | OpWrite
   | OpEdit
   | OpExec
+  | OpAnswer
   deriving (Eq, Ord, Show, Bounded, Enum)
 
 capsuleOperationText :: CapsuleOperation -> T.Text
@@ -116,6 +117,7 @@ capsuleOperationText operation =
       OpWrite -> "write"
       OpEdit -> "edit"
       OpExec -> "exec"
+      OpAnswer -> "answer"
 
 parseCapsuleOperation :: T.Text -> Maybe CapsuleOperation
 parseCapsuleOperation =
@@ -130,12 +132,13 @@ capsule exists (P5.1 review finding 1).
 roleOperations :: Role -> [CapsuleOperation]
 roleOperations role =
   case role of
-    Implementer -> [OpRead, OpList, OpSearch, OpWrite, OpEdit, OpExec]
+    Implementer -> [OpRead, OpList, OpSearch, OpWrite, OpEdit, OpExec, OpAnswer]
     Planner -> readOnly
     Challenger -> readOnly
     Reviewer -> readOnly
  where
-  readOnly = [OpRead, OpList, OpSearch]
+  -- 'OpAnswer' writes only the role's answer file, outside the project's tree.
+  readOnly = [OpRead, OpList, OpSearch, OpAnswer]
 
 -- | Whether the operation can change the capsule's working state.
 operationMutates :: CapsuleOperation -> Bool

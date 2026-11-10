@@ -1,0 +1,10 @@
+lockstep-control-result 1
+id 990a8b5d7d7f7575c23a9234c9bd316a
+op run-verify
+outcome refused
+reason verification-environment-missing
+started 1794330184
+finished 1794330184
+field capsule vmq1
+detail 
+mac 759f8f4c122897ae5e1c835ff759daea4e080de86d074da237015a9073c16956

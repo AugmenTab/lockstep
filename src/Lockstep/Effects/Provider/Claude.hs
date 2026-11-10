@@ -338,7 +338,8 @@ capsuleRoleInstructions role view =
       , T.pack "- The project's files: " <> viewTree view <> T.pack ". " <> treeRule
       , T.pack "- Your input: " <> viewInput view <> T.pack "/context.json. It holds the ticket, the stage, earlier evidence"
       , T.pack "  and, under \"answer\", the kind of answer you must give."
-      , T.pack "- Your answer: one JSON object, written to " <> viewOutput view <> T.pack "/result.json with mcp__capsule__write."
+      , T.pack "- Your answer: one JSON object, written to " <> viewOutput view <> T.pack "/result.json by mcp__capsule__answer"
+      , T.pack "  (the whole document as its content)."
       , T.pack "  Write it once, at the end."
       ]
         <> engineering
@@ -365,8 +366,8 @@ capsuleRoleInstructions role view =
   tools =
     T.pack $
       if isImplementer
-        then "mcp__capsule__read, mcp__capsule__list, mcp__capsule__search, mcp__capsule__write, mcp__capsule__edit and mcp__capsule__exec"
-        else "mcp__capsule__read, mcp__capsule__list and mcp__capsule__search (you run no command)"
+        then "mcp__capsule__read, mcp__capsule__list, mcp__capsule__search, mcp__capsule__write, mcp__capsule__edit, mcp__capsule__exec and mcp__capsule__answer"
+        else "mcp__capsule__read, mcp__capsule__list, mcp__capsule__search and mcp__capsule__answer (you run no command and change no file)"
   treeRule =
     T.pack $
       if isImplementer
