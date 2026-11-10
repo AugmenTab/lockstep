@@ -1224,6 +1224,7 @@ init_runner() {
     docker network rm "$n" >/dev/null 2>&1 || true
   done
   init_provider
+  rm -f "$runner/capsule"
   if declare -F init_capsule >/dev/null; then init_capsule; fi
   export LOCKSTEP_SERVICE_RUNNER=$runner
 }
@@ -1875,6 +1876,8 @@ handle_runner() { # NAME
     if [ -n "$active_pid" ] && [ "$active_run" = "$run" ]; then
       : > "$runner_work/$run/.cancelled"
       docker kill "$runner_name_prefix$run" >/dev/null 2>&1 || true
+      # A capsule run: the runtime watches for this and ends the guest program.
+      [ -d "$runner_work/$run/.capsule-out" ] && : > "$runner_work/$run/.capsule-out/.cancel"
       now=$(date +%s)
       write_result "$id" "$op" ok - "$now" "$now" "" "run $run" || true
     else
@@ -1888,6 +1891,7 @@ handle_runner() { # NAME
   refusal=$(run_refusal "$op" "$run" "$sha")
   if [ -n "$refusal" ]; then refuse "$id" "$op" "$refusal"; return; fi
   case "$capsule_mode $op" in
+    "2 "*) refuse "$id" "$op" capsule-mode-unavailable; return ;;
     "1 run-live-"*)
       [ "$live_ready" = 1 ] || { refuse "$id" "$op" provider-not-configured; return; }
       execute_capsule_live_run "$id" "$op" "$run" < /dev/null > /dev/null 2>&1 &

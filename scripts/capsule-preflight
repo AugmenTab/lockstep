@@ -70,8 +70,13 @@ docker run --rm busybox:1.36 true >/dev/null 2>&1 && echo docker-ok || { docker 
 [ -z "$(findmnt -rn -t virtiofs,9p,fuse.sshfs,nfs,cifs -o TARGET)" ] && echo no-host-mounts
 test -x /opt/lockstep/guest-exec && echo guest-exec-present
 EOF
-"$rt" --state "$cstate" run "$cap" "$proj" "$probe_script" 300 > /dev/null 2>&1
 gout=$cstate/capsules/records/$cap.run.out
+rm -f "$gout"
+# Fresh output only, from a probe that ran to its end: a stale or failed probe proves nothing.
+if ! "$rt" --state "$cstate" run "$cap" "$proj" "$probe_script" 300 > /dev/null 2>&1; then
+  fail guest-probe "the in-guest probe did not complete; the checks below have no evidence"
+  : > "$gout"
+fi
 grep -q workspace-writable "$gout" 2>/dev/null && pass workspace-writable || fail workspace-writable "cannot write /work/tree in the capsule"
 free=$(sed -n 's/^disk-free-mib=//p' "$gout" 2>/dev/null)
 if [ -n "$free" ] && [ "$free" -ge 4096 ]; then pass disk-space; else fail disk-space "only ${free:-unknown} MiB free in the capsule (4096 needed)"; fi
@@ -85,6 +90,7 @@ grep -q guest-exec-present "$gout" 2>/dev/null && pass bridge-executor || fail b
 
 # ---- the project's toolchain (a trusted, project-declared probe)
 if [ -n "$probe" ]; then
+  rm -f "$gout"
   if "$rt" --state "$cstate" run "$cap" "$proj" "$probe" 3600 > /dev/null 2>&1; then pass toolchain
   else fail toolchain "the project's toolchain probe failed: $(tail -n 3 "$gout" 2>/dev/null | tr '\n' ' ' | cut -c 1-200)"
   fi

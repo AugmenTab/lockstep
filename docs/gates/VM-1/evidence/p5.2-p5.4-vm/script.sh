@@ -1,4 +1,4 @@
-cd /work/repo
+cd /work/tree
 f() { local x; for x in "$@"; do printf '<%s>' "$x"; done; echo; }
 f "a b" c | tr '<' '[' > out.txt && cat out.txt
 ( cd /tmp && pwd ) ; { echo grouped; } 2>&1 | sed 's/grouped/grouped-ok/'

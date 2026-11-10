@@ -1,6 +1,6 @@
 # The Dev Capsule VM (Phase 5; docs/architecture/dev-capsules.md §3, §7; contract C-P5.2 L4).
 # The only VM configuration Lockstep uses. scripts/capsule-runtime substitutes the three numeric
-# resources (2, 4, 30) from a fixed profile and nothing else, then audits the
+# resources (the CPU, memory and disk placeholders below) from a fixed profile and nothing else, then audits the
 # effective configuration Lima stores before every start. Upstream templates are NOT used: they
 # mount the host home, forward the guest's ports and (the docker template) its Docker socket.
 vmType: vz

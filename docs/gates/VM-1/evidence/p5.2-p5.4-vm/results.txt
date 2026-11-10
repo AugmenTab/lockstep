@@ -52,6 +52,6 @@ PASS R2 a call in flight when the executor stopped is answered effect-unknown, n
 PASS D7 a full disk refuses writes (reported, not silent)
 PASS D7 the capsule recovers once space is freed
 PASS D7 guest Docker still works
-NOTE guest resources: cpus=2 mem-kib=3998424
+NOTE guest resources: cpus=2 mem-kib=3998416
 NOTE VM directory on the host:  28G	/Users/tab/personal/lockstep/.local/cvm/capsules/lima/lockstep-vmq1
 PASS L2 clean final shutdown

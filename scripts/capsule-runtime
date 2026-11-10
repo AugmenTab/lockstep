@@ -367,19 +367,27 @@ guest_user() { # the guest's development user (Lima: the host user's name)
   if [ "$backend" = fixture ]; then echo root; else id -un; fi
 }
 
-op_push() { # CAPSULE PROJECT RUN-DIR
-  local cap=$1 proj=$2 dir=$3 u
+op_push() { # CAPSULE PROJECT RUN-DIR exact|keep-ignored
+  local cap=$1 proj=$2 dir=$3 mode=$4 u
   check_ids push "$cap" "$proj"
   owned push "$cap" "$proj"
   run_dir_ok "$dir" || refuse push run-dir-invalid
+  case $mode in exact | keep-ignored) ;; *) refuse push invalid-what ;; esac
   [ "$(vm_status "$cap")" = Running ] || unavailable push vm-not-running
   u=$(guest_user)
-  journal "start push $cap"
-  # The tree: mirrored into /work/tree; what the project's .gitignore names (build output, caches) is
-  # kept from earlier runs, everything else follows the Supervisor's tree exactly.
-  COPYFILE_DISABLE=1 tar -C "$dir/tree" -cf - . 2>/dev/null |
-    guest "$cap" sudo -n -H -u "$u" -- bash -c 'set -e; rm -rf /work/.incoming; mkdir -p /work/.incoming /work/tree; tar -C /work/.incoming -xf -; rsync -a --delete --filter=":- .gitignore" /work/.incoming/ /work/tree/; rm -rf /work/.incoming' \
-    > "$caps/records/$cap.push.log" 2>&1 || failed push tree-transfer-failed
+  journal "start push $cap $mode"
+  # exact (verification, review): /work/tree becomes exactly the Supervisor's tree, nothing kept.
+  # keep-ignored (the Engineer's own work): the same, except what the project's .gitignore names
+  # (build output, caches) is kept from earlier runs; contents compared by checksum, not size and time.
+  if [ "$mode" = exact ]; then
+    COPYFILE_DISABLE=1 tar -C "$dir/tree" -cf - . 2>/dev/null |
+      guest "$cap" sudo -n -H -u "$u" -- bash -c 'set -e; rm -rf /work/tree; mkdir -p /work/tree; tar -C /work/tree -xf -' \
+      > "$caps/records/$cap.push.log" 2>&1 || failed push tree-transfer-failed
+  else
+    COPYFILE_DISABLE=1 tar -C "$dir/tree" -cf - . 2>/dev/null |
+      guest "$cap" sudo -n -H -u "$u" -- bash -c 'set -e; rm -rf /work/.incoming; mkdir -p /work/.incoming /work/tree; tar -C /work/.incoming -xf -; rsync -a --checksum --delete --filter=":- .gitignore" /work/.incoming/ /work/tree/; rm -rf /work/.incoming' \
+      > "$caps/records/$cap.push.log" 2>&1 || failed push tree-transfer-failed
+  fi
   COPYFILE_DISABLE=1 tar -C "$dir/input" -cf - . 2>/dev/null |
     guest "$cap" sudo -n -- bash -c "set -e; rm -rf /input /output; mkdir -p /input /output; tar -C /input -xf -; chown -R $u /input /output" \
     >> "$caps/records/$cap.push.log" 2>&1 || failed push input-transfer-failed
@@ -399,24 +407,57 @@ op_exec_argv() { # CAPSULE PROJECT ARGV-FILE LIMIT OUT-DIR
   u=$(guest_user)
   journal "start exec-argv $cap"
   # The argument vector (NUL-separated) arrives on standard input; the program gets /dev/null. A login
-  # shell, so the Engineer's own toolchains (installed in the guest) are on PATH.
-  guest "$cap" sudo -n -H -u "$u" -- timeout --kill-after=10 "$lim" bash -lc \
-    'cd /work/tree && mapfile -d "" -t a && exec "${a[@]}" < /dev/null' < "$argv" > "$out/stdout" 2> "$out/stderr"
+  # shell, so the Engineer's own toolchains (installed in the guest) are on PATH. Each stream is capped
+  # on its way to the host (8 MiB + 1), so a guest cannot fill the host's disk.
+  local -a via
+  if [ "$backend" = fixture ]; then via=(docker exec -i "$(vm_of "$cap")"); else via=(limactl shell --workdir / "$(vm_of "$cap")" sudo -n -H -u "$u" --); fi
+  "${via[@]}" timeout --kill-after=10 "$lim" bash -lc 'cd /work/tree && mapfile -d "" -t a && exec "${a[@]}" < /dev/null' \
+    < "$argv" > >(head -c 8388609 > "$out/stdout") 2> >(head -c 8388609 > "$out/stderr") &
+  local pid=$! n=0 ended=exited
+  # The host's own deadline (the guest's timeout can be killed by the program it limits) and the
+  # helper's cancellation ("$out/.cancel"): the transport is killed and the guest's processes ended by
+  # stopping the VM. Its disk, so the Engineer's caches, is kept; a verification VM is restored anyway.
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 0.2
+    n=$((n + 1))
+    if [ -e "$out/.cancel" ]; then ended=cancelled; break; fi
+    if [ $n -gt $(((lim + 60) * 5)) ]; then ended=host-deadline; break; fi
+  done
+  if [ "$ended" != exited ]; then
+    kill "$pid" 2>/dev/null
+    [ "$backend" = lima ] && limactl stop --force "$(vm_of "$cap")" >/dev/null 2>&1
+  fi
+  wait "$pid" 2>/dev/null
   rc=$?
-  journal "end exec-argv $cap exit=$rc"
-  if [ $rc = 124 ] || [ $rc = 137 ]; then say exec-argv exited "capsule=$cap" "exit=$rc" "timed-out=yes"
+  sleep 0.2
+  journal "end exec-argv $cap exit=$rc ended=$ended"
+  if [ "$ended" = cancelled ]; then say exec-argv exited "capsule=$cap" "exit=$rc" "timed-out=no" "cancelled=yes"
+  elif [ "$ended" = host-deadline ] || [ $rc = 124 ] || [ $rc = 137 ]; then say exec-argv exited "capsule=$cap" "exit=$rc" "timed-out=yes"
+  elif [ "$(vm_status "$cap")" != Running ]; then
+    # The VM went away under the program: what it did is not known; never reported as its exit.
+    say exec-argv unavailable "capsule=$cap" "reason=vm-stopped-during-run"
+    exit 69
   else say exec-argv exited "capsule=$cap" "exit=$rc" "timed-out=no"
   fi
 }
 
 # A tar stream from the guest is checked before anything is extracted: regular files and directories
-# only (no link, device or fifo), relative names without "..", at most 200000 entries.
+# only (no symbolic or hard link, device or fifo), relative names without "..", at most 200000 entries,
+# no entry over 1 GiB and at most 4 GiB in all (sizes as the archive declares them, sparse ones too).
 tar_safe() { # FILE
-  local line n=0 name
+  local line n=0 name size total=0
   while IFS= read -r line; do
     n=$((n + 1))
     [ $n -le 200000 ] || return 1
     case ${line:0:1} in - | d) ;; *) return 1 ;; esac
+    case $line in *" link to "* | *" -> "*) return 1 ;; esac
+    # The host's tar lists "MODE LINKS OWNER GROUP SIZE Mon DD HH:MM NAME": the size is the field just
+    # before the month's name.
+    size=$(printf '%s\n' "$line" | awk '{ for (i = 3; i <= NF; i++) if ($i ~ /^[A-Z][a-z][a-z]$/) { print $(i - 1); exit } }')
+    [[ $size =~ ^[0-9]{1,13}$ ]] || return 1
+    [ "$size" -le 1073741824 ] || return 1
+    total=$((total + size))
+    [ "$total" -le 4294967296 ] || return 1
   done < <(tar -tvf "$1" 2>/dev/null)
   while IFS= read -r name; do
     case $name in /* | ../* | */../* | */.. | ..) return 1 ;; esac
@@ -436,20 +477,23 @@ op_pull() { # CAPSULE PROJECT RUN-DIR output|tree
   journal "start pull $cap $what"
   case $what in
     output)
-      guest "$cap" bash -c 'cd /output && tar -cf - .' > "$t" 2>/dev/null || { rm -f "$t"; failed pull transfer-failed; }
+      guest "$cap" bash -c 'cd /output && tar -cf - .' 2>/dev/null | head -c 4294967297 > "$t" || { rm -f "$t"; failed pull transfer-failed; }
       dest=$dir/.pulled-output ;;
     tree)
       # What the project's .gitignore names stays in the guest; the guest's .git never leaves it.
       guest "$cap" sudo -n -H -u "$u" -- bash -c 'set -e; rm -rf /work/.outgoing; rsync -a --filter=":- .gitignore" --exclude=/.git /work/tree/ /work/.outgoing/; tar -C /work/.outgoing -cf - .; rm -rf /work/.outgoing' \
-        > "$t" 2>/dev/null || { rm -f "$t"; failed pull transfer-failed; }
+        2>/dev/null | head -c 4294967297 > "$t" || { rm -f "$t"; failed pull transfer-failed; }
       dest=$dir/.pulled-tree ;;
     *) refuse pull invalid-what ;;
   esac
+  # Capped on the way in (4 GiB + 1): a larger stream is refused, never stored in full.
   [ "$(wc -c < "$t" | tr -d ' ')" -le 4294967296 ] || { rm -f "$t"; refuse pull too-large; }
   tar_safe "$t" || { rm -f "$t"; refuse pull entry-not-allowed; }
   rm -rf "$dest"
   mkdir -m 700 "$dest"
   tar -xof "$t" -C "$dest" 2>/dev/null || { rm -rf "$dest" "$t"; failed pull extract-failed; }
+  # Modes as the host needs them: readable and writable by this user, never writable by others.
+  chmod -R u+rwX,go-w "$dest" 2>/dev/null
   rm -f "$t"
   journal "end pull $cap $what ok"
   say pull ok "capsule=$cap" "what=$what" "into=$dest"
@@ -480,17 +524,21 @@ op_bind() { # INVOCATION CAPSULE PROJECT TRANSACTION ROLE LIMIT
   # Single writer (C-P5.6): at most one live implementer binding per project, checked and made under
   # the project's lock so two binds cannot both pass the check.
   [ -d "$caps/locks" ] || mkdir -m 700 "$caps/locks"
-  local lock=$caps/locks/bind-$proj other n=0
+  local lock=$caps/locks/bind-$proj other n=0 holder
   until mkdir "$lock" 2>/dev/null; do
+    # A lock whose holder is gone (a runtime killed while binding) is stale.
+    holder=$(cat "$lock/pid" 2>/dev/null)
+    if [[ $holder =~ ^[0-9]+$ ]] && ! kill -0 "$holder" 2>/dev/null; then rm -rf "$lock"; continue; fi
     n=$((n + 1))
     [ $n -lt 100 ] || unavailable bind lock-busy
     sleep 0.1
   done
+  echo $$ > "$lock/pid"
   if [ "$role" = implementer ]; then
     for other in "$caps"/invocations/*/binding; do
       [ -f "$other" ] || continue
       if grep -qx "project $proj" "$other" && grep -qx "role implementer" "$other" && [ ! -e "$(dirname "$other")/closed" ]; then
-        rmdir "$lock"
+        rm -rf "$lock"
         refuse bind writer-already-active
       fi
     done
@@ -503,7 +551,7 @@ op_bind() { # INVOCATION CAPSULE PROJECT TRANSACTION ROLE LIMIT
   chmod 711 "$dir/channel"
   printf 'invocation %s\ncapsule %s\nproject %s\ntransaction %s\nrole %s\nops %s\nexec-limit %s\nbound %s\n' \
     "$inv" "$cap" "$proj" "$tx" "$role" "$ops" "$lim" "$(date +%s)" > "$dir/binding"
-  rmdir "$lock"
+  rm -rf "$lock"
   journal "bind $inv $cap $proj $tx $role"
   say bind ok "invocation=$inv" "capsule=$cap" "role=$role" "requests=$dir/channel/requests" "results=$dir/channel/results"
 }
@@ -551,7 +599,7 @@ serve_one() { # SEQ
   local -a via
   if [ "$backend" = fixture ]; then via=(docker exec -i "$(vm_of "$b_cap")"); else via=(limactl shell --workdir / "$(vm_of "$b_cap")"); fi
   "${via[@]}" /usr/bin/env python3 /opt/lockstep/guest-exec --workspace "$b_ws" --op "$reqop" \
-    --limit-seconds "$b_lim" --output-limit 1048576 < "$req" > "$raw" 2>/dev/null &
+    --limit-seconds "$b_lim" --output-limit 1048576 < "$req" > >(head -c $((outlim + 1)) > "$raw") 2>/dev/null &
   pid=$!
   local outcome=completed detail=""
   while kill -0 "$pid" 2>/dev/null; do
@@ -640,7 +688,7 @@ case $op in
   snapshot | restore) [ $# = 3 ] || exit 64; op_snapshot "$op" "$@" ;;
   run) [ $# = 4 ] || exit 64; op_run "$@" ;;
   import) [ $# = 3 ] || exit 64; op_import "$@" ;;
-  push) [ $# = 3 ] || exit 64; op_push "$@" ;;
+  push) [ $# = 4 ] || exit 64; op_push "$@" ;;
   exec-argv) [ $# = 5 ] || exit 64; op_exec_argv "$@" ;;
   pull) [ $# = 4 ] || exit 64; op_pull "$@" ;;
   bind) [ $# = 6 ] || exit 64; op_bind "$@" ;;

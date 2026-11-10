@@ -1,1 +1,1 @@
-echo changed > /work/repo/after-snapshot.txt && rm -f /work/repo/src/calc.c && echo mutated
+echo changed > /work/tree/after-snapshot.txt && rm -f /work/tree/src/calc.c && echo mutated

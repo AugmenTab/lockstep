@@ -1,4 +1,4 @@
-cpus=2 mem-kib=3998424
+cpus=2 mem-kib=3998416
 /dev/vda1        29G  3.3G   25G  12% /
 TYPE            TOTAL     ACTIVE    SIZE      RECLAIMABLE
 Images          2         0         577MB     214.9MB (37%)

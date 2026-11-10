@@ -84,7 +84,7 @@ expect "L2 first-time provision and startup" grep -q '^capsule-runtime 1 provisi
 timed provision-repeat R provision "$cap" "$proj" "small,disposable" > "$work/provision2.txt" 2>&1
 expect "L2 repeating the provision is idempotent (no second VM)" grep -q 'provision ok .*already=yes' "$work/provision2.txt"
 LIMA_HOME=$state/capsules/lima limactl list --format '{{.Name}}' > "$work/vms.txt" 2>&1
-expect "L2 exactly one VM exists for the capsule" test "$(grep -c . "$work/vms.txt")" = 1
+expect "L2 exactly one VM exists for the capsule" test "$(grep -cx "lockstep-$cap" "$work/vms.txt")" = 1
 R inspect "$cap" "$proj" > "$work/inspect.txt" 2>&1
 expect "L2 inspect reports Running and an audited configuration" grep -q 'status=Running .*audit=ok' "$work/inspect.txt"
 R inspect "$cap" other-project > "$work/inspect-other.txt" 2>&1

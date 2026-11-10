@@ -1,0 +1,19 @@
+lockstep-control-result 1
+id 3387cc700527c812244499e65cfd5999
+op run-write
+outcome launch-failed
+reason -
+started 1794331084
+finished 1794331085
+field exit 0
+field run 14215ff130abd9b2d31a08c0bbf26585
+field image capsule:vmq1
+field stdout-bytes 0
+field stderr-bytes 0
+field stdout-sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+field stderr-sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+field limits 1800 8388608 2097152
+field capsule vmq1
+field protected-changed 0
+detail 
+mac eca77883fb81b47e3beb3b37407b4853b236b0fa57257819fef1bc46428c547f

@@ -1,9 +1,0 @@
-lockstep-control-result 1
-id 74043889efd85cadfc72f9686e34defd
-op run-live-write
-outcome refused
-reason argv-not-allowed-in-capsule-mode
-started 1794330266
-finished 1794330266
-detail 
-mac 0a3a9b6254a3f3847e3699f039586253d4bc1484b70be499da44c2a8e6c2cbd4

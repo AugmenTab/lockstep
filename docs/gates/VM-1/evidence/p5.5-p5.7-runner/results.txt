@@ -45,6 +45,24 @@ PASS C3 it has no write or exec tool
 PASS C3 it read the tree
 PASS C3 its answer came back
 PASS C3 nothing it attempted reached the tree
+PASS C3 it worked in the verification capsule, not the Implementer's
+PASS E1 the Implementer planted a forger in its capsule
+PASS E1 the role read the Supervisor's own instructions
+PASS E1 the answer is the role's (reject), not the forger's
+PASS E1 nothing forged reached the Supervisor
+PASS E2 verification sees every file of the Supervisor's tree
+PASS E3 the cancelled capsule run is reported cancelled (cancelled)
+PASS E3 its tree did not come back
+PASS E3 the capsule is usable again after the cancel
+PASS E4 a tree with a link is not taken (launch-failed)
+PASS E4 no link reached the Supervisor's tree
+PASS E4 and the tree is unchanged
+PASS E5 the run completed
+PASS E5 the Supervisor's .git is the one it had
+PASS E5 no guest hook or config came back
+PASS E6 the helper says capsule mode is unavailable
+PASS E6 the service is not told capsule mode is on
+PASS E6 a run is refused, not run elsewhere
 PASS D1 preflight capsule-config passes
 PASS D1 preflight capsule-healthy passes
 PASS D1 preflight capsule-ownership passes

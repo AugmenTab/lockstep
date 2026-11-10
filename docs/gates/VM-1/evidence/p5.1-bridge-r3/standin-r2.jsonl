@@ -1,0 +1,3 @@
+{"messages": 2, "results": [], "issued": ["toolu_01NhVGjxH1pcqUXEL9kLDJSo"]}
+{"messages": 5, "results": ["lockstep: the capsule did not answer in time (outcome unknown)"], "issued": ["toolu_01YXwtkqLL9SLokOF93sJauP"]}
+{"messages": 5, "results": ["lockstep: the capsule did not answer in time (outcome unknown)", "<tool_use_error>Error: No such tool available: Bash. Bash is disabled for this session, in subagents as well as here.</tool_use_error>"], "issued": []}

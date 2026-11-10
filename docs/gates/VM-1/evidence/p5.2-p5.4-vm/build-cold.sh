@@ -1,1 +1,1 @@
-cd /work/repo && scripts/test
+cd /work/tree && scripts/test

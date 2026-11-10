@@ -31,7 +31,9 @@ cap_project=""
 cap_verify=""
 cap_limit=0
 
-capsule_off() { log "capsule mode off: $1"; capsule_mode=0; return 0; }
+# The owner asked for capsule mode (DIR/capsule exists) but it cannot be used: every run is refused
+# (capsule-mode-unavailable), never sent to the Phase 4 containers instead (P5.5 review finding 6).
+capsule_off() { log "capsule mode UNAVAILABLE, every run is refused: $1"; capsule_mode=2; return 0; }
 
 init_capsule() {
   local f=$capsule_dir/config line n=0 out tmp
@@ -70,12 +72,26 @@ init_capsule() {
     [[ $out =~ ^capsule-runtime\ 1\ inspect\ ok\ .*audit=ok ]] || { capsule_off "the verification capsule is not ready ($(printf '%s' "$out" | clean_detail))"; return 0; }
     [ -f "$cap_state/capsules/snapshots/$cap_verify/verify.disk" ] || { capsule_off "the verification capsule has no 'verify' snapshot"; return 0; }
   fi
-  tmp=$(mktemp "$runner/.capsule.XXXXXX") || return 0
+  # An invocation still open from before this helper started cannot be live (the helper ran it): close
+  # it, so it holds no writer slot (P5.5 review finding 11).
+  local b
+  for b in "$cap_state"/capsules/invocations/*/binding; do
+    [ -f "$b" ] || continue
+    grep -qx "project $cap_project" "$b" || continue
+    [ -e "$(dirname "$b")/closed" ] && continue
+    "$cap_rt" --state "$cap_state" close "$(basename "$(dirname "$b")")" > /dev/null 2>&1
+    log "capsule: closed the stale invocation $(basename "$(dirname "$b")")"
+  done
+  tmp=$(mktemp "$runner/.capsule.XXXXXX") || { capsule_off "runner/capsule cannot be written"; return 0; }
   printf 'lockstep-capsule 1 %s\n' "$cap_name" > "$tmp"
   chmod 600 "$tmp"
-  place "$tmp" "$runner/capsule" || { rm -f "$tmp"; return 0; }
+  place "$tmp" "$runner/capsule" || { rm -f "$tmp"; capsule_off "runner/capsule cannot be written"; return 0; }
   capsule_mode=1
   log "capsule mode on: capsule $cap_name, project $cap_project, verification ${cap_verify:-none}, command limit ${cap_limit}s"
+}
+
+vm_status_of() { # CAPSULE
+  "$cap_rt" --state "$cap_state" inspect "$1" "$cap_project" 2>/dev/null | sed -n 's/.* status=\([A-Za-z]*\).*/\1/p'
 }
 
 # A run's tree returned from the guest replaces the run's tree, except: protected files (the Supervisor's
@@ -87,9 +103,13 @@ capsule_take_tree() { # RUN-DIR -> prints the number of protected files the gues
     while IFS= read -r p; do
       [[ $p =~ $re_protected ]] || continue
       if ! cmp -s "$dir/tree/$p" "$dir/.pulled-tree/$p" 2>/dev/null; then changed=$((changed + 1)); fi
-      mkdir -p "$(dirname "$dir/.pulled-tree/$p")"
-      rm -rf "${dir:?}/.pulled-tree/$p"
-      cp -p "$dir/tree/$p" "$dir/.pulled-tree/$p"
+      # A guest that put a file where a parent directory belongs makes the restore fail: the run fails,
+      # the Supervisor's tree is left as it was.
+      if ! { rm -rf "${dir:?}/.pulled-tree/$p" && mkdir -p "$(dirname "$dir/.pulled-tree/$p")" && cp -p "$dir/tree/$p" "$dir/.pulled-tree/$p"; } 2>/dev/null; then
+        rm -rf "$dir/.pulled-tree"
+        echo "$changed"
+        return 1
+      fi
     done < "$dir/protected"
   fi
   if [ -d "$dir/tree/.git" ] && [ ! -L "$dir/tree/.git" ]; then
@@ -143,24 +163,34 @@ execute_capsule_run() { # ID OP RUN
   rm -rf "$dir/.capsule-out"
   mkdir -m 700 "$dir/.capsule-out"
   outcome=launch-failed
-  if "$cap_rt" --state "$cap_state" push "$target" "$cap_project" "$dir" >> "$dir/.capsule.log" 2>&1; then
+  # Verification gets exactly the Supervisor's tree; the Engineer's runs keep its ignored build output.
+  local mode=keep-ignored
+  [ "$op" = run-verify ] && mode=exact
+  if "$cap_rt" --state "$cap_state" push "$target" "$cap_project" "$dir" "$mode" >> "$dir/.capsule.log" 2>&1; then
     reply=$("$cap_rt" --state "$cap_state" exec-argv "$target" "$cap_project" "$dir/argv" "$wall" "$dir/.capsule-out" 2>>"$dir/.capsule.log")
     if [[ $reply =~ exec-argv\ exited\ .*exit=([0-9]+)\ timed-out=(yes|no) ]]; then
       rc=${BASH_REMATCH[1]}
       timed=${BASH_REMATCH[2]}
       outcome=exited
       [ "$timed" = yes ] && outcome=timed-out
-      if [ -e "$dir/.cancelled" ]; then outcome=cancelled; fi
-      "$cap_rt" --state "$cap_state" pull "$target" "$cap_project" "$dir" output >> "$dir/.capsule.log" 2>&1 && capsule_take_output "$dir"
-      if [ "$op" = run-write ]; then
-        if "$cap_rt" --state "$cap_state" pull "$target" "$cap_project" "$dir" tree >> "$dir/.capsule.log" 2>&1; then
-          changed=$(capsule_take_tree "$dir")
-        else
-          outcome=launch-failed
+      if [ -e "$dir/.cancelled" ] || [[ $reply =~ cancelled=yes ]]; then outcome=cancelled; fi
+      # Only a run that ended by itself is collected: a cancelled or timed-out run's tree never comes back.
+      if [ "$outcome" = exited ]; then
+        "$cap_rt" --state "$cap_state" pull "$target" "$cap_project" "$dir" output >> "$dir/.capsule.log" 2>&1 && capsule_take_output "$dir"
+        if [ "$op" = run-write ]; then
+          if "$cap_rt" --state "$cap_state" pull "$target" "$cap_project" "$dir" tree >> "$dir/.capsule.log" 2>&1 &&
+            changed=$(capsule_take_tree "$dir"); then
+            :
+          else
+            outcome=launch-failed
+          fi
         fi
       fi
     fi
+    # Anything else (the VM went away under the program) stays launch-failed: what it did is unknown.
   fi
+  # A VM the runtime stopped (deadline, cancel) is started again for the next run.
+  [ "$(vm_status_of "$target")" = Running ] || "$cap_rt" --state "$cap_state" start "$target" "$cap_project" >> "$dir/.capsule.log" 2>&1
   head -c $((outlim + 1)) "$dir/.capsule-out/stdout" > "$dir/stdout" 2>/dev/null || : > "$dir/stdout"
   head -c $((errlim + 1)) "$dir/.capsule-out/stderr" > "$dir/stderr" 2>/dev/null || : > "$dir/stderr"
   rm -rf "$dir/.capsule-out" "$dir/.cancelled"
@@ -187,15 +217,22 @@ execute_capsule_run() { # ID OP RUN
 # The argument vector of a live run in capsule mode: the built-in tools must be off (--tools "") and no
 # MCP configuration of its own; the helper adds the bridge. Prints the refusal code, or nothing.
 capsule_live_refusal() { # ARGV...
-  local tools_off=no prev="" a
+  local tools=0 tools_off=no prev="" a
   for a in "$@"; do
-    case $a in --mcp-config | --mcp-config=* | --tools=* | --setting-sources* | --settings | --settings=* | --add-dir*) echo argv-not-allowed-in-capsule-mode; return ;; esac
+    case $a in
+      --mcp-config | --mcp-config=* | --tools=* | --setting-sources* | --settings | --settings=* | --add-dir* | \
+        --plugin-dir* | --plugin-url* | --agents | --agents=* | --agent | --agent=* | --allowedTools* | --allowed-tools* | \
+        --bare | --ide | --chrome)
+        echo argv-not-allowed-in-capsule-mode; return ;;
+      --tools) tools=$((tools + 1)) ;;
+    esac
     if [ "$prev" = --tools ]; then
       [ -z "$a" ] && tools_off=yes || { echo built-in-tools-not-disabled; return; }
     fi
     prev=$a
   done
-  [ "$tools_off" = yes ] || echo built-in-tools-not-disabled
+  # Exactly one --tools, and its value empty.
+  [ "$tools" = 1 ] && [ "$tools_off" = yes ] || echo built-in-tools-not-disabled
 }
 
 # One native live role run whose tools execute in the Engineer's capsule.
@@ -222,17 +259,38 @@ execute_capsule_live_run() { # ID OP RUN
   case $status in *'"loggedIn": true'*) ;; *) refuse "$id" "$op" not-authenticated; return ;; esac
   started=$(date +%s)
   journal "start $id $op"
-  # The workspace goes to the capsule; the invocation is bound there and its channel served.
+  # Where the role works. The Implementer: its own capsule, its ignored build output kept. A read-only
+  # role (Planner, Challenger, Reviewer): the verification capsule, restored from its trusted snapshot,
+  # with exactly the Supervisor's tree, so nothing an Implementer left running can show it other code
+  # or change what it reads (P5.5 review finding 1). No verification capsule: refused.
+  local target=$cap_name mode=keep-ignored tlimit=$cap_limit
+  if [ "$role" != implementer ]; then
+    if [ -z "$cap_verify" ]; then
+      finished=$(date +%s)
+      write_result "$id" "$op" refused verification-environment-missing "$started" "$finished" "a read-only role needs the verification capsule" "capsule $cap_name" || true
+      journal "end $id refused"
+      return
+    fi
+    target=$cap_verify
+    mode=exact
+    tlimit=$(sed -n 's/^exec-limit //p' "$cap_state/capsules/records/$cap_verify")
+    if ! "$cap_rt" --state "$cap_state" restore "$cap_verify" "$cap_project" verify > "$dir/.capsule.log" 2>&1; then
+      finished=$(date +%s)
+      write_result "$id" "$op" launch-failed - "$started" "$finished" "verification capsule restore failed" "capsule $cap_verify" || true
+      journal "end $id launch-failed"
+      return
+    fi
+  fi
   outcome=launch-failed
-  if ! "$cap_rt" --state "$cap_state" push "$cap_name" "$cap_project" "$dir" > "$dir/.capsule.log" 2>&1; then
+  if ! "$cap_rt" --state "$cap_state" push "$target" "$cap_project" "$dir" "$mode" >> "$dir/.capsule.log" 2>&1; then
     finished=$(date +%s)
-    write_result "$id" "$op" launch-failed - "$started" "$finished" "capsule push failed" "capsule $cap_name" || true
+    write_result "$id" "$op" launch-failed - "$started" "$finished" "capsule push failed" "capsule $target" || true
     journal "end $id launch-failed"
     return
   fi
   inv=$run
   tx=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
-  if ! "$cap_rt" --state "$cap_state" bind "$inv" "$cap_name" "$cap_project" "$tx" "$role" "$cap_limit" >> "$dir/.capsule.log" 2>&1; then
+  if ! "$cap_rt" --state "$cap_state" bind "$inv" "$target" "$cap_project" "$tx" "$role" "$tlimit" >> "$dir/.capsule.log" 2>&1; then
     finished=$(date +%s)
     write_result "$id" "$op" refused capsule-bind-refused "$started" "$finished" "$(tail -n 1 "$dir/.capsule.log" | clean_detail)" "capsule $cap_name" || true
     journal "end $id refused"
@@ -241,7 +299,7 @@ execute_capsule_live_run() { # ID OP RUN
   chan=$cap_state/capsules/invocations/$inv/channel
   "$cap_rt" --state "$cap_state" serve "$inv" >> "$dir/.capsule.log" 2>&1 &
   serve_pid=$!
-  mcp="{\"mcpServers\":{\"capsule\":{\"type\":\"stdio\",\"command\":\"/usr/bin/python3\",\"args\":[\"/opt/lockstep/capsule-bridge\",\"--channel\",\"/bridge\",\"--role\",\"$([ "$role" = implementer ] && echo write || echo readonly)\",\"--wait-limit\",\"$((cap_limit + 60))\"]}}}"
+  mcp="{\"mcpServers\":{\"capsule\":{\"type\":\"stdio\",\"command\":\"/usr/bin/python3\",\"args\":[\"/opt/lockstep/capsule-bridge\",\"--channel\",\"/bridge\",\"--role\",\"$([ "$role" = implementer ] && echo write || echo readonly)\",\"--wait-limit\",\"$((cap_limit + 60))\",\"--input-dir\",\"/input\",\"--answer-dir\",\"/output\"]}}}"
   rm -f "$marker" "$failed" "$summary" "$summary.ready"
   mkdir -p "$provider_dir/ledger/runs" 2>/dev/null || true
   filter_args=(--run "$run" --ledger /ledger --allow "$egress_hosts")
@@ -277,6 +335,8 @@ execute_capsule_live_run() { # ID OP RUN
         --mount "type=bind,source=$cap_bridge,target=/opt/lockstep/capsule-bridge,readonly"
         --mount "type=bind,source=$chan/requests,target=/bridge/requests"
         --mount "type=bind,source=$chan/results,target=/bridge/results,readonly"
+        --mount "type=bind,source=$dir/input,target=/input,readonly"
+        --mount "type=bind,source=$dir/output,target=/output"
         --log-driver none --workdir /tmp)
       [ -n "$test_ca" ] && args+=(--env NODE_EXTRA_CA_CERTS=/etc/lockstep/ca.pem
         --mount "type=bind,source=$test_ca,target=/etc/lockstep/ca.pem,readonly")
@@ -313,13 +373,15 @@ execute_capsule_live_run() { # ID OP RUN
   # The invocation ends: its channel is closed and served no more.
   "$cap_rt" --state "$cap_state" close "$inv" >/dev/null 2>&1
   [ -n "$serve_pid" ] && { kill "$serve_pid" 2>/dev/null; wait "$serve_pid" 2>/dev/null; }
-  # The role's answer (/output) and, for the Implementer, its tree come back from the capsule.
-  "$cap_rt" --state "$cap_state" pull "$cap_name" "$cap_project" "$dir" output >> "$dir/.capsule.log" 2>&1 && capsule_take_output "$dir"
-  if [ "$role" = implementer ]; then
-    if "$cap_rt" --state "$cap_state" pull "$cap_name" "$cap_project" "$dir" tree >> "$dir/.capsule.log" 2>&1; then
-      changed=$(capsule_take_tree "$dir")
+  # The role's answer is already in the run's own output (the bridge wrote it there, on the host side).
+  # The Implementer's tree comes back from its capsule, only after a run that ended by itself.
+  local collect=ok
+  if [ "$role" = implementer ] && [ ! -e "$runner_work/$run/.cancelled" ] && [ ! -e "$marker" ] && [ ! -e "$failed" ]; then
+    if "$cap_rt" --state "$cap_state" pull "$cap_name" "$cap_project" "$dir" tree >> "$dir/.capsule.log" 2>&1 &&
+      changed=$(capsule_take_tree "$dir"); then
+      :
     else
-      : > "$failed"
+      collect=failed
     fi
   fi
   sleep 0.2
@@ -333,22 +395,26 @@ execute_capsule_live_run() { # ID OP RUN
   elif [ -e "$failed" ]; then outcome=provider-stopped
   elif [ "$out_bytes" -gt "$outlim" ] || [ "$err_bytes" -gt "$errlim" ]; then outcome=output-limit
   elif [ "$rc" = 125 ]; then outcome=launch-failed
+  elif [ "$collect" = failed ]; then outcome=launch-failed
   else outcome=exited
   fi
   rm -f "$marker" "$runner_work/$run/.cancelled"
   if [ "$outcome" = provider-stopped ]; then
     write_result "$id" "$op" provider-stopped - "$started" "$finished" "" \
       "exit $rc" "run $run" "image $provider_image" "provider-stop egress-failed" \
-      "egress.micro 0" "egress.tokens $tokens" "capsule $cap_name" || true
+      "egress.micro 0" "egress.tokens $tokens" "capsule $target" || true
+  elif [ "$collect" = failed ]; then
+    write_result "$id" "$op" launch-failed - "$started" "$finished" "the capsule's tree could not be collected safely" \
+      "exit $rc" "run $run" "image $provider_image" "egress.micro 0" "egress.tokens $tokens" "capsule $target" || true
   else
     write_result "$id" "$op" "$outcome" - "$started" "$finished" "" \
       "exit $rc" "run $run" "image $provider_image" \
       "stdout-bytes $out_bytes" "stderr-bytes $err_bytes" \
       "stdout-sha256 $(sha256 < "$dir/stdout")" "stderr-sha256 $(sha256 < "$dir/stderr")" \
       "limits $wall $outlim $errlim" "egress.micro 0" "egress.tokens $tokens" \
-      "capsule $cap_name" "invocation $inv" "protected-changed $changed" || true
+      "capsule $target" "invocation $inv" "protected-changed $changed" || true
   fi
   rm -f "$failed"
   journal "end $id $outcome"
-  log "$op $id: $outcome (exit $rc, $tokens tokens, capsule $cap_name)"
+  log "$op $id: $outcome (exit $rc, $tokens tokens, capsule $target)"
 }

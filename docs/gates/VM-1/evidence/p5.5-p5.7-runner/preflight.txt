@@ -11,5 +11,5 @@ PASS toolchain
 PASS bridge-present
 PASS tool-routing
 PASS verification-environment
-FAIL host-loopback-exposure: listening on the host (reachable from the guest): 4444 5000 50966 5984 6984 7000 7900 8300 8310 8320 8780 8781 9300 32222 51873 51874 52031 52032 59514 32222; stop them or accept them with --allow-loopback
+FAIL host-loopback-exposure: listening on the host (reachable from the guest): 4444 5000 50966 5984 6984 7000 7900 8300 8310 8320 8780 8781 9300 32222 52418 52419 52427 52428 59514 6080 32222; stop them or accept them with --allow-loopback
 capsule-preflight: 1 failure(s)

@@ -1,0 +1,22 @@
+lockstep-control-result 1
+id c6588520c79d9ee2eae894fc754f561b
+op run-live-readonly
+outcome exited
+reason -
+started 1794331015
+finished 1794331031
+field exit 0
+field run b7cac9d0c8b0329cfee150807e31fa14
+field image sha256:4a050cb49536092f82261eff968873a5f505fb2f647ce4c9af925f1202f0daa1
+field stdout-bytes 1721
+field stderr-bytes 0
+field stdout-sha256 0e4fba761b2d28b95f541d1a22fff30199946eb19af080813e504ab5345b547b
+field stderr-sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+field limits 2100 8388608 2097152
+field egress.micro 0
+field egress.tokens 420
+field capsule vmv1
+field invocation b7cac9d0c8b0329cfee150807e31fa14
+field protected-changed 0
+detail 
+mac b42bceda002007cebadea1ebf09d338816be7a94637cb63930e79bba362a6088
