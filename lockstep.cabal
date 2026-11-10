@@ -87,6 +87,7 @@ library
       Lockstep.Kernel.Activation
       Lockstep.Kernel.Activity
       Lockstep.Kernel.Candidate
+      Lockstep.Kernel.Capsule
       Lockstep.Kernel.Conversation
       Lockstep.Kernel.Decision
       Lockstep.Kernel.Delivery
@@ -235,6 +236,24 @@ executable lockstep
     , safe-exceptions
     , text
     , warp
+  default-language: GHC2021
+
+test-suite lockstep-capsule
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  hs-source-dirs:
+      test/capsule
+  default-extensions:
+      NoImplicitPrelude
+  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T -fplugin-opt=Henforcer:--config=henforcer-tests.toml
+  build-depends:
+      base
+    , flipstone-prelude
+    , henforcer
+    , lockstep
+    , tasty
+    , tasty-hunit
+    , text
   default-language: GHC2021
 
 test-suite lockstep-compliance

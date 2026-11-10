@@ -1,0 +1,316 @@
+#!/usr/bin/env bash
+# P5.2-P5.4 qualification on a REAL VM (contract C-P5.2 L1-L6, C-P5.3 W1-W5, C-P5.4 D1-D9): the Capsule
+# Runtime provisions a disposable Lima/VZ Dev Capsule, installs Docker inside it, imports a synthetic
+# project, runs its project-defined build and test (a C program, a Docker image, a Compose service),
+# preserves the workspace across a stop and start, snapshots and restores it, probes the isolation
+# boundary, serves bridged calls with timeout and cancellation, and shuts down. No model, no provider.
+#
+#   scripts/lib/check-capsule-vm [--keep]     (--keep: leave the VM for a later warm run)
+#
+# Results: .local/evidence/capsule-vm-<stamp>/results.txt
+set -uo pipefail
+cd "$(dirname "$0")/../.."
+root=$PWD
+keep=no
+[ "${1:-}" = --keep ] && keep=yes
+
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+work=$root/.local/evidence/capsule-vm-$stamp
+state=$root/.local/cvm
+mkdir -p "$work" "$state"
+chmod 700 "$state"
+results=$work/results.txt
+timings=$work/timings.txt
+: > "$results"
+: > "$timings"
+failures=0
+cap=vmq1
+proj=vmq-project
+rt=$root/scripts/capsule-runtime
+serve_pid=""
+probe=lockstep-cvm-probe-$stamp
+
+record() { printf '%s %s\n' "$1" "$2" | tee -a "$results"; [ "$1" = PASS ] || failures=$((failures + 1)); }
+expect() { local d=$1; shift; if "$@"; then record PASS "$d"; else record FAIL "$d"; fi; }
+note() { printf 'NOTE %s\n' "$1" | tee -a "$results"; }
+timed() { # LABEL CMD... : runs it, records seconds
+  local t0 t1 rc
+  t0=$(date +%s)
+  "$@"
+  rc=$?
+  t1=$(date +%s)
+  printf '%s %s s (exit %s)\n' "$1" $((t1 - t0)) "$rc" | tee -a "$timings"
+  return $rc
+}
+R() { "$rt" --state "$state" "$@"; }
+guest_run() { # NAME LIMIT : runs $work/NAME.sh in the guest, output to $work/NAME.out
+  R run "$cap" "$proj" "$work/$1.sh" "$2" > "$work/$1.out" 2>&1
+}
+out_has() { grep -qF -- "$2" "$work/$1.out"; }
+out_lacks() { ! grep -qF -- "$2" "$work/$1.out"; }
+
+cleanup() {
+  [ -n "$serve_pid" ] && kill "$serve_pid" 2>/dev/null
+  docker rm -f "$probe" >/dev/null 2>&1
+  [ -f "$state/capsules/journal" ] && cp "$state/capsules/journal" "$work/runtime-journal.txt"
+  [ -f "$state/capsules/records/$cap" ] && cp "$state/capsules/records/$cap" "$work/capsule-record.txt"
+  [ -f "$state/capsules/lima/lockstep-$cap/lima.yaml" ] && cp "$state/capsules/lima/lockstep-$cap/lima.yaml" "$work/effective-lima.yaml"
+  if [ "$keep" = no ]; then R destroy "$cap" "$proj" > "$work/destroy.txt" 2>&1; fi
+}
+trap cleanup EXIT
+
+command -v limactl >/dev/null 2>&1 || { echo "NOT_RUN: limactl is not installed" >&2; exit 2; }
+limactl --version > "$work/limactl-version.txt" 2>&1
+sw_vers > "$work/host-os.txt" 2>&1
+sysctl -n hw.ncpu hw.memsize > "$work/host-resources.txt" 2>&1
+
+# ---- L1-L3 identity and authority, before any VM exists.
+R provision "../etc" "$proj" > "$work/bad-id.txt" 2>&1
+expect "L1 an invalid capsule id is refused" grep -q 'refused reason=invalid-capsule-id' "$work/bad-id.txt"
+R provision "$cap" "x;rm -rf /" > "$work/bad-proj.txt" 2>&1
+expect "L1 a project id with shell text is refused" grep -q 'refused reason=invalid-project-id' "$work/bad-proj.txt"
+R provision "$cap" "$proj" 'standard;id' > "$work/bad-profile.txt" 2>&1
+expect "L3 shell text in a lifecycle parameter is refused, never run" grep -q 'refused reason=invalid-profile' "$work/bad-profile.txt"
+
+# ---- L2 provision (cold) and idempotence.
+timed provision-cold R provision "$cap" "$proj" "small,disposable" > "$work/provision.txt" 2>&1
+expect "L2 first-time provision and startup" grep -q '^capsule-runtime 1 provision ok .*backend=lima.*status=Running' "$work/provision.txt"
+timed provision-repeat R provision "$cap" "$proj" "small,disposable" > "$work/provision2.txt" 2>&1
+expect "L2 repeating the provision is idempotent (no second VM)" grep -q 'provision ok .*already=yes' "$work/provision2.txt"
+LIMA_HOME=$state/capsules/lima limactl list --format '{{.Name}}' > "$work/vms.txt" 2>&1
+expect "L2 exactly one VM exists for the capsule" test "$(grep -c . "$work/vms.txt")" = 1
+R inspect "$cap" "$proj" > "$work/inspect.txt" 2>&1
+expect "L2 inspect reports Running and an audited configuration" grep -q 'status=Running .*audit=ok' "$work/inspect.txt"
+R inspect "$cap" other-project > "$work/inspect-other.txt" 2>&1
+expect "L2 a request for a different project is refused" grep -q 'refused reason=capsule-owned-by-another-project' "$work/inspect-other.txt"
+R provision "$cap" other-project small > "$work/provision-other.txt" 2>&1
+expect "L2 another project cannot take over the capsule" grep -q 'refused reason=capsule-owned-by-another-project' "$work/provision-other.txt"
+
+# ---- D isolation probes inside the guest.
+docker run -d --name "$probe" -p 127.0.0.1:18765:8080 busybox:1.36 httpd -f -p 8080 >/dev/null 2>&1
+sleep 2
+cat > "$work/isolation.sh" <<'EOF'
+echo "hostname=$(hostname)"
+echo "mounts=[$(findmnt -rn -t virtiofs,9p,fuse.sshfs,nfs,cifs -o TARGET | tr '\n' ' ')]"
+ls /Users >/dev/null 2>&1 && echo users-dir=present || echo users-dir=absent
+echo "ssh-agent=[${SSH_AUTH_SOCK:-}]"
+echo "docker-name=$(docker info --format '{{.Name}}' 2>&1)"
+echo "docker-os=$(docker info --format '{{.OperatingSystem}}' 2>&1)"
+for target in host.lima.internal:18765 192.168.5.2:18765 192.168.5.2:2375 192.168.5.2:5432 192.168.5.2:8000; do
+  code=$(curl -s -m 4 -o /dev/null -w '%{http_code}' "http://$target/" 2>/dev/null)
+  echo "reach $target code=${code:-none}"
+done
+echo "listening=[$(ss -Hltn | awk '{print $4}' | tr '\n' ' ')]"
+echo isolation-done
+EOF
+guest_run isolation 120
+expect "D1 the guest's Docker is its own (not the host's Docker Desktop)" out_has isolation "docker-name=lima-lockstep-$cap"
+expect "D2 no host directory is mounted in the guest" out_has isolation "mounts=[]"
+expect "D2 the host's /Users is not visible" out_has isolation "users-dir=absent"
+expect "D3 no SSH agent is forwarded" out_has isolation "ssh-agent=[]"
+for target in host.lima.internal:18765 192.168.5.2:18765; do
+  if grep -qE "reach $target code=[1-9][0-9]{2}" "$work/isolation.out"; then
+    record FAIL "D4 a host-loopback service is NOT reachable from the guest ($target answered HTTP)"
+  else
+    record PASS "D4 a host-loopback service is not reachable from the guest ($target)"
+  fi
+done
+docker rm -f "$probe" >/dev/null 2>&1
+
+# ---- the milestone: a project-defined build and test, with guest Docker and Compose.
+proj_src=$work/project
+mkdir -p "$proj_src/scripts" "$proj_src/src"
+cat > "$proj_src/src/calc.c" <<'EOF'
+int add(int a, int b) { return a + b; }
+EOF
+cat > "$proj_src/src/test.c" <<'EOF'
+#include <stdio.h>
+int add(int, int);
+int main(void) { if (add(2, 3) != 5) { puts("FAIL add"); return 1; } puts("PASS add"); return 0; }
+EOF
+cat > "$proj_src/Makefile" <<'EOF'
+build/test: src/calc.c src/test.c
+	mkdir -p build && cc -O2 -o build/test src/calc.c src/test.c
+test: build/test
+	./build/test
+EOF
+cat > "$proj_src/Dockerfile" <<'EOF'
+FROM alpine:3.20
+RUN apk add --no-cache build-base
+WORKDIR /app
+COPY . .
+RUN make test
+EOF
+cat > "$proj_src/compose.yaml" <<'EOF'
+services:
+  db:
+    image: redis:7-alpine
+  check:
+    image: redis:7-alpine
+    depends_on: [db]
+    command: ["sh", "-c", "for i in 1 2 3 4 5 6 7 8 9 10; do redis-cli -h db ping && exit 0; sleep 1; done; exit 1"]
+EOF
+cat > "$proj_src/scripts/test" <<'EOF'
+#!/bin/bash
+# The project's own check: native build and test, then the same in a container, then a Compose service.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+make test
+docker build -q -t capsule-test-app . >/dev/null
+echo docker-build-ok
+docker compose run --rm check
+docker compose down -v
+echo project-test-ok
+EOF
+chmod +x "$proj_src/scripts/test"
+git -C "$proj_src" -c init.defaultBranch=main init -q
+git -C "$proj_src" add -A
+git -C "$proj_src" -c user.name=lockstep-check -c user.email=check@lockstep.invalid commit -qm "synthetic project"
+git -C "$proj_src" bundle create "$work/project.bundle" --all > /dev/null 2>&1
+before=$(git -C "$proj_src" rev-parse HEAD)
+timed import R import "$cap" "$proj" "$work/project.bundle" > "$work/import.txt" 2>&1
+expect "W1 the project was imported into the VM's workspace at its revision" grep -q "import ok .*head=$before" "$work/import.txt"
+cat > "$work/build-cold.sh" <<'EOF'
+cd /work/repo && scripts/test
+EOF
+timed build-test-cold guest_run build-cold 1500
+expect "D5 the project-defined build and test ran (native compile)" out_has build-cold "PASS add"
+expect "D5 a Docker image built in the guest" out_has build-cold "docker-build-ok"
+expect "D5 a Compose service started and answered" out_has build-cold "PONG"
+expect "D5 the whole project check passed" out_has build-cold "project-test-ok"
+expect "W1 the owner-side source was not changed by the import" test "$(git -C "$proj_src" rev-parse HEAD)" = "$before"
+
+cat > "$work/script.sh" <<'EOF'
+cd /work/repo
+f() { local x; for x in "$@"; do printf '<%s>' "$x"; done; echo; }
+f "a b" c | tr '<' '[' > out.txt && cat out.txt
+( cd /tmp && pwd ) ; { echo grouped; } 2>&1 | sed 's/grouped/grouped-ok/'
+python3 -c 'print("py-ok")'
+sudo apt-get install -y --no-install-recommends tree >/dev/null 2>&1 && tree --version | head -n 1
+EOF
+guest_run script 600
+expect "D6 ordinary multi-line scripts, functions, pipes and subshells run" out_has script "[a b>[c>"
+expect "D6 interpreters run" out_has script "py-ok"
+expect "D6 the Engineer installs an OS package itself (guest sudo, public mirror)" out_has script "tree v"
+
+# ---- W2-W3 persistence across a stop and start.
+timed stop R stop "$cap" "$proj" > "$work/stop.txt" 2>&1
+expect "L2 normal shutdown" grep -q 'stop ok .*status=Stopped' "$work/stop.txt"
+timed start-warm R start "$cap" "$proj" > "$work/start.txt" 2>&1
+expect "L2 restart" grep -q 'start ok .*status=Running' "$work/start.txt"
+cat > "$work/persist.sh" <<'EOF'
+test -x /work/repo/build/test && echo build-artifact-kept
+docker image inspect capsule-test-app >/dev/null 2>&1 && echo docker-image-kept
+docker image inspect redis:7-alpine >/dev/null 2>&1 && echo pulled-image-kept
+command -v tree >/dev/null && echo installed-package-kept
+EOF
+guest_run persist 120
+expect "W2 build artifacts persist across a VM restart" out_has persist "build-artifact-kept"
+expect "W2 the guest Docker build cache persists" out_has persist "docker-image-kept"
+expect "W2 pulled dependencies persist" out_has persist "pulled-image-kept"
+expect "W2 installed toolchain packages persist" out_has persist "installed-package-kept"
+timed build-test-warm guest_run build-cold 1500
+cp "$work/build-cold.out" "$work/build-warm.out"
+expect "W2 the warm project check passes" out_has build-warm "project-test-ok"
+
+# ---- W4 snapshots.
+timed snapshot R snapshot "$cap" "$proj" work-0000beef > "$work/snapshot.txt" 2>&1
+expect "W4 a snapshot of the whole VM disk was taken" grep -q 'snapshot ok' "$work/snapshot.txt"
+cat > "$work/mutate.sh" <<'EOF'
+echo changed > /work/repo/after-snapshot.txt && rm -f /work/repo/src/calc.c && echo mutated
+EOF
+guest_run mutate 60
+timed restore R restore "$cap" "$proj" work-0000beef > "$work/restore.txt" 2>&1
+expect "W4 the snapshot was restored" grep -q 'restore ok .*status=Running' "$work/restore.txt"
+cat > "$work/restored.sh" <<'EOF'
+test -e /work/repo/after-snapshot.txt && echo marker-present || echo marker-absent
+test -f /work/repo/src/calc.c && echo source-back
+EOF
+guest_run restored 60
+expect "W4 restoring undid the later changes" out_has restored "marker-absent"
+expect "W4 and brought back the deleted source" out_has restored "source-back"
+R snapshot "$cap" "$proj" '../../etc' > "$work/snapshot-bad.txt" 2>&1
+expect "W4 a snapshot name with a path is refused" grep -q 'refused reason=invalid-snapshot-name' "$work/snapshot-bad.txt"
+R restore "$cap" "$proj" work-00000000 > "$work/restore-missing.txt" 2>&1
+expect "W5 restoring a snapshot that does not exist is refused (no partial state)" grep -q 'refused reason=snapshot-unknown' "$work/restore-missing.txt"
+
+# ---- bridged calls against the VM: hostname, time limit, cancellation, effect-unknown on restart.
+inv=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+tx=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+R bind "$inv" "$cap" "$proj" "$tx" implementer 600 > "$work/bind.txt" 2>&1
+chan=$state/capsules/invocations/$inv/channel
+R serve "$inv" > "$work/serve.txt" 2>&1 &
+serve_pid=$!
+submit() { # SEQ JSON-ARGS OP
+  printf '{"v": 1, "seq": %s, "op": "%s", "args": %s}' "$1" "$3" "$2" > "$chan/requests/.$1"
+  mv "$chan/requests/.$1" "$chan/requests/$1.json"
+}
+await() { local n=0; while [ ! -f "$chan/results/$1.json" ] && [ $n -lt 1200 ]; do sleep 0.1; n=$((n + 1)); done; }
+submit 1 '{"command": "hostname; id -nG"}' exec
+await 1
+expect "B1 a bridged exec ran in the VM" grep -q "lima-lockstep-$cap" "$chan/results/1.json"
+expect "B1 with the guest user's docker group" grep -q 'docker' "$chan/results/1.json"
+submit 2 '{"command": "sleep 100; touch /work/repo/late-timeout", "timeout_seconds": 3}' exec
+await 2
+expect "B2 a command over its limit is timed out" grep -q '"outcome": "timed-out"' "$chan/results/2.json"
+submit 3 '{"command": "sleep 100; touch /work/repo/late-cancel"}' exec
+sleep 2
+: > "$chan/requests/3.cancel"
+await 3
+expect "B3 a cancelled command is reported cancelled" grep -q 'cancelled' "$chan/results/3.json"
+sleep 4
+R run "$cap" "$proj" "$work/restored.sh" 30 > /dev/null 2>&1
+cat > "$work/late.sh" <<'EOF'
+ls /work/repo/late-timeout /work/repo/late-cancel 2>&1; pgrep -fa 'sleep 100' || echo no-sleepers
+EOF
+guest_run late 30
+expect "B2/B3 the ended commands left no process and wrote nothing" out_has late "no-sleepers"
+expect "B2 the timed-out command wrote no late file" out_has late "cannot access '/work/repo/late-timeout'"
+expect "B3 the cancelled command wrote no late file" out_has late "cannot access '/work/repo/late-cancel'"
+submit 4 '{"command": "sleep 20; echo finished"}' exec
+sleep 2
+kill "$serve_pid" 2>/dev/null
+wait "$serve_pid" 2>/dev/null
+R serve "$inv" > "$work/serve2.txt" 2>&1 &
+serve_pid=$!
+await 4
+expect "R2 a call in flight when the executor stopped is answered effect-unknown, not replayed" grep -q '"host_outcome": "effect-unknown", "host_detail": "executor-restarted"' "$chan/results/4.json"
+kill "$serve_pid" 2>/dev/null
+wait "$serve_pid" 2>/dev/null
+serve_pid=""
+R close "$inv" > /dev/null
+
+# ---- D7 disk exhaustion is reported, and the capsule survives it.
+cat > "$work/diskfull.sh" <<'EOF'
+avail=$(df --output=avail -B1 /work | tail -n 1)
+fallocate -l "$avail" /work/fill 2>&1 || dd if=/dev/zero of=/work/fill bs=1M 2>/dev/null
+echo data > /work/after-full.txt 2>&1 || echo write-refused-enospc
+rm -f /work/fill /work/after-full.txt
+echo ok > /work/after-free.txt && echo write-ok-after-free
+docker info >/dev/null 2>&1 && echo docker-ok-after-free
+EOF
+guest_run diskfull 600
+expect "D7 a full disk refuses writes (reported, not silent)" out_has diskfull "write-refused-enospc"
+expect "D7 the capsule recovers once space is freed" out_has diskfull "write-ok-after-free"
+expect "D7 guest Docker still works" out_has diskfull "docker-ok-after-free"
+
+# ---- resources in use.
+cat > "$work/resources.sh" <<'EOF'
+echo "cpus=$(nproc) mem-kib=$(awk '/MemTotal/ {print $2}' /proc/meminfo)"
+df -h /work | tail -n 1
+docker system df
+EOF
+guest_run resources 60
+note "guest resources: $(head -n 1 "$work/resources.out")"
+du -sh "$state/capsules/lima/lockstep-$cap" > "$work/vm-disk-usage.txt" 2>&1
+note "VM directory on the host: $(cat "$work/vm-disk-usage.txt")"
+
+timed final-stop R stop "$cap" "$proj" > "$work/final-stop.txt" 2>&1
+expect "L2 clean final shutdown" grep -q 'stop ok' "$work/final-stop.txt"
+if [ "$keep" = no ]; then
+  R destroy "$cap" "$proj" > "$work/destroy.txt" 2>&1
+  expect "L6 the disposable capsule was destroyed" grep -q 'destroy ok' "$work/destroy.txt"
+fi
+
+echo "check-capsule-vm: $failures failure(s); results in $results"
+[ "$failures" = 0 ]
