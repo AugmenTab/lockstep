@@ -34,17 +34,23 @@ record() { printf '%s %s\n' "$1" "$2" | tee -a "$results"; [ "$1" = PASS ] || fa
 expect() { local d=$1; shift; if "$@"; then record PASS "$d"; else record FAIL "$d"; fi; }
 note() { printf 'NOTE %s\n' "$1" | tee -a "$results"; }
 timed() { # LABEL CMD... : runs it, records seconds
-  local t0 t1 rc
+  local label=$1 t0 t1 rc
+  shift
   t0=$(date +%s)
   "$@"
   rc=$?
   t1=$(date +%s)
-  printf '%s %s s (exit %s)\n' "$1" $((t1 - t0)) "$rc" | tee -a "$timings"
+  printf '%s %s s (exit %s)\n' "$label" $((t1 - t0)) "$rc" >> "$timings"
   return $rc
 }
 R() { "$rt" --state "$state" "$@"; }
-guest_run() { # NAME LIMIT : runs $work/NAME.sh in the guest, output to $work/NAME.out
-  R run "$cap" "$proj" "$work/$1.sh" "$2" > "$work/$1.out" 2>&1
+guest_run() { # NAME LIMIT : runs $work/NAME.sh in the guest; reply in NAME.reply, guest output in NAME.out
+  local rc
+  rm -f "$state/capsules/records/$cap.run.out"
+  R run "$cap" "$proj" "$work/$1.sh" "$2" > "$work/$1.reply" 2>&1
+  rc=$?
+  cp "$state/capsules/records/$cap.run.out" "$work/$1.out" 2>/dev/null || : > "$work/$1.out"
+  return $rc
 }
 out_has() { grep -qF -- "$2" "$work/$1.out"; }
 out_lacks() { ! grep -qF -- "$2" "$work/$1.out"; }
@@ -89,6 +95,9 @@ expect "L2 another project cannot take over the capsule" grep -q 'refused reason
 # ---- D isolation probes inside the guest.
 docker run -d --name "$probe" -p 127.0.0.1:18765:8080 busybox:1.36 httpd -f -p 8080 >/dev/null 2>&1
 sleep 2
+# The probe must really listen on the host's loopback, or D4 would pass for nothing.
+host_code=$(curl -s -m 4 -o /dev/null -w '%{http_code}' http://127.0.0.1:18765/ 2>/dev/null)
+expect "D4 precondition: the host-loopback probe answers on the host (HTTP $host_code)" test "${host_code:-000}" != 000
 cat > "$work/isolation.sh" <<'EOF'
 echo "hostname=$(hostname)"
 echo "mounts=[$(findmnt -rn -t virtiofs,9p,fuse.sshfs,nfs,cifs -o TARGET | tr '\n' ' ')]"
@@ -96,9 +105,10 @@ ls /Users >/dev/null 2>&1 && echo users-dir=present || echo users-dir=absent
 echo "ssh-agent=[${SSH_AUTH_SOCK:-}]"
 echo "docker-name=$(docker info --format '{{.Name}}' 2>&1)"
 echo "docker-os=$(docker info --format '{{.OperatingSystem}}' 2>&1)"
-for target in host.lima.internal:18765 192.168.5.2:18765 192.168.5.2:2375 192.168.5.2:5432 192.168.5.2:8000; do
-  code=$(curl -s -m 4 -o /dev/null -w '%{http_code}' "http://$target/" 2>/dev/null)
-  echo "reach $target code=${code:-none}"
+for target in host.lima.internal:18765 192.168.5.2:18765 192.168.5.2:2375 192.168.5.2:5432 192.168.5.2:8000 192.168.5.2:22; do
+  host=${target%:*}
+  port=${target#*:}
+  if timeout 4 bash -c "exec 3<>/dev/tcp/$host/$port" 2>/dev/null; then echo "tcp $target open"; else echo "tcp $target closed"; fi
 done
 echo "listening=[$(ss -Hltn | awk '{print $4}' | tr '\n' ' ')]"
 echo isolation-done
@@ -108,11 +118,12 @@ expect "D1 the guest's Docker is its own (not the host's Docker Desktop)" out_ha
 expect "D2 no host directory is mounted in the guest" out_has isolation "mounts=[]"
 expect "D2 the host's /Users is not visible" out_has isolation "users-dir=absent"
 expect "D3 no SSH agent is forwarded" out_has isolation "ssh-agent=[]"
-for target in host.lima.internal:18765 192.168.5.2:18765; do
-  if grep -qE "reach $target code=[1-9][0-9]{2}" "$work/isolation.out"; then
-    record FAIL "D4 a host-loopback service is NOT reachable from the guest ($target answered HTTP)"
+expect "D4 the probe ran in the guest" out_has isolation "tcp 192.168.5.2:22 "
+for target in host.lima.internal:18765 192.168.5.2:18765 192.168.5.2:2375 192.168.5.2:5432 192.168.5.2:8000 192.168.5.2:22; do
+  if grep -q "tcp $target open" "$work/isolation.out"; then
+    record FAIL "D4 a host service is NOT isolated from the guest (TCP $target connected)"
   else
-    record PASS "D4 a host-loopback service is not reachable from the guest ($target)"
+    record PASS "D4 the guest cannot connect to the host at $target"
   fi
 done
 docker rm -f "$probe" >/dev/null 2>&1
@@ -141,6 +152,7 @@ WORKDIR /app
 COPY . .
 RUN make test
 EOF
+printf 'build\n.git\n' > "$proj_src/.dockerignore"
 cat > "$proj_src/compose.yaml" <<'EOF'
 services:
   db:
@@ -239,7 +251,7 @@ inv=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
 tx=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
 R bind "$inv" "$cap" "$proj" "$tx" implementer 600 > "$work/bind.txt" 2>&1
 chan=$state/capsules/invocations/$inv/channel
-R serve "$inv" > "$work/serve.txt" 2>&1 &
+"$rt" --state "$state" serve "$inv" > "$work/serve.txt" 2>&1 &
 serve_pid=$!
 submit() { # SEQ JSON-ARGS OP
   printf '{"v": 1, "seq": %s, "op": "%s", "args": %s}' "$1" "$3" "$2" > "$chan/requests/.$1"
@@ -269,9 +281,10 @@ expect "B2 the timed-out command wrote no late file" out_has late "cannot access
 expect "B3 the cancelled command wrote no late file" out_has late "cannot access '/work/repo/late-cancel'"
 submit 4 '{"command": "sleep 20; echo finished"}' exec
 sleep 2
-kill "$serve_pid" 2>/dev/null
+# A crash, not a polite stop: the executor dies with call 4 in flight.
+kill -9 "$serve_pid" 2>/dev/null
 wait "$serve_pid" 2>/dev/null
-R serve "$inv" > "$work/serve2.txt" 2>&1 &
+"$rt" --state "$state" serve "$inv" > "$work/serve2.txt" 2>&1 &
 serve_pid=$!
 await 4
 expect "R2 a call in flight when the executor stopped is answered effect-unknown, not replayed" grep -q '"host_outcome": "effect-unknown", "host_detail": "executor-restarted"' "$chan/results/4.json"
@@ -288,6 +301,7 @@ echo data > /work/after-full.txt 2>&1 || echo write-refused-enospc
 rm -f /work/fill /work/after-full.txt
 echo ok > /work/after-free.txt && echo write-ok-after-free
 docker info >/dev/null 2>&1 && echo docker-ok-after-free
+sudo fstrim -v /work 2>&1 || sudo fstrim -v / 2>&1
 EOF
 guest_run diskfull 600
 expect "D7 a full disk refuses writes (reported, not silent)" out_has diskfull "write-refused-enospc"

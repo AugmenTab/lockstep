@@ -96,7 +96,8 @@ run_cli() { # CHANNEL ROLE WAIT-LIMIT OUT
     --env DISABLE_TELEMETRY=1 --env DISABLE_ERROR_REPORTING=1 --env MCP_TOOL_TIMEOUT=7200000 \
     --mount "type=bind,source=$work/standin.pem,target=/etc/lockstep/ca.pem,readonly" \
     --mount "type=bind,source=$root/scripts/runner/provider/capsule-bridge,target=/opt/lockstep/capsule-bridge,readonly" \
-    --mount "type=bind,source=$1,target=/bridge" \
+    --mount "type=bind,source=$1/requests,target=/bridge/requests" \
+    --mount "type=bind,source=$1/results,target=/bridge/results,readonly" \
     "$image" /opt/lockstep/agent-entry "$(id -u)" "$(id -g)" \
     claude -p --model claude-sonnet-5-5 --tools "" --dangerously-skip-permissions --no-session-persistence \
     --output-format json --strict-mcp-config --mcp-config "$mcp" --disable-slash-commands \
@@ -107,6 +108,7 @@ said() { grep -qF -- "$1" "$log"; }
 not_said() { ! grep -qF -- "$1" "$log"; }
 in_capsule() { docker exec "lockstep-$cap" test -e "$1"; }
 not_in_capsule() { ! docker exec "lockstep-$cap" test -e "$1"; }
+lacks() { ! grep -q -- "$1" "$2"; }
 
 # ---- run 1: an implementer invocation, the executor serving its channel.
 inv=$(new_id)
@@ -124,7 +126,7 @@ steps='[
  {"name":"mcp__capsule__list","input":{"path":"src"}},
  {"name":"mcp__capsule__exec","input":{"command":"for i in 1 2 3; do echo line$i; done | while read l; do printf \"%s;\" \"$l\"; done; echo; (cd src && ls) > sub.txt && cat sub.txt","timeout_seconds":60}},
  {"name":"mcp__capsule__exec","input":{"command":"sleep 30; echo late > /tmp/work/late.txt","timeout_seconds":2}},
- {"name":"Bash","input":{"command":"echo FALLBACK > /bridge/fallback.txt","description":"x"}},
+ {"name":"Bash","input":{"command":"echo FALLBACK > /bridge/requests/fallback.txt","description":"x"}},
  {"name":"mcp__capsule__exec","input":{"command":"ls -la /auth /bridge 2>&1; echo anthropic-count=$(env | grep -ci anthropic)"}}
 ]'
 start_standin r1 "$steps"
@@ -144,7 +146,7 @@ expect "T5 a command over its time limit was reported timed out" said "outcome: 
 sleep 31
 expect "T5 the timed-out command was ended (it wrote nothing afterwards)" not_in_capsule /tmp/work/late.txt
 expect "T6 the built-in Bash tool does not exist for the CLI" said "No such tool available"
-expect "T6 nothing ran in the provider's container (no fallback file)" test ! -e "$chan/fallback.txt"
+expect "T6 nothing ran in the provider's container (no fallback file)" test ! -e "$chan/requests/fallback.txt"
 expect "T7 model-directed commands cannot see the provider's auth or channel paths" said "cannot access '/auth'"
 expect "T7 nor the provider's environment (no ANTHROPIC variable in the capsule)" said "anthropic-count=0"
 expect "T8 the CLI finished the run (exit 0, JSON result)" grep -q '"type":"result"' "$work/cli1.json"
@@ -159,13 +161,13 @@ inv=$(new_id)
 chan=$state/capsules/invocations/$inv/channel
 start_standin r2 '[
  {"name":"mcp__capsule__exec","input":{"command":"echo ran > /tmp/work/should-not.txt"}},
- {"name":"Bash","input":{"command":"echo FALLBACK > /bridge/fallback2.txt","description":"x"}}
+ {"name":"Bash","input":{"command":"echo FALLBACK > /bridge/requests/fallback2.txt","description":"x"}}
 ]'
 run_cli "$chan" write 4 "$work/cli2.json"
 cp "$log" "$work/standin-r2.jsonl"
 expect "T9 with no executor the call fails closed (no answer, outcome unknown)" said "did not answer in time"
 expect "T9 and nothing ran in the capsule" not_in_capsule /tmp/work/should-not.txt
-expect "T9 and nothing ran in the provider's container" test ! -e "$chan/fallback2.txt"
+expect "T9 and nothing ran in the provider's container" test ! -e "$chan/requests/fallback2.txt"
 "$runtime" --state "$state" close "$inv" >/dev/null
 
 # ---- run 3: a read-only role: the bridge offers no write tool, and the host refuses a forged one.
@@ -192,6 +194,20 @@ printf '{"v": 1, "seq": 901, "op": "exec", "args": {"command": "touch /tmp/work/
 mv "$chan/requests/.901" "$chan/requests/901.json"
 sleep 2
 expect "T10 the host refuses a forged exec in a reviewer's channel" grep -q 'op-not-authorized-for-role' "$chan/results/901.json"
+# A duplicate key: the host reads op "read" from the prefix; a later "op" would win in the guest's parser.
+printf '{"v": 1, "seq": 902, "op": "read", "args": {"path": "x"}, "op": "write", "args": {"path": "src/smuggled.txt", "content": "x"}}' > "$chan/requests/.902"
+mv "$chan/requests/.902" "$chan/requests/902.json"
+sleep 2
+expect "T13 a request smuggling a second op (duplicate key) is refused by the guest" grep -q 'malformed-request' "$chan/results/902.json"
+expect "T13 and nothing was written" not_in_capsule /tmp/work/src/smuggled.txt
+# A request that is a symlink to a host file: it must never be read or sent to the guest.
+echo "host-secret-$(new_id)" > "$work/host-secret.txt"
+ln -s "$work/host-secret.txt" "$chan/requests/903.json"
+sleep 2
+expect "T14 a symlinked request is refused as not a regular file" grep -q 'not-regular-file' "$chan/results/903.json"
+expect "T14 and the host file it named was not sent anywhere" lacks 'host-secret' "$chan/results/903.json"
+"$runtime" --state "$state" serve "$inv" > "$work/serve3b.txt" 2>&1
+expect "T15 a second server for the same invocation is refused" grep -q 'refused reason=already-serving' "$work/serve3b.txt"
 kill "$serve_pid" 2>/dev/null
 wait "$serve_pid" 2>/dev/null
 serve_pid=""

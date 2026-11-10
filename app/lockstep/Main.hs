@@ -105,8 +105,8 @@ import Lockstep.Application.Repositories
   )
 import Lockstep.Application.Sandbox (sandboxAdapters, sandboxApplications, sandboxReconcilers, sandboxRequest)
 import Lockstep.Effects.HelperRunner (openRunnerChannel)
-import Lockstep.Effects.Provider.Claude (ProviderConfig (..), readProviderFile)
-import Lockstep.Effects.Provider.Live (liveRoles)
+import Lockstep.Effects.Provider.Claude (ProviderConfig (..), readCapsuleFile, readProviderFile)
+import Lockstep.Effects.Provider.Live (liveCapsuleRoles, liveRoles)
 import Lockstep.Effects.Roles (helperRunner)
 import Lockstep.Foundation.Cli
   ( BackupPolicy
@@ -129,6 +129,7 @@ import Lockstep.Foundation.SystemConfig
   , loadSystemConfig
   , renderConfigError
   )
+import Lockstep.Kernel.Capsule (capsuleNameText)
 import Lockstep.Kernel.Effect (Intent (..), IntentRequest (..), OperationId (..), effectKeyText, intentStateName)
 import Lockstep.Kernel.Identity (EngineerId (..), JobId (..), ReceiptId (..), RepositoryId (..), TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..), identityText, jobIdNumber, parseUuid, uuidText)
 import Lockstep.Kernel.Profile (profileIdText)
@@ -314,10 +315,22 @@ engineWorker runtime logLine = do
               logLine ("Engine worker: off (" <> T.unpack code <> ")")
               pure Nothing
             Just (Right config) -> do
-              let
-                (runner, adapter) = liveRoles c config
-              logLine ("Engine worker: on (live provider claude-code, model " <> T.unpack (providerModel config) <> ", effort " <> T.unpack (providerEffort config) <> ")")
-              Just <$> startEngineWorker runtime (Engine runner adapter) 2000 logLine
+              -- Phase 5: the helper's capsule mode, if on, decides where the role's tools run.
+              capsule <- readCapsuleFile (d <> "/capsule")
+              case capsule of
+                Just (Left code) -> do
+                  logLine ("Engine worker: off (" <> T.unpack code <> ")")
+                  pure Nothing
+                Just (Right name) -> do
+                  let
+                    (runner, adapter) = liveCapsuleRoles c config
+                  logLine ("Engine worker: on (live provider claude-code, model " <> T.unpack (providerModel config) <> ", effort " <> T.unpack (providerEffort config) <> ", tools in Dev Capsule " <> T.unpack (capsuleNameText name) <> ")")
+                  Just <$> startEngineWorker runtime (Engine runner adapter) 2000 logLine
+                Nothing -> do
+                  let
+                    (runner, adapter) = liveRoles c config
+                  logLine ("Engine worker: on (live provider claude-code, model " <> T.unpack (providerModel config) <> ", effort " <> T.unpack (providerEffort config) <> ")")
+                  Just <$> startEngineWorker runtime (Engine runner adapter) 2000 logLine
 
 dbMigrate :: BackupPolicy -> DatabaseRuntime -> IO ()
 dbMigrate policy runtime = do

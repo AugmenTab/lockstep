@@ -1,0 +1,57 @@
+PASS L1 an invalid capsule id is refused
+PASS L1 a project id with shell text is refused
+PASS L3 shell text in a lifecycle parameter is refused, never run
+PASS L2 first-time provision and startup
+PASS L2 repeating the provision is idempotent (no second VM)
+PASS L2 exactly one VM exists for the capsule
+PASS L2 inspect reports Running and an audited configuration
+PASS L2 a request for a different project is refused
+PASS L2 another project cannot take over the capsule
+PASS D4 precondition: the host-loopback probe answers on the host (HTTP 404)
+PASS D1 the guest's Docker is its own (not the host's Docker Desktop)
+PASS D2 no host directory is mounted in the guest
+PASS D2 the host's /Users is not visible
+PASS D3 no SSH agent is forwarded
+PASS D4 the probe ran in the guest
+FAIL D4 a host service is NOT isolated from the guest (TCP host.lima.internal:18765 connected)
+FAIL D4 a host service is NOT isolated from the guest (TCP 192.168.5.2:18765 connected)
+PASS D4 the guest cannot connect to the host at 192.168.5.2:2375
+PASS D4 the guest cannot connect to the host at 192.168.5.2:5432
+PASS D4 the guest cannot connect to the host at 192.168.5.2:8000
+PASS D4 the guest cannot connect to the host at 192.168.5.2:22
+PASS W1 the project was imported into the VM's workspace at its revision
+PASS D5 the project-defined build and test ran (native compile)
+PASS D5 a Docker image built in the guest
+PASS D5 a Compose service started and answered
+PASS D5 the whole project check passed
+PASS W1 the owner-side source was not changed by the import
+PASS D6 ordinary multi-line scripts, functions, pipes and subshells run
+PASS D6 interpreters run
+PASS D6 the Engineer installs an OS package itself (guest sudo, public mirror)
+PASS L2 normal shutdown
+PASS L2 restart
+PASS W2 build artifacts persist across a VM restart
+PASS W2 the guest Docker build cache persists
+PASS W2 pulled dependencies persist
+PASS W2 installed toolchain packages persist
+PASS W2 the warm project check passes
+PASS W4 a snapshot of the whole VM disk was taken
+PASS W4 the snapshot was restored
+PASS W4 restoring undid the later changes
+PASS W4 and brought back the deleted source
+PASS W4 a snapshot name with a path is refused
+PASS W5 restoring a snapshot that does not exist is refused (no partial state)
+PASS B1 a bridged exec ran in the VM
+PASS B1 with the guest user's docker group
+PASS B2 a command over its limit is timed out
+PASS B3 a cancelled command is reported cancelled
+PASS B2/B3 the ended commands left no process and wrote nothing
+PASS B2 the timed-out command wrote no late file
+PASS B3 the cancelled command wrote no late file
+PASS R2 a call in flight when the executor stopped is answered effect-unknown, not replayed
+PASS D7 a full disk refuses writes (reported, not silent)
+PASS D7 the capsule recovers once space is freed
+PASS D7 guest Docker still works
+NOTE guest resources: cpus=2 mem-kib=3998424
+NOTE VM directory on the host:  28G	/Users/tab/personal/lockstep/.local/cvm/capsules/lima/lockstep-vmq1
+PASS L2 clean final shutdown

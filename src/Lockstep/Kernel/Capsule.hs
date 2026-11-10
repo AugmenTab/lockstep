@@ -104,7 +104,6 @@ data CapsuleOperation
   | OpWrite
   | OpEdit
   | OpExec
-  | OpExecReadonly
   deriving (Eq, Ord, Show, Bounded, Enum)
 
 capsuleOperationText :: CapsuleOperation -> T.Text
@@ -117,15 +116,16 @@ capsuleOperationText operation =
       OpWrite -> "write"
       OpEdit -> "edit"
       OpExec -> "exec"
-      OpExecReadonly -> "exec_readonly"
 
 parseCapsuleOperation :: T.Text -> Maybe CapsuleOperation
 parseCapsuleOperation =
   parseEnumText capsuleOperationText
 
 {- | What each role may do in its capsule (C-P5.1 V2; C-P5.6). Only the
-Implementer writes or runs commands against the working state; the other
-roles inspect, and run commands only against a disposable read-only view.
+Implementer writes or runs commands; the other roles read, list and search.
+A command in the Engineer's own VM could use guest sudo or Docker to change
+the working state, so read-only roles get none until a separate review
+capsule exists (P5.1 review finding 1).
 -}
 roleOperations :: Role -> [CapsuleOperation]
 roleOperations role =
@@ -135,7 +135,7 @@ roleOperations role =
     Challenger -> readOnly
     Reviewer -> readOnly
  where
-  readOnly = [OpRead, OpList, OpSearch, OpExecReadonly]
+  readOnly = [OpRead, OpList, OpSearch]
 
 -- | Whether the operation can change the capsule's working state.
 operationMutates :: CapsuleOperation -> Bool
@@ -189,6 +189,9 @@ data LifecycleOperation
   | Restore
   | Import
   | RunScript
+  | Push
+  | ExecArgv
+  | Pull
   | Bind
   | Serve
   | Close
@@ -207,6 +210,9 @@ lifecycleOperationText operation =
       Restore -> "restore"
       Import -> "import"
       RunScript -> "run"
+      Push -> "push"
+      ExecArgv -> "exec-argv"
+      Pull -> "pull"
       Bind -> "bind"
       Serve -> "serve"
       Close -> "close"
@@ -305,7 +311,14 @@ data CapsuleRefusal
   | WriterAlreadyActive
   | InvocationUnknown
   | InvocationClosed
+  | AlreadyServing
   | OpNotAuthorizedForRole
+  | RunDirInvalid
+  | ArgvMissing
+  | OutDirInvalid
+  | InvalidWhat
+  | TooLarge
+  | DisallowedEntry
   deriving (Eq, Ord, Show, Bounded, Enum)
 
 capsuleRefusalText :: CapsuleRefusal -> T.Text
@@ -333,7 +346,14 @@ capsuleRefusalText refusal =
       WriterAlreadyActive -> "writer-already-active"
       InvocationUnknown -> "invocation-unknown"
       InvocationClosed -> "invocation-closed"
+      AlreadyServing -> "already-serving"
       OpNotAuthorizedForRole -> "op-not-authorized-for-role"
+      RunDirInvalid -> "run-dir-invalid"
+      ArgvMissing -> "argv-missing"
+      OutDirInvalid -> "out-dir-invalid"
+      InvalidWhat -> "invalid-what"
+      TooLarge -> "too-large"
+      DisallowedEntry -> "entry-not-allowed"
 
 parseCapsuleRefusal :: T.Text -> Maybe CapsuleRefusal
 parseCapsuleRefusal =

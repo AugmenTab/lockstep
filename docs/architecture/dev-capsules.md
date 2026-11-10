@@ -124,12 +124,18 @@ that channel and nothing else.
 | Role | Operations |
 |---|---|
 | implementer | `read`, `list`, `search`, `write`, `edit`, `exec` |
-| planner, challenger, reviewer | `read`, `list`, `search`, `exec_readonly` |
+| planner, challenger, reviewer | `read`, `list`, `search` (no command: guest sudo or Docker would make any command mutating in the Engineer's VM; a separate review capsule is future work) |
+
+**The channel.** `requests/` is mounted read-write into the provider's container. `results/` is mounted
+**read-only**, so only the runtime writes a result. The runtime moves each request into the invocation's private
+directory **before** checking it. One `serve` per invocation (a PID lock). Bindings for a project are made under
+that project's lock.
 
 **Request** (written by the bridge, trusted code in the provider container):
 `{"v": 1, "seq": N, "op": OP, "args": {...}}` as `requests/N.json`. The runtime reads only the fixed-format prefix
 (version, sequence equal to the file name, operation). It checks the operation against the **binding**, not the
-bridge, and pipes the file to `guest-exec` in the VM. The arguments never reach a host command line.
+bridge, and pipes the file to `guest-exec --op OP` in the VM. guest-exec refuses a request whose operation
+differs, or one with duplicate keys. The arguments never reach a host command line.
 
 **Result** `results/N.json`. Line 1 is the runtime's own envelope (trusted): `host_outcome` is `completed`,
 `refused`, `timed-out`, `cancelled`, `output-limit`, `capsule-unavailable` or `effect-unknown`, with a detail.

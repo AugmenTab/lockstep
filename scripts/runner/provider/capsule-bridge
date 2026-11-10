@@ -23,8 +23,12 @@ import threading
 import time
 
 PROTOCOL = "2025-06-18"
-OPS_READONLY = ("read", "list", "search", "exec_readonly")
+# Read-only roles inspect files only: a command in the Engineer's own VM could use guest sudo or Docker
+# to change the working state, so no command tool is offered until a separate review capsule exists.
+OPS_READONLY = ("read", "list", "search")
 OPS_WRITE = ("read", "list", "search", "write", "edit", "exec")
+# The channel: requests/ is written here; results/ is mounted read-only into this container and
+# written only by the host executor.
 
 TOOLS = {
     "read": {
@@ -63,12 +67,6 @@ TOOLS = {
         "inputSchema": {"type": "object", "properties": {
             "command": {"type": "string"}, "timeout_seconds": {"type": "integer"}}, "required": ["command"]},
     },
-    "exec_readonly": {
-        "description": "Run a bash command against a disposable read-only view of the workspace in the "
-        "Dev Capsule (inspection only: changes are discarded).",
-        "inputSchema": {"type": "object", "properties": {
-            "command": {"type": "string"}, "timeout_seconds": {"type": "integer"}}, "required": ["command"]},
-    },
 }
 
 MAX_REQUEST = 4 * 1024 * 1024
@@ -93,7 +91,13 @@ class Bridge:
         self.results = os.path.join(channel, "results")
         self.ops = OPS_WRITE if role == "write" else OPS_READONLY
         self.wait_limit = wait_limit
+        # Never reuse a sequence number of an earlier bridge on this channel (a restarted CLI).
         self.seq = 0
+        for d in (self.requests, self.results):
+            for name in os.listdir(d):
+                stem = name.split(".")[0] if not name.startswith(".") else name.split(".")[1]
+                if stem.isdigit():
+                    self.seq = max(self.seq, int(stem))
         self.inflight = {}
 
     def tools(self):
@@ -110,8 +114,11 @@ class Bridge:
         body = json.dumps({"v": 1, "seq": seq, "op": name, "args": args})
         if len(body) > MAX_REQUEST:
             return error_result("lockstep: request too large")
+        if os.path.exists(os.path.join(self.results, "%d.json" % seq)):
+            return error_result("lockstep: sequence %d already answered (outcome unknown)" % seq)
         tmp = os.path.join(self.requests, ".%d.tmp" % seq)
-        with open(tmp, "w", encoding="utf-8") as f:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(body)
         os.rename(tmp, os.path.join(self.requests, "%d.json" % seq))
         self.inflight[rpc_id] = seq

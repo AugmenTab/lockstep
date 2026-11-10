@@ -1224,8 +1224,17 @@ init_runner() {
     docker network rm "$n" >/dev/null 2>&1 || true
   done
   init_provider
+  if declare -F init_capsule >/dev/null; then init_capsule; fi
   export LOCKSTEP_SERVICE_RUNNER=$runner
 }
+
+# Phase 5: the runner channel's capsule mode (off unless DIR/capsule/config; scripts/capsule/helper-capsule.sh).
+# A copy of this script without the file beside it (as some checks make) simply has no capsule mode.
+capsule_mode=0
+if [ -f "$root/scripts/capsule/helper-capsule.sh" ]; then
+  # shellcheck source=scripts/capsule/helper-capsule.sh
+  . "$root/scripts/capsule/helper-capsule.sh"
+fi
 
 # C-P4.L.N: the CLI's identity inside the role container (C-P4.L.R3), which owns the auth volume.
 provider_cli_uid=2000000000
@@ -1878,8 +1887,13 @@ handle_runner() { # NAME
   local refusal
   refusal=$(run_refusal "$op" "$run" "$sha")
   if [ -n "$refusal" ]; then refuse "$id" "$op" "$refusal"; return; fi
-  case $op in
-    run-live-*)
+  case "$capsule_mode $op" in
+    "1 run-live-"*)
+      [ "$live_ready" = 1 ] || { refuse "$id" "$op" provider-not-configured; return; }
+      execute_capsule_live_run "$id" "$op" "$run" < /dev/null > /dev/null 2>&1 &
+      ;;
+    "1 "*) execute_capsule_run "$id" "$op" "$run" < /dev/null > /dev/null 2>&1 & ;;
+    *" run-live-"*)
       [ "$live_ready" = 1 ] || { refuse "$id" "$op" provider-not-configured; return; }
       execute_live_run "$id" "$op" "$run" < /dev/null > /dev/null 2>&1 &
       ;;

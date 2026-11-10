@@ -10,12 +10,15 @@ module Main
 import Data.Foldable (for_)
 import Data.List qualified as L
 import Data.Text qualified as T
+import Data.Text.Encoding qualified as TE
 import Data.Text.IO qualified as TIO
 import Flipstone.Prelude
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase, (@?=))
 import Text.Show (show)
 
+import Lockstep.Effects.Provider.Claude (ProviderConfig (..), capsuleRoleInstructions, claudeCapsuleArgv, parseCapsuleLine)
+import Lockstep.Effects.Roles (View (..), Workspace (..))
 import Lockstep.Kernel.Capsule
   ( CapsuleOperation (..)
   , CapsuleProfile
@@ -82,9 +85,9 @@ tests script =
         [ testCase "only the Implementer may mutate" $
             fmap (L.any operationMutates . roleOperations) [Planner, Challenger, Implementer, Reviewer]
               @?= [False, False, True, False]
-        , testCase "the read-only roles get the read-only exec" $
-            fmap (L.elem OpExecReadonly . roleOperations) [Planner, Challenger, Implementer, Reviewer]
-              @?= [True, True, False, True]
+        , testCase "the read-only roles run no command (review finding 1)" $
+            fmap (L.elem OpExec . roleOperations) [Planner, Challenger, Implementer, Reviewer]
+              @?= [False, False, True, False]
         , testCase "the runtime's binding grants each role exactly these operations" $
             for_ [Planner, Challenger, Implementer, Reviewer] $ \role ->
               assertBool (T.unpack (roleName role)) (bindingLine role `L.elem` T.lines script)
@@ -110,10 +113,42 @@ tests script =
             fmap (parseRuntimeReply . T.pack) ["capsule-runtime 2 bind ok", "capsule-runtime 1 bind ok =x", "capsule-runtime 1 frobnicate ok"]
               @?= [Nothing, Nothing, Nothing]
         ]
+    , testGroup
+        "C-P5.5 the service in capsule mode"
+        [ testCase "the helper's capsule line is read" $
+            fmap capsuleNameText (parseCapsuleLine (TE.encodeUtf8 (T.pack "lockstep-capsule 1 brigid-dev\n"))) @?= Right (T.pack "brigid-dev")
+        , testCase "a malformed capsule line is refused" $
+            fmap
+              (either Just (const Nothing) . parseCapsuleLine . TE.encodeUtf8 . T.pack)
+              ["lockstep-capsule 2 brigid-dev\n", "lockstep-capsule 1 ../x\n", "lockstep-capsule 1 brigid-dev", "lockstep-capsule 1 a b\n"]
+              @?= L.replicate 4 (Just (T.pack "capsule-file-invalid"))
+        , testCase "the capsule argv turns every built-in tool off" $
+            L.isInfixOf [T.pack "--tools", T.empty] capsuleArgv @?= True
+        , testCase "and names no built-in tool and no MCP configuration of its own (the helper adds the bridge)" $
+            L.filter (`L.elem` fmap T.pack ["Read Edit Bash", "--mcp-config", "--settings", "--add-dir"]) capsuleArgv @?= []
+        , testCase "only the Implementer is told it may run commands" $
+            fmap (T.isInfixOf (T.pack "mcp__capsule__exec runs") . (`capsuleRoleInstructions` capsuleView)) [Planner, Challenger, Implementer, Reviewer]
+              @?= [False, False, True, False]
+        , testCase "every role still gets its answer documents" $
+            for_ [Planner, Challenger, Implementer, Reviewer] $ \role ->
+              assertBool (T.unpack (roleName role)) (T.isInfixOf (T.pack "\"kind\"") (capsuleRoleInstructions role capsuleView))
+        ]
     ]
  where
+  capsuleView =
+    View (T.pack "/work/tree") (T.pack "/input") (T.pack "/output")
+  capsuleArgv =
+    claudeCapsuleArgv
+      (ProviderConfig (T.pack "claude-sonnet-5-5") (T.pack "medium"))
+      (Workspace "/w/tree" "/w/input" "/w/output" capsuleView (T.pack "0123456789abcdef0123456789abcdef"))
+  -- A word the runtime says in code (a refusal, outcome or detail), not merely in a comment.
   said word =
-    T.isInfixOf word script
+    L.any
+      ( \l ->
+          not (T.isPrefixOf (T.pack "#") (T.strip l))
+            && L.any (\boundary -> T.isInfixOf (T.pack boundary <> word) l) [" ", "=", "\""]
+      )
+      (T.lines script)
   dispatches word line =
     let
       stripped = T.strip line

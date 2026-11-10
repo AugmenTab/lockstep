@@ -140,6 +140,8 @@ audit_vm() { # CAPSULE -> prints "ok" or a reason
   vm=$(vm_of "$1")
   cfg=$LIMA_HOME/$vm/lima.yaml
   [ -f "$cfg" ] || { echo config-missing; return; }
+  # Lima merges these into every instance; they could add mounts or forwards the file below lacks.
+  if [ -e "$LIMA_HOME/_config/override.yaml" ] || [ -e "$LIMA_HOME/_config/default.yaml" ]; then echo lima-overrides-present; return; fi
   cmp -s "$cfg" "$caps/records/$1.yaml" || { echo config-changed; return; }
   grep -q '^mounts: \[\]$' "$cfg" || { echo host-mounts-present; return; }
   grep -q '^  forwardAgent: false$' "$cfg" || { echo agent-forwarding; return; }
@@ -194,6 +196,7 @@ op_provision() { # CAPSULE PROJECT [PROFILE[,disposable]]
     limactl copy "$guest_exec" "$vm:/tmp/guest-exec" >/dev/null 2>&1 || failed provision guest-exec-install-failed
     guest "$cap" sudo install -D -m 0755 /tmp/guest-exec /opt/lockstep/guest-exec || failed provision guest-exec-install-failed
     guest "$cap" sudo install -d -m 0755 -o "$(id -un)" /work || failed provision workspace-failed
+    guest "$cap" sudo usermod -aG docker "$(id -un)" || failed provision docker-group-failed
     guest "$cap" sudo bash -c 'for i in $(seq 1 300); do docker info >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1' ||
       failed provision guest-docker-not-ready
   fi
@@ -255,22 +258,33 @@ op_snapshot() { # OP CAPSULE PROJECT NAME
   [[ $name =~ $re_snapshot ]] || refuse "$o" invalid-snapshot-name
   [ "$backend" = lima ] || refuse "$o" not-supported-by-backend
   vm=$(vm_of "$cap")
-  disk=$LIMA_HOME/$vm/diffdisk
+  # Lima 2 names the VM's disk "disk"; earlier releases "diffdisk".
+  disk=$LIMA_HOME/$vm/disk
+  [ -f "$disk" ] || disk=$LIMA_HOME/$vm/diffdisk
+  [ -f "$disk" ] && [ ! -L "$disk" ] || failed "$o" vm-disk-missing
   dir=$caps/snapshots/$cap
   [ -d "$dir" ] || mkdir -m 700 "$dir"
+  if [ "$o" = snapshot ]; then
+    [ -e "$dir/$name.disk" ] && refuse snapshot snapshot-exists
+  else
+    [ -f "$dir/$name.disk" ] || refuse restore snapshot-unknown
+  fi
   was=$(vm_status "$cap")
   journal "start $o $cap $name"
   [ "$was" = Running ] && { limactl stop "$vm" >/dev/null 2>&1 || failed "$o" stop-failed; }
+  # On a failed copy the disk is untouched; a VM that was running is started again before failing.
+  local copied=yes
   if [ "$o" = snapshot ]; then
-    [ -e "$dir/$name.diffdisk" ] && refuse snapshot snapshot-exists
-    cp -c "$disk" "$dir/.$name.partial" || { rm -f "$dir/.$name.partial"; failed snapshot copy-failed; }
-    mv "$dir/.$name.partial" "$dir/$name.diffdisk"
+    if cp -c "$disk" "$dir/.$name.partial"; then mv "$dir/.$name.partial" "$dir/$name.disk"
+    else rm -f "$dir/.$name.partial"; copied=no
+    fi
   else
-    [ -f "$dir/$name.diffdisk" ] || refuse restore snapshot-unknown
-    cp -c "$dir/$name.diffdisk" "$disk.restoring" || { rm -f "$disk.restoring"; failed restore copy-failed; }
-    mv "$disk.restoring" "$disk"
+    if cp -c "$dir/$name.disk" "$disk.restoring"; then mv "$disk.restoring" "$disk"
+    else rm -f "$disk.restoring"; copied=no
+    fi
   fi
   [ "$was" = Running ] && { limactl start --tty=false "$vm" >/dev/null 2>&1 || failed "$o" start-failed; }
+  [ "$copied" = yes ] || failed "$o" copy-failed
   journal "end $o $cap $name ok"
   say "$o" ok "capsule=$cap" "snapshot=$name" "status=$(vm_status "$cap")"
 }
@@ -293,9 +307,9 @@ op_run() { # CAPSULE PROJECT SCRIPT LIMIT
     guest "$cap" sudo -n -H -u "$(id -un)" -- timeout --kill-after=10 "$lim" bash -s < "$script" > "$out" 2>&1
   fi
   rc=$?
-  cat "$out"
+  # The guest's output stays in its file (never on this reply stream, where it could imitate a reply).
   journal "end run $cap exit=$rc"
-  say run "$([ $rc = 0 ] && echo ok || echo exited)" "capsule=$cap" "exit=$rc"
+  say run "$([ $rc = 0 ] && echo ok || echo exited)" "capsule=$cap" "exit=$rc" "output=$out"
   [ $rc = 0 ] || exit 70
 }
 
@@ -312,8 +326,116 @@ op_import() { # CAPSULE PROJECT BUNDLE
   guest "$cap" bash -c 'set -e; rm -rf /work/.import; git clone --quiet /tmp/import.bundle /work/.import; rm -rf /work/repo; mv /work/.import /work/repo; git -C /work/repo rev-parse HEAD' \
     > "$caps/records/$cap.import.out" 2>&1 || failed import clone-failed
   journal "end import $cap ok"
-  say import ok "capsule=$cap" "head=$(tail -n 1 "$caps/records/$cap.import.out" | tr -cd '0-9a-f' | cut -c 1-40)"
+  # head: what the host's bundle says (trusted); guest-head: what the guest reports (not trusted).
+  say import ok "capsule=$cap" "head=$(git bundle list-heads "$bundle" HEAD 2>/dev/null | cut -c 1-40)" \
+    "guest-head=$(tail -n 1 "$caps/records/$cap.import.out" | tr -cd '0-9a-f' | cut -c 1-40)"
   : "$vm"
+}
+
+# ---------------------------------------------------------------- run exchange (the helper's capsule mode)
+#
+# The Supervisor's run directory (tree/, input/, output/, made by the service on the host) stays the
+# authoritative exchange point. push copies it into the guest (/work/tree, /input, an empty /output);
+# exec-argv runs the run's argument vector there; pull brings back /output, and for a writing run the
+# tree, as regular files and directories only, into a fresh directory beside the run's own.
+
+run_dir_ok() { # DIR
+  case $1 in /*) ;; *) return 1 ;; esac
+  case $1 in *[!A-Za-z0-9._/-]*) return 1 ;; esac
+  [ -d "$1" ] && [ ! -L "$1" ] && [ -d "$1/tree" ] && [ ! -L "$1/tree" ] && [ -d "$1/input" ] && [ ! -L "$1/input" ] &&
+    [ -d "$1/output" ] && [ ! -L "$1/output" ]
+}
+
+guest_user() { # the guest's development user (Lima: the host user's name)
+  if [ "$backend" = fixture ]; then echo root; else id -un; fi
+}
+
+op_push() { # CAPSULE PROJECT RUN-DIR
+  local cap=$1 proj=$2 dir=$3 u
+  check_ids push "$cap" "$proj"
+  owned push "$cap" "$proj"
+  run_dir_ok "$dir" || refuse push run-dir-invalid
+  [ "$(vm_status "$cap")" = Running ] || unavailable push vm-not-running
+  u=$(guest_user)
+  journal "start push $cap"
+  # The tree: mirrored into /work/tree; what the project's .gitignore names (build output, caches) is
+  # kept from earlier runs, everything else follows the Supervisor's tree exactly.
+  COPYFILE_DISABLE=1 tar -C "$dir/tree" -cf - . 2>/dev/null |
+    guest "$cap" sudo -n -H -u "$u" -- bash -c 'set -e; rm -rf /work/.incoming; mkdir -p /work/.incoming /work/tree; tar -C /work/.incoming -xf -; rsync -a --delete --filter=":- .gitignore" /work/.incoming/ /work/tree/; rm -rf /work/.incoming' \
+    > "$caps/records/$cap.push.log" 2>&1 || failed push tree-transfer-failed
+  COPYFILE_DISABLE=1 tar -C "$dir/input" -cf - . 2>/dev/null |
+    guest "$cap" sudo -n -- bash -c "set -e; rm -rf /input /output; mkdir -p /input /output; tar -C /input -xf -; chown -R $u /input /output" \
+    >> "$caps/records/$cap.push.log" 2>&1 || failed push input-transfer-failed
+  journal "end push $cap ok"
+  say push ok "capsule=$cap"
+}
+
+op_exec_argv() { # CAPSULE PROJECT ARGV-FILE LIMIT OUT-DIR
+  local cap=$1 proj=$2 argv=$3 lim=$4 out=$5 rc u
+  check_ids exec-argv "$cap" "$proj"
+  owned exec-argv "$cap" "$proj"
+  [ -f "$argv" ] && [ ! -L "$argv" ] || refuse exec-argv argv-missing
+  [[ $lim =~ ^[0-9]{1,6}$ ]] && [ "$lim" -ge 1 ] && [ "$lim" -le "$(record_get "$cap" exec-limit)" ] || refuse exec-argv invalid-limit
+  case $out in /*) ;; *) refuse exec-argv out-dir-invalid ;; esac
+  [ -d "$out" ] && [ ! -L "$out" ] || refuse exec-argv out-dir-invalid
+  [ "$(vm_status "$cap")" = Running ] || unavailable exec-argv vm-not-running
+  u=$(guest_user)
+  journal "start exec-argv $cap"
+  # The argument vector (NUL-separated) arrives on standard input; the program gets /dev/null. A login
+  # shell, so the Engineer's own toolchains (installed in the guest) are on PATH.
+  guest "$cap" sudo -n -H -u "$u" -- timeout --kill-after=10 "$lim" bash -lc \
+    'cd /work/tree && mapfile -d "" -t a && exec "${a[@]}" < /dev/null' < "$argv" > "$out/stdout" 2> "$out/stderr"
+  rc=$?
+  journal "end exec-argv $cap exit=$rc"
+  if [ $rc = 124 ] || [ $rc = 137 ]; then say exec-argv exited "capsule=$cap" "exit=$rc" "timed-out=yes"
+  else say exec-argv exited "capsule=$cap" "exit=$rc" "timed-out=no"
+  fi
+}
+
+# A tar stream from the guest is checked before anything is extracted: regular files and directories
+# only (no link, device or fifo), relative names without "..", at most 200000 entries.
+tar_safe() { # FILE
+  local line n=0 name
+  while IFS= read -r line; do
+    n=$((n + 1))
+    [ $n -le 200000 ] || return 1
+    case ${line:0:1} in - | d) ;; *) return 1 ;; esac
+  done < <(tar -tvf "$1" 2>/dev/null)
+  while IFS= read -r name; do
+    case $name in /* | ../* | */../* | */.. | ..) return 1 ;; esac
+  done < <(tar -tf "$1" 2>/dev/null)
+  return 0
+}
+
+op_pull() { # CAPSULE PROJECT RUN-DIR output|tree
+  local cap=$1 proj=$2 dir=$3 what=$4 t u dest
+  check_ids pull "$cap" "$proj"
+  owned pull "$cap" "$proj"
+  run_dir_ok "$dir" || refuse pull run-dir-invalid
+  [ "$(vm_status "$cap")" = Running ] || unavailable pull vm-not-running
+  u=$(guest_user)
+  t=$dir/.pull.tar
+  rm -f "$t"
+  journal "start pull $cap $what"
+  case $what in
+    output)
+      guest "$cap" bash -c 'cd /output && tar -cf - .' > "$t" 2>/dev/null || { rm -f "$t"; failed pull transfer-failed; }
+      dest=$dir/.pulled-output ;;
+    tree)
+      # What the project's .gitignore names stays in the guest; the guest's .git never leaves it.
+      guest "$cap" sudo -n -H -u "$u" -- bash -c 'set -e; rm -rf /work/.outgoing; rsync -a --filter=":- .gitignore" --exclude=/.git /work/tree/ /work/.outgoing/; tar -C /work/.outgoing -cf - .; rm -rf /work/.outgoing' \
+        > "$t" 2>/dev/null || { rm -f "$t"; failed pull transfer-failed; }
+      dest=$dir/.pulled-tree ;;
+    *) refuse pull invalid-what ;;
+  esac
+  [ "$(wc -c < "$t" | tr -d ' ')" -le 4294967296 ] || { rm -f "$t"; refuse pull too-large; }
+  tar_safe "$t" || { rm -f "$t"; refuse pull entry-not-allowed; }
+  rm -rf "$dest"
+  mkdir -m 700 "$dest"
+  tar -xof "$t" -C "$dest" 2>/dev/null || { rm -rf "$dest" "$t"; failed pull extract-failed; }
+  rm -f "$t"
+  journal "end pull $cap $what ok"
+  say pull ok "capsule=$cap" "what=$what" "into=$dest"
 }
 
 # ---------------------------------------------------------------- invocation channels
@@ -329,66 +451,90 @@ op_bind() { # INVOCATION CAPSULE PROJECT TRANSACTION ROLE LIMIT
   owned bind "$cap" "$proj"
   [[ $tx =~ $re_hex32 ]] || refuse bind invalid-transaction-id
   [[ $lim =~ ^[0-9]{1,6}$ ]] || refuse bind invalid-limit
+  # The per-command limit never exceeds the capsule's profile.
+  [ "$lim" -ge 1 ] && [ "$lim" -le "$(record_get "$cap" exec-limit)" ] || refuse bind invalid-limit
   case $role in
     implementer) ops="read list search write edit exec" ;;
-    planner | challenger | reviewer) ops="read list search exec_readonly" ;;
+    planner | challenger | reviewer) ops="read list search" ;;
     *) refuse bind invalid-role ;;
   esac
   dir=$caps/invocations/$inv
   [ -e "$dir" ] && refuse bind invocation-exists
-  # Single writer (C-P5.6): at most one live implementer binding per project.
+  # Single writer (C-P5.6): at most one live implementer binding per project, checked and made under
+  # the project's lock so two binds cannot both pass the check.
+  [ -d "$caps/locks" ] || mkdir -m 700 "$caps/locks"
+  local lock=$caps/locks/bind-$proj other n=0
+  until mkdir "$lock" 2>/dev/null; do
+    n=$((n + 1))
+    [ $n -lt 100 ] || unavailable bind lock-busy
+    sleep 0.1
+  done
   if [ "$role" = implementer ]; then
-    local other
     for other in "$caps"/invocations/*/binding; do
       [ -f "$other" ] || continue
       if grep -qx "project $proj" "$other" && grep -qx "role implementer" "$other" && [ ! -e "$(dirname "$other")/closed" ]; then
+        rmdir "$lock"
         refuse bind writer-already-active
       fi
     done
   fi
-  mkdir -m 700 "$dir" "$dir/channel"
-  mkdir -m 777 "$dir/channel/requests" "$dir/channel/results"
+  # requests/ is the only directory the provider's container may write (mounted read-write);
+  # results/ is mounted read-only there, so nothing but this runtime writes a result.
+  mkdir -m 700 "$dir" "$dir/channel" "$dir/private"
+  mkdir -m 777 "$dir/channel/requests"
+  mkdir -m 755 "$dir/channel/results"
   chmod 711 "$dir/channel"
   printf 'invocation %s\ncapsule %s\nproject %s\ntransaction %s\nrole %s\nops %s\nexec-limit %s\nbound %s\n' \
     "$inv" "$cap" "$proj" "$tx" "$role" "$ops" "$lim" "$(date +%s)" > "$dir/binding"
+  rmdir "$lock"
   journal "bind $inv $cap $proj $tx $role"
-  say bind ok "invocation=$inv" "capsule=$cap" "role=$role" "channel=$dir/channel"
+  say bind ok "invocation=$inv" "capsule=$cap" "role=$role" "requests=$dir/channel/requests" "results=$dir/channel/results"
 }
 
-result_write() { # RESULTS SEQ OUTCOME DETAIL [PAYLOAD-FILE]
-  local tmp=$1/.$2.tmp
-  printf '{"v": 1, "seq": %s, "host_outcome": "%s", "host_detail": "%s"}\n' "$2" "$3" "$4" > "$tmp"
-  [ -n "${5:-}" ] && [ -f "$5" ] && cat "$5" >> "$tmp"
+# A result is made in the invocation's private directory and renamed into results/ (never written
+# through a name another process could have placed there).
+result_write() { # SEQ OUTCOME DETAIL [PAYLOAD-FILE]
+  local tmp=$inv_dir/private/result.$1
+  rm -f "$tmp"
+  printf '{"v": 1, "seq": %s, "host_outcome": "%s", "host_detail": "%s"}\n' "$1" "$2" "$3" > "$tmp"
+  [ -n "${4:-}" ] && [ -f "$4" ] && [ ! -L "$4" ] && cat "$4" >> "$tmp"
   chmod 644 "$tmp"
-  mv "$tmp" "$1/$2.json"
+  mv -f "$tmp" "$chan/results/$1.json"
 }
 
 serve_one() { # SEQ
-  local seq=$1 req=$chan/requests/$1.json head reqop allowed=no o pid n=0 outfile=$inv_dir/out.$1 rc grace host_limit outlim=4194304
+  local seq=$1 req=$inv_dir/private/req.$1 head reqop allowed=no o pid n=0 rc grace host_limit outlim=4194304
+  local raw=$inv_dir/private/raw.$1 outfile=$inv_dir/private/out.$1
   local re_head='^\{"v": 1, "seq": ([0-9]{1,9}), "op": "([a-z_]{1,20})", "args": '
-  if [ -L "$req" ] || [ ! -f "$req" ]; then rm -f "$req"; result_write "$chan/results" "$seq" refused not-regular-file; return; fi
-  if [ "$(wc -c < "$req" | tr -d ' ')" -gt 8388608 ]; then rm -f "$req"; result_write "$chan/results" "$seq" refused too-large; return; fi
+  # First move the request out of the shared directory into the private one (rename moves a link
+  # itself, never its target), then check the moved copy: nothing can swap it after the check.
+  mv -f "$chan/requests/$seq.json" "$req" 2>/dev/null || return
+  if [ -L "$req" ] || [ ! -f "$req" ]; then rm -f "$req"; result_write "$seq" refused not-regular-file; return; fi
+  if [ "$(wc -c < "$req" | tr -d ' ')" -gt 8388608 ]; then rm -f "$req"; result_write "$seq" refused too-large; return; fi
   head=$(head -c 120 "$req")
   if [[ ! $head =~ $re_head ]] || [ "${BASH_REMATCH[1]}" != "$seq" ]; then
-    rm -f "$req"; result_write "$chan/results" "$seq" refused malformed; return
+    rm -f "$req"; result_write "$seq" refused malformed; return
   fi
   reqop=${BASH_REMATCH[2]}
   for o in $b_ops; do [ "$o" = "$reqop" ] && allowed=yes; done
   if [ "$allowed" != yes ]; then
     rm -f "$req"; journal "refused $inv op $reqop role $b_role"
-    result_write "$chan/results" "$seq" refused "op-not-authorized-for-role"
+    result_write "$seq" refused "op-not-authorized-for-role"
     return
   fi
   if [ "$(vm_status "$b_cap")" != Running ]; then
-    rm -f "$req"; result_write "$chan/results" "$seq" capsule-unavailable vm-not-running; return
+    rm -f "$req"; result_write "$seq" capsule-unavailable vm-not-running; return
   fi
-  mv "$req" "$inv_dir/req.$seq"
   journal "start $inv $seq $reqop"
   printf '%s start %s %s\n' "$(date +%s)" "$seq" "$reqop" >> "$inv_dir/ledger"
   host_limit=$((b_lim + 30))
   grace=0
-  ( guest "$b_cap" /usr/bin/env python3 /opt/lockstep/guest-exec --workspace "$b_ws" --limit-seconds "$b_lim" \
-      --output-limit 1048576 < "$inv_dir/req.$seq" | head -c $((outlim + 1)) > "$outfile" ) &
+  # The guest learns the operation from the host (--op) and refuses a request that says otherwise.
+  # Started directly (not through a function), so $! is the transport itself and a kill ends it.
+  local -a via
+  if [ "$backend" = fixture ]; then via=(docker exec -i "$(vm_of "$b_cap")"); else via=(limactl shell --workdir / "$(vm_of "$b_cap")"); fi
+  "${via[@]}" /usr/bin/env python3 /opt/lockstep/guest-exec --workspace "$b_ws" --op "$reqop" \
+    --limit-seconds "$b_lim" --output-limit 1048576 < "$req" > "$raw" 2>/dev/null &
   pid=$!
   local outcome=completed detail=""
   while kill -0 "$pid" 2>/dev/null; do
@@ -408,16 +554,18 @@ serve_one() { # SEQ
   wait "$pid" 2>/dev/null
   rc=$?
   rm -f "$chan/requests/$seq.cancel"
+  head -c $((outlim + 1)) "$raw" > "$outfile" 2>/dev/null
   if [ "$outcome" = completed ]; then
-    if [ "$(wc -c < "$outfile" | tr -d ' ')" -gt $outlim ]; then outcome=output-limit; detail=host-output-limit
+    if [ "$(wc -c < "$raw" | tr -d ' ')" -gt $outlim ]; then outcome=output-limit; detail=host-output-limit
     elif [ "$(vm_status "$b_cap")" != Running ]; then outcome=effect-unknown; detail=vm-stopped-during-call
     elif [ ! -s "$outfile" ]; then outcome=effect-unknown; detail="no-answer-exit-$rc"
     fi
   fi
-  result_write "$chan/results" "$seq" "$outcome" "$detail" "$outfile"
+  [ "$outcome" = output-limit ] && head -c $outlim "$raw" > "$outfile"
+  result_write "$seq" "$outcome" "$detail" "$outfile"
   printf '%s end %s %s %s\n' "$(date +%s)" "$seq" "$reqop" "$outcome" >> "$inv_dir/ledger"
   journal "end $inv $seq $outcome"
-  rm -f "$outfile" "$inv_dir/req.$seq"
+  rm -f "$outfile" "$raw" "$req"
 }
 
 op_serve() { # INVOCATION
@@ -433,17 +581,26 @@ op_serve() { # INVOCATION
   b_lim=$(sed -n 's/^exec-limit //p' "$inv_dir/binding")
   b_ws=/work/repo
   [ "$backend" = fixture ] && b_ws=/tmp/work
-  local stopping=0 name seq
+  local stopping=0 name seq holder
+  # One server per invocation: a lock holding the server's PID; a lock whose holder is gone is stale.
+  if ! mkdir "$inv_dir/serving" 2>/dev/null; then
+    holder=$(cat "$inv_dir/serving/pid" 2>/dev/null)
+    if [[ $holder =~ ^[0-9]+$ ]] && kill -0 "$holder" 2>/dev/null; then refuse serve already-serving; fi
+    rm -rf "$inv_dir/serving"
+    mkdir "$inv_dir/serving" || refuse serve already-serving
+  fi
+  echo $$ > "$inv_dir/serving/pid"
   trap 'stopping=1' TERM INT
   journal "serve $inv"
-  # An earlier server that stopped with a call in flight: that call's effect is unknown and it is
-  # answered as such, never replayed (C-P5.9 R2).
-  for name in "$inv_dir"/req.*; do
+  # An earlier server that stopped with a call in flight (only now, under the lock, can none be
+  # running): that call's effect is unknown and it is answered as such, never replayed (C-P5.9 R2).
+  for name in "$inv_dir"/private/req.*; do
     [ -f "$name" ] || continue
     seq=${name##*.}
-    result_write "$chan/results" "$seq" effect-unknown executor-restarted
+    [[ $seq =~ ^[0-9]{1,9}$ ]] || { rm -f "$name"; continue; }
+    result_write "$seq" effect-unknown executor-restarted
     printf '%s end %s - effect-unknown\n' "$(date +%s)" "$seq" >> "$inv_dir/ledger"
-    rm -f "$name"
+    rm -f "$name" "$inv_dir/private/raw.$seq" "$inv_dir/private/out.$seq"
   done
   while [ $stopping = 0 ] && [ ! -e "$inv_dir/closed" ]; do
     for name in "$chan"/requests/*.json; do
@@ -456,6 +613,7 @@ op_serve() { # INVOCATION
     done
     sleep 0.05
   done
+  rm -rf "$inv_dir/serving"
   say serve ok "invocation=$inv"
 }
 
@@ -465,6 +623,9 @@ case $op in
   snapshot | restore) [ $# = 3 ] || exit 64; op_snapshot "$op" "$@" ;;
   run) [ $# = 4 ] || exit 64; op_run "$@" ;;
   import) [ $# = 3 ] || exit 64; op_import "$@" ;;
+  push) [ $# = 3 ] || exit 64; op_push "$@" ;;
+  exec-argv) [ $# = 5 ] || exit 64; op_exec_argv "$@" ;;
+  pull) [ $# = 4 ] || exit 64; op_pull "$@" ;;
   bind) [ $# = 6 ] || exit 64; op_bind "$@" ;;
   serve) [ $# = 1 ] || exit 64; op_serve "$@" ;;
   close) [ $# = 1 ] && [[ $1 =~ $re_hex32 ]] && [ -d "$caps/invocations/$1" ] || exit 64; : > "$caps/invocations/$1/closed"; say close ok "invocation=$1" ;;

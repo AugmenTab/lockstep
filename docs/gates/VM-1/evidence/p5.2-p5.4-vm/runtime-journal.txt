@@ -1,0 +1,176 @@
+1794288226 refused provision invalid-capsule-id
+1794288226 refused provision invalid-project-id
+1794288226 refused provision invalid-profile
+1794288226 refused inspect capsule-unknown
+1794288226 refused inspect capsule-unknown
+1794288226 start provision vmq1 other-project small
+1794288311 end provision vmq1 ok
+1794288314 refused run capsule-owned-by-another-project
+1794288315 refused run capsule-owned-by-another-project
+1794288315 refused run capsule-owned-by-another-project
+1794326593 refused provision invalid-capsule-id
+1794326593 refused provision invalid-project-id
+1794326593 refused provision invalid-profile
+1794326593 start provision vmq1 vmq-project small
+1794326665 end provision vmq1 ok
+1794326665 start provision vmq1 vmq-project small
+1794326665 end provision vmq1 already-provisioned
+1794326666 start inspect vmq1
+1794326666 end inspect vmq1 ok
+1794326666 refused inspect capsule-owned-by-another-project
+1794326666 start provision vmq1 other-project small
+1794326666 refused provision capsule-owned-by-another-project
+1794326669 start run vmq1 d2b867220f617ebe
+1794326669 end run vmq1 exit=0
+1794326670 start import vmq1
+1794326671 end import vmq1 ok
+1794326671 start run vmq1 c6e492835ff9e3a3
+1794326681 end run vmq1 exit=1
+1794326681 start run vmq1 36c99870156b5196
+1794326688 end run vmq1 exit=0
+1794326688 start stop vmq1
+1794326690 end stop vmq1 ok
+1794326690 start start vmq1
+1794326700 end start vmq1 ok
+1794326701 start run vmq1 69f7b0a0fa303e9f
+1794326701 end run vmq1 exit=0
+1794326701 start run vmq1 c6e492835ff9e3a3
+1794326702 end run vmq1 exit=1
+1794326702 start snapshot vmq1 work-0000beef
+1794326706 failed snapshot copy-failed
+1794326706 unavailable run vm-not-running
+1794326707 start restore vmq1 work-0000beef
+1794326707 refused restore snapshot-unknown
+1794326707 unavailable run vm-not-running
+1794326707 refused snapshot invalid-snapshot-name
+1794326707 start restore vmq1 work-00000000
+1794326707 refused restore snapshot-unknown
+1794326707 bind 2e7dfc8c096a0798dc846ce35a5ab8df vmq1 vmq-project 043dc039c3f2a554504f95807dba6660 implementer
+1794326707 serve 2e7dfc8c096a0798dc846ce35a5ab8df
+1794326714 unavailable run vm-not-running
+1794326714 unavailable run vm-not-running
+1794326716 refused serve already-serving
+1794326716 unavailable run vm-not-running
+1794326716 unavailable run vm-not-running
+1794326716 start stop vmq1
+1794326780 start destroy vmq1
+1794326781 end destroy vmq1 ok
+1794326796 refused provision invalid-capsule-id
+1794326796 refused provision invalid-project-id
+1794326796 refused provision invalid-profile
+1794326796 start provision vmq1 vmq-project small
+1794326876 end provision vmq1 ok
+1794326876 start provision vmq1 vmq-project small
+1794326877 end provision vmq1 already-provisioned
+1794326877 start inspect vmq1
+1794326877 end inspect vmq1 ok
+1794326877 refused inspect capsule-owned-by-another-project
+1794326877 start provision vmq1 other-project small
+1794326877 refused provision capsule-owned-by-another-project
+1794326880 start run vmq1 d2b867220f617ebe
+1794326881 end run vmq1 exit=0
+1794326882 start import vmq1
+1794326882 end import vmq1 ok
+1794326882 start run vmq1 c6e492835ff9e3a3
+1794326907 end run vmq1 exit=0
+1794326908 start run vmq1 36c99870156b5196
+1794326914 end run vmq1 exit=0
+1794326914 start stop vmq1
+1794326916 end stop vmq1 ok
+1794326917 start start vmq1
+1794326932 end start vmq1 ok
+1794326932 start run vmq1 69f7b0a0fa303e9f
+1794326932 end run vmq1 exit=0
+1794326933 start run vmq1 c6e492835ff9e3a3
+1794326936 end run vmq1 exit=0
+1794326936 start snapshot vmq1 work-0000beef
+1794326952 end snapshot vmq1 work-0000beef ok
+1794326952 start run vmq1 847a3ba5d1dbbeef
+1794326952 end run vmq1 exit=0
+1794326953 start restore vmq1 work-0000beef
+1794326972 end restore vmq1 work-0000beef ok
+1794326972 start run vmq1 446cc16bf8349f0f
+1794326973 end run vmq1 exit=0
+1794326973 refused snapshot invalid-snapshot-name
+1794326973 refused restore snapshot-unknown
+1794326973 bind 0b62c4109d8ad4c62f41fd20b26d64c5 vmq1 vmq-project f3a68645ae728a64196be6647ddc3587 implementer
+1794326973 serve 0b62c4109d8ad4c62f41fd20b26d64c5
+1794326973 start 0b62c4109d8ad4c62f41fd20b26d64c5 1 exec
+1794326973 end 0b62c4109d8ad4c62f41fd20b26d64c5 1 completed
+1794326974 start 0b62c4109d8ad4c62f41fd20b26d64c5 2 exec
+1794326978 end 0b62c4109d8ad4c62f41fd20b26d64c5 2 completed
+1794326979 start 0b62c4109d8ad4c62f41fd20b26d64c5 3 exec
+1794326981 end 0b62c4109d8ad4c62f41fd20b26d64c5 3 cancelled
+1794326985 start run vmq1 446cc16bf8349f0f
+1794326986 end run vmq1 exit=0
+1794326986 start run vmq1 d94309f799d75b47
+1794326986 end run vmq1 exit=0
+1794326986 start 0b62c4109d8ad4c62f41fd20b26d64c5 4 exec
+1794326988 refused serve already-serving
+1794327007 end 0b62c4109d8ad4c62f41fd20b26d64c5 4 completed
+1794327007 start run vmq1 889953d07e79c0e3
+1794327032 end run vmq1 exit=0
+1794327032 start run vmq1 b11758de728cc8fd
+1794327032 end run vmq1 exit=0
+1794327033 start stop vmq1
+1794327037 end stop vmq1 ok
+1794327074 start destroy vmq1
+1794327074 end destroy vmq1 ok
+1794327075 refused provision invalid-capsule-id
+1794327075 refused provision invalid-project-id
+1794327075 refused provision invalid-profile
+1794327075 start provision vmq1 vmq-project small
+1794327154 end provision vmq1 ok
+1794327154 start provision vmq1 vmq-project small
+1794327154 end provision vmq1 already-provisioned
+1794327154 start inspect vmq1
+1794327154 end inspect vmq1 ok
+1794327154 refused inspect capsule-owned-by-another-project
+1794327154 start provision vmq1 other-project small
+1794327154 refused provision capsule-owned-by-another-project
+1794327159 start run vmq1 d2b867220f617ebe
+1794327160 end run vmq1 exit=0
+1794327161 start import vmq1
+1794327161 end import vmq1 ok
+1794327161 start run vmq1 c6e492835ff9e3a3
+1794327186 end run vmq1 exit=0
+1794327186 start run vmq1 36c99870156b5196
+1794327193 end run vmq1 exit=0
+1794327193 start stop vmq1
+1794327195 end stop vmq1 ok
+1794327195 start start vmq1
+1794327211 end start vmq1 ok
+1794327211 start run vmq1 69f7b0a0fa303e9f
+1794327212 end run vmq1 exit=0
+1794327212 start run vmq1 c6e492835ff9e3a3
+1794327215 end run vmq1 exit=0
+1794327215 start snapshot vmq1 work-0000beef
+1794327231 end snapshot vmq1 work-0000beef ok
+1794327231 start run vmq1 847a3ba5d1dbbeef
+1794327231 end run vmq1 exit=0
+1794327232 start restore vmq1 work-0000beef
+1794327251 end restore vmq1 work-0000beef ok
+1794327251 start run vmq1 446cc16bf8349f0f
+1794327251 end run vmq1 exit=0
+1794327251 refused snapshot invalid-snapshot-name
+1794327251 refused restore snapshot-unknown
+1794327252 bind 455620176feeadfc1ff16bf6bc756b41 vmq1 vmq-project b2ee66180fc646510907ed0365568dd2 implementer
+1794327252 serve 455620176feeadfc1ff16bf6bc756b41
+1794327252 start 455620176feeadfc1ff16bf6bc756b41 1 exec
+1794327252 end 455620176feeadfc1ff16bf6bc756b41 1 completed
+1794327252 start 455620176feeadfc1ff16bf6bc756b41 2 exec
+1794327257 end 455620176feeadfc1ff16bf6bc756b41 2 completed
+1794327257 start 455620176feeadfc1ff16bf6bc756b41 3 exec
+1794327260 end 455620176feeadfc1ff16bf6bc756b41 3 cancelled
+1794327264 start run vmq1 446cc16bf8349f0f
+1794327264 end run vmq1 exit=0
+1794327264 start run vmq1 d94309f799d75b47
+1794327265 end run vmq1 exit=0
+1794327265 start 455620176feeadfc1ff16bf6bc756b41 4 exec
+1794327267 serve 455620176feeadfc1ff16bf6bc756b41
+1794327267 start run vmq1 2df3a0179e4f920e
+1794327295 end run vmq1 exit=0
+1794327296 start run vmq1 b11758de728cc8fd
+1794327296 end run vmq1 exit=0
+1794327296 start stop vmq1
+1794327298 end stop vmq1 ok

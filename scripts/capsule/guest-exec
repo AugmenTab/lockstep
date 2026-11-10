@@ -19,7 +19,15 @@ import subprocess
 import sys
 import time
 
-STATE = "/run/lockstep-exec"
+# Per-user state for cancellation (the guest user runs both the call and its cancel).
+STATE = os.path.join(os.path.expanduser("~"), ".cache", "lockstep-exec")
+
+
+def no_duplicates(pairs):
+    keys = [k for k, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError("duplicate key")
+    return dict(pairs)
 
 
 def result(seq, status, **kw):
@@ -174,7 +182,7 @@ def main():
     argv = sys.argv[1:]
     if len(argv) == 2 and argv[0] == "--cancel" and re.fullmatch(r"[0-9]{1,9}", argv[1]):
         return cancel(int(argv[1]))
-    opts = {"--workspace": None, "--limit-seconds": "600", "--output-limit": "1048576"}
+    opts = {"--workspace": None, "--op": None, "--limit-seconds": "600", "--output-limit": "1048576"}
     while argv:
         k = argv.pop(0)
         if k not in opts or not argv:
@@ -191,12 +199,16 @@ def main():
     deadline = time.monotonic() + int(opts["--limit-seconds"])
     raw = sys.stdin.buffer.read(8 * 1024 * 1024)
     try:
-        req = json.loads(raw)
+        req = json.loads(raw, object_pairs_hook=no_duplicates)
         seq = int(req["seq"])
         op = req["op"]
         args = req.get("args") or {}
     except (ValueError, KeyError, TypeError):
         print(json.dumps(result(None, "refused", detail="malformed-request")))
+        return 0
+    # The host checked the operation against the binding and names it here; the request must agree.
+    if op != opts["--op"]:
+        print(json.dumps(result(seq, "refused", detail="op-mismatch")))
         return 0
     try:
         if op == "read":
@@ -209,7 +221,7 @@ def main():
             body = op_write(ws, args, limit)
         elif op == "edit":
             body = op_edit(ws, args, limit)
-        elif op in ("exec", "exec_readonly"):
+        elif op == "exec":
             body = op_exec(ws, args, limit, deadline, seq)
         else:
             print(json.dumps(result(seq, "refused", detail="unknown-op")))

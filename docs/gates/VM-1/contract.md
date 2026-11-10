@@ -38,9 +38,12 @@ capsule that the invocation's binding names.
 | T10 | A read-only role is offered no write tool. The host refuses a forged `write` or `exec` in its channel (`op-not-authorized-for-role`). | ″ |
 | T11 | A binding for a capsule of another project, or with an invalid capsule id, is refused. | ″ |
 | T12 | A second live implementer binding for the same project is refused (`writer-already-active`). | ″ |
+| T13 | A request that smuggles a second operation (a duplicate key) is refused by the guest; nothing happens. | ″ (review finding 6) |
+| T14 | A request file that is a symlink to a host file is refused as not regular; the host file goes nowhere. | ″ (finding 2) |
+| T15 | A second server for the same invocation is refused (`already-serving`). | ″ (finding 7) |
 | V1 | Each runtime enumeration has one text, parsed back by derivation. | `lockstep-capsule` |
 | V2 | Capsule names are validated. The VM name is derived, never given. | ″ |
-| V3 | Only the Implementer has mutating operations. The runtime's binding grants exactly `roleOperations`. | ″ |
+| V3 | Only the Implementer has mutating operations, and only it runs commands. The runtime's binding grants exactly `roleOperations`. | ″ |
 | V4 | Every refusal, outcome, operation and profile in the Kernel is the runtime script's own word. | ″ |
 
 Safety of the checks: the upstream is the stand-in `scripts/lib/live-standin-secret` on an internal Docker

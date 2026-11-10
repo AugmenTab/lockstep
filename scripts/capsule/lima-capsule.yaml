@@ -1,6 +1,6 @@
 # The Dev Capsule VM (Phase 5; docs/architecture/dev-capsules.md §3, §7; contract C-P5.2 L4).
 # The only VM configuration Lockstep uses. scripts/capsule-runtime substitutes the three numeric
-# resources (@CPUS@, @MEMORY@, @DISK@) from a fixed profile and nothing else, then audits the
+# resources (the CPU, memory and disk placeholders below) from a fixed profile and nothing else, then audits the
 # effective configuration Lima stores before every start. Upstream templates are NOT used: they
 # mount the host home, forward the guest's ports and (the docker template) its Docker socket.
 vmType: vz
@@ -16,7 +16,6 @@ disk: "@DISK@GiB"
 mounts: []
 ssh:
   localPort: 0
-  loadDotSSHPubKey: false
   forwardAgent: false
   forwardX11: false
   forwardX11Trusted: false
@@ -45,8 +44,6 @@ provision:
     export DEBIAN_FRONTEND=noninteractive
     if ! command -v docker >/dev/null 2>&1; then
       apt-get update
-      apt-get install -y --no-install-recommends docker.io docker-compose-v2 docker-buildx git build-essential ca-certificates curl python3 jq
+      apt-get install -y --no-install-recommends docker.io docker-compose-v2 docker-buildx git build-essential ca-certificates curl python3 jq rsync
     fi
     systemctl enable --now docker
-    usermod -aG docker "${LIMA_CIDATA_USER}"
-    install -d -m 0755 -o "${LIMA_CIDATA_USER}" /work
