@@ -29,11 +29,16 @@ cap_state=""
 cap_name=""
 cap_project=""
 cap_verify=""
+cap_lockstep_project=""
 cap_limit=0
 
 # The owner asked for capsule mode (DIR/capsule exists) but it cannot be used: every run is refused
 # (capsule-mode-unavailable), never sent to the Phase 4 containers instead (P5.5 review finding 6).
 capsule_off() { log "capsule mode UNAVAILABLE, every run is refused: $1"; capsule_mode=2; return 0; }
+
+# The calling (sub)shell's process id. macOS's bash 3.2 has no BASHPID, and under set -u reading it
+# ends the run's subshell before it can answer; the parent of a child shell is the caller.
+self_pid() { sh -c 'echo "$PPID"'; }
 
 init_capsule() {
   local f=$capsule_dir/config line n=0 out tmp
@@ -50,7 +55,8 @@ init_capsule() {
       2:runtime-state\ /*) cap_state=${line#runtime-state } ;;
       3:capsule\ *) cap_name=${line#capsule } ;;
       4:project\ *) cap_project=${line#project } ;;
-      5:verify-capsule\ *) cap_verify=${line#verify-capsule } ;;
+      [56]:verify-capsule\ *) cap_verify=${line#verify-capsule } ;;
+      [56]:lockstep-project\ *) cap_lockstep_project=${line#lockstep-project } ;;
       *) capsule_off "$f is malformed (line $n)"; return 0 ;;
     esac
   done < "$f"
@@ -58,6 +64,10 @@ init_capsule() {
   [[ $cap_state =~ ^/[A-Za-z0-9._/-]+$ ]] || { capsule_off "runtime-state must be a plain absolute path"; return 0; }
   [[ $cap_name =~ ^[a-z][a-z0-9-]{2,30}[a-z0-9]$ ]] || { capsule_off "invalid capsule name"; return 0; }
   [[ $cap_project =~ ^[a-z0-9][a-z0-9-]{1,62}$ ]] || { capsule_off "invalid project name"; return 0; }
+  # The Lockstep project (its id) whose page shows this capsule and may stop its run; optional.
+  if [ -n "$cap_lockstep_project" ]; then
+    [[ $cap_lockstep_project =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || { capsule_off "invalid lockstep-project"; return 0; }
+  fi
   if [ -n "$cap_verify" ]; then
     [[ $cap_verify =~ ^[a-z][a-z0-9-]{2,30}[a-z0-9]$ ]] && [ "$cap_verify" != "$cap_name" ] || { capsule_off "invalid verify-capsule"; return 0; }
   fi
@@ -65,13 +75,30 @@ init_capsule() {
   "$cap_rt" --state "$cap_state" start "$cap_name" "$cap_project" > /dev/null 2>&1
   out=$("$cap_rt" --state "$cap_state" inspect "$cap_name" "$cap_project" 2>&1)
   [[ $out =~ ^capsule-runtime\ 1\ inspect\ ok\ .*status=Running.*audit=ok ]] || { capsule_off "the capsule is not ready ($(printf '%s' "$out" | clean_detail))"; return 0; }
+  # Made from today's template, or not used (P5.5 review 3, M1): reconfigure it, or reprovision it.
+  [[ $out =~ template=current ]] || { capsule_off "the capsule was made from an older template; run capsule-runtime reconfigure (or reprovision for a new base image)"; return 0; }
   cap_limit=$(sed -n 's/^exec-limit //p' "$cap_state/capsules/records/$cap_name")
   [[ $cap_limit =~ ^[0-9]{1,6}$ ]] || { capsule_off "the capsule has no limit"; return 0; }
   if [ -n "$cap_verify" ]; then
     out=$("$cap_rt" --state "$cap_state" inspect "$cap_verify" "$cap_project" 2>&1)
-    [[ $out =~ ^capsule-runtime\ 1\ inspect\ ok\ .*audit=ok ]] || { capsule_off "the verification capsule is not ready ($(printf '%s' "$out" | clean_detail))"; return 0; }
+    [[ $out =~ ^capsule-runtime\ 1\ inspect\ ok\ .*audit=ok.*template=current ]] || { capsule_off "the verification capsule is not ready or not current ($(printf '%s' "$out" | clean_detail))"; return 0; }
     [ -f "$cap_state/capsules/snapshots/$cap_verify/verify.disk" ] || { capsule_off "the verification capsule has no 'verify' snapshot"; return 0; }
   fi
+  # A capsule run left behind by a helper that crashed (kill -9; P5.5 review 3, M4): its guest program is
+  # cancelled (the runtime ends it and stops the VM) and its process killed, before anything else, so it
+  # can neither bring a tree back nor answer; the journal recovery then answers it interrupted.
+  local pidfile opid
+  for pidfile in "$runner_work"/*/.capsule-pid; do
+    [ -f "$pidfile" ] || continue
+    opid=$(cat "$pidfile" 2>/dev/null)
+    if [ -d "$(dirname "$pidfile")/.capsule-out" ]; then : > "$(dirname "$pidfile")/.capsule-out/.cancel"; fi
+    # Only a process that still is a helper's (a reused process id is left alone).
+    if [[ $opid =~ ^[0-9]+$ ]] && kill -0 "$opid" 2>/dev/null && ps -p "$opid" -o command= 2>/dev/null | grep -q control-helper; then
+      kill -9 "$opid" 2>/dev/null
+      log "capsule: ended the orphaned run $(basename "$(dirname "$pidfile")") (process $opid)"
+    fi
+    rm -f "$pidfile"
+  done
   # An invocation still open from before this helper started cannot be live (the helper ran it): close
   # it, so it holds no writer slot (P5.5 review finding 11).
   local b
@@ -87,7 +114,41 @@ init_capsule() {
   chmod 600 "$tmp"
   place "$tmp" "$runner/capsule" || { rm -f "$tmp"; capsule_off "runner/capsule cannot be written"; return 0; }
   capsule_mode=1
+  capsule_status_write - - = =
   log "capsule mode on: capsule $cap_name, project $cap_project, verification ${cap_verify:-none}, command limit ${cap_limit}s"
+}
+
+# The status the service shows the operator (DIR/runner/capsule-status; Lockstep.Application.CapsuleStatus).
+# Arguments: ACTIVE-RUN ACTIVE-OP LAST-RUN LAST-FAILURE; "-" for none, "=" to keep what the file says.
+capsule_status_write() {
+  local f=$runner/capsule-status tmp out vm audit template prev_last prev_fail last fail
+  out=$("$cap_rt" --state "$cap_state" inspect "$cap_name" "$cap_project" 2>/dev/null)
+  vm=$(printf '%s' "$out" | sed -n 's/.* status=\([A-Za-z]*\).*/\1/p')
+  audit=$(printf '%s' "$out" | sed -n 's/.* audit=\([a-z0-9-]*\).*/\1/p')
+  template=$(printf '%s' "$out" | sed -n 's/.* template=\([a-z]*\).*/\1/p')
+  prev_last=$(sed -n 's/^last-run //p' "$f" 2>/dev/null)
+  prev_fail=$(sed -n 's/^last-failure //p' "$f" 2>/dev/null)
+  last=$3
+  fail=$4
+  [ "$last" = "=" ] && last=${prev_last:--}
+  [ "$fail" = "=" ] && fail=${prev_fail:--}
+  tmp=$(mktemp "$runner/.capsule-status.XXXXXX") || return 0
+  {
+    printf 'lockstep-capsule-status 1\n'
+    printf 'capsule %s\n' "$cap_name"
+    printf 'project %s\n' "${cap_lockstep_project:--}"
+    printf 'verify %s\n' "${cap_verify:--}"
+    printf 'vm %s\n' "${vm:-unknown}"
+    printf 'audit %s\n' "${audit:-unknown}"
+    printf 'template %s\n' "${template:-unknown}"
+    printf 'active-run %s\n' "$1"
+    printf 'active-op %s\n' "$2"
+    printf 'last-run %s\n' "$(printf '%s' "$last" | clean_detail)"
+    printf 'last-failure %s\n' "$(printf '%s' "$fail" | clean_detail)"
+    printf 'updated %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } > "$tmp"
+  chmod 600 "$tmp"
+  place "$tmp" "$f" || rm -f "$tmp"
 }
 
 vm_status_of() { # CAPSULE
@@ -142,31 +203,40 @@ execute_capsule_run() { # ID OP RUN
   wall=$cap_limit
   started=$(date +%s)
   journal "start $id $op"
-  if [ "$op" = run-verify ]; then
-    if [ -z "$cap_verify" ]; then
-      finished=$(date +%s)
-      write_result "$id" "$op" refused verification-environment-missing "$started" "$finished" "" "capsule $cap_name" || true
-      journal "end $id refused"
-      return
-    fi
-    target=$cap_verify
-    # The trusted verification environment, fresh: nothing an earlier run left there survives.
-    "$cap_rt" --state "$cap_state" restore "$cap_verify" "$cap_project" verify > "$dir/.capsule.log" 2>&1 || {
-      finished=$(date +%s)
-      write_result "$id" "$op" launch-failed - "$started" "$finished" "verification capsule restore failed" "capsule $cap_verify" || true
-      journal "end $id launch-failed"
-      return
-    }
-    lim=$(sed -n 's/^exec-limit //p' "$cap_state/capsules/records/$cap_verify")
-    [[ $lim =~ ^[0-9]{1,6}$ ]] && wall=$lim
+  # This run's process, so a helper that starts after a crash can end it (P5.5 review 3, M4).
+  self_pid > "$dir/.capsule-pid"
+  if [ "$op" = run-verify ] && [ -z "$cap_verify" ]; then
+    finished=$(date +%s)
+    write_result "$id" "$op" refused verification-environment-missing "$started" "$finished" "" "capsule $cap_name" || true
+    journal "end $id refused"
+    rm -f "$dir/.capsule-pid"
+    return
   fi
+  # Cancellable from here on, the restore included (M3): the cancel file and the status come first.
   rm -rf "$dir/.capsule-out"
   mkdir -m 700 "$dir/.capsule-out"
+  capsule_status_write "$run" "$op" = =
   outcome=launch-failed
-  # Verification gets exactly the Supervisor's tree; the Engineer's runs keep its ignored build output.
-  local mode=keep-ignored
-  [ "$op" = run-verify ] && mode=exact
-  if "$cap_rt" --state "$cap_state" push "$target" "$cap_project" "$dir" "$mode" >> "$dir/.capsule.log" 2>&1; then
+  local mode=keep-ignored go=yes
+  if [ "$op" = run-verify ]; then
+    target=$cap_verify
+    # The trusted verification environment, fresh: nothing an earlier run left there survives.
+    # (restore keeps a stopped VM stopped; the run needs it started.)
+    if ! { "$cap_rt" --state "$cap_state" restore "$cap_verify" "$cap_project" verify &&
+      "$cap_rt" --state "$cap_state" start "$cap_verify" "$cap_project"; } > "$dir/.capsule.log" 2>&1; then
+      go=no
+    fi
+    lim=$(sed -n 's/^exec-limit //p' "$cap_state/capsules/records/$cap_verify")
+    [[ $lim =~ ^[0-9]{1,6}$ ]] && wall=$lim
+    # Verification gets exactly the Supervisor's tree; the Engineer's runs keep its ignored build output.
+    mode=exact
+  elif [ "$(vm_status_of "$target")" != Running ]; then
+    # A capsule a cancelled or crashed run left stopped is started (the runtime audits before it starts).
+    "$cap_rt" --state "$cap_state" start "$target" "$cap_project" >> "$dir/.capsule.log" 2>&1 || go=no
+  fi
+  [ -e "$dir/.cancelled" ] || [ -e "$dir/.capsule-out/.cancel" ] && { outcome=cancelled; go=no; }
+  if [ "$go" = yes ] && "$cap_rt" --state "$cap_state" push "$target" "$cap_project" "$dir" "$mode" >> "$dir/.capsule.log" 2>&1 &&
+    { [ ! -e "$dir/.cancelled" ] || { outcome=cancelled; false; }; }; then
     reply=$("$cap_rt" --state "$cap_state" exec-argv "$target" "$cap_project" "$dir/argv" "$wall" "$dir/.capsule-out" 2>>"$dir/.capsule.log")
     if [[ $reply =~ exec-argv\ exited\ .*exit=([0-9]+)\ timed-out=(yes|no) ]]; then
       rc=${BASH_REMATCH[1]}
@@ -193,7 +263,7 @@ execute_capsule_run() { # ID OP RUN
   [ "$(vm_status_of "$target")" = Running ] || "$cap_rt" --state "$cap_state" start "$target" "$cap_project" >> "$dir/.capsule.log" 2>&1
   head -c $((outlim + 1)) "$dir/.capsule-out/stdout" > "$dir/stdout" 2>/dev/null || : > "$dir/stdout"
   head -c $((errlim + 1)) "$dir/.capsule-out/stderr" > "$dir/stderr" 2>/dev/null || : > "$dir/stderr"
-  rm -rf "$dir/.capsule-out" "$dir/.cancelled"
+  rm -rf "$dir/.capsule-out" "$dir/.cancelled" "$dir/.capsule-pid"
   out_bytes=$(wc -c < "$dir/stdout" | tr -d ' ')
   err_bytes=$(wc -c < "$dir/stderr" | tr -d ' ')
   if [ "$outcome" = exited ] && { [ "$out_bytes" -gt "$outlim" ] || [ "$err_bytes" -gt "$errlim" ]; }; then outcome=output-limit; fi
@@ -204,6 +274,8 @@ execute_capsule_run() { # ID OP RUN
       head -c "$lim" "$dir/$p" > "$dir/.$p.cut" && place "$dir/.$p.cut" "$dir/$p"
     fi
   done
+  # The operator's status first: once the result exists the run is over, and the next request may come.
+  capsule_status_write - - "$op $outcome exit $rc" "$([ "$outcome" = exited ] && echo = || echo "$op: $outcome")"
   finished=$(date +%s)
   write_result "$id" "$op" "$outcome" - "$started" "$finished" "" \
     "exit $rc" "run $run" "image capsule:$target" \
@@ -259,6 +331,7 @@ execute_capsule_live_run() { # ID OP RUN
   case $status in *'"loggedIn": true'*) ;; *) refuse "$id" "$op" not-authenticated; return ;; esac
   started=$(date +%s)
   journal "start $id $op"
+  self_pid > "$dir/.capsule-pid"
   # Where the role works. The Implementer: its own capsule, its ignored build output kept. A read-only
   # role (Planner, Challenger, Reviewer): the verification capsule, restored from its trusted snapshot,
   # with exactly the Supervisor's tree, so nothing an Implementer left running can show it other code
@@ -274,7 +347,8 @@ execute_capsule_live_run() { # ID OP RUN
     target=$cap_verify
     mode=exact
     tlimit=$(sed -n 's/^exec-limit //p' "$cap_state/capsules/records/$cap_verify")
-    if ! "$cap_rt" --state "$cap_state" restore "$cap_verify" "$cap_project" verify > "$dir/.capsule.log" 2>&1; then
+    if ! { "$cap_rt" --state "$cap_state" restore "$cap_verify" "$cap_project" verify &&
+      "$cap_rt" --state "$cap_state" start "$cap_verify" "$cap_project"; } > "$dir/.capsule.log" 2>&1; then
       finished=$(date +%s)
       write_result "$id" "$op" launch-failed - "$started" "$finished" "verification capsule restore failed" "capsule $cap_verify" || true
       journal "end $id launch-failed"
@@ -297,6 +371,7 @@ execute_capsule_live_run() { # ID OP RUN
     return
   fi
   chan=$cap_state/capsules/invocations/$inv/channel
+  capsule_status_write "$run" "$op" = =
   "$cap_rt" --state "$cap_state" serve "$inv" >> "$dir/.capsule.log" 2>&1 &
   serve_pid=$!
   mcp="{\"mcpServers\":{\"capsule\":{\"type\":\"stdio\",\"command\":\"/usr/bin/python3\",\"args\":[\"/opt/lockstep/capsule-bridge\",\"--channel\",\"/bridge\",\"--role\",\"$([ "$role" = implementer ] && echo write || echo readonly)\",\"--wait-limit\",\"$((cap_limit + 60))\",\"--input-dir\",\"/input\",\"--answer-dir\",\"/output\"]}}}"
@@ -354,7 +429,10 @@ execute_capsule_live_run() { # ID OP RUN
         : > "$marker"; docker kill "$name" >/dev/null 2>&1
       ) &
       watchdog=$!
-      docker "${args[@]}" < /dev/null 2> >(head -c $((errlim + 1)) > "$dir/stderr") | head -c $((outlim + 1)) > "$dir/stdout"
+      # A cancel that came during the setup: the CLI is never started.
+      if [ -e "$runner_work/$run/.cancelled" ]; then : > "$dir/stdout"; : > "$dir/stderr"
+      else docker "${args[@]}" < /dev/null 2> >(head -c $((errlim + 1)) > "$dir/stderr") | head -c $((outlim + 1)) > "$dir/stdout"
+      fi
       rc=${PIPESTATUS[0]}
       kill "$watchdog" 2>/dev/null
       pkill -P "$watchdog" 2>/dev/null
@@ -399,6 +477,8 @@ execute_capsule_live_run() { # ID OP RUN
   else outcome=exited
   fi
   rm -f "$marker" "$runner_work/$run/.cancelled"
+  # The operator's status first: once the result exists the run is over, and the next request may come.
+  capsule_status_write - - "$op $outcome exit $rc" "$([ "$outcome" = exited ] && echo = || echo "$op: $outcome")"
   if [ "$outcome" = provider-stopped ]; then
     write_result "$id" "$op" provider-stopped - "$started" "$finished" "" \
       "exit $rc" "run $run" "image $provider_image" "provider-stop egress-failed" \
@@ -414,7 +494,7 @@ execute_capsule_live_run() { # ID OP RUN
       "limits $wall $outlim $errlim" "egress.micro 0" "egress.tokens $tokens" \
       "capsule $target" "invocation $inv" "protected-changed $changed" || true
   fi
-  rm -f "$failed"
+  rm -f "$failed" "$dir/.capsule-pid"
   journal "end $id $outcome"
   log "$op $id: $outcome (exit $rc, $tokens tokens, capsule $target)"
 }

@@ -3,14 +3,13 @@
 # prerequisite of a capsule-backed transaction and name the exact one that fails. Read-only toward the
 # project; it starts a stopped capsule, runs a fixed probe in the guest, and nothing else.
 #
-#   scripts/capsule-preflight --helper-state DIR [--repo PATH] [--toolchain-probe FILE] [--allow-loopback PORTS]
+#   scripts/capsule-preflight --helper-state DIR [--repo PATH] [--toolchain-probe FILE] [--allow-lan PORTS]
 #
 #   --helper-state   the helper's state directory (holds capsule/config, runner/, provider/)
 #   --repo           the Supervisor's canonical repository (its Git authority is checked)
 #   --toolchain-probe  a trusted script run in the capsule; exit 0 = the project's tools are usable
-#   --allow-loopback  comma-separated host loopback ports the owner accepts while a capsule runs (D4,
-#                     escalation-host-network.md option B); any other listener on the host's loopback
-#                     fails the preflight
+#   --allow-lan      comma-separated host ports, bound beyond loopback, that the owner accepts a capsule
+#                    can reach (update 1 §4); any other such listener fails the preflight
 #
 # Prints one line per check, "PASS name" or "FAIL name: reason", and exits 0 only if all pass.
 set -u
@@ -19,18 +18,20 @@ here=$(cd "$(dirname "$0")" && pwd -P)
 root=$(dirname "$here")
 rt=$root/scripts/capsule-runtime
 
-hstate="" repo="" probe="" allow=""
+hstate="" repo="" probe="" allow="" allow_udp=""
 while [ $# -gt 0 ]; do
   case $1 in
     --helper-state) hstate=$2; shift 2 ;;
     --repo) repo=$2; shift 2 ;;
     --toolchain-probe) probe=$2; shift 2 ;;
-    --allow-loopback) allow=$2; shift 2 ;;
-    *) echo "usage: scripts/capsule-preflight --helper-state DIR [--repo PATH] [--toolchain-probe FILE] [--allow-loopback PORTS]" >&2; exit 64 ;;
+    --allow-lan) allow=$2; shift 2 ;;
+    --allow-lan-udp) allow_udp=$2; shift 2 ;;
+    *) echo "usage: scripts/capsule-preflight --helper-state DIR [--repo PATH] [--toolchain-probe FILE] [--allow-lan PORTS]" >&2; exit 64 ;;
   esac
 done
 [ -n "$hstate" ] || { echo "capsule-preflight: --helper-state is required" >&2; exit 64; }
-case $allow in "" | *[!0-9,]*) [ -z "$allow" ] || { echo "capsule-preflight: --allow-loopback takes port numbers" >&2; exit 64; } ;; esac
+case $allow in "" | *[!0-9,]*) [ -z "$allow" ] || { echo "capsule-preflight: --allow-lan takes port numbers" >&2; exit 64; } ;; esac
+case $allow_udp in "" | *[!0-9,]*) [ -z "$allow_udp" ] || { echo "capsule-preflight: --allow-lan-udp takes port numbers" >&2; exit 64; } ;; esac
 
 failures=0
 pass() { printf 'PASS %s\n' "$1"; }
@@ -58,6 +59,15 @@ case $out in
   *) fail capsule-healthy "$out" ;;
 esac
 case $out in *"project=$proj"*) pass capsule-ownership ;; esac
+case $out in
+  *"template=current"*) pass capsule-template-current ;;
+  *) fail capsule-template-current "the capsule was made from an older template (base image or settings changed); run: scripts/capsule-runtime --state $cstate reconfigure $cap $proj" ;;
+esac
+# D4 (update 1): the capsule's effective configuration keeps the gateway off the host's loopback.
+ecfg=$cstate/capsules/lima/lockstep-$cap/lima.yaml
+if [ "$(grep -c hostLoopback "$ecfg" 2>/dev/null)" = 1 ] && grep -qx '  hostLoopback: false' "$ecfg"; then pass host-loopback-isolation
+else fail host-loopback-isolation "the capsule's effective Lima configuration does not set networkOpts.hostLoopback: false"
+fi
 
 # ---- inside the guest: workspace, disk, Docker, no credentials, no host mounts
 probe_script=$(mktemp "${TMPDIR:-/tmp}/lockstep-preflight.XXXXXX")
@@ -118,15 +128,32 @@ if [ -n "$repo" ]; then
   fi
 fi
 
-# ---- D4: host loopback listeners a capsule could reach (escalation-host-network.md)
+# ---- Host services a capsule could reach (update 1 §4). The guest cannot reach the host's loopback
+# (networkOpts.hostLoopback: false, checked above), but it can reach every service bound to another of the
+# Mac's addresses (all interfaces, the LAN address) through its ordinary outbound path, as any device on
+# the LAN could. Measured: check-capsule-vm "LAN exposure" notes. Each such listener fails the preflight
+# unless the owner accepts its port with --allow-lan.
+# netstat lists every socket on the host, whatever user owns it (lsof without root sees only this
+# user's): TCP listeners and bound UDP sockets whose local address is not loopback (P5.5 review 3, H1).
+exposed() { # tcp|udp -> "PORT" per line
+  netstat -anv -p "$1" 2>/dev/null | awk -v proto="$1" '
+    $1 ~ /^(tcp|udp)/ && (proto == "udp" || $6 == "LISTEN") {
+      addr = $4; n = split(addr, part, "."); port = part[n]
+      if (addr ~ /^127\./ || addr ~ /^::1\./ || addr ~ /^fe80::1%lo0/) next
+      print port
+    }' | sort -un
+}
 unexpected=""
-while read -r addr; do
-  port=${addr##*:}
+for port in $(exposed tcp); do
   case ",$allow," in *",$port,"*) continue ;; esac
-  unexpected="$unexpected $port"
-done < <(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 && ($9 ~ /^127\.0\.0\.1:/ || $9 ~ /^\[::1\]:/ || $9 ~ /^\*:/) { print $9 }' | sort -u)
-if [ -z "$unexpected" ]; then pass host-loopback-exposure
-else fail host-loopback-exposure "listening on the host (reachable from the guest):$unexpected; stop them or accept them with --allow-loopback"
+  unexpected="$unexpected tcp/$port"
+done
+for port in $(exposed udp); do
+  case ",$allow_udp," in *",$port,"*) continue ;; esac
+  unexpected="$unexpected udp/$port"
+done
+if [ -z "$unexpected" ]; then pass host-network-exposure
+else fail host-network-exposure "host services reachable from the guest through the Mac's other addresses:$unexpected; bind them to 127.0.0.1, stop them, or accept them with --allow-lan / --allow-lan-udp"
 fi
 
 echo "capsule-preflight: $failures failure(s)"

@@ -1,0 +1,2793 @@
+1794288226 refused provision invalid-capsule-id
+1794288226 refused provision invalid-project-id
+1794288226 refused provision invalid-profile
+1794288226 refused inspect capsule-unknown
+1794288226 refused inspect capsule-unknown
+1794288226 start provision vmq1 other-project small
+1794288311 end provision vmq1 ok
+1794288314 refused run capsule-owned-by-another-project
+1794288315 refused run capsule-owned-by-another-project
+1794288315 refused run capsule-owned-by-another-project
+1794326593 refused provision invalid-capsule-id
+1794326593 refused provision invalid-project-id
+1794326593 refused provision invalid-profile
+1794326593 start provision vmq1 vmq-project small
+1794326665 end provision vmq1 ok
+1794326665 start provision vmq1 vmq-project small
+1794326665 end provision vmq1 already-provisioned
+1794326666 start inspect vmq1
+1794326666 end inspect vmq1 ok
+1794326666 refused inspect capsule-owned-by-another-project
+1794326666 start provision vmq1 other-project small
+1794326666 refused provision capsule-owned-by-another-project
+1794326669 start run vmq1 d2b867220f617ebe
+1794326669 end run vmq1 exit=0
+1794326670 start import vmq1
+1794326671 end import vmq1 ok
+1794326671 start run vmq1 c6e492835ff9e3a3
+1794326681 end run vmq1 exit=1
+1794326681 start run vmq1 36c99870156b5196
+1794326688 end run vmq1 exit=0
+1794326688 start stop vmq1
+1794326690 end stop vmq1 ok
+1794326690 start start vmq1
+1794326700 end start vmq1 ok
+1794326701 start run vmq1 69f7b0a0fa303e9f
+1794326701 end run vmq1 exit=0
+1794326701 start run vmq1 c6e492835ff9e3a3
+1794326702 end run vmq1 exit=1
+1794326702 start snapshot vmq1 work-0000beef
+1794326706 failed snapshot copy-failed
+1794326706 unavailable run vm-not-running
+1794326707 start restore vmq1 work-0000beef
+1794326707 refused restore snapshot-unknown
+1794326707 unavailable run vm-not-running
+1794326707 refused snapshot invalid-snapshot-name
+1794326707 start restore vmq1 work-00000000
+1794326707 refused restore snapshot-unknown
+1794326707 bind 2e7dfc8c096a0798dc846ce35a5ab8df vmq1 vmq-project 043dc039c3f2a554504f95807dba6660 implementer
+1794326707 serve 2e7dfc8c096a0798dc846ce35a5ab8df
+1794326714 unavailable run vm-not-running
+1794326714 unavailable run vm-not-running
+1794326716 refused serve already-serving
+1794326716 unavailable run vm-not-running
+1794326716 unavailable run vm-not-running
+1794326716 start stop vmq1
+1794326780 start destroy vmq1
+1794326781 end destroy vmq1 ok
+1794326796 refused provision invalid-capsule-id
+1794326796 refused provision invalid-project-id
+1794326796 refused provision invalid-profile
+1794326796 start provision vmq1 vmq-project small
+1794326876 end provision vmq1 ok
+1794326876 start provision vmq1 vmq-project small
+1794326877 end provision vmq1 already-provisioned
+1794326877 start inspect vmq1
+1794326877 end inspect vmq1 ok
+1794326877 refused inspect capsule-owned-by-another-project
+1794326877 start provision vmq1 other-project small
+1794326877 refused provision capsule-owned-by-another-project
+1794326880 start run vmq1 d2b867220f617ebe
+1794326881 end run vmq1 exit=0
+1794326882 start import vmq1
+1794326882 end import vmq1 ok
+1794326882 start run vmq1 c6e492835ff9e3a3
+1794326907 end run vmq1 exit=0
+1794326908 start run vmq1 36c99870156b5196
+1794326914 end run vmq1 exit=0
+1794326914 start stop vmq1
+1794326916 end stop vmq1 ok
+1794326917 start start vmq1
+1794326932 end start vmq1 ok
+1794326932 start run vmq1 69f7b0a0fa303e9f
+1794326932 end run vmq1 exit=0
+1794326933 start run vmq1 c6e492835ff9e3a3
+1794326936 end run vmq1 exit=0
+1794326936 start snapshot vmq1 work-0000beef
+1794326952 end snapshot vmq1 work-0000beef ok
+1794326952 start run vmq1 847a3ba5d1dbbeef
+1794326952 end run vmq1 exit=0
+1794326953 start restore vmq1 work-0000beef
+1794326972 end restore vmq1 work-0000beef ok
+1794326972 start run vmq1 446cc16bf8349f0f
+1794326973 end run vmq1 exit=0
+1794326973 refused snapshot invalid-snapshot-name
+1794326973 refused restore snapshot-unknown
+1794326973 bind 0b62c4109d8ad4c62f41fd20b26d64c5 vmq1 vmq-project f3a68645ae728a64196be6647ddc3587 implementer
+1794326973 serve 0b62c4109d8ad4c62f41fd20b26d64c5
+1794326973 start 0b62c4109d8ad4c62f41fd20b26d64c5 1 exec
+1794326973 end 0b62c4109d8ad4c62f41fd20b26d64c5 1 completed
+1794326974 start 0b62c4109d8ad4c62f41fd20b26d64c5 2 exec
+1794326978 end 0b62c4109d8ad4c62f41fd20b26d64c5 2 completed
+1794326979 start 0b62c4109d8ad4c62f41fd20b26d64c5 3 exec
+1794326981 end 0b62c4109d8ad4c62f41fd20b26d64c5 3 cancelled
+1794326985 start run vmq1 446cc16bf8349f0f
+1794326986 end run vmq1 exit=0
+1794326986 start run vmq1 d94309f799d75b47
+1794326986 end run vmq1 exit=0
+1794326986 start 0b62c4109d8ad4c62f41fd20b26d64c5 4 exec
+1794326988 refused serve already-serving
+1794327007 end 0b62c4109d8ad4c62f41fd20b26d64c5 4 completed
+1794327007 start run vmq1 889953d07e79c0e3
+1794327032 end run vmq1 exit=0
+1794327032 start run vmq1 b11758de728cc8fd
+1794327032 end run vmq1 exit=0
+1794327033 start stop vmq1
+1794327037 end stop vmq1 ok
+1794327074 start destroy vmq1
+1794327074 end destroy vmq1 ok
+1794327075 refused provision invalid-capsule-id
+1794327075 refused provision invalid-project-id
+1794327075 refused provision invalid-profile
+1794327075 start provision vmq1 vmq-project small
+1794327154 end provision vmq1 ok
+1794327154 start provision vmq1 vmq-project small
+1794327154 end provision vmq1 already-provisioned
+1794327154 start inspect vmq1
+1794327154 end inspect vmq1 ok
+1794327154 refused inspect capsule-owned-by-another-project
+1794327154 start provision vmq1 other-project small
+1794327154 refused provision capsule-owned-by-another-project
+1794327159 start run vmq1 d2b867220f617ebe
+1794327160 end run vmq1 exit=0
+1794327161 start import vmq1
+1794327161 end import vmq1 ok
+1794327161 start run vmq1 c6e492835ff9e3a3
+1794327186 end run vmq1 exit=0
+1794327186 start run vmq1 36c99870156b5196
+1794327193 end run vmq1 exit=0
+1794327193 start stop vmq1
+1794327195 end stop vmq1 ok
+1794327195 start start vmq1
+1794327211 end start vmq1 ok
+1794327211 start run vmq1 69f7b0a0fa303e9f
+1794327212 end run vmq1 exit=0
+1794327212 start run vmq1 c6e492835ff9e3a3
+1794327215 end run vmq1 exit=0
+1794327215 start snapshot vmq1 work-0000beef
+1794327231 end snapshot vmq1 work-0000beef ok
+1794327231 start run vmq1 847a3ba5d1dbbeef
+1794327231 end run vmq1 exit=0
+1794327232 start restore vmq1 work-0000beef
+1794327251 end restore vmq1 work-0000beef ok
+1794327251 start run vmq1 446cc16bf8349f0f
+1794327251 end run vmq1 exit=0
+1794327251 refused snapshot invalid-snapshot-name
+1794327251 refused restore snapshot-unknown
+1794327252 bind 455620176feeadfc1ff16bf6bc756b41 vmq1 vmq-project b2ee66180fc646510907ed0365568dd2 implementer
+1794327252 serve 455620176feeadfc1ff16bf6bc756b41
+1794327252 start 455620176feeadfc1ff16bf6bc756b41 1 exec
+1794327252 end 455620176feeadfc1ff16bf6bc756b41 1 completed
+1794327252 start 455620176feeadfc1ff16bf6bc756b41 2 exec
+1794327257 end 455620176feeadfc1ff16bf6bc756b41 2 completed
+1794327257 start 455620176feeadfc1ff16bf6bc756b41 3 exec
+1794327260 end 455620176feeadfc1ff16bf6bc756b41 3 cancelled
+1794327264 start run vmq1 446cc16bf8349f0f
+1794327264 end run vmq1 exit=0
+1794327264 start run vmq1 d94309f799d75b47
+1794327265 end run vmq1 exit=0
+1794327265 start 455620176feeadfc1ff16bf6bc756b41 4 exec
+1794327267 serve 455620176feeadfc1ff16bf6bc756b41
+1794327267 start run vmq1 2df3a0179e4f920e
+1794327295 end run vmq1 exit=0
+1794327296 start run vmq1 b11758de728cc8fd
+1794327296 end run vmq1 exit=0
+1794327296 start stop vmq1
+1794327298 end stop vmq1 ok
+1794329964 start start vmq1
+1794329974 end start vmq1 ok
+1794329974 start inspect vmq1
+1794329974 end inspect vmq1 ok
+1794329975 start push vmq1
+1794329975 end push vmq1 ok
+1794329975 start exec-argv vmq1
+1794329975 end exec-argv vmq1 exit=2
+1794329975 start pull vmq1 output
+1794329976 end pull vmq1 output ok
+1794329976 start pull vmq1 tree
+1794329976 end pull vmq1 tree ok
+1794329976 start push vmq1
+1794329977 end push vmq1 ok
+1794329977 start exec-argv vmq1
+1794329977 end exec-argv vmq1 exit=2
+1794329977 start pull vmq1 output
+1794329977 end pull vmq1 output ok
+1794329978 start provision vmv1 vmq-project small
+1794330033 end provision vmv1 ok
+1794330034 start start vmv1
+1794330034 start run vmv1 38f7cda2dbc49fec
+1794330034 end run vmv1 exit=0
+1794330034 start snapshot vmv1 verify
+1794330045 end snapshot vmv1 verify ok
+1794330046 start start vmq1
+1794330046 start inspect vmq1
+1794330046 end inspect vmq1 ok
+1794330047 start inspect vmv1
+1794330047 end inspect vmv1 ok
+1794330047 start push vmq1
+1794330047 end push vmq1 ok
+1794330047 start exec-argv vmq1
+1794330047 end exec-argv vmq1 exit=0
+1794330048 start pull vmq1 output
+1794330048 end pull vmq1 output ok
+1794330048 start pull vmq1 tree
+1794330048 end pull vmq1 tree ok
+1794330049 start restore vmv1 verify
+1794330064 end restore vmv1 verify ok
+1794330065 start push vmv1
+1794330065 end push vmv1 ok
+1794330065 start exec-argv vmv1
+1794330065 end exec-argv vmv1 exit=2
+1794330065 start pull vmv1 output
+1794330065 end pull vmv1 output ok
+1794330066 start restore vmv1 verify
+1794330078 end restore vmv1 verify ok
+1794330078 start push vmv1
+1794330079 end push vmv1 ok
+1794330079 start exec-argv vmv1
+1794330079 end exec-argv vmv1 exit=0
+1794330079 start pull vmv1 output
+1794330079 end pull vmv1 output ok
+1794330079 start restore vmv1 verify
+1794330093 end restore vmv1 verify ok
+1794330093 start push vmv1
+1794330093 end push vmv1 ok
+1794330093 start exec-argv vmv1
+1794330094 end exec-argv vmv1 exit=2
+1794330094 start pull vmv1 output
+1794330094 end pull vmv1 output ok
+1794330094 start restore vmv1 verify
+1794330107 end restore vmv1 verify ok
+1794330107 start push vmv1
+1794330108 end push vmv1 ok
+1794330108 start exec-argv vmv1
+1794330108 end exec-argv vmv1 exit=0
+1794330108 start pull vmv1 output
+1794330108 end pull vmv1 output ok
+1794330108 start run vmq1 3c8ec48ff97cf0a6
+1794330109 end run vmq1 exit=0
+1794330112 start start vmq1
+1794330112 start inspect vmq1
+1794330112 end inspect vmq1 ok
+1794330112 start inspect vmv1
+1794330113 end inspect vmv1 ok
+1794330118 start push vmq1
+1794330119 end push vmq1 ok
+1794330119 bind 96b7eb8663a29a15d7a37784d9d57cbf vmq1 vmq-project 3bd6c1174a20d32b2410f3edebbf2dff implementer
+1794330119 serve 96b7eb8663a29a15d7a37784d9d57cbf
+1794330120 start 96b7eb8663a29a15d7a37784d9d57cbf 1 read
+1794330120 end 96b7eb8663a29a15d7a37784d9d57cbf 1 completed
+1794330120 start 96b7eb8663a29a15d7a37784d9d57cbf 2 edit
+1794330121 end 96b7eb8663a29a15d7a37784d9d57cbf 2 completed
+1794330121 start 96b7eb8663a29a15d7a37784d9d57cbf 3 exec
+1794330121 end 96b7eb8663a29a15d7a37784d9d57cbf 3 completed
+1794330121 start 96b7eb8663a29a15d7a37784d9d57cbf 4 answer
+1794330122 end 96b7eb8663a29a15d7a37784d9d57cbf 4 completed
+1794330123 start pull vmq1 output
+1794330123 end pull vmq1 output ok
+1794330123 start pull vmq1 tree
+1794330123 end pull vmq1 tree ok
+1794330127 start push vmq1
+1794330127 end push vmq1 ok
+1794330127 bind 066a5ff80d3b01b66e3077cb154137a3 vmq1 vmq-project 4bd831f63ec28ba1cc0d7d38f69351b4 reviewer
+1794330127 serve 066a5ff80d3b01b66e3077cb154137a3
+1794330128 start 066a5ff80d3b01b66e3077cb154137a3 1 read
+1794330129 end 066a5ff80d3b01b66e3077cb154137a3 1 completed
+1794330129 start 066a5ff80d3b01b66e3077cb154137a3 2 answer
+1794330129 end 066a5ff80d3b01b66e3077cb154137a3 2 completed
+1794330130 start pull vmq1 output
+1794330130 end pull vmq1 output ok
+1794330131 start start vmq1
+1794330132 start inspect vmq1
+1794330132 end inspect vmq1 ok
+1794330132 start run vmq1 d636444824493219
+1794330134 end run vmq1 exit=0
+1794330134 start run vmq1 934aee17ae9b22ee
+1794330134 end run vmq1 exit=0
+1794330134 start inspect vmv1
+1794330134 end inspect vmv1 ok
+1794330134 start start vmq1
+1794330135 start inspect vmq1
+1794330135 end inspect vmq1 ok
+1794330135 start run vmq1 d636444824493219
+1794330135 end run vmq1 exit=0
+1794330135 start run vmq1 2ed27c1421e6928d
+1794330135 end run vmq1 exit=1
+1794330135 start inspect vmv1
+1794330136 end inspect vmv1 ok
+1794330136 start stop vmv1
+1794330143 end stop vmv1 ok
+1794330181 start start vmq1
+1794330181 start inspect vmq1
+1794330181 end inspect vmq1 ok
+1794330181 start push vmq1
+1794330182 end push vmq1 ok
+1794330182 start exec-argv vmq1
+1794330182 end exec-argv vmq1 exit=0
+1794330182 start pull vmq1 output
+1794330182 end pull vmq1 output ok
+1794330182 start pull vmq1 tree
+1794330183 end pull vmq1 tree ok
+1794330183 start push vmq1
+1794330183 end push vmq1 ok
+1794330183 start exec-argv vmq1
+1794330184 end exec-argv vmq1 exit=2
+1794330184 start pull vmq1 output
+1794330184 end pull vmq1 output ok
+1794330185 start start vmv1
+1794330195 end start vmv1 ok
+1794330195 start start vmq1
+1794330195 start inspect vmq1
+1794330195 end inspect vmq1 ok
+1794330196 start inspect vmv1
+1794330196 end inspect vmv1 ok
+1794330196 start push vmq1
+1794330196 end push vmq1 ok
+1794330196 start exec-argv vmq1
+1794330197 end exec-argv vmq1 exit=0
+1794330197 start pull vmq1 output
+1794330197 end pull vmq1 output ok
+1794330197 start pull vmq1 tree
+1794330197 end pull vmq1 tree ok
+1794330198 start restore vmv1 verify
+1794330211 end restore vmv1 verify ok
+1794330212 start push vmv1
+1794330212 end push vmv1 ok
+1794330212 start exec-argv vmv1
+1794330212 end exec-argv vmv1 exit=2
+1794330212 start pull vmv1 output
+1794330213 end pull vmv1 output ok
+1794330213 start restore vmv1 verify
+1794330226 end restore vmv1 verify ok
+1794330226 start push vmv1
+1794330226 end push vmv1 ok
+1794330227 start exec-argv vmv1
+1794330227 end exec-argv vmv1 exit=0
+1794330227 start pull vmv1 output
+1794330227 end pull vmv1 output ok
+1794330227 start restore vmv1 verify
+1794330240 end restore vmv1 verify ok
+1794330240 start push vmv1
+1794330241 end push vmv1 ok
+1794330241 start exec-argv vmv1
+1794330241 end exec-argv vmv1 exit=2
+1794330241 start pull vmv1 output
+1794330241 end pull vmv1 output ok
+1794330242 start restore vmv1 verify
+1794330257 end restore vmv1 verify ok
+1794330258 start push vmv1
+1794330258 end push vmv1 ok
+1794330258 start exec-argv vmv1
+1794330258 end exec-argv vmv1 exit=0
+1794330258 start pull vmv1 output
+1794330258 end pull vmv1 output ok
+1794330259 start run vmq1 3c8ec48ff97cf0a6
+1794330259 end run vmq1 exit=0
+1794330262 start start vmq1
+1794330263 start inspect vmq1
+1794330263 end inspect vmq1 ok
+1794330263 start inspect vmv1
+1794330263 end inspect vmv1 ok
+1794330269 start push vmq1
+1794330269 end push vmq1 ok
+1794330269 bind 7a54d694656a538a0f8a285fb463e88a vmq1 vmq-project f410eefa4ffa7f34903f4550aa062149 implementer
+1794330269 serve 7a54d694656a538a0f8a285fb463e88a
+1794330270 start 7a54d694656a538a0f8a285fb463e88a 1 read
+1794330271 end 7a54d694656a538a0f8a285fb463e88a 1 completed
+1794330271 start 7a54d694656a538a0f8a285fb463e88a 2 edit
+1794330271 end 7a54d694656a538a0f8a285fb463e88a 2 completed
+1794330271 start 7a54d694656a538a0f8a285fb463e88a 3 exec
+1794330272 end 7a54d694656a538a0f8a285fb463e88a 3 completed
+1794330272 start 7a54d694656a538a0f8a285fb463e88a 4 answer
+1794330272 end 7a54d694656a538a0f8a285fb463e88a 4 completed
+1794330273 start pull vmq1 output
+1794330273 end pull vmq1 output ok
+1794330273 start pull vmq1 tree
+1794330274 end pull vmq1 tree ok
+1794330277 start push vmq1
+1794330278 end push vmq1 ok
+1794330278 bind 754c76e8a8c023bc5de57e0c309b6e21 vmq1 vmq-project 0f5ef3e1cf44026512f1bfaf9d0926bd reviewer
+1794330278 serve 754c76e8a8c023bc5de57e0c309b6e21
+1794330279 start 754c76e8a8c023bc5de57e0c309b6e21 1 read
+1794330279 end 754c76e8a8c023bc5de57e0c309b6e21 1 completed
+1794330280 start 754c76e8a8c023bc5de57e0c309b6e21 2 answer
+1794330280 end 754c76e8a8c023bc5de57e0c309b6e21 2 completed
+1794330281 start pull vmq1 output
+1794330281 end pull vmq1 output ok
+1794330282 start start vmq1
+1794330282 start inspect vmq1
+1794330282 end inspect vmq1 ok
+1794330282 start run vmq1 d636444824493219
+1794330283 end run vmq1 exit=0
+1794330283 start run vmq1 934aee17ae9b22ee
+1794330283 end run vmq1 exit=0
+1794330283 start inspect vmv1
+1794330283 end inspect vmv1 ok
+1794330283 start start vmq1
+1794330284 start inspect vmq1
+1794330284 end inspect vmq1 ok
+1794330284 start run vmq1 d636444824493219
+1794330284 end run vmq1 exit=0
+1794330284 start run vmq1 2ed27c1421e6928d
+1794330284 end run vmq1 exit=1
+1794330285 start inspect vmv1
+1794330285 end inspect vmv1 ok
+1794330285 start stop vmv1
+1794330287 end stop vmv1 ok
+1794330307 start destroy vmq1
+1794330307 end destroy vmq1 ok
+1794330307 refused provision invalid-capsule-id
+1794330307 refused provision invalid-project-id
+1794330308 refused provision invalid-profile
+1794330308 start provision vmq1 vmq-project small
+1794330362 end provision vmq1 ok
+1794330362 start provision vmq1 vmq-project small
+1794330363 end provision vmq1 already-provisioned
+1794330363 start inspect vmq1
+1794330363 end inspect vmq1 ok
+1794330363 refused inspect capsule-owned-by-another-project
+1794330363 start provision vmq1 other-project small
+1794330363 refused provision capsule-owned-by-another-project
+1794330366 start run vmq1 d2b867220f617ebe
+1794330366 end run vmq1 exit=0
+1794330366 start import vmq1
+1794330367 end import vmq1 ok
+1794330367 start run vmq1 001333bf3aae8a4b
+1794330387 end run vmq1 exit=0
+1794330388 start run vmq1 04babc0c34f0faac
+1794330392 end run vmq1 exit=0
+1794330393 start stop vmq1
+1794330394 end stop vmq1 ok
+1794330394 start start vmq1
+1794330403 end start vmq1 ok
+1794330403 start run vmq1 60dfd50da04d546b
+1794330403 end run vmq1 exit=0
+1794330404 start run vmq1 001333bf3aae8a4b
+1794330406 end run vmq1 exit=0
+1794330406 start snapshot vmq1 work-0000beef
+1794330418 end snapshot vmq1 work-0000beef ok
+1794330419 start run vmq1 ef68266f54756a26
+1794330419 end run vmq1 exit=0
+1794330419 start restore vmq1 work-0000beef
+1794330431 end restore vmq1 work-0000beef ok
+1794330432 start run vmq1 b39361e6405b4be5
+1794330432 end run vmq1 exit=0
+1794330432 refused snapshot invalid-snapshot-name
+1794330432 refused restore snapshot-unknown
+1794330432 bind c9cb6d4231e36d14e61bd2c52b91a4b6 vmq1 vmq-project cf5962fdc7859bf36e33670b035ed64f implementer
+1794330432 serve c9cb6d4231e36d14e61bd2c52b91a4b6
+1794330432 start c9cb6d4231e36d14e61bd2c52b91a4b6 1 exec
+1794330432 end c9cb6d4231e36d14e61bd2c52b91a4b6 1 completed
+1794330432 start c9cb6d4231e36d14e61bd2c52b91a4b6 2 exec
+1794330437 end c9cb6d4231e36d14e61bd2c52b91a4b6 2 completed
+1794330437 start c9cb6d4231e36d14e61bd2c52b91a4b6 3 exec
+1794330439 end c9cb6d4231e36d14e61bd2c52b91a4b6 3 cancelled
+1794330444 start run vmq1 b39361e6405b4be5
+1794330444 end run vmq1 exit=0
+1794330444 start run vmq1 d75c1fc908cf10d4
+1794330444 end run vmq1 exit=0
+1794330444 start c9cb6d4231e36d14e61bd2c52b91a4b6 4 exec
+1794330446 serve c9cb6d4231e36d14e61bd2c52b91a4b6
+1794330446 start run vmq1 2df3a0179e4f920e
+1794330466 end run vmq1 exit=0
+1794330466 start run vmq1 b11758de728cc8fd
+1794330467 end run vmq1 exit=0
+1794330467 start stop vmq1
+1794330468 end stop vmq1 ok
+1794330484 start destroy vmq1
+1794330484 end destroy vmq1 ok
+1794330484 refused provision invalid-capsule-id
+1794330484 refused provision invalid-project-id
+1794330484 refused provision invalid-profile
+1794330484 start provision vmq1 vmq-project small
+1794330537 end provision vmq1 ok
+1794330537 start provision vmq1 vmq-project small
+1794330537 end provision vmq1 already-provisioned
+1794330537 start inspect vmq1
+1794330537 end inspect vmq1 ok
+1794330537 refused inspect capsule-owned-by-another-project
+1794330537 start provision vmq1 other-project small
+1794330537 refused provision capsule-owned-by-another-project
+1794330540 start run vmq1 d2b867220f617ebe
+1794330540 end run vmq1 exit=0
+1794330541 start import vmq1
+1794330541 end import vmq1 ok
+1794330541 start run vmq1 001333bf3aae8a4b
+1794330562 end run vmq1 exit=0
+1794330562 start run vmq1 04babc0c34f0faac
+1794330566 end run vmq1 exit=0
+1794330566 start stop vmq1
+1794330568 end stop vmq1 ok
+1794330568 start start vmq1
+1794330580 end start vmq1 ok
+1794330580 start run vmq1 60dfd50da04d546b
+1794330580 end run vmq1 exit=0
+1794330580 start run vmq1 001333bf3aae8a4b
+1794330582 end run vmq1 exit=0
+1794330582 start snapshot vmq1 work-0000beef
+1794330593 end snapshot vmq1 work-0000beef ok
+1794330593 start run vmq1 ef68266f54756a26
+1794330593 end run vmq1 exit=0
+1794330594 start restore vmq1 work-0000beef
+1794330609 end restore vmq1 work-0000beef ok
+1794330609 start run vmq1 b39361e6405b4be5
+1794330609 end run vmq1 exit=0
+1794330609 refused snapshot invalid-snapshot-name
+1794330609 refused restore snapshot-unknown
+1794330610 bind 6a8882a1b082d916d41bc21da0e16b5e vmq1 vmq-project 634b40262027cec6e0330786435a72de implementer
+1794330610 serve 6a8882a1b082d916d41bc21da0e16b5e
+1794330610 start 6a8882a1b082d916d41bc21da0e16b5e 1 exec
+1794330610 end 6a8882a1b082d916d41bc21da0e16b5e 1 completed
+1794330610 start 6a8882a1b082d916d41bc21da0e16b5e 2 exec
+1794330614 end 6a8882a1b082d916d41bc21da0e16b5e 2 completed
+1794330615 start 6a8882a1b082d916d41bc21da0e16b5e 3 exec
+1794330617 end 6a8882a1b082d916d41bc21da0e16b5e 3 cancelled
+1794330621 start run vmq1 b39361e6405b4be5
+1794330621 end run vmq1 exit=0
+1794330622 start run vmq1 d75c1fc908cf10d4
+1794330622 end run vmq1 exit=0
+1794330622 start 6a8882a1b082d916d41bc21da0e16b5e 4 exec
+1794330624 serve 6a8882a1b082d916d41bc21da0e16b5e
+1794330624 start run vmq1 2df3a0179e4f920e
+1794330641 end run vmq1 exit=0
+1794330641 start run vmq1 b11758de728cc8fd
+1794330641 end run vmq1 exit=0
+1794330641 start stop vmq1
+1794330643 end stop vmq1 ok
+1794330876 start start vmq1
+1794330887 end start vmq1 ok
+1794330887 start inspect vmq1
+1794330887 end inspect vmq1 ok
+1794330887 start push vmq1 keep-ignored
+1794330888 end push vmq1 ok
+1794330888 start exec-argv vmq1
+1794330888 end exec-argv vmq1 exit=0 ended=exited
+1794330889 start pull vmq1 output
+1794330889 end pull vmq1 output ok
+1794330889 start pull vmq1 tree
+1794330889 end pull vmq1 tree ok
+1794330889 start inspect vmq1
+1794330889 end inspect vmq1 ok
+1794330890 start push vmq1 keep-ignored
+1794330890 end push vmq1 ok
+1794330890 start exec-argv vmq1
+1794330891 end exec-argv vmq1 exit=2 ended=exited
+1794330891 start pull vmq1 output
+1794330891 end pull vmq1 output ok
+1794330891 start inspect vmq1
+1794330891 end inspect vmq1 ok
+1794330892 start start vmv1
+1794330905 end start vmv1 ok
+1794330906 start start vmq1
+1794330906 start inspect vmq1
+1794330906 end inspect vmq1 ok
+1794330907 start inspect vmv1
+1794330907 end inspect vmv1 ok
+1794330907 start push vmq1 keep-ignored
+1794330907 end push vmq1 ok
+1794330908 start exec-argv vmq1
+1794330908 end exec-argv vmq1 exit=0 ended=exited
+1794330908 start pull vmq1 output
+1794330908 end pull vmq1 output ok
+1794330908 start pull vmq1 tree
+1794330909 end pull vmq1 tree ok
+1794330909 start inspect vmq1
+1794330909 end inspect vmq1 ok
+1794330909 start restore vmv1 verify
+1794330921 end restore vmv1 verify ok
+1794330921 start push vmv1 exact
+1794330922 end push vmv1 ok
+1794330922 start exec-argv vmv1
+1794330922 end exec-argv vmv1 exit=2 ended=exited
+1794330922 start pull vmv1 output
+1794330923 end pull vmv1 output ok
+1794330923 start inspect vmv1
+1794330923 end inspect vmv1 ok
+1794330923 start restore vmv1 verify
+1794330937 end restore vmv1 verify ok
+1794330937 start push vmv1 exact
+1794330938 end push vmv1 ok
+1794330938 start exec-argv vmv1
+1794330938 end exec-argv vmv1 exit=0 ended=exited
+1794330938 start pull vmv1 output
+1794330939 end pull vmv1 output ok
+1794330939 start inspect vmv1
+1794330939 end inspect vmv1 ok
+1794330939 start restore vmv1 verify
+1794330954 end restore vmv1 verify ok
+1794330954 start push vmv1 exact
+1794330954 end push vmv1 ok
+1794330954 start exec-argv vmv1
+1794330955 end exec-argv vmv1 exit=2 ended=exited
+1794330955 start pull vmv1 output
+1794330955 end pull vmv1 output ok
+1794330955 start inspect vmv1
+1794330955 end inspect vmv1 ok
+1794330956 start restore vmv1 verify
+1794330973 end restore vmv1 verify ok
+1794330973 start push vmv1 exact
+1794330973 end push vmv1 ok
+1794330973 start exec-argv vmv1
+1794330974 end exec-argv vmv1 exit=0 ended=exited
+1794330974 start pull vmv1 output
+1794330974 end pull vmv1 output ok
+1794330974 start inspect vmv1
+1794330974 end inspect vmv1 ok
+1794330975 start run vmq1 3c8ec48ff97cf0a6
+1794330975 end run vmq1 exit=0
+1794330979 start start vmq1
+1794330979 start inspect vmq1
+1794330979 end inspect vmq1 ok
+1794330979 start inspect vmv1
+1794330979 end inspect vmv1 ok
+1794330985 start push vmq1 keep-ignored
+1794330986 end push vmq1 ok
+1794330986 bind ce59102d6648d586c1b46480bdac1ab2 vmq1 vmq-project 1e25ae0c9108de55f32b44f05318ecad implementer
+1794330986 serve ce59102d6648d586c1b46480bdac1ab2
+1794330987 start ce59102d6648d586c1b46480bdac1ab2 1 edit
+1794330987 end ce59102d6648d586c1b46480bdac1ab2 1 completed
+1794330988 start ce59102d6648d586c1b46480bdac1ab2 2 exec
+1794330988 end ce59102d6648d586c1b46480bdac1ab2 2 completed
+1794330989 start pull vmq1 tree
+1794330990 end pull vmq1 tree ok
+1794330994 start restore vmv1 verify
+1794331005 end restore vmv1 verify ok
+1794331006 start push vmv1 exact
+1794331006 end push vmv1 ok
+1794331006 bind 8e40d5d0b08ece036e4313a6e31f912c vmv1 vmq-project 37e000d2d30b89f868a569a50e82305a reviewer
+1794331006 serve 8e40d5d0b08ece036e4313a6e31f912c
+1794331007 start 8e40d5d0b08ece036e4313a6e31f912c 1 read
+1794331008 end 8e40d5d0b08ece036e4313a6e31f912c 1 completed
+1794331010 start push vmq1 keep-ignored
+1794331011 end push vmq1 ok
+1794331011 start exec-argv vmq1
+1794331011 end exec-argv vmq1 exit=0 ended=exited
+1794331011 start pull vmq1 output
+1794331012 end pull vmq1 output ok
+1794331012 start pull vmq1 tree
+1794331012 end pull vmq1 tree ok
+1794331012 start inspect vmq1
+1794331012 end inspect vmq1 ok
+1794331015 start restore vmv1 verify
+1794331027 end restore vmv1 verify ok
+1794331027 start push vmv1 exact
+1794331028 end push vmv1 ok
+1794331028 bind b7cac9d0c8b0329cfee150807e31fa14 vmv1 vmq-project 27508089a2c66c2497665c1576f59582 reviewer
+1794331028 serve b7cac9d0c8b0329cfee150807e31fa14
+1794331032 start run vmq1 32d1e9c74266d96a
+1794331032 end run vmq1 exit=0
+1794331032 start restore vmv1 verify
+1794331045 end restore vmv1 verify ok
+1794331045 start push vmv1 exact
+1794331045 end push vmv1 ok
+1794331046 start exec-argv vmv1
+1794331046 end exec-argv vmv1 exit=0 ended=exited
+1794331046 start pull vmv1 output
+1794331046 end pull vmv1 output ok
+1794331046 start inspect vmv1
+1794331047 end inspect vmv1 ok
+1794331047 start push vmq1 keep-ignored
+1794331047 end push vmq1 ok
+1794331047 start exec-argv vmq1
+1794331072 end exec-argv vmq1 exit=143 ended=cancelled
+1794331072 start inspect vmq1
+1794331072 end inspect vmq1 ok
+1794331073 start start vmq1
+1794331082 end start vmq1 ok
+1794331082 start push vmq1 keep-ignored
+1794331083 end push vmq1 ok
+1794331083 start exec-argv vmq1
+1794331083 end exec-argv vmq1 exit=0 ended=exited
+1794331083 start pull vmq1 output
+1794331083 end pull vmq1 output ok
+1794331083 start inspect vmq1
+1794331083 end inspect vmq1 ok
+1794331084 start push vmq1 keep-ignored
+1794331084 end push vmq1 ok
+1794331084 start exec-argv vmq1
+1794331085 end exec-argv vmq1 exit=0 ended=exited
+1794331085 start pull vmq1 output
+1794331085 end pull vmq1 output ok
+1794331085 start pull vmq1 tree
+1794331085 refused pull entry-not-allowed
+1794331085 start inspect vmq1
+1794331085 end inspect vmq1 ok
+1794331086 start run vmq1 77375c80d3af164d
+1794331086 end run vmq1 exit=0
+1794331086 start push vmq1 keep-ignored
+1794331086 end push vmq1 ok
+1794331086 start exec-argv vmq1
+1794331087 end exec-argv vmq1 exit=0 ended=exited
+1794331087 start pull vmq1 output
+1794331087 end pull vmq1 output ok
+1794331087 start pull vmq1 tree
+1794331088 end pull vmq1 tree ok
+1794331088 start inspect vmq1
+1794331088 end inspect vmq1 ok
+1794331090 refused start capsule-unknown
+1794331090 refused inspect capsule-unknown
+1794331093 start start vmq1
+1794331094 start inspect vmq1
+1794331094 end inspect vmq1 ok
+1794331094 start inspect vmv1
+1794331094 end inspect vmv1 ok
+1794331095 start start vmq1
+1794331095 start inspect vmq1
+1794331095 end inspect vmq1 ok
+1794331095 start run vmq1 d636444824493219
+1794331097 end run vmq1 exit=0
+1794331097 start run vmq1 934aee17ae9b22ee
+1794331097 end run vmq1 exit=0
+1794331097 start inspect vmv1
+1794331097 end inspect vmv1 ok
+1794331098 start start vmq1
+1794331098 start inspect vmq1
+1794331098 end inspect vmq1 ok
+1794331098 start run vmq1 d636444824493219
+1794331098 end run vmq1 exit=0
+1794331099 start run vmq1 2ed27c1421e6928d
+1794331099 end run vmq1 exit=1
+1794331099 start inspect vmv1
+1794331099 end inspect vmv1 ok
+1794331100 start stop vmv1
+1794331101 end stop vmv1 ok
+1794333437 start destroy vmq1
+1794333437 end destroy vmq1 ok
+1794333438 refused provision invalid-capsule-id
+1794333438 refused provision invalid-project-id
+1794333438 refused provision invalid-profile
+1794333438 start provision vmq1 vmq-project small
+1794333489 end provision vmq1 ok
+1794333489 start provision vmq1 vmq-project small
+1794333489 end provision vmq1 already-provisioned
+1794333489 start inspect vmq1
+1794333489 end inspect vmq1 ok
+1794333489 refused inspect capsule-owned-by-another-project
+1794333489 start provision vmq1 other-project small
+1794333489 refused provision capsule-owned-by-another-project
+1794333492 start run vmq1 d2b867220f617ebe
+1794333492 end run vmq1 exit=0
+1794333492 start import vmq1
+1794333493 end import vmq1 ok
+1794333493 start run vmq1 001333bf3aae8a4b
+1794333512 end run vmq1 exit=0
+1794333512 start run vmq1 04babc0c34f0faac
+1794333516 end run vmq1 exit=0
+1794333516 start stop vmq1
+1794333518 end stop vmq1 ok
+1794333518 start start vmq1
+1794333526 end start vmq1 ok
+1794333527 start run vmq1 60dfd50da04d546b
+1794333527 end run vmq1 exit=0
+1794333527 start run vmq1 001333bf3aae8a4b
+1794333529 end run vmq1 exit=0
+1794333529 start snapshot vmq1 work-0000beef
+1794333543 end snapshot vmq1 work-0000beef ok
+1794333543 start run vmq1 ef68266f54756a26
+1794333543 end run vmq1 exit=0
+1794333543 start restore vmq1 work-0000beef
+1794333556 end restore vmq1 work-0000beef ok
+1794333556 start run vmq1 b39361e6405b4be5
+1794333556 end run vmq1 exit=0
+1794333556 refused snapshot invalid-snapshot-name
+1794333556 refused restore snapshot-unknown
+1794333556 bind 88133fe45dc02e25d7c3efd51455c20b vmq1 vmq-project 7a61e91157675979630b1d8218d76187 implementer
+1794333556 serve 88133fe45dc02e25d7c3efd51455c20b
+1794333556 start 88133fe45dc02e25d7c3efd51455c20b 1 exec
+1794333556 end 88133fe45dc02e25d7c3efd51455c20b 1 completed
+1794333557 start 88133fe45dc02e25d7c3efd51455c20b 2 exec
+1794333561 end 88133fe45dc02e25d7c3efd51455c20b 2 completed
+1794333561 start 88133fe45dc02e25d7c3efd51455c20b 3 exec
+1794333564 end 88133fe45dc02e25d7c3efd51455c20b 3 cancelled
+1794333568 start run vmq1 b39361e6405b4be5
+1794333568 end run vmq1 exit=0
+1794333568 start run vmq1 d75c1fc908cf10d4
+1794333568 end run vmq1 exit=0
+1794333568 start 88133fe45dc02e25d7c3efd51455c20b 4 exec
+1794333570 serve 88133fe45dc02e25d7c3efd51455c20b
+1794333570 start run vmq1 2df3a0179e4f920e
+1794333588 end run vmq1 exit=0
+1794333588 start run vmq1 b11758de728cc8fd
+1794333588 end run vmq1 exit=0
+1794333588 start stop vmq1
+1794333590 end stop vmq1 ok
+1794335509 start destroy vmq1
+1794335510 end destroy vmq1 ok
+1794335510 refused provision invalid-capsule-id
+1794335510 refused provision invalid-project-id
+1794335510 refused provision invalid-profile
+1794335510 start provision vmq1 vmq-project small
+1794335581 end provision vmq1 ok
+1794335581 start provision vmq1 vmq-project small
+1794335581 end provision vmq1 already-provisioned
+1794335581 start inspect vmq1
+1794335582 end inspect vmq1 ok
+1794335582 refused inspect capsule-owned-by-another-project
+1794335582 start provision vmq1 other-project small
+1794335582 refused provision capsule-owned-by-another-project
+1794335586 start run vmq1 261e6584318e7153
+1794335586 end run vmq1 exit=0
+1794335588 start import vmq1
+1794335589 end import vmq1 ok
+1794335589 start run vmq1 001333bf3aae8a4b
+1794335611 end run vmq1 exit=0
+1794335611 start run vmq1 04babc0c34f0faac
+1794335617 end run vmq1 exit=0
+1794335618 start stop vmq1
+1794335619 end stop vmq1 ok
+1794335620 start start vmq1
+1794335632 end start vmq1 ok
+1794335632 start run vmq1 60dfd50da04d546b
+1794335632 end run vmq1 exit=0
+1794335633 start run vmq1 001333bf3aae8a4b
+1794335636 end run vmq1 exit=0
+1794335636 start snapshot vmq1 work-0000beef
+1794335653 end snapshot vmq1 work-0000beef ok
+1794335654 start run vmq1 ef68266f54756a26
+1794335654 end run vmq1 exit=0
+1794335654 start restore vmq1 work-0000beef
+1794335673 end restore vmq1 work-0000beef ok
+1794335673 start run vmq1 b39361e6405b4be5
+1794335673 end run vmq1 exit=0
+1794335673 refused snapshot invalid-snapshot-name
+1794335673 refused restore snapshot-unknown
+1794335674 bind 2af18f48e6dc3852ec0d912e68faf9b8 vmq1 vmq-project ae5c11c812a89198310b6b1afb79d4ce implementer
+1794335674 serve 2af18f48e6dc3852ec0d912e68faf9b8
+1794335674 start 2af18f48e6dc3852ec0d912e68faf9b8 1 exec
+1794335674 end 2af18f48e6dc3852ec0d912e68faf9b8 1 completed
+1794335675 start 2af18f48e6dc3852ec0d912e68faf9b8 2 exec
+1794335679 end 2af18f48e6dc3852ec0d912e68faf9b8 2 completed
+1794335679 start 2af18f48e6dc3852ec0d912e68faf9b8 3 exec
+1794335682 end 2af18f48e6dc3852ec0d912e68faf9b8 3 cancelled
+1794335686 start run vmq1 b39361e6405b4be5
+1794335686 end run vmq1 exit=0
+1794335686 start run vmq1 d75c1fc908cf10d4
+1794335687 end run vmq1 exit=0
+1794335687 start 2af18f48e6dc3852ec0d912e68faf9b8 4 exec
+1794335689 serve 2af18f48e6dc3852ec0d912e68faf9b8
+1794335689 start run vmq1 2df3a0179e4f920e
+1794335718 end run vmq1 exit=0
+1794335718 start run vmq1 b11758de728cc8fd
+1794335719 end run vmq1 exit=0
+1794335719 start run vmq1 032d8cb23d47cd28
+1794335719 end run vmq1 exit=0
+1794335720 start stop vmq1
+1794335722 end stop vmq1 ok
+1794335723 start start vmq1
+1794335723 failed start audit-config-changed
+1794335723 start start vmq1
+1794335723 failed start audit-host-loopback-not-disabled
+1794335723 start inspect vmq1
+1794335723 end inspect vmq1 ok
+1794335724 start start vmq1
+1794335724 failed start audit-host-loopback-not-disabled
+1794335724 start inspect vmq1
+1794335724 end inspect vmq1 ok
+1794335725 unavailable run vm-not-running
+1794335725 start reconfigure vmq1
+1794335726 end reconfigure vmq1 ok
+1794335726 start start vmq1
+1794335743 end start vmq1 ok
+1794335743 start run vmq1 b69d0a51751e9a34
+1794335743 end run vmq1 exit=0
+1794335743 start start vmq1
+1794335744 start inspect vmq1
+1794335744 end inspect vmq1 ok
+1794335744 start run vmq1 d636444824493219
+1794335746 end run vmq1 exit=0
+1794335747 start stop vmq1
+1794335749 end stop vmq1 ok
+1794335866 start inspect vmv1
+1794335866 end inspect vmv1 ok
+1794335866 start reconfigure vmv1
+1794335866 end reconfigure vmv1 ok
+1794335869 start start vmq1
+1794335882 end start vmq1 ok
+1794335882 start inspect vmq1
+1794335882 end inspect vmq1 ok
+1794335883 start push vmq1 keep-ignored
+1794335883 end push vmq1 ok
+1794335883 start exec-argv vmq1
+1794335884 end exec-argv vmq1 exit=0 ended=exited
+1794335884 start pull vmq1 output
+1794335885 end pull vmq1 output ok
+1794335885 start pull vmq1 tree
+1794335885 end pull vmq1 tree ok
+1794335886 start inspect vmq1
+1794335886 end inspect vmq1 ok
+1794335887 start push vmq1 keep-ignored
+1794335887 end push vmq1 ok
+1794335887 start exec-argv vmq1
+1794335888 end exec-argv vmq1 exit=2 ended=exited
+1794335888 start pull vmq1 output
+1794335888 end pull vmq1 output ok
+1794335888 start inspect vmq1
+1794335888 end inspect vmq1 ok
+1794335890 start start vmv1
+1794335906 end start vmv1 ok
+1794335907 start start vmq1
+1794335908 start inspect vmq1
+1794335908 end inspect vmq1 ok
+1794335908 start inspect vmv1
+1794335908 end inspect vmv1 ok
+1794335909 start push vmq1 keep-ignored
+1794335909 end push vmq1 ok
+1794335910 start exec-argv vmq1
+1794335910 end exec-argv vmq1 exit=0 ended=exited
+1794335910 start pull vmq1 output
+1794335910 end pull vmq1 output ok
+1794335911 start pull vmq1 tree
+1794335911 end pull vmq1 tree ok
+1794335911 start inspect vmq1
+1794335911 end inspect vmq1 ok
+1794335912 start restore vmv1 verify
+1794335927 end restore vmv1 verify ok
+1794335927 start push vmv1 exact
+1794335928 end push vmv1 ok
+1794335928 start exec-argv vmv1
+1794335929 end exec-argv vmv1 exit=2 ended=exited
+1794335929 start pull vmv1 output
+1794335929 end pull vmv1 output ok
+1794335929 start inspect vmv1
+1794335929 end inspect vmv1 ok
+1794335930 start restore vmv1 verify
+1794335947 end restore vmv1 verify ok
+1794335947 start push vmv1 exact
+1794335947 end push vmv1 ok
+1794335948 start exec-argv vmv1
+1794335948 end exec-argv vmv1 exit=0 ended=exited
+1794335948 start pull vmv1 output
+1794335949 end pull vmv1 output ok
+1794335949 start inspect vmv1
+1794335949 end inspect vmv1 ok
+1794335950 start restore vmv1 verify
+1794335967 end restore vmv1 verify ok
+1794335968 start push vmv1 exact
+1794335968 end push vmv1 ok
+1794335968 start exec-argv vmv1
+1794335969 end exec-argv vmv1 exit=2 ended=exited
+1794335969 start pull vmv1 output
+1794335969 end pull vmv1 output ok
+1794335970 start inspect vmv1
+1794335970 end inspect vmv1 ok
+1794335971 start restore vmv1 verify
+1794335985 end restore vmv1 verify ok
+1794335985 start push vmv1 exact
+1794335985 end push vmv1 ok
+1794335985 start exec-argv vmv1
+1794335986 end exec-argv vmv1 exit=0 ended=exited
+1794335986 start pull vmv1 output
+1794335986 end pull vmv1 output ok
+1794335987 start inspect vmv1
+1794335987 end inspect vmv1 ok
+1794335987 start run vmq1 3c8ec48ff97cf0a6
+1794335987 end run vmq1 exit=0
+1794335999 start start vmq1
+1794335999 start inspect vmq1
+1794335999 end inspect vmq1 ok
+1794335999 start inspect vmv1
+1794336000 end inspect vmv1 ok
+1794336010 start push vmq1 keep-ignored
+1794336010 end push vmq1 ok
+1794336011 bind 5b456772c3e545870fa85b3307a8b3f2 vmq1 vmq-project c4f243b76da9a112d30aa0b8f1b6a205 implementer
+1794336011 serve 5b456772c3e545870fa85b3307a8b3f2
+1794336013 start 5b456772c3e545870fa85b3307a8b3f2 1 edit
+1794336014 end 5b456772c3e545870fa85b3307a8b3f2 1 completed
+1794336014 start 5b456772c3e545870fa85b3307a8b3f2 2 exec
+1794336014 end 5b456772c3e545870fa85b3307a8b3f2 2 completed
+1794336017 start pull vmq1 tree
+1794336017 end pull vmq1 tree ok
+1794336024 start restore vmv1 verify
+1794336041 end restore vmv1 verify ok
+1794336041 start push vmv1 exact
+1794336042 end push vmv1 ok
+1794336042 bind 87280878f9a29c91cb13213943299799 vmv1 vmq-project b33125c710d7325208d6431ee2af4a89 reviewer
+1794336042 serve 87280878f9a29c91cb13213943299799
+1794336045 start 87280878f9a29c91cb13213943299799 1 read
+1794336045 end 87280878f9a29c91cb13213943299799 1 completed
+1794336049 start push vmq1 keep-ignored
+1794336049 end push vmq1 ok
+1794336050 start exec-argv vmq1
+1794336050 end exec-argv vmq1 exit=0 ended=exited
+1794336050 start pull vmq1 output
+1794336051 end pull vmq1 output ok
+1794336051 start pull vmq1 tree
+1794336051 end pull vmq1 tree ok
+1794336051 start inspect vmq1
+1794336052 end inspect vmq1 ok
+1794336057 start restore vmv1 verify
+1794336073 end restore vmv1 verify ok
+1794336073 start push vmv1 exact
+1794336073 end push vmv1 ok
+1794336074 bind 9ca6fd990a5a275d2a456468f1a2f38b vmv1 vmq-project cd74ada5bfdacb4b14d70cc0868308a8 reviewer
+1794336074 serve 9ca6fd990a5a275d2a456468f1a2f38b
+1794336080 start run vmq1 32d1e9c74266d96a
+1794336080 end run vmq1 exit=0
+1794336080 start restore vmv1 verify
+1794336096 end restore vmv1 verify ok
+1794336096 start push vmv1 exact
+1794336097 end push vmv1 ok
+1794336097 start exec-argv vmv1
+1794336097 end exec-argv vmv1 exit=0 ended=exited
+1794336098 start pull vmv1 output
+1794336098 end pull vmv1 output ok
+1794336098 start inspect vmv1
+1794336098 end inspect vmv1 ok
+1794336099 start push vmq1 keep-ignored
+1794336099 end push vmq1 ok
+1794336100 start exec-argv vmq1
+1794336124 end exec-argv vmq1 exit=143 ended=cancelled
+1794336124 start inspect vmq1
+1794336124 end inspect vmq1 ok
+1794336125 start start vmq1
+1794336137 end start vmq1 ok
+1794336138 start push vmq1 keep-ignored
+1794336139 end push vmq1 ok
+1794336139 start exec-argv vmq1
+1794336140 end exec-argv vmq1 exit=0 ended=exited
+1794336140 start pull vmq1 output
+1794336140 end pull vmq1 output ok
+1794336140 start inspect vmq1
+1794336140 end inspect vmq1 ok
+1794336141 start push vmq1 keep-ignored
+1794336142 end push vmq1 ok
+1794336142 start exec-argv vmq1
+1794336142 end exec-argv vmq1 exit=0 ended=exited
+1794336142 start pull vmq1 output
+1794336143 end pull vmq1 output ok
+1794336143 start pull vmq1 tree
+1794336143 refused pull entry-not-allowed
+1794336143 start inspect vmq1
+1794336143 end inspect vmq1 ok
+1794336144 start run vmq1 77375c80d3af164d
+1794336144 end run vmq1 exit=0
+1794336144 start push vmq1 keep-ignored
+1794336145 end push vmq1 ok
+1794336145 start exec-argv vmq1
+1794336145 end exec-argv vmq1 exit=0 ended=exited
+1794336146 start pull vmq1 output
+1794336146 end pull vmq1 output ok
+1794336146 start pull vmq1 tree
+1794336146 end pull vmq1 tree ok
+1794336147 start inspect vmq1
+1794336147 end inspect vmq1 ok
+1794336153 refused start capsule-unknown
+1794336153 refused inspect capsule-unknown
+1794336159 start start vmq1
+1794336159 start inspect vmq1
+1794336159 end inspect vmq1 ok
+1794336160 start inspect vmv1
+1794336160 end inspect vmv1 ok
+1794336161 start start vmq1
+1794336162 start inspect vmq1
+1794336162 end inspect vmq1 ok
+1794336162 start run vmq1 d636444824493219
+1794336163 end run vmq1 exit=0
+1794336163 start run vmq1 934aee17ae9b22ee
+1794336163 end run vmq1 exit=0
+1794336164 start inspect vmv1
+1794336164 end inspect vmv1 ok
+1794336164 start start vmq1
+1794336165 start inspect vmq1
+1794336165 end inspect vmq1 ok
+1794336165 start run vmq1 d636444824493219
+1794336166 end run vmq1 exit=0
+1794336166 start run vmq1 2ed27c1421e6928d
+1794336166 end run vmq1 exit=1
+1794336167 start inspect vmv1
+1794336167 end inspect vmv1 ok
+1794336169 start stop vmv1
+1794336170 end stop vmv1 ok
+1794336205 start start vmq1
+1794336206 start inspect vmq1
+1794336206 end inspect vmq1 ok
+1794336207 start push vmq1 keep-ignored
+1794336207 end push vmq1 ok
+1794336208 start exec-argv vmq1
+1794336227 end exec-argv vmq1 exit=143 ended=cancelled
+1794336227 start inspect vmq1
+1794336227 end inspect vmq1 ok
+1794336227 start start vmq1
+1794336236 end start vmq1 ok
+1794336237 start start vmq1
+1794336237 start inspect vmq1
+1794336237 end inspect vmq1 ok
+1794336242 start run vmq1 01e81e6755099280
+1794336243 end run vmq1 exit=0
+1794336243 start push vmq1 keep-ignored
+1794336243 end push vmq1 ok
+1794336243 start exec-argv vmq1
+1794336244 end exec-argv vmq1 exit=0 ended=exited
+1794336244 start pull vmq1 output
+1794336244 end pull vmq1 output ok
+1794336244 start inspect vmq1
+1794336244 end inspect vmq1 ok
+1794336244 start run vmq1 c7e0213f62f9162a
+1794336244 end run vmq1 exit=0
+1794336245 start push vmq1 keep-ignored
+1794336245 end push vmq1 ok
+1794336245 start exec-argv vmq1
+1794336260 end exec-argv vmq1 exit=255 ended=exited
+1794336260 start inspect vmq1
+1794336260 end inspect vmq1 ok
+1794336260 start start vmq1
+1794336271 end start vmq1 ok
+1794336271 start push vmq1 keep-ignored
+1794336271 end push vmq1 ok
+1794336271 start exec-argv vmq1
+1794336272 end exec-argv vmq1 exit=0 ended=exited
+1794336272 start pull vmq1 output
+1794336272 end pull vmq1 output ok
+1794336272 start inspect vmq1
+1794336272 end inspect vmq1 ok
+1794336272 start stop vmq1
+1794336276 end stop vmq1 ok
+1794336276 start inspect vmq1
+1794336276 end inspect vmq1 ok
+1794336276 start start vmq1
+1794336284 end start vmq1 ok
+1794336285 start inspect vmq1
+1794336285 end inspect vmq1 ok
+1794336285 start run vmq1 d636444824493219
+1794336285 end run vmq1 exit=0
+1794336285 start reconfigure vmq1
+1794336298 end reconfigure vmq1 ok
+1794336298 start inspect vmq1
+1794336298 end inspect vmq1 ok
+1794336298 start start vmq1
+1794336299 start run vmq1 fbdcab2cc0fea2c8
+1794336299 end run vmq1 exit=0
+1794336299 start stop vmq1
+1794336303 end stop vmq1 ok
+1794336320 start start vmq1
+1794336329 end start vmq1 ok
+1794336329 start inspect vmq1
+1794336329 end inspect vmq1 ok
+1794336329 start push vmq1 keep-ignored
+1794336330 end push vmq1 ok
+1794336330 start exec-argv vmq1
+1794336350 end exec-argv vmq1 exit=143 ended=cancelled
+1794336350 start inspect vmq1
+1794336350 end inspect vmq1 ok
+1794336350 start start vmq1
+1794336359 end start vmq1 ok
+1794336359 start start vmq1
+1794336359 start inspect vmq1
+1794336359 end inspect vmq1 ok
+1794336365 start run vmq1 01e81e6755099280
+1794336365 end run vmq1 exit=0
+1794336365 start push vmq1 keep-ignored
+1794336365 end push vmq1 ok
+1794336366 start exec-argv vmq1
+1794336366 end exec-argv vmq1 exit=0 ended=exited
+1794336366 start pull vmq1 output
+1794336366 end pull vmq1 output ok
+1794336366 start inspect vmq1
+1794336366 end inspect vmq1 ok
+1794336367 start run vmq1 c7e0213f62f9162a
+1794336367 end run vmq1 exit=0
+1794336367 start push vmq1 keep-ignored
+1794336367 end push vmq1 ok
+1794336367 start exec-argv vmq1
+1794336382 end exec-argv vmq1 exit=255 ended=exited
+1794336383 start inspect vmq1
+1794336383 end inspect vmq1 ok
+1794336383 start start vmq1
+1794336393 end start vmq1 ok
+1794336394 start push vmq1 keep-ignored
+1794336394 end push vmq1 ok
+1794336394 start exec-argv vmq1
+1794336394 end exec-argv vmq1 exit=0 ended=exited
+1794336395 start pull vmq1 output
+1794336395 end pull vmq1 output ok
+1794336395 start inspect vmq1
+1794336395 end inspect vmq1 ok
+1794336396 start stop vmq1
+1794336398 end stop vmq1 ok
+1794336398 start inspect vmq1
+1794336398 end inspect vmq1 ok
+1794336399 start start vmq1
+1794336409 end start vmq1 ok
+1794336409 start inspect vmq1
+1794336409 end inspect vmq1 ok
+1794336409 start run vmq1 d636444824493219
+1794336410 end run vmq1 exit=0
+1794336410 start reconfigure vmq1
+1794336424 end reconfigure vmq1 ok
+1794336424 start inspect vmq1
+1794336424 end inspect vmq1 ok
+1794336424 start start vmq1
+1794336425 start run vmq1 fbdcab2cc0fea2c8
+1794336425 end run vmq1 exit=0
+1794336425 start stop vmq1
+1794336429 end stop vmq1 ok
+1794336849 start start vmq1
+1794336858 end start vmq1 ok
+1794336858 start inspect vmq1
+1794336858 end inspect vmq1 ok
+1794336858 start inspect vmq1
+1794336858 end inspect vmq1 ok
+1794336859 start inspect vmq1
+1794336859 end inspect vmq1 ok
+1794336859 start push vmq1 keep-ignored
+1794336860 end push vmq1 ok
+1794336860 start exec-argv vmq1
+1794336860 end exec-argv vmq1 exit=0 ended=exited
+1794336860 start pull vmq1 output
+1794336861 end pull vmq1 output ok
+1794336861 start pull vmq1 tree
+1794336861 end pull vmq1 tree ok
+1794336861 start inspect vmq1
+1794336861 end inspect vmq1 ok
+1794336861 start inspect vmq1
+1794336861 end inspect vmq1 ok
+1794336861 start inspect vmq1
+1794336862 end inspect vmq1 ok
+1794336862 start push vmq1 keep-ignored
+1794336862 end push vmq1 ok
+1794336862 start exec-argv vmq1
+1794336862 end exec-argv vmq1 exit=2 ended=exited
+1794336863 start pull vmq1 output
+1794336863 end pull vmq1 output ok
+1794336863 start inspect vmq1
+1794336863 end inspect vmq1 ok
+1794336863 start inspect vmq1
+1794336863 end inspect vmq1 ok
+1794336864 start start vmv1
+1794336872 end start vmv1 ok
+1794336873 start start vmq1
+1794336873 start inspect vmq1
+1794336873 end inspect vmq1 ok
+1794336873 start inspect vmv1
+1794336873 end inspect vmv1 ok
+1794336874 start inspect vmq1
+1794336874 end inspect vmq1 ok
+1794336874 start inspect vmq1
+1794336874 end inspect vmq1 ok
+1794336874 start push vmq1 keep-ignored
+1794336875 end push vmq1 ok
+1794336875 start exec-argv vmq1
+1794336875 end exec-argv vmq1 exit=0 ended=exited
+1794336875 start pull vmq1 output
+1794336875 end pull vmq1 output ok
+1794336876 start pull vmq1 tree
+1794336876 end pull vmq1 tree ok
+1794336876 start inspect vmq1
+1794336876 end inspect vmq1 ok
+1794336876 start inspect vmq1
+1794336876 end inspect vmq1 ok
+1794336876 start restore vmv1 verify
+1794336888 end restore vmv1 verify ok
+1794336888 start inspect vmq1
+1794336888 end inspect vmq1 ok
+1794336888 start push vmv1 exact
+1794336888 end push vmv1 ok
+1794336888 start exec-argv vmv1
+1794336889 end exec-argv vmv1 exit=2 ended=exited
+1794336889 start pull vmv1 output
+1794336889 end pull vmv1 output ok
+1794336889 start inspect vmv1
+1794336889 end inspect vmv1 ok
+1794336889 start inspect vmq1
+1794336889 end inspect vmq1 ok
+1794336890 start restore vmv1 verify
+1794336902 end restore vmv1 verify ok
+1794336902 start inspect vmq1
+1794336902 end inspect vmq1 ok
+1794336903 start push vmv1 exact
+1794336903 end push vmv1 ok
+1794336903 start exec-argv vmv1
+1794336903 end exec-argv vmv1 exit=0 ended=exited
+1794336903 start pull vmv1 output
+1794336903 end pull vmv1 output ok
+1794336904 start inspect vmv1
+1794336904 end inspect vmv1 ok
+1794336904 start inspect vmq1
+1794336904 end inspect vmq1 ok
+1794336904 start restore vmv1 verify
+1794336916 end restore vmv1 verify ok
+1794336916 start inspect vmq1
+1794336916 end inspect vmq1 ok
+1794336916 start push vmv1 exact
+1794336916 end push vmv1 ok
+1794336916 start exec-argv vmv1
+1794336917 end exec-argv vmv1 exit=2 ended=exited
+1794336917 start pull vmv1 output
+1794336917 end pull vmv1 output ok
+1794336917 start inspect vmv1
+1794336917 end inspect vmv1 ok
+1794336917 start inspect vmq1
+1794336918 end inspect vmq1 ok
+1794336918 start restore vmv1 verify
+1794336930 end restore vmv1 verify ok
+1794336931 start inspect vmq1
+1794336931 end inspect vmq1 ok
+1794336931 start push vmv1 exact
+1794336931 end push vmv1 ok
+1794336931 start exec-argv vmv1
+1794336932 end exec-argv vmv1 exit=0 ended=exited
+1794336932 start pull vmv1 output
+1794336932 end pull vmv1 output ok
+1794336932 start inspect vmv1
+1794336932 end inspect vmv1 ok
+1794336932 start inspect vmq1
+1794336932 start run vmq1 3c8ec48ff97cf0a6
+1794336932 end inspect vmq1 ok
+1794336932 end run vmq1 exit=0
+1794336935 start start vmq1
+1794336936 start inspect vmq1
+1794336936 end inspect vmq1 ok
+1794336936 start inspect vmv1
+1794336936 end inspect vmv1 ok
+1794336936 start inspect vmq1
+1794336936 end inspect vmq1 ok
+1794336942 start push vmq1 keep-ignored
+1794336942 end push vmq1 ok
+1794336942 bind e4373f0d3995f43eac6616ab126236b2 vmq1 vmq-project 0bce716c123a15b1e192a0c07a85b48a implementer
+1794336942 start inspect vmq1
+1794336942 end inspect vmq1 ok
+1794336942 serve e4373f0d3995f43eac6616ab126236b2
+1794336944 start e4373f0d3995f43eac6616ab126236b2 1 edit
+1794336944 end e4373f0d3995f43eac6616ab126236b2 1 completed
+1794336944 start e4373f0d3995f43eac6616ab126236b2 2 exec
+1794336945 end e4373f0d3995f43eac6616ab126236b2 2 completed
+1794336946 start pull vmq1 tree
+1794336946 end pull vmq1 tree ok
+1794336947 start inspect vmq1
+1794336947 end inspect vmq1 ok
+1794336950 start restore vmv1 verify
+1794336961 end restore vmv1 verify ok
+1794336962 start push vmv1 exact
+1794336962 end push vmv1 ok
+1794336962 bind cea17b3be0caddef7156c20e4b9ff802 vmv1 vmq-project 6a77078476669523637fbe4c7ff13a26 reviewer
+1794336962 start inspect vmq1
+1794336962 end inspect vmq1 ok
+1794336962 serve cea17b3be0caddef7156c20e4b9ff802
+1794336963 start cea17b3be0caddef7156c20e4b9ff802 1 read
+1794336963 end cea17b3be0caddef7156c20e4b9ff802 1 completed
+1794336965 start inspect vmq1
+1794336965 end inspect vmq1 ok
+1794336965 start inspect vmq1
+1794336966 end inspect vmq1 ok
+1794336966 start push vmq1 keep-ignored
+1794336966 end push vmq1 ok
+1794336966 start exec-argv vmq1
+1794336966 end exec-argv vmq1 exit=0 ended=exited
+1794336967 start pull vmq1 output
+1794336967 end pull vmq1 output ok
+1794336967 start pull vmq1 tree
+1794336967 end pull vmq1 tree ok
+1794336967 start inspect vmq1
+1794336967 end inspect vmq1 ok
+1794336967 start inspect vmq1
+1794336967 end inspect vmq1 ok
+1794336970 start restore vmv1 verify
+1794336979 end restore vmv1 verify ok
+1794336980 start push vmv1 exact
+1794336980 end push vmv1 ok
+1794336980 bind ee8df08b11f172c541327341ddd1e518 vmv1 vmq-project 7a705c7c60e22e78d9082eb14676e591 reviewer
+1794336980 start inspect vmq1
+1794336980 end inspect vmq1 ok
+1794336980 serve ee8df08b11f172c541327341ddd1e518
+1794336983 start inspect vmq1
+1794336983 start run vmq1 32d1e9c74266d96a
+1794336983 end inspect vmq1 ok
+1794336983 end run vmq1 exit=0
+1794336984 start restore vmv1 verify
+1794336995 end restore vmv1 verify ok
+1794336995 start inspect vmq1
+1794336995 end inspect vmq1 ok
+1794336996 start push vmv1 exact
+1794336996 end push vmv1 ok
+1794336996 start exec-argv vmv1
+1794336996 end exec-argv vmv1 exit=0 ended=exited
+1794336996 start pull vmv1 output
+1794336997 end pull vmv1 output ok
+1794336997 start inspect vmv1
+1794336997 end inspect vmv1 ok
+1794336997 start inspect vmq1
+1794336997 end inspect vmq1 ok
+1794337022 start inspect vmq1
+1794337022 end inspect vmq1 ok
+1794337023 start push vmq1 keep-ignored
+1794337023 end push vmq1 ok
+1794337023 start exec-argv vmq1
+1794337023 end exec-argv vmq1 exit=0 ended=exited
+1794337023 start pull vmq1 output
+1794337023 end pull vmq1 output ok
+1794337024 start inspect vmq1
+1794337024 end inspect vmq1 ok
+1794337024 start inspect vmq1
+1794337024 end inspect vmq1 ok
+1794337024 start inspect vmq1
+1794337024 end inspect vmq1 ok
+1794337024 start push vmq1 keep-ignored
+1794337025 end push vmq1 ok
+1794337025 start exec-argv vmq1
+1794337025 end exec-argv vmq1 exit=0 ended=exited
+1794337025 start pull vmq1 output
+1794337025 end pull vmq1 output ok
+1794337025 start pull vmq1 tree
+1794337026 refused pull entry-not-allowed
+1794337026 start inspect vmq1
+1794337026 end inspect vmq1 ok
+1794337026 start inspect vmq1
+1794337026 end inspect vmq1 ok
+1794337026 start run vmq1 77375c80d3af164d
+1794337026 end run vmq1 exit=0
+1794337026 start inspect vmq1
+1794337026 end inspect vmq1 ok
+1794337027 start push vmq1 keep-ignored
+1794337027 end push vmq1 ok
+1794337027 start exec-argv vmq1
+1794337027 end exec-argv vmq1 exit=0 ended=exited
+1794337027 start pull vmq1 output
+1794337028 end pull vmq1 output ok
+1794337028 start pull vmq1 tree
+1794337028 end pull vmq1 tree ok
+1794337028 start inspect vmq1
+1794337028 end inspect vmq1 ok
+1794337028 start inspect vmq1
+1794337028 end inspect vmq1 ok
+1794337030 refused start capsule-unknown
+1794337030 refused inspect capsule-unknown
+1794337032 start start vmq1
+1794337033 start inspect vmq1
+1794337033 end inspect vmq1 ok
+1794337033 start inspect vmv1
+1794337033 end inspect vmv1 ok
+1794337033 start inspect vmq1
+1794337033 end inspect vmq1 ok
+1794337034 start start vmq1
+1794337034 start inspect vmq1
+1794337034 end inspect vmq1 ok
+1794337034 start run vmq1 d636444824493219
+1794337034 end run vmq1 exit=0
+1794337034 start run vmq1 934aee17ae9b22ee
+1794337035 end run vmq1 exit=0
+1794337035 start inspect vmv1
+1794337035 end inspect vmv1 ok
+1794337035 start start vmq1
+1794337035 start inspect vmq1
+1794337035 end inspect vmq1 ok
+1794337035 start run vmq1 d636444824493219
+1794337036 end run vmq1 exit=0
+1794337036 start run vmq1 2ed27c1421e6928d
+1794337036 end run vmq1 exit=1
+1794337036 start inspect vmv1
+1794337036 end inspect vmv1 ok
+1794337037 start stop vmv1
+1794337038 end stop vmv1 ok
+1794337128 start start vmq1
+1794337128 start inspect vmq1
+1794337129 end inspect vmq1 ok
+1794337129 start inspect vmq1
+1794337129 end inspect vmq1 ok
+1794337129 start inspect vmq1
+1794337130 end inspect vmq1 ok
+1794337130 start push vmq1 keep-ignored
+1794337130 end push vmq1 ok
+1794337130 start exec-argv vmq1
+1794337130 end exec-argv vmq1 exit=0 ended=exited
+1794337131 start pull vmq1 output
+1794337131 end pull vmq1 output ok
+1794337131 start pull vmq1 tree
+1794337131 end pull vmq1 tree ok
+1794337131 start inspect vmq1
+1794337131 end inspect vmq1 ok
+1794337131 start inspect vmq1
+1794337131 end inspect vmq1 ok
+1794337132 start inspect vmq1
+1794337132 end inspect vmq1 ok
+1794337132 start push vmq1 keep-ignored
+1794337132 end push vmq1 ok
+1794337132 start exec-argv vmq1
+1794337133 end exec-argv vmq1 exit=2 ended=exited
+1794337133 start pull vmq1 output
+1794337133 end pull vmq1 output ok
+1794337133 start inspect vmq1
+1794337133 end inspect vmq1 ok
+1794337133 start inspect vmq1
+1794337133 end inspect vmq1 ok
+1794337134 start start vmv1
+1794337145 end start vmv1 ok
+1794337146 start start vmq1
+1794337146 start inspect vmq1
+1794337146 end inspect vmq1 ok
+1794337146 start inspect vmv1
+1794337146 end inspect vmv1 ok
+1794337146 start inspect vmq1
+1794337147 end inspect vmq1 ok
+1794337147 start inspect vmq1
+1794337147 end inspect vmq1 ok
+1794337147 start push vmq1 keep-ignored
+1794337147 end push vmq1 ok
+1794337148 start exec-argv vmq1
+1794337148 end exec-argv vmq1 exit=0 ended=exited
+1794337148 start pull vmq1 output
+1794337148 end pull vmq1 output ok
+1794337148 start pull vmq1 tree
+1794337149 end pull vmq1 tree ok
+1794337149 start inspect vmq1
+1794337149 end inspect vmq1 ok
+1794337149 start inspect vmq1
+1794337149 end inspect vmq1 ok
+1794337149 start restore vmv1 verify
+1794337159 end restore vmv1 verify ok
+1794337160 start inspect vmq1
+1794337160 end inspect vmq1 ok
+1794337160 start push vmv1 exact
+1794337160 end push vmv1 ok
+1794337160 start exec-argv vmv1
+1794337161 end exec-argv vmv1 exit=2 ended=exited
+1794337161 start pull vmv1 output
+1794337161 end pull vmv1 output ok
+1794337161 start inspect vmv1
+1794337161 end inspect vmv1 ok
+1794337161 start inspect vmq1
+1794337161 end inspect vmq1 ok
+1794337162 start restore vmv1 verify
+1794337174 end restore vmv1 verify ok
+1794337174 start inspect vmq1
+1794337175 end inspect vmq1 ok
+1794337175 start push vmv1 exact
+1794337175 end push vmv1 ok
+1794337175 start exec-argv vmv1
+1794337175 end exec-argv vmv1 exit=0 ended=exited
+1794337176 start pull vmv1 output
+1794337176 end pull vmv1 output ok
+1794337176 start inspect vmv1
+1794337176 end inspect vmv1 ok
+1794337176 start inspect vmq1
+1794337176 end inspect vmq1 ok
+1794337177 start restore vmv1 verify
+1794337192 end restore vmv1 verify ok
+1794337192 start inspect vmq1
+1794337193 end inspect vmq1 ok
+1794337193 start push vmv1 exact
+1794337193 end push vmv1 ok
+1794337193 start exec-argv vmv1
+1794337193 end exec-argv vmv1 exit=2 ended=exited
+1794337194 start pull vmv1 output
+1794337194 end pull vmv1 output ok
+1794337194 start inspect vmv1
+1794337194 end inspect vmv1 ok
+1794337194 start inspect vmq1
+1794337194 end inspect vmq1 ok
+1794337195 start restore vmv1 verify
+1794337208 end restore vmv1 verify ok
+1794337208 start inspect vmq1
+1794337208 end inspect vmq1 ok
+1794337208 start push vmv1 exact
+1794337208 end push vmv1 ok
+1794337209 start exec-argv vmv1
+1794337209 end exec-argv vmv1 exit=0 ended=exited
+1794337209 start pull vmv1 output
+1794337209 end pull vmv1 output ok
+1794337209 start inspect vmv1
+1794337209 end inspect vmv1 ok
+1794337210 start inspect vmq1
+1794337210 end inspect vmq1 ok
+1794337210 start run vmq1 3c8ec48ff97cf0a6
+1794337210 end run vmq1 exit=0
+1794337214 start start vmq1
+1794337215 start inspect vmq1
+1794337215 end inspect vmq1 ok
+1794337215 start inspect vmv1
+1794337215 end inspect vmv1 ok
+1794337215 start inspect vmq1
+1794337215 end inspect vmq1 ok
+1794337221 start push vmq1 keep-ignored
+1794337221 end push vmq1 ok
+1794337221 bind f3223766fa6930f79049f59b2ea1b1fc vmq1 vmq-project 53ca5bdde302af9292d4ad3f65f772fe implementer
+1794337221 start inspect vmq1
+1794337222 end inspect vmq1 ok
+1794337222 serve f3223766fa6930f79049f59b2ea1b1fc
+1794337223 start f3223766fa6930f79049f59b2ea1b1fc 1 edit
+1794337223 end f3223766fa6930f79049f59b2ea1b1fc 1 completed
+1794337223 start f3223766fa6930f79049f59b2ea1b1fc 2 exec
+1794337223 end f3223766fa6930f79049f59b2ea1b1fc 2 completed
+1794337225 start pull vmq1 tree
+1794337225 end pull vmq1 tree ok
+1794337226 start inspect vmq1
+1794337226 end inspect vmq1 ok
+1794337229 start restore vmv1 verify
+1794337242 end restore vmv1 verify ok
+1794337242 start push vmv1 exact
+1794337242 end push vmv1 ok
+1794337242 bind 4e45cf09b948b28ab414010899d85e88 vmv1 vmq-project 5f32335354a7d1386bb211549f68243b reviewer
+1794337242 start inspect vmq1
+1794337243 end inspect vmq1 ok
+1794337243 serve 4e45cf09b948b28ab414010899d85e88
+1794337244 start 4e45cf09b948b28ab414010899d85e88 1 read
+1794337244 end 4e45cf09b948b28ab414010899d85e88 1 completed
+1794337247 start inspect vmq1
+1794337247 end inspect vmq1 ok
+1794337248 start inspect vmq1
+1794337248 end inspect vmq1 ok
+1794337248 start push vmq1 keep-ignored
+1794337248 end push vmq1 ok
+1794337248 start exec-argv vmq1
+1794337249 end exec-argv vmq1 exit=0 ended=exited
+1794337249 start pull vmq1 output
+1794337249 end pull vmq1 output ok
+1794337249 start pull vmq1 tree
+1794337249 end pull vmq1 tree ok
+1794337250 start inspect vmq1
+1794337250 end inspect vmq1 ok
+1794337250 start inspect vmq1
+1794337250 end inspect vmq1 ok
+1794337253 start restore vmv1 verify
+1794337262 end restore vmv1 verify ok
+1794337262 start push vmv1 exact
+1794337263 end push vmv1 ok
+1794337263 bind 79ee94af2d3dda1b9b3362a45b58a956 vmv1 vmq-project 30122bddab6896be4863b47bd7390f5f reviewer
+1794337263 start inspect vmq1
+1794337263 end inspect vmq1 ok
+1794337263 serve 79ee94af2d3dda1b9b3362a45b58a956
+1794337266 start inspect vmq1
+1794337266 end inspect vmq1 ok
+1794337266 start run vmq1 32d1e9c74266d96a
+1794337266 end run vmq1 exit=0
+1794337267 start restore vmv1 verify
+1794337279 end restore vmv1 verify ok
+1794337279 start inspect vmq1
+1794337279 end inspect vmq1 ok
+1794337279 start push vmv1 exact
+1794337279 end push vmv1 ok
+1794337279 start exec-argv vmv1
+1794337280 end exec-argv vmv1 exit=0 ended=exited
+1794337280 start pull vmv1 output
+1794337280 end pull vmv1 output ok
+1794337280 start inspect vmv1
+1794337280 end inspect vmv1 ok
+1794337281 start inspect vmq1
+1794337281 end inspect vmq1 ok
+1794337281 start inspect vmq1
+1794337281 end inspect vmq1 ok
+1794337281 start push vmq1 keep-ignored
+1794337282 end push vmq1 ok
+1794337282 start exec-argv vmq1
+1794337306 end exec-argv vmq1 exit=143 ended=cancelled
+1794337307 start inspect vmq1
+1794337307 end inspect vmq1 ok
+1794337307 start start vmq1
+1794337316 end start vmq1 ok
+1794337316 start inspect vmq1
+1794337316 end inspect vmq1 ok
+1794337316 start inspect vmq1
+1794337316 end inspect vmq1 ok
+1794337316 start push vmq1 keep-ignored
+1794337317 end push vmq1 ok
+1794337317 start exec-argv vmq1
+1794337317 end exec-argv vmq1 exit=0 ended=exited
+1794337317 start pull vmq1 output
+1794337317 end pull vmq1 output ok
+1794337317 start inspect vmq1
+1794337317 end inspect vmq1 ok
+1794337318 start inspect vmq1
+1794337318 end inspect vmq1 ok
+1794337318 start inspect vmq1
+1794337318 end inspect vmq1 ok
+1794337318 start push vmq1 keep-ignored
+1794337319 end push vmq1 ok
+1794337319 start exec-argv vmq1
+1794337319 end exec-argv vmq1 exit=0 ended=exited
+1794337319 start pull vmq1 output
+1794337319 end pull vmq1 output ok
+1794337319 start pull vmq1 tree
+1794337320 refused pull entry-not-allowed
+1794337320 start inspect vmq1
+1794337320 end inspect vmq1 ok
+1794337320 start inspect vmq1
+1794337320 end inspect vmq1 ok
+1794337320 start run vmq1 77375c80d3af164d
+1794337320 end run vmq1 exit=0
+1794337321 start inspect vmq1
+1794337321 end inspect vmq1 ok
+1794337321 start push vmq1 keep-ignored
+1794337321 end push vmq1 ok
+1794337321 start exec-argv vmq1
+1794337322 end exec-argv vmq1 exit=0 ended=exited
+1794337322 start pull vmq1 output
+1794337322 end pull vmq1 output ok
+1794337322 start pull vmq1 tree
+1794337322 end pull vmq1 tree ok
+1794337322 start inspect vmq1
+1794337322 end inspect vmq1 ok
+1794337322 start inspect vmq1
+1794337323 end inspect vmq1 ok
+1794337324 refused start capsule-unknown
+1794337324 refused inspect capsule-unknown
+1794337327 start start vmq1
+1794337327 start inspect vmq1
+1794337327 end inspect vmq1 ok
+1794337327 start inspect vmv1
+1794337327 end inspect vmv1 ok
+1794337327 start inspect vmq1
+1794337328 end inspect vmq1 ok
+1794337328 start start vmq1
+1794337328 start inspect vmq1
+1794337328 end inspect vmq1 ok
+1794337328 start run vmq1 d636444824493219
+1794337329 end run vmq1 exit=0
+1794337329 start run vmq1 934aee17ae9b22ee
+1794337329 end run vmq1 exit=0
+1794337329 start inspect vmv1
+1794337329 end inspect vmv1 ok
+1794337329 start start vmq1
+1794337330 start inspect vmq1
+1794337330 end inspect vmq1 ok
+1794337330 start run vmq1 d636444824493219
+1794337330 end run vmq1 exit=0
+1794337330 start run vmq1 2ed27c1421e6928d
+1794337330 end run vmq1 exit=1
+1794337330 start inspect vmv1
+1794337330 end inspect vmv1 ok
+1794337331 start stop vmv1
+1794337332 end stop vmv1 ok
+1794337364 start start vmq1
+1794337364 start inspect vmq1
+1794337364 end inspect vmq1 ok
+1794337364 start inspect vmv1
+1794337365 end inspect vmv1 ok
+1794337365 start inspect vmq1
+1794337365 end inspect vmq1 ok
+1794337622 start inspect vmq1
+1794337622 end inspect vmq1 ok
+1794337622 start push vmq1 keep-ignored
+1794337622 end push vmq1 ok
+1794337622 start exec-argv vmq1
+1794337623 end exec-argv vmq1 exit=0 ended=exited
+1794337623 start pull vmq1 output
+1794337623 end pull vmq1 output ok
+1794337623 start inspect vmq1
+1794337623 end inspect vmq1 ok
+1794337623 start inspect vmq1
+1794337623 end inspect vmq1 ok
+1794337624 start restore vmv1 verify
+1794337624 end restore vmv1 verify ok
+1794337625 start inspect vmq1
+1794337625 end inspect vmq1 ok
+1794337625 unavailable push vm-not-running
+1794337625 start inspect vmv1
+1794337625 end inspect vmv1 ok
+1794337625 start start vmv1
+1794337636 end start vmv1 ok
+1794337636 start inspect vmq1
+1794337636 end inspect vmq1 ok
+1794339618 start start vmq1
+1794339618 start inspect vmq1
+1794339619 end inspect vmq1 ok
+1794339619 start inspect vmv1
+1794339619 end inspect vmv1 ok
+1794339619 start inspect vmq1
+1794339619 end inspect vmq1 ok
+1794342141 start start vmq1
+1794342141 start inspect vmq1
+1794342141 end inspect vmq1 ok
+1794342141 start inspect vmv1
+1794342141 end inspect vmv1 ok
+1794342142 start inspect vmq1
+1794342142 end inspect vmq1 ok
+1794344375 start start vmq1
+1794344376 start inspect vmq1
+1794344376 end inspect vmq1 ok
+1794344377 start inspect vmq1
+1794344377 end inspect vmq1 ok
+1794350042 start start vmv1
+1794350043 start start vmq1
+1794350044 start inspect vmq1
+1794350044 end inspect vmq1 ok
+1794350044 start inspect vmv1
+1794350044 end inspect vmv1 ok
+1794350045 start inspect vmq1
+1794350045 end inspect vmq1 ok
+1794350045 start stop vmv1
+1794350047 end stop vmv1 ok
+1794353899 start stop vmv1
+1794353909 start start vmq1
+1794353909 start inspect vmq1
+1794353909 end inspect vmq1 ok
+1794353909 start inspect vmq1
+1794353910 end inspect vmq1 ok
+1794353910 start inspect vmq1
+1794353910 end inspect vmq1 ok
+1794353910 start push vmq1 keep-ignored
+1794353910 end push vmq1 ok
+1794353910 start exec-argv vmq1
+1794353911 end exec-argv vmq1 exit=0 ended=exited
+1794353911 start pull vmq1 output
+1794353911 end pull vmq1 output ok
+1794353911 start pull vmq1 tree
+1794353911 end pull vmq1 tree ok
+1794353911 start inspect vmq1
+1794353912 end inspect vmq1 ok
+1794353912 start inspect vmq1
+1794353912 end inspect vmq1 ok
+1794353912 start inspect vmq1
+1794353912 end inspect vmq1 ok
+1794353913 start push vmq1 keep-ignored
+1794353913 end push vmq1 ok
+1794353913 start exec-argv vmq1
+1794353913 end exec-argv vmq1 exit=2 ended=exited
+1794353913 start pull vmq1 output
+1794353914 end pull vmq1 output ok
+1794353914 start inspect vmq1
+1794353914 end inspect vmq1 ok
+1794353914 start inspect vmq1
+1794353914 end inspect vmq1 ok
+1794353915 start start vmv1
+1794353922 end start vmv1 ok
+1794353923 start start vmq1
+1794353923 start inspect vmq1
+1794353923 end inspect vmq1 ok
+1794353924 start inspect vmv1
+1794353924 end inspect vmv1 ok
+1794353924 start inspect vmq1
+1794353924 end inspect vmq1 ok
+1794353924 start stop vmv1
+1794353928 end stop vmv1 ok
+1794353929 start inspect vmq1
+1794353929 end inspect vmq1 ok
+1794353929 start push vmq1 keep-ignored
+1794353929 end push vmq1 ok
+1794353929 start exec-argv vmq1
+1794353929 end exec-argv vmq1 exit=0 ended=exited
+1794353930 start pull vmq1 output
+1794353930 end pull vmq1 output ok
+1794353930 start pull vmq1 tree
+1794353930 end pull vmq1 tree ok
+1794353930 start inspect vmq1
+1794353930 end inspect vmq1 ok
+1794353930 start inspect vmq1
+1794353930 end inspect vmq1 ok
+1794353931 start inspect vmq1
+1794353931 end inspect vmq1 ok
+1794353931 start restore vmv1 verify
+1794353931 end restore vmv1 verify ok
+1794353931 start start vmv1
+1794353940 end start vmv1 ok
+1794353940 start push vmv1 exact
+1794353940 end push vmv1 ok
+1794353940 start exec-argv vmv1
+1794353941 end exec-argv vmv1 exit=2 ended=exited
+1794353941 start pull vmv1 output
+1794353941 end pull vmv1 output ok
+1794353941 start inspect vmv1
+1794353941 end inspect vmv1 ok
+1794353941 start inspect vmq1
+1794353941 end inspect vmq1 ok
+1794353942 start inspect vmq1
+1794353942 end inspect vmq1 ok
+1794353942 start restore vmv1 verify
+1794353954 end restore vmv1 verify ok
+1794353955 start start vmv1
+1794353955 start push vmv1 exact
+1794353955 end push vmv1 ok
+1794353955 start exec-argv vmv1
+1794353956 end exec-argv vmv1 exit=0 ended=exited
+1794353956 start pull vmv1 output
+1794353956 end pull vmv1 output ok
+1794353956 start inspect vmv1
+1794353956 end inspect vmv1 ok
+1794353956 start inspect vmq1
+1794353956 end inspect vmq1 ok
+1794353957 start inspect vmq1
+1794353957 end inspect vmq1 ok
+1794353957 start restore vmv1 verify
+1794353969 end restore vmv1 verify ok
+1794353970 start start vmv1
+1794353970 start push vmv1 exact
+1794353970 end push vmv1 ok
+1794353970 start exec-argv vmv1
+1794353971 end exec-argv vmv1 exit=2 ended=exited
+1794353971 start pull vmv1 output
+1794353971 end pull vmv1 output ok
+1794353971 start inspect vmv1
+1794353971 end inspect vmv1 ok
+1794353971 start inspect vmq1
+1794353971 end inspect vmq1 ok
+1794353972 start inspect vmq1
+1794353972 end inspect vmq1 ok
+1794353972 start restore vmv1 verify
+1794353983 end restore vmv1 verify ok
+1794353984 start start vmv1
+1794353984 start push vmv1 exact
+1794353984 end push vmv1 ok
+1794353984 start exec-argv vmv1
+1794353985 end exec-argv vmv1 exit=0 ended=exited
+1794353985 start pull vmv1 output
+1794353985 end pull vmv1 output ok
+1794353985 start inspect vmv1
+1794353985 end inspect vmv1 ok
+1794353985 start inspect vmq1
+1794353985 end inspect vmq1 ok
+1794353985 start run vmq1 3c8ec48ff97cf0a6
+1794353986 end run vmq1 exit=0
+1794353989 start start vmq1
+1794353989 start inspect vmq1
+1794353989 end inspect vmq1 ok
+1794353989 start inspect vmv1
+1794353990 end inspect vmv1 ok
+1794353990 start inspect vmq1
+1794353990 end inspect vmq1 ok
+1794353992 start inspect vmq1
+1794353993 end inspect vmq1 ok
+1794353993 start inspect vmq1
+1794353993 end inspect vmq1 ok
+1794353996 start push vmq1 keep-ignored
+1794353996 end push vmq1 ok
+1794353996 bind 3a212c76840078bf8e9a5f609bf6fd45 vmq1 vmq-project 0b6dd37a5203f411fd979bc936007ab4 implementer
+1794353996 start inspect vmq1
+1794353997 end inspect vmq1 ok
+1794353997 serve 3a212c76840078bf8e9a5f609bf6fd45
+1794353998 start 3a212c76840078bf8e9a5f609bf6fd45 1 edit
+1794353998 end 3a212c76840078bf8e9a5f609bf6fd45 1 completed
+1794353998 start 3a212c76840078bf8e9a5f609bf6fd45 2 exec
+1794353998 end 3a212c76840078bf8e9a5f609bf6fd45 2 completed
+1794354000 start pull vmq1 tree
+1794354000 end pull vmq1 tree ok
+1794354001 start inspect vmq1
+1794354001 end inspect vmq1 ok
+1794354004 start restore vmv1 verify
+1794354014 end restore vmv1 verify ok
+1794354014 start start vmv1
+1794354014 start push vmv1 exact
+1794354015 end push vmv1 ok
+1794354015 bind 143d46588bfb90a91b08e66fb7728684 vmv1 vmq-project 9b604a227a6cf6e103b2c6eb48e66c31 reviewer
+1794354015 start inspect vmq1
+1794354015 end inspect vmq1 ok
+1794354015 serve 143d46588bfb90a91b08e66fb7728684
+1794354016 start 143d46588bfb90a91b08e66fb7728684 1 read
+1794354016 end 143d46588bfb90a91b08e66fb7728684 1 completed
+1794354018 start inspect vmq1
+1794354018 end inspect vmq1 ok
+1794354019 start inspect vmq1
+1794354019 end inspect vmq1 ok
+1794354019 start push vmq1 keep-ignored
+1794354019 end push vmq1 ok
+1794354019 start exec-argv vmq1
+1794354019 end exec-argv vmq1 exit=0 ended=exited
+1794354020 start pull vmq1 output
+1794354020 end pull vmq1 output ok
+1794354020 start pull vmq1 tree
+1794354020 end pull vmq1 tree ok
+1794354020 start inspect vmq1
+1794354020 end inspect vmq1 ok
+1794354020 start inspect vmq1
+1794354020 end inspect vmq1 ok
+1794354023 start restore vmv1 verify
+1794354036 end restore vmv1 verify ok
+1794354036 start start vmv1
+1794354037 start push vmv1 exact
+1794354037 end push vmv1 ok
+1794354037 bind 54942d98d746128dae5935c187ecd24e vmv1 vmq-project 299d94dc688ec05957ef1c9575e184a6 reviewer
+1794354037 start inspect vmq1
+1794354037 end inspect vmq1 ok
+1794354037 serve 54942d98d746128dae5935c187ecd24e
+1794354040 start inspect vmq1
+1794354040 end inspect vmq1 ok
+1794354041 start run vmq1 32d1e9c74266d96a
+1794354041 end run vmq1 exit=0
+1794354041 start inspect vmq1
+1794354041 end inspect vmq1 ok
+1794354041 start restore vmv1 verify
+1794354051 end restore vmv1 verify ok
+1794354051 start start vmv1
+1794354051 start push vmv1 exact
+1794354051 end push vmv1 ok
+1794354052 start exec-argv vmv1
+1794354052 end exec-argv vmv1 exit=0 ended=exited
+1794354052 start pull vmv1 output
+1794354052 end pull vmv1 output ok
+1794354052 start inspect vmv1
+1794354052 end inspect vmv1 ok
+1794354052 start inspect vmq1
+1794354053 end inspect vmq1 ok
+1794354053 start inspect vmq1
+1794354053 end inspect vmq1 ok
+1794354053 start push vmq1 keep-ignored
+1794354053 end push vmq1 ok
+1794354054 start exec-argv vmq1
+1794354078 end exec-argv vmq1 exit=143 ended=cancelled
+1794354079 start inspect vmq1
+1794354079 end inspect vmq1 ok
+1794354079 start start vmq1
+1794354089 end start vmq1 ok
+1794354089 start inspect vmq1
+1794354090 end inspect vmq1 ok
+1794354090 start inspect vmq1
+1794354090 end inspect vmq1 ok
+1794354090 start push vmq1 keep-ignored
+1794354090 end push vmq1 ok
+1794354090 start exec-argv vmq1
+1794354091 end exec-argv vmq1 exit=0 ended=exited
+1794354091 start pull vmq1 output
+1794354091 end pull vmq1 output ok
+1794354091 start inspect vmq1
+1794354091 end inspect vmq1 ok
+1794354091 start inspect vmq1
+1794354092 end inspect vmq1 ok
+1794354092 start inspect vmq1
+1794354092 end inspect vmq1 ok
+1794354092 start push vmq1 keep-ignored
+1794354092 end push vmq1 ok
+1794354092 start exec-argv vmq1
+1794354093 end exec-argv vmq1 exit=0 ended=exited
+1794354093 start pull vmq1 output
+1794354093 end pull vmq1 output ok
+1794354093 start pull vmq1 tree
+1794354093 refused pull entry-not-allowed
+1794354093 start inspect vmq1
+1794354093 end inspect vmq1 ok
+1794354094 start inspect vmq1
+1794354094 end inspect vmq1 ok
+1794354094 start run vmq1 77375c80d3af164d
+1794354094 end run vmq1 exit=0
+1794354094 start inspect vmq1
+1794354094 end inspect vmq1 ok
+1794354094 start push vmq1 keep-ignored
+1794354094 end push vmq1 ok
+1794354095 start exec-argv vmq1
+1794354095 end exec-argv vmq1 exit=0 ended=exited
+1794354095 start pull vmq1 output
+1794354095 end pull vmq1 output ok
+1794354095 start pull vmq1 tree
+1794354096 end pull vmq1 tree ok
+1794354096 start inspect vmq1
+1794354096 end inspect vmq1 ok
+1794354096 start inspect vmq1
+1794354096 end inspect vmq1 ok
+1794354098 refused start capsule-unknown
+1794354098 refused inspect capsule-unknown
+1794354100 start start vmq1
+1794354100 start inspect vmq1
+1794354101 end inspect vmq1 ok
+1794354101 start inspect vmv1
+1794354101 end inspect vmv1 ok
+1794354101 start inspect vmq1
+1794354101 end inspect vmq1 ok
+1794354102 start start vmq1
+1794354102 start inspect vmq1
+1794354102 end inspect vmq1 ok
+1794354102 start run vmq1 d636444824493219
+1794354102 end run vmq1 exit=0
+1794354103 start run vmq1 934aee17ae9b22ee
+1794354103 end run vmq1 exit=0
+1794354103 start inspect vmv1
+1794354103 end inspect vmv1 ok
+1794354103 start start vmq1
+1794354103 start inspect vmq1
+1794354103 end inspect vmq1 ok
+1794354104 start run vmq1 d636444824493219
+1794354104 end run vmq1 exit=0
+1794354104 start run vmq1 2ed27c1421e6928d
+1794354104 end run vmq1 exit=1
+1794354104 start inspect vmv1
+1794354104 end inspect vmv1 ok
+1794354105 start stop vmv1
+1794354106 end stop vmv1 ok
+1794354117 start start vmq1
+1794354117 start inspect vmq1
+1794354117 end inspect vmq1 ok
+1794354117 start inspect vmq1
+1794354117 end inspect vmq1 ok
+1794354118 start inspect vmq1
+1794354118 end inspect vmq1 ok
+1794354118 start push vmq1 keep-ignored
+1794354118 end push vmq1 ok
+1794354118 start exec-argv vmq1
+1794354138 end exec-argv vmq1 exit=143 ended=cancelled
+1794354138 start inspect vmq1
+1794354138 end inspect vmq1 ok
+1794354138 start start vmq1
+1794354147 end start vmq1 ok
+1794354147 start inspect vmq1
+1794354147 end inspect vmq1 ok
+1794354147 start start vmq1
+1794354148 start inspect vmq1
+1794354148 end inspect vmq1 ok
+1794354148 start inspect vmq1
+1794354148 end inspect vmq1 ok
+1794354153 start run vmq1 01e81e6755099280
+1794354154 end run vmq1 exit=0
+1794354154 start inspect vmq1
+1794354154 end inspect vmq1 ok
+1794354154 start push vmq1 keep-ignored
+1794354154 end push vmq1 ok
+1794354154 start exec-argv vmq1
+1794354155 end exec-argv vmq1 exit=0 ended=exited
+1794354155 start pull vmq1 output
+1794354155 end pull vmq1 output ok
+1794354155 start inspect vmq1
+1794354155 end inspect vmq1 ok
+1794354155 start inspect vmq1
+1794354155 end inspect vmq1 ok
+1794354156 start run vmq1 c7e0213f62f9162a
+1794354156 end run vmq1 exit=0
+1794354156 start inspect vmq1
+1794354156 end inspect vmq1 ok
+1794354156 start push vmq1 keep-ignored
+1794354157 end push vmq1 ok
+1794354157 start exec-argv vmq1
+1794354176 start start vmq1
+1794354177 start inspect vmq1
+1794354177 end inspect vmq1 ok
+1794354177 start inspect vmq1
+1794354177 end inspect vmq1 ok
+1794354177 end exec-argv vmq1 exit=143 ended=cancelled
+1794354222 unavailable run vm-not-running
+1794354223 unavailable run vm-not-running
+1794354223 start inspect vmq1
+1794354223 end inspect vmq1 ok
+1794354223 unavailable push vm-not-running
+1794354223 start inspect vmq1
+1794354223 end inspect vmq1 ok
+1794354223 start start vmq1
+1794354232 end start vmq1 ok
+1794354232 start inspect vmq1
+1794354232 end inspect vmq1 ok
+1794354238 start inspect vmq1
+1794354238 end inspect vmq1 ok
+1794354238 unavailable push vm-not-running
+1794354238 start inspect vmq1
+1794354238 end inspect vmq1 ok
+1794354238 start start vmq1
+1794354246 end start vmq1 ok
+1794354246 start inspect vmq1
+1794354246 end inspect vmq1 ok
+1794354247 start run vmq1 b326728e002b116e
+1794354247 end run vmq1 exit=0
+1794354247 start stop vmq1
+1794354251 end stop vmq1 ok
+1794354251 start inspect vmq1
+1794354251 end inspect vmq1 ok
+1794354251 start start vmq1
+1794354260 end start vmq1 ok
+1794354260 start inspect vmq1
+1794354260 end inspect vmq1 ok
+1794354260 start run vmq1 d636444824493219
+1794354260 end run vmq1 exit=0
+1794354261 start reconfigure vmq1
+1794354273 end reconfigure vmq1 ok
+1794354273 start inspect vmq1
+1794354273 end inspect vmq1 ok
+1794354273 start start vmq1
+1794354274 start run vmq1 dd81aa52ca7e1c6d
+1794354274 end run vmq1 exit=0
+1794354274 start stop vmq1
+1794354278 end stop vmq1 ok
+1794354325 start inspect vmq1
+1794354326 end inspect vmq1 ok
+1794354331 start start vmq1
+1794354339 end start vmq1 ok
+1794354416 start start vmq1
+1794354417 start run vmq1 5a5f7d27078a3e2b
+1794354417 end run vmq1 exit=0
+1794354417 start start vmq1
+1794354418 start inspect vmq1
+1794354418 end inspect vmq1 ok
+1794354418 start inspect vmq1
+1794354418 end inspect vmq1 ok
+1794354418 start inspect vmq1
+1794354419 end inspect vmq1 ok
+1794354419 start inspect vmq1
+1794354419 end inspect vmq1 ok
+1794354419 start push vmq1 keep-ignored
+1794354419 end push vmq1 ok
+1794354419 start exec-argv vmq1
+1794354439 end exec-argv vmq1 exit=143 ended=cancelled
+1794354439 start inspect vmq1
+1794354439 end inspect vmq1 ok
+1794354439 start start vmq1
+1794354448 end start vmq1 ok
+1794354448 start inspect vmq1
+1794354448 end inspect vmq1 ok
+1794354449 start start vmq1
+1794354449 start inspect vmq1
+1794354449 end inspect vmq1 ok
+1794354449 start inspect vmq1
+1794354449 end inspect vmq1 ok
+1794354455 start start vmq1
+1794354455 start run vmq1 01e81e6755099280
+1794354455 end run vmq1 exit=0
+1794354455 start inspect vmq1
+1794354456 end inspect vmq1 ok
+1794354456 start inspect vmq1
+1794354456 end inspect vmq1 ok
+1794354456 start push vmq1 keep-ignored
+1794354456 end push vmq1 ok
+1794354456 start exec-argv vmq1
+1794354457 end exec-argv vmq1 exit=0 ended=exited
+1794354457 start pull vmq1 output
+1794354457 end pull vmq1 output ok
+1794354457 start inspect vmq1
+1794354457 end inspect vmq1 ok
+1794354457 start inspect vmq1
+1794354457 end inspect vmq1 ok
+1794354458 start start vmq1
+1794354458 start run vmq1 c7e0213f62f9162a
+1794354458 end run vmq1 exit=0
+1794354458 start inspect vmq1
+1794354458 end inspect vmq1 ok
+1794354458 start inspect vmq1
+1794354459 end inspect vmq1 ok
+1794354459 start push vmq1 keep-ignored
+1794354459 end push vmq1 ok
+1794354459 start exec-argv vmq1
+1794354479 start start vmq1
+1794354479 start inspect vmq1
+1794354479 end inspect vmq1 ok
+1794354480 start inspect vmq1
+1794354480 end inspect vmq1 ok
+1794354480 end exec-argv vmq1 exit=143 ended=cancelled
+1794354525 start start vmq1
+1794354536 end start vmq1 ok
+1794354536 start run vmq1 d6f92b96aa70bf4c
+1794354536 end run vmq1 exit=0
+1794354536 start start vmq1
+1794354536 start run vmq1 84a2c6901274b5bc
+1794354536 end run vmq1 exit=0
+1794354537 start inspect vmq1
+1794354537 end inspect vmq1 ok
+1794354537 start inspect vmq1
+1794354537 end inspect vmq1 ok
+1794354537 start push vmq1 keep-ignored
+1794354537 end push vmq1 ok
+1794354537 start exec-argv vmq1
+1794354543 end exec-argv vmq1 exit=255 ended=exited
+1794354543 start inspect vmq1
+1794354543 end inspect vmq1 ok
+1794354543 start start vmq1
+1794354552 end start vmq1 ok
+1794354552 start inspect vmq1
+1794354552 end inspect vmq1 ok
+1794354552 start inspect vmq1
+1794354552 end inspect vmq1 ok
+1794354552 start inspect vmq1
+1794354553 end inspect vmq1 ok
+1794354553 start push vmq1 keep-ignored
+1794354553 end push vmq1 ok
+1794354553 start exec-argv vmq1
+1794354553 end exec-argv vmq1 exit=0 ended=exited
+1794354554 start pull vmq1 output
+1794354554 end pull vmq1 output ok
+1794354554 start inspect vmq1
+1794354554 end inspect vmq1 ok
+1794354554 start inspect vmq1
+1794354554 end inspect vmq1 ok
+1794354555 start start vmq1
+1794354555 start run vmq1 b326728e002b116e
+1794354555 end run vmq1 exit=0
+1794354555 start stop vmq1
+1794354559 end stop vmq1 ok
+1794354559 start inspect vmq1
+1794354559 end inspect vmq1 ok
+1794354559 start start vmq1
+1794354570 end start vmq1 ok
+1794354570 start inspect vmq1
+1794354570 end inspect vmq1 ok
+1794354570 start run vmq1 d636444824493219
+1794354571 end run vmq1 exit=0
+1794354571 start reconfigure vmq1
+1794354585 end reconfigure vmq1 ok
+1794354585 start inspect vmq1
+1794354585 end inspect vmq1 ok
+1794354585 start start vmq1
+1794354586 start start vmq1
+1794354586 start run vmq1 dd81aa52ca7e1c6d
+1794354586 end run vmq1 exit=0
+1794354586 start stop vmq1
+1794354590 end stop vmq1 ok
+1794354601 start start vmq1
+1794354609 end start vmq1 ok
+1794354609 start inspect vmq1
+1794354609 end inspect vmq1 ok
+1794354609 start inspect vmq1
+1794354610 end inspect vmq1 ok
+1794354610 start inspect vmq1
+1794354610 end inspect vmq1 ok
+1794354610 start inspect vmq1
+1794354610 end inspect vmq1 ok
+1794354610 start push vmq1 keep-ignored
+1794354611 end push vmq1 ok
+1794354611 start exec-argv vmq1
+1794354611 end exec-argv vmq1 exit=0 ended=exited
+1794354611 start pull vmq1 output
+1794354611 end pull vmq1 output ok
+1794354611 start pull vmq1 tree
+1794354612 end pull vmq1 tree ok
+1794354612 start inspect vmq1
+1794354612 end inspect vmq1 ok
+1794354612 start inspect vmq1
+1794354612 end inspect vmq1 ok
+1794354612 start inspect vmq1
+1794354613 end inspect vmq1 ok
+1794354613 start inspect vmq1
+1794354613 end inspect vmq1 ok
+1794354613 start push vmq1 keep-ignored
+1794354613 end push vmq1 ok
+1794354613 start exec-argv vmq1
+1794354614 end exec-argv vmq1 exit=2 ended=exited
+1794354614 start pull vmq1 output
+1794354614 end pull vmq1 output ok
+1794354614 start inspect vmq1
+1794354614 end inspect vmq1 ok
+1794354614 start inspect vmq1
+1794354614 end inspect vmq1 ok
+1794354615 start inspect vmq1
+1794354615 end inspect vmq1 ok
+1794354615 start inspect vmq1
+1794354615 end inspect vmq1 ok
+1794354615 start push vmq1 keep-ignored
+1794354615 end push vmq1 ok
+1794354615 start exec-argv vmq1
+1794354619 start inspect vmq1
+1794354619 end inspect vmq1 ok
+1794354619 end exec-argv vmq1 exit=143 ended=cancelled
+1794354620 start inspect vmq1
+1794354620 end inspect vmq1 ok
+1794354620 start inspect vmq1
+1794354620 end inspect vmq1 ok
+1794354620 start start vmq1
+1794354629 end start vmq1 ok
+1794354629 start push vmq1 keep-ignored
+1794354629 end push vmq1 ok
+1794354629 start exec-argv vmq1
+1794354629 end exec-argv vmq1 exit=0 ended=exited
+1794354630 start pull vmq1 output
+1794354630 end pull vmq1 output ok
+1794354630 start inspect vmq1
+1794354630 end inspect vmq1 ok
+1794354630 start inspect vmq1
+1794354630 end inspect vmq1 ok
+1794354630 start start vmv1
+1794354639 end start vmv1 ok
+1794354640 start start vmq1
+1794354640 start inspect vmq1
+1794354640 end inspect vmq1 ok
+1794354640 start inspect vmv1
+1794354640 end inspect vmv1 ok
+1794354641 start inspect vmq1
+1794354641 end inspect vmq1 ok
+1794354641 start stop vmv1
+1794354645 end stop vmv1 ok
+1794354645 start inspect vmq1
+1794354645 end inspect vmq1 ok
+1794354645 start inspect vmq1
+1794354646 end inspect vmq1 ok
+1794354646 start push vmq1 keep-ignored
+1794354646 end push vmq1 ok
+1794354646 start exec-argv vmq1
+1794354646 end exec-argv vmq1 exit=0 ended=exited
+1794354647 start pull vmq1 output
+1794354647 end pull vmq1 output ok
+1794354647 start pull vmq1 tree
+1794354647 end pull vmq1 tree ok
+1794354647 start inspect vmq1
+1794354647 end inspect vmq1 ok
+1794354647 start inspect vmq1
+1794354647 end inspect vmq1 ok
+1794354648 start inspect vmq1
+1794354648 end inspect vmq1 ok
+1794354648 start restore vmv1 verify
+1794354648 end restore vmv1 verify ok
+1794354648 start start vmv1
+1794354657 end start vmv1 ok
+1794354657 start push vmv1 exact
+1794354657 end push vmv1 ok
+1794354657 start exec-argv vmv1
+1794354657 end exec-argv vmv1 exit=2 ended=exited
+1794354657 start pull vmv1 output
+1794354658 end pull vmv1 output ok
+1794354658 start inspect vmv1
+1794354658 end inspect vmv1 ok
+1794354658 start inspect vmq1
+1794354658 end inspect vmq1 ok
+1794354658 start inspect vmq1
+1794354659 end inspect vmq1 ok
+1794354659 start restore vmv1 verify
+1794354673 end restore vmv1 verify ok
+1794354673 start start vmv1
+1794354674 start push vmv1 exact
+1794354674 end push vmv1 ok
+1794354674 start exec-argv vmv1
+1794354674 end exec-argv vmv1 exit=0 ended=exited
+1794354674 start pull vmv1 output
+1794354675 end pull vmv1 output ok
+1794354675 start inspect vmv1
+1794354675 end inspect vmv1 ok
+1794354675 start inspect vmq1
+1794354675 end inspect vmq1 ok
+1794354675 start inspect vmq1
+1794354676 end inspect vmq1 ok
+1794354676 start restore vmv1 verify
+1794354687 end restore vmv1 verify ok
+1794354687 start start vmv1
+1794354687 start push vmv1 exact
+1794354687 end push vmv1 ok
+1794354687 start exec-argv vmv1
+1794354688 end exec-argv vmv1 exit=2 ended=exited
+1794354688 start pull vmv1 output
+1794354688 end pull vmv1 output ok
+1794354688 start inspect vmv1
+1794354688 end inspect vmv1 ok
+1794354688 start inspect vmq1
+1794354688 end inspect vmq1 ok
+1794354689 start inspect vmq1
+1794354689 end inspect vmq1 ok
+1794354689 start restore vmv1 verify
+1794354704 end restore vmv1 verify ok
+1794354704 start start vmv1
+1794354704 start push vmv1 exact
+1794354704 end push vmv1 ok
+1794354704 start exec-argv vmv1
+1794354705 end exec-argv vmv1 exit=0 ended=exited
+1794354705 start pull vmv1 output
+1794354705 end pull vmv1 output ok
+1794354705 start inspect vmv1
+1794354705 end inspect vmv1 ok
+1794354705 start inspect vmq1
+1794354705 end inspect vmq1 ok
+1794354706 start run vmq1 3c8ec48ff97cf0a6
+1794354706 end run vmq1 exit=0
+1794354709 start start vmq1
+1794354709 start inspect vmq1
+1794354709 end inspect vmq1 ok
+1794354709 start inspect vmv1
+1794354709 end inspect vmv1 ok
+1794354710 start inspect vmq1
+1794354710 end inspect vmq1 ok
+1794354712 start inspect vmq1
+1794354712 end inspect vmq1 ok
+1794354713 start inspect vmq1
+1794354713 end inspect vmq1 ok
+1794354715 start push vmq1 keep-ignored
+1794354715 end push vmq1 ok
+1794354716 bind 23ca9b4e840374caad9809572e5b1008 vmq1 vmq-project 72928ce087d17567fe908af5f1062093 implementer
+1794354716 start inspect vmq1
+1794354716 end inspect vmq1 ok
+1794354716 serve 23ca9b4e840374caad9809572e5b1008
+1794354717 start 23ca9b4e840374caad9809572e5b1008 1 edit
+1794354717 end 23ca9b4e840374caad9809572e5b1008 1 completed
+1794354717 start 23ca9b4e840374caad9809572e5b1008 2 exec
+1794354718 end 23ca9b4e840374caad9809572e5b1008 2 completed
+1794354719 start pull vmq1 tree
+1794354720 end pull vmq1 tree ok
+1794354720 start inspect vmq1
+1794354720 end inspect vmq1 ok
+1794354723 start restore vmv1 verify
+1794354733 end restore vmv1 verify ok
+1794354733 start start vmv1
+1794354733 start push vmv1 exact
+1794354733 end push vmv1 ok
+1794354733 bind d4ec0fac73e700dd79cb50393b9919af vmv1 vmq-project eb2f8c07eac63740dd59a5d0e5d1df5c reviewer
+1794354734 start inspect vmq1
+1794354734 end inspect vmq1 ok
+1794354734 serve d4ec0fac73e700dd79cb50393b9919af
+1794354735 start d4ec0fac73e700dd79cb50393b9919af 1 read
+1794354735 end d4ec0fac73e700dd79cb50393b9919af 1 completed
+1794354737 start inspect vmq1
+1794354737 end inspect vmq1 ok
+1794354737 start inspect vmq1
+1794354737 end inspect vmq1 ok
+1794354737 start inspect vmq1
+1794354738 end inspect vmq1 ok
+1794354738 start push vmq1 keep-ignored
+1794354738 end push vmq1 ok
+1794354738 start exec-argv vmq1
+1794354738 end exec-argv vmq1 exit=0 ended=exited
+1794354739 start pull vmq1 output
+1794354739 end pull vmq1 output ok
+1794354739 start pull vmq1 tree
+1794354739 end pull vmq1 tree ok
+1794354739 start inspect vmq1
+1794354739 end inspect vmq1 ok
+1794354739 start inspect vmq1
+1794354739 end inspect vmq1 ok
+1794354742 start restore vmv1 verify
+1794354754 end restore vmv1 verify ok
+1794354754 start start vmv1
+1794354754 start push vmv1 exact
+1794354754 end push vmv1 ok
+1794354754 bind 402bbc67a6498647e3df8fec8e4cfd3b vmv1 vmq-project e070af53b67e03487e13bc4412f1f4db reviewer
+1794354755 start inspect vmq1
+1794354755 end inspect vmq1 ok
+1794354755 serve 402bbc67a6498647e3df8fec8e4cfd3b
+1794354758 start inspect vmq1
+1794354758 end inspect vmq1 ok
+1794354758 start run vmq1 32d1e9c74266d96a
+1794354758 end run vmq1 exit=0
+1794354758 start inspect vmq1
+1794354759 end inspect vmq1 ok
+1794354759 start restore vmv1 verify
+1794354768 end restore vmv1 verify ok
+1794354768 start start vmv1
+1794354769 start push vmv1 exact
+1794354769 end push vmv1 ok
+1794354769 start exec-argv vmv1
+1794354770 end exec-argv vmv1 exit=0 ended=exited
+1794354770 start pull vmv1 output
+1794354770 end pull vmv1 output ok
+1794354770 start inspect vmv1
+1794354770 end inspect vmv1 ok
+1794354770 start inspect vmq1
+1794354770 end inspect vmq1 ok
+1794354771 start inspect vmq1
+1794354771 end inspect vmq1 ok
+1794354771 start inspect vmq1
+1794354771 end inspect vmq1 ok
+1794354771 start push vmq1 keep-ignored
+1794354771 end push vmq1 ok
+1794354771 start exec-argv vmq1
+1794354796 end exec-argv vmq1 exit=143 ended=cancelled
+1794354796 start inspect vmq1
+1794354796 end inspect vmq1 ok
+1794354797 start start vmq1
+1794354807 end start vmq1 ok
+1794354807 start inspect vmq1
+1794354807 end inspect vmq1 ok
+1794354808 start inspect vmq1
+1794354808 end inspect vmq1 ok
+1794354808 start inspect vmq1
+1794354808 end inspect vmq1 ok
+1794354809 start push vmq1 keep-ignored
+1794354809 end push vmq1 ok
+1794354809 start exec-argv vmq1
+1794354809 end exec-argv vmq1 exit=0 ended=exited
+1794354809 start pull vmq1 output
+1794354810 end pull vmq1 output ok
+1794354810 start inspect vmq1
+1794354810 end inspect vmq1 ok
+1794354810 start inspect vmq1
+1794354810 end inspect vmq1 ok
+1794354810 start inspect vmq1
+1794354810 end inspect vmq1 ok
+1794354811 start inspect vmq1
+1794354811 end inspect vmq1 ok
+1794354811 start push vmq1 keep-ignored
+1794354811 end push vmq1 ok
+1794354811 start exec-argv vmq1
+1794354812 end exec-argv vmq1 exit=0 ended=exited
+1794354812 start pull vmq1 output
+1794354812 end pull vmq1 output ok
+1794354812 start pull vmq1 tree
+1794354812 refused pull entry-not-allowed
+1794354812 start inspect vmq1
+1794354812 end inspect vmq1 ok
+1794354812 start inspect vmq1
+1794354812 end inspect vmq1 ok
+1794354813 start run vmq1 77375c80d3af164d
+1794354813 end run vmq1 exit=0
+1794354813 start inspect vmq1
+1794354813 end inspect vmq1 ok
+1794354813 start inspect vmq1
+1794354813 end inspect vmq1 ok
+1794354814 start push vmq1 keep-ignored
+1794354814 end push vmq1 ok
+1794354814 start exec-argv vmq1
+1794354814 end exec-argv vmq1 exit=0 ended=exited
+1794354814 start pull vmq1 output
+1794354815 end pull vmq1 output ok
+1794354815 start pull vmq1 tree
+1794354815 end pull vmq1 tree ok
+1794354815 start inspect vmq1
+1794354815 end inspect vmq1 ok
+1794354815 start inspect vmq1
+1794354815 end inspect vmq1 ok
+1794354817 refused start capsule-unknown
+1794354817 refused inspect capsule-unknown
+1794354820 start start vmq1
+1794354820 start inspect vmq1
+1794354820 end inspect vmq1 ok
+1794354820 start inspect vmv1
+1794354821 end inspect vmv1 ok
+1794354821 start inspect vmq1
+1794354821 end inspect vmq1 ok
+1794354821 start start vmq1
+1794354821 start inspect vmq1
+1794354822 end inspect vmq1 ok
+1794354822 start run vmq1 d636444824493219
+1794354822 end run vmq1 exit=0
+1794354822 start run vmq1 934aee17ae9b22ee
+1794354822 end run vmq1 exit=0
+1794354822 start inspect vmv1
+1794354822 end inspect vmv1 ok
+1794354823 start start vmq1
+1794354823 start inspect vmq1
+1794354823 end inspect vmq1 ok
+1794354823 start run vmq1 d636444824493219
+1794354823 end run vmq1 exit=0
+1794354823 start run vmq1 2ed27c1421e6928d
+1794354824 end run vmq1 exit=1
+1794354824 start inspect vmv1
+1794354824 end inspect vmv1 ok
+1794354824 start stop vmv1
+1794354825 end stop vmv1 ok
+1794354839 refused provision invalid-capsule-id
+1794354840 refused provision invalid-project-id
+1794354840 refused provision invalid-profile
+1794354840 start provision vmq1 vmq-project small
+1794354840 end provision vmq1 already-provisioned
+1794354840 start provision vmq1 vmq-project small
+1794354840 end provision vmq1 already-provisioned
+1794354840 start inspect vmq1
+1794354840 end inspect vmq1 ok
+1794354840 refused inspect capsule-owned-by-another-project
+1794354840 start provision vmq1 other-project small
+1794354840 refused provision capsule-owned-by-another-project
+1794354843 start run vmq1 261e6584318e7153
+1794354844 end run vmq1 exit=0
+1794354844 start import vmq1
+1794354845 end import vmq1 ok
+1794354845 start run vmq1 001333bf3aae8a4b
+1794354846 end run vmq1 exit=0
+1794354846 start run vmq1 04babc0c34f0faac
+1794354847 end run vmq1 exit=0
+1794354847 start stop vmq1
+1794354848 end stop vmq1 ok
+1794354848 start start vmq1
+1794354857 end start vmq1 ok
+1794354857 start run vmq1 60dfd50da04d546b
+1794354857 end run vmq1 exit=0
+1794354857 start run vmq1 001333bf3aae8a4b
+1794354858 end run vmq1 exit=0
+1794354859 refused snapshot snapshot-exists
+1794354859 start run vmq1 ef68266f54756a26
+1794354859 end run vmq1 exit=0
+1794354859 start restore vmq1 work-0000beef
+1794354873 end restore vmq1 work-0000beef ok
+1794354874 start run vmq1 b39361e6405b4be5
+1794354874 end run vmq1 exit=0
+1794354874 refused snapshot invalid-snapshot-name
+1794354874 refused restore snapshot-unknown
+1794354874 bind 9e8739bb6e5aef9365a17a87ca03f2f0 vmq1 vmq-project 7f9ca380245f488e34797d15cdb224bb implementer
+1794354874 serve 9e8739bb6e5aef9365a17a87ca03f2f0
+1794354874 start 9e8739bb6e5aef9365a17a87ca03f2f0 1 exec
+1794354874 end 9e8739bb6e5aef9365a17a87ca03f2f0 1 completed
+1794354874 start 9e8739bb6e5aef9365a17a87ca03f2f0 2 exec
+1794354879 end 9e8739bb6e5aef9365a17a87ca03f2f0 2 completed
+1794354879 start 9e8739bb6e5aef9365a17a87ca03f2f0 3 exec
+1794354881 end 9e8739bb6e5aef9365a17a87ca03f2f0 3 cancelled
+1794354886 start run vmq1 b39361e6405b4be5
+1794354886 end run vmq1 exit=0
+1794354886 start run vmq1 d75c1fc908cf10d4
+1794354886 end run vmq1 exit=0
+1794354886 start 9e8739bb6e5aef9365a17a87ca03f2f0 4 exec
+1794354888 serve 9e8739bb6e5aef9365a17a87ca03f2f0
+1794354888 start run vmq1 2df3a0179e4f920e
+1794354908 end run vmq1 exit=0
+1794354909 start run vmq1 b11758de728cc8fd
+1794354909 end run vmq1 exit=0
+1794354909 start run vmq1 032d8cb23d47cd28
+1794354909 end run vmq1 exit=0
+1794354909 start stop vmq1
+1794354911 end stop vmq1 ok
+1794354911 start start vmq1
+1794354911 failed start audit-config-changed
+1794354911 start start vmq1
+1794354911 failed start audit-host-loopback-not-disabled
+1794354911 start start vmq1
+1794354911 failed start audit-host-loopback-not-disabled
+1794354911 start inspect vmq1
+1794354911 end inspect vmq1 ok
+1794354911 unavailable run vm-not-running
+1794354924 start start vmq1
+1794354924 failed start audit-host-loopback-not-disabled
+1794354924 start inspect vmq1
+1794354924 end inspect vmq1 ok
+1794354924 start start vmq1
+1794354924 failed start audit-host-loopback-not-disabled
+1794354925 start inspect vmq1
+1794354925 end inspect vmq1 ok
+1794354925 unavailable run vm-not-running
+1794354925 start reconfigure vmq1
+1794354925 end reconfigure vmq1 ok
+1794354925 start start vmq1
+1794354933 end start vmq1 ok
+1794354934 start run vmq1 b69d0a51751e9a34
+1794354934 end run vmq1 exit=0
+1794354934 start start vmq1
+1794354934 start inspect vmq1
+1794354934 end inspect vmq1 ok
+1794354934 start run vmq1 d636444824493219
+1794354936 end run vmq1 exit=0
+1794354936 start stop vmq1
+1794354940 end stop vmq1 ok
+1794354940 start destroy vmq1
+1794354940 end destroy vmq1 ok
+1794354940 refused destroy capsule-unknown
+1794354977 refused provision invalid-capsule-id
+1794354977 refused provision invalid-project-id
+1794354977 refused provision invalid-profile
+1794354978 start provision vmq1 vmq-project small
+1794355024 end provision vmq1 ok
+1794355024 start provision vmq1 vmq-project small
+1794355024 end provision vmq1 already-provisioned
+1794355024 start inspect vmq1
+1794355024 end inspect vmq1 ok
+1794355024 refused inspect capsule-owned-by-another-project
+1794355024 start provision vmq1 other-project small
+1794355024 refused provision capsule-owned-by-another-project
+1794355027 start run vmq1 261e6584318e7153
+1794355028 end run vmq1 exit=0
+1794355028 start import vmq1
+1794355028 end import vmq1 ok
+1794355029 start run vmq1 001333bf3aae8a4b
+1794355047 end run vmq1 exit=0
+1794355047 start run vmq1 04babc0c34f0faac
+1794355051 end run vmq1 exit=0
+1794355051 start stop vmq1
+1794355053 end stop vmq1 ok
+1794355053 start start vmq1
+1794355060 end start vmq1 ok
+1794355061 start run vmq1 60dfd50da04d546b
+1794355061 end run vmq1 exit=0
+1794355061 start run vmq1 001333bf3aae8a4b
+1794355062 end run vmq1 exit=0
+1794355062 start snapshot vmq1 work-0000beef
+1794355075 end snapshot vmq1 work-0000beef ok
+1794355075 start run vmq1 ef68266f54756a26
+1794355075 end run vmq1 exit=0
+1794355075 start restore vmq1 work-0000beef
+1794355087 end restore vmq1 work-0000beef ok
+1794355087 start run vmq1 b39361e6405b4be5
+1794355088 end run vmq1 exit=0
+1794355088 refused snapshot invalid-snapshot-name
+1794355088 refused restore snapshot-unknown
+1794355088 bind 3e2d7c58c0572a024f2a267c9054ed1a vmq1 vmq-project 83dfc2cbdf8aa52298ba4125e22d92cc implementer
+1794355088 serve 3e2d7c58c0572a024f2a267c9054ed1a
+1794355088 start 3e2d7c58c0572a024f2a267c9054ed1a 1 exec
+1794355088 end 3e2d7c58c0572a024f2a267c9054ed1a 1 completed
+1794355088 start 3e2d7c58c0572a024f2a267c9054ed1a 2 exec
+1794355093 end 3e2d7c58c0572a024f2a267c9054ed1a 2 completed
+1794355093 start 3e2d7c58c0572a024f2a267c9054ed1a 3 exec
+1794355095 end 3e2d7c58c0572a024f2a267c9054ed1a 3 cancelled
+1794355099 start run vmq1 b39361e6405b4be5
+1794355100 end run vmq1 exit=0
+1794355100 start run vmq1 d75c1fc908cf10d4
+1794355100 end run vmq1 exit=0
+1794355100 start 3e2d7c58c0572a024f2a267c9054ed1a 4 exec
+1794355102 serve 3e2d7c58c0572a024f2a267c9054ed1a
+1794355102 start run vmq1 2df3a0179e4f920e
+1794355115 end run vmq1 exit=0
+1794355115 start run vmq1 b11758de728cc8fd
+1794355115 end run vmq1 exit=0
+1794355115 start run vmq1 032d8cb23d47cd28
+1794355115 end run vmq1 exit=0
+1794355115 start stop vmq1
+1794355119 end stop vmq1 ok
+1794355119 start start vmq1
+1794355119 failed start audit-config-changed
+1794355119 start start vmq1
+1794355119 failed start audit-host-loopback-not-disabled
+1794355119 start start vmq1
+1794355119 failed start audit-host-loopback-not-disabled
+1794355119 start inspect vmq1
+1794355119 end inspect vmq1 ok
+1794355119 unavailable run vm-not-running
+1794355133 start start vmq1
+1794355133 failed start audit-host-loopback-not-disabled
+1794355133 start inspect vmq1
+1794355133 end inspect vmq1 ok
+1794355133 start start vmq1
+1794355133 failed start audit-host-loopback-not-disabled
+1794355133 start inspect vmq1
+1794355133 end inspect vmq1 ok
+1794355133 unavailable run vm-not-running
+1794355133 start reconfigure vmq1
+1794355133 end reconfigure vmq1 ok
+1794355134 start start vmq1
+1794355144 end start vmq1 ok
+1794355144 start run vmq1 b69d0a51751e9a34
+1794355144 end run vmq1 exit=0
+1794355144 start start vmq1
+1794355145 start inspect vmq1
+1794355145 end inspect vmq1 ok
+1794355145 start run vmq1 d636444824493219
+1794355146 end run vmq1 exit=0
+1794355146 start stop vmq1
+1794355149 end stop vmq1 ok
+1794355149 start destroy vmq1
+1794355149 end destroy vmq1 ok

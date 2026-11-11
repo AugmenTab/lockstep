@@ -1,0 +1,46 @@
+2026-11-10T23:50:10Z capsule mode on: capsule vmq1, project vmq-project, verification none, command limit 1800s
+2026-11-10T23:50:10Z started (pid 58752, protocol 1, timeout 90s, instance p5cr, runner image sha256:e5e0c0d0f4cc8f2163b389c8e5e634d12aadbe5b370fe2ec725b5a7f84c6fc4d)
+2026-11-10T23:50:10Z the request or result directory is missing, a symlink or not private; nothing is read
+2026-11-10T23:50:12Z run-write 38130835ea2dabeb01060e7466a6cd15: exited (exit 0, capsule vmq1)
+2026-11-10T23:50:14Z run-readonly cf50eb803b4b4042062ed987a37b0ddd: exited (exit 2, capsule vmq1)
+2026-11-10T23:50:19Z run-write d1e2d1c4172d7351f47c32265ed65de0: interrupted (its process ended without an answer)
+2026-11-10T23:50:30Z run-readonly 7f8fee5ff0f11fdada78f02704fbe56d: exited (exit 0, capsule vmq1)
+2026-11-10T23:50:30Z stopped
+2026-11-10T23:50:41Z capsule mode on: capsule vmq1, project vmq-project, verification vmv1, command limit 1800s
+2026-11-10T23:50:41Z started (pid 62945, protocol 1, timeout 90s, instance p5cr, runner image sha256:e5e0c0d0f4cc8f2163b389c8e5e634d12aadbe5b370fe2ec725b5a7f84c6fc4d)
+2026-11-10T23:50:41Z the request or result directory is missing, a symlink or not private; nothing is read
+2026-11-10T23:50:47Z run-write bfe4a419e04dda4358531e5d2b9a6290: exited (exit 0, capsule vmq1)
+2026-11-10T23:50:58Z run-verify dfcba27e40fbf4583f843dc25de2eae6: exited (exit 2, capsule vmv1)
+2026-11-10T23:51:15Z run-verify 12011b00242e5eb6bf718f296243f46c: exited (exit 0, capsule vmv1)
+2026-11-10T23:51:28Z run-verify 0e3858d7112e97e53a79e054814cbe2b: exited (exit 2, capsule vmv1)
+2026-11-10T23:51:45Z run-verify bf512586f855088007db84523fce98b6: exited (exit 0, capsule vmv1)
+2026-11-10T23:51:46Z stopped
+2026-11-10T23:51:49Z live runs on (OFFLINE TEST: upstream standin:8443, CA /Users/tab/personal/lockstep/.local/evidence/capsule-runner-20261110t235001z/ca.pem, internal network lockstep-ccr-20261110t235001z, key offline-credential): claude-code claude-sonnet-5-5 medium, subscription, native (usage in tokens), at most 16000 output tokens a request (image sha256:4a050cb49536092f82261eff968873a5f505fb2f647ce4c9af925f1202f0daa1)
+2026-11-10T23:51:50Z capsule mode on: capsule vmq1, project vmq-project, verification vmv1, command limit 1800s
+2026-11-10T23:51:50Z started (pid 69630, protocol 1, timeout 90s, instance p5cr, runner image sha256:e5e0c0d0f4cc8f2163b389c8e5e634d12aadbe5b370fe2ec725b5a7f84c6fc4d)
+2026-11-10T23:51:50Z the request or result directory is missing, a symlink or not private; nothing is read
+2026-11-10T23:51:52Z refused 3daf1fd7362ebda40c8e98692f186609: built-in-tools-not-disabled
+2026-11-10T23:51:52Z run-live-write 3daf1fd7362ebda40c8e98692f186609: interrupted (its process ended without an answer)
+2026-11-10T23:51:52Z refused 688cd9d5f8a6d259ffb7b0df8614df33: argv-not-allowed-in-capsule-mode
+2026-11-10T23:51:52Z run-live-write 688cd9d5f8a6d259ffb7b0df8614df33: interrupted (its process ended without an answer)
+2026-11-10T23:52:00Z run-live-write 2e6f81025913d798710d89e4f4f164a9: exited (exit 0, 840 tokens, capsule vmq1)
+2026-11-10T23:52:17Z run-live-readonly c7dc200f46e0f457a0a0ec997b639a8f: exited (exit 0, 700 tokens, capsule vmv1)
+2026-11-10T23:52:19Z run-write eb59ddecd89969e9be2b776bb7dc76e9: exited (exit 0, capsule vmq1)
+2026-11-10T23:52:38Z run-live-readonly 8262a67c63da2ddc4f40d812b4075bbd: exited (exit 0, 420 tokens, capsule vmv1)
+2026-11-10T23:52:50Z run-verify b46a26647888996ca5740a5f8a250108: exited (exit 0, capsule vmv1)
+2026-11-10T23:53:28Z run-write 8264472f5a52f295455c8d40b4832dc0: cancelled (exit 143, capsule vmq1)
+2026-11-10T23:53:30Z run-readonly 638085fbeb5e0083af50e7af04b70297: exited (exit 0, capsule vmq1)
+2026-11-10T23:53:33Z run-write a0fdb2a9642ddd1fe39908ffc4af5294: launch-failed (exit 0, capsule vmq1)
+2026-11-10T23:53:35Z run-write cf72701ac444e4e9ce9e6c1c18ca28fa: exited (exit 0, capsule vmq1)
+2026-11-10T23:53:36Z stopped
+2026-11-10T23:53:37Z live runs on (OFFLINE TEST: upstream standin:8443, CA /Users/tab/personal/lockstep/.local/evidence/capsule-runner-20261110t235001z/ca.pem, internal network lockstep-ccr-20261110t235001z, key offline-credential): claude-code claude-sonnet-5-5 medium, subscription, native (usage in tokens), at most 16000 output tokens a request (image sha256:4a050cb49536092f82261eff968873a5f505fb2f647ce4c9af925f1202f0daa1)
+2026-11-10T23:53:37Z capsule mode UNAVAILABLE, every run is refused: the capsule is not ready (capsule-runtime 1 inspect refused reason=capsule-unknown)
+2026-11-10T23:53:37Z started (pid 81009, protocol 1, timeout 90s, instance p5cr, runner image sha256:e5e0c0d0f4cc8f2163b389c8e5e634d12aadbe5b370fe2ec725b5a7f84c6fc4d)
+2026-11-10T23:53:37Z the request or result directory is missing, a symlink or not private; nothing is read
+2026-11-10T23:53:38Z refused 363e589e41065e7931ca17c2209b009d: capsule-mode-unavailable
+2026-11-10T23:53:38Z stopped
+2026-11-10T23:53:40Z live runs on (OFFLINE TEST: upstream standin:8443, CA /Users/tab/personal/lockstep/.local/evidence/capsule-runner-20261110t235001z/ca.pem, internal network lockstep-ccr-20261110t235001z, key offline-credential): claude-code claude-sonnet-5-5 medium, subscription, native (usage in tokens), at most 16000 output tokens a request (image sha256:4a050cb49536092f82261eff968873a5f505fb2f647ce4c9af925f1202f0daa1)
+2026-11-10T23:53:41Z capsule mode on: capsule vmq1, project vmq-project, verification vmv1, command limit 1800s
+2026-11-10T23:53:41Z started (pid 81718, protocol 1, timeout 90s, instance p5cr, runner image sha256:e5e0c0d0f4cc8f2163b389c8e5e634d12aadbe5b370fe2ec725b5a7f84c6fc4d)
+2026-11-10T23:53:41Z the request or result directory is missing, a symlink or not private; nothing is read
+2026-11-10T23:53:44Z stopped

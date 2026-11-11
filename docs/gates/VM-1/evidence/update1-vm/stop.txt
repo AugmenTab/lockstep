@@ -1,0 +1,1 @@
+capsule-runtime 1 stop ok capsule=vmq1 status=Stopped

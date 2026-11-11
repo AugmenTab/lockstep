@@ -1,0 +1,38 @@
+hostname=lima-lockstep-vmq1
+mounts=[]
+users-dir=absent
+ssh-agent=[]
+docker-name=lima-lockstep-vmq1
+tcp host.lima.internal:18765 closed
+tcp 192.168.5.2:18765 closed
+tcp host.lima.internal:18766 closed
+tcp 192.168.5.2:18766 closed
+tcp 192.168.5.2:2375 closed
+tcp 192.168.5.2:5432 closed
+tcp 192.168.5.2:8000 closed
+tcp 192.168.5.2:22 closed
+tcp 192.168.5.2:5000 closed
+tcp 192.168.5.2:7000 closed
+tcp 192.168.5.2:5984 closed
+tcp 192.168.5.2:4444 closed
+tcp 10.10.1.203:18765 closed
+tcp 10.10.1.203:18766 open
+tcp 10.10.1.203:5000 open
+tcp 10.10.1.203:7000 open
+tcp 10.10.1.203:4444 open
+tcp 10.10.1.203:5984 open
+tcp 10.10.1.203:6984 open
+tcp 10.10.1.203:7900 open
+tcp 10.10.1.203:8300 open
+tcp 10.10.1.203:8310 open
+tcp 10.10.1.203:8320 open
+tcp 10.10.1.203:8780 open
+tcp 10.10.1.203:8781 open
+tcp 10.10.1.203:9300 open
+tcp 10.10.1.203:50966 open
+tcp 10.10.1.203:22 closed
+tcp 10.10.1.203:5432 closed
+tcp 10.10.1.203:8000 closed
+dns-ok
+https=401
+isolation-done

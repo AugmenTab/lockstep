@@ -1,0 +1,1 @@
+capsule-runtime 1 snapshot refused reason=invalid-snapshot-name

@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# P5.11: the full transaction through the real service with every run in real Dev Capsules (contract
+# C-P5.11). Model-free. On this host: the real helper (scripts/control-helper --runner) in capsule mode
+# with the Engineer's capsule vmq1 and the verification capsule vmv1 (check-capsule-vm / -runner made
+# them), and a disposable PostgreSQL. In the dev container, as the host's user with the runner channel
+# at its own path (as scripts/service runs the service): the suite lockstep-capsule-e2e drives the real
+# service and the engine worker (helperRunner), and a real browser, through the Gate C-EXEC journey.
+# Then the helper's own record is checked: which runs ran in which capsule.
+#
+# Results: .local/evidence/capsule-e2e-<stamp>/results.txt
+set -uo pipefail
+cd "$(dirname "$0")/../.."
+root=$PWD
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+work=$root/.local/evidence/capsule-e2e-$stamp
+state=$root/.local/cce-$stamp
+cstate=$root/.local/cvm
+mkdir -p "$work"
+results=$work/results.txt
+: > "$results"
+failures=0
+instance=p5ce
+helper_pid=""
+net=lockstep-cce-$stamp
+pg=lockstep-cce-pg-$stamp
+
+record() { printf '%s %s\n' "$1" "$2" | tee -a "$results"; [ "$1" = PASS ] || failures=$((failures + 1)); }
+expect() { local d=$1; shift; if "$@"; then record PASS "$d"; else record FAIL "$d"; fi; }
+cleanup() {
+  if [ -n "$helper_pid" ]; then kill "$helper_pid" 2>/dev/null; wait "$helper_pid" 2>/dev/null; fi
+  docker rm -f "$pg" >/dev/null 2>&1
+  docker network rm "$net" >/dev/null 2>&1
+  [ -f "$state/helper/helper.log" ] && cp "$state/helper/helper.log" "$work/helper.log"
+  [ -f "$state/helper/runner-journal" ] && cp "$state/helper/runner-journal" "$work/runner-journal"
+  rm -rf "$state"
+}
+trap cleanup EXIT
+for c in vmq1 vmv1; do
+  [ -f "$cstate/capsules/records/$c" ] || { echo "NOT_RUN: capsule $c is missing (run check-capsule-vm --keep and check-capsule-runner)" >&2; exit 2; }
+done
+
+umask 077
+mkdir -p "$state/helper" "$state/pane" "$state/capsule"
+chmod 700 "$state" "$state/helper" "$state/pane" "$state/capsule"
+head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$state/helper/channel.key"
+printf 'lockstep-capsule 1\nruntime-state %s\ncapsule vmq1\nproject vmq-project\nverify-capsule vmv1\n' "$cstate" > "$state/capsule/config"
+chmod 600 "$state/capsule/config"
+"$root/scripts/control-helper" --state "$state" --instance "$instance" --runner < /dev/null > "$work/helper.out" 2>&1 &
+helper_pid=$!
+for _ in $(seq 1 1200); do grep -q "started (pid $helper_pid" "$state/helper/helper.log" 2>/dev/null && break; sleep 0.1; done
+expect "the helper is in capsule mode with the verification capsule" grep -q 'capsule mode on: capsule vmq1, project vmq-project, verification vmv1' "$state/helper/helper.log"
+
+# A disposable PostgreSQL, as scripts/check makes one.
+password=$(head -c 24 /dev/urandom | base64 | tr -d '/+=\n')
+docker network create "$net" >/dev/null
+docker run -d --name "$pg" --network "$net" --env POSTGRES_PASSWORD="$password" "$(cat scripts/lib/postgres-image)" >/dev/null
+for _ in $(seq 1 60); do docker exec "$pg" pg_isready -q -h 127.0.0.1 -U postgres 2>/dev/null && break; sleep 1; done
+
+t0=$(date +%s)
+docker run --rm --network "$net" --user "$(id -u):$(id -g)" \
+  --volume "$root:/work" --volume "$state/runner:$state/runner" --workdir /work \
+  --env "LOCKSTEP_E2E_RUNNER_DIR=$state/runner" \
+  --env "LOCKSTEP_TEST_PG_HOST=$pg" --env LOCKSTEP_TEST_PG_PORT=5432 --env LOCKSTEP_TEST_PG_USER=postgres \
+  --env "LOCKSTEP_TEST_PG_PASSWORD=$password" \
+  lockstep-dev:p1 scripts/lib/capsule-e2e-in-container > "$work/suite.log" 2>&1
+rc=$?
+t1=$(date +%s)
+echo "suite $((t1 - t0)) s (exit $rc)" > "$work/timings.txt"
+expect "the transaction went from hand-over to Done through the real service ($(tail -n 1 "$work/suite.log"))" test "$rc" = 0
+
+# The helper's side: every run of the transaction ran in a capsule; verification never in the Engineer's.
+log=$state/helper/helper.log
+grep -E ': (exited|timed-out|cancelled|launch-failed|output-limit|refused)' "$log" > "$work/runs.txt" 2>/dev/null
+expect "runs were executed in the Engineer's capsule ($(grep -c 'capsule vmq1' "$work/runs.txt"))" test "$(grep -c 'capsule vmq1' "$work/runs.txt")" -ge 4
+expect "verification ran in the verification capsule ($(grep -c '^.*run-verify .*capsule vmv1' "$work/runs.txt"))" test "$(grep -c 'run-verify .*capsule vmv1' "$work/runs.txt")" -ge 1
+expect "no verification ran in the Engineer's capsule" test "$(grep -c 'run-verify .*capsule vmq1' "$work/runs.txt")" = 0
+expect "no run fell back to a container" test "$(grep -cE '^[^ ]+ run-(readonly|write|verify) [0-9a-f]+: [a-z-]+ \(exit [0-9]+\)$' "$log")" = 0
+
+echo "check-capsule-e2e: $failures failure(s); results in $results"
+[ "$failures" = 0 ]

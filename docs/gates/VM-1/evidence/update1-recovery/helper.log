@@ -1,0 +1,16 @@
+2026-11-10T23:46:58Z capsule mode on: capsule vmq1, project vmq-project, verification none, command limit 1800s
+2026-11-10T23:46:58Z started (pid 47952, protocol 1, timeout 90s, instance p5rc, runner image sha256:e5e0c0d0f4cc8f2163b389c8e5e634d12aadbe5b370fe2ec725b5a7f84c6fc4d)
+2026-11-10T23:46:58Z the request or result directory is missing, a symlink or not private; nothing is read
+2026-11-10T23:47:28Z run-write f70db2eb3683cc89722828f77495b70b: cancelled (exit 143, capsule vmq1)
+2026-11-10T23:47:28Z stopped
+2026-11-10T23:47:29Z capsule mode on: capsule vmq1, project vmq-project, verification none, command limit 1800s
+2026-11-10T23:47:29Z started (pid 50164, protocol 1, timeout 90s, instance p5rc, runner image sha256:e5e0c0d0f4cc8f2163b389c8e5e634d12aadbe5b370fe2ec725b5a7f84c6fc4d)
+2026-11-10T23:47:29Z the request or result directory is missing, a symlink or not private; nothing is read
+2026-11-10T23:47:37Z run-readonly 778de0c5557a1048917d55d2326fbff4: exited (exit 0, capsule vmq1)
+2026-11-10T23:47:59Z capsule: ended the orphaned run 8748e1f03ec25b77263db93dd28fc628 (process 51998)
+2026-11-10T23:48:00Z capsule mode on: capsule vmq1, project vmq-project, verification none, command limit 1800s
+2026-11-10T23:48:00Z started (pid 53069, protocol 1, timeout 90s, instance p5rc, runner image sha256:e5e0c0d0f4cc8f2163b389c8e5e634d12aadbe5b370fe2ec725b5a7f84c6fc4d)
+2026-11-10T23:48:00Z the request or result directory is missing, a symlink or not private; nothing is read
+2026-11-10T23:49:12Z run-write b78ca2c10a6c187b9de3405b5336525d: launch-failed (exit 125, capsule vmq1)
+2026-11-10T23:49:14Z run-readonly 5f0b40e1141c1baaa6c78b07d4da5282: exited (exit 0, capsule vmq1)
+2026-11-10T23:49:14Z stopped

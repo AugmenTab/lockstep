@@ -1,0 +1,1 @@
+capsule-runtime 1 inspect ok capsule=vmq1 project=vmq-project backend=lima status=Stopped phase=ready profile=small audit=host-loopback-not-disabled template=stale

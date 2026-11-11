@@ -7,6 +7,7 @@ checks and digests are under Technical details.
 -}
 module Lockstep.Web.ExecutionPages
   ( projectExecutionSection
+  , capsuleSection
   , taskFixingSection
   ) where
 
@@ -20,6 +21,7 @@ import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (show)
 
+import Lockstep.Application.CapsuleStatus (CapsuleStatus (..))
 import Lockstep.Application.Conversation (StoredRequest (..))
 import Lockstep.Application.Engine (InvocationView (..), TransactionView (..))
 import Lockstep.Application.EngineEvidence (CheckRun (..), Evidence (..), FindingTime (..), FindingView (..), ReviewView (..), transactionEvidence)
@@ -28,16 +30,16 @@ import Lockstep.Application.ProjectChecks (Standing (..))
 import Lockstep.Application.Projects (ProjectView (..))
 import Lockstep.Application.Tasks (TaskView (..))
 import Lockstep.Kernel.Execution (executionRefusalWords)
-import Lockstep.Kernel.Identity (InvocationId (..), RepositoryId (..), identityText)
+import Lockstep.Kernel.Identity (InvocationId (..), ProjectId, RepositoryId (..), identityText)
 import Lockstep.Kernel.Policy (ineligibilityWords)
 import Lockstep.Kernel.Profile (profileIdText)
 import Lockstep.Kernel.Roles (CandidateTest (..), Criterion (..), Verdict (..))
 import Lockstep.Kernel.Runner (OutcomeKind (..))
 import Lockstep.Kernel.Task (TaskReadiness (..))
 import Lockstep.Kernel.Transaction (Disposition (..), FixedHalt (..), HaltCode (..), Stage (..), StateName (..), haltCodeFromText, noCodingAgent, parseStage, parseStateName)
-import Lockstep.Web.Fields (choiceField, expectedField, expectedSetField, keyField, requestField, revisionField, ticketRevisionField)
+import Lockstep.Web.Fields (choiceField, expectedField, expectedSetField, keyField, requestField, revisionField, runField, ticketRevisionField)
 import Lockstep.Web.Fragment (attr, cls, elementId)
-import Lockstep.Web.Routes.App (admitBugAction, completionAction, enableExecutionAction, haltDecisionAction)
+import Lockstep.Web.Routes.App (admitBugAction, completionAction, enableExecutionAction, haltDecisionAction, stopCapsuleRunAction)
 
 heading :: T.Text -> T.Text -> E.ChildHTML E.Division E.Body
 heading sectionId title =
@@ -96,6 +98,67 @@ projectExecutionSection project status started key =
               )
           ]
       ]
+
+{- | Phase 5 (P5.10): where Lockstep works, when the helper runs it in a Dev
+Capsule: the capsule's readiness, the step under way with a way to stop it,
+the last step's outcome and the last failure, from the helper's own status.
+Shown only in capsule mode; nothing here starts anything.
+-}
+capsuleSection :: ProjectId -> CapsuleStatus -> [E.ChildHTML E.Division E.Body]
+capsuleSection project status =
+  [ heading "capsule" "Where Lockstep works"
+  , E.p [] [E.text ("In its own Linux virtual machine (Dev Capsule " <> statusCapsule status <> "): " <> readiness <> ".")]
+  , E.p
+      []
+      [ E.text $
+          case statusVerify status of
+            Just v -> "Its work is checked in a separate machine (" <> v <> ") that is reset to a known-good state before every check."
+            Nothing -> "No separate checking machine is set up, so Lockstep will refuse to check work until there is one."
+      ]
+  ]
+    <> running
+    <> [E.p [cls "ls-muted"] [E.text ("Last step: " <> lastWords)] | Just lastWords <- [statusLastRun status]]
+    <> [E.p [cls "ls-notice", attr "role" "alert"] [E.text ("Last problem: " <> failure)] | Just failure <- [statusLastFailure status]]
+    <> [ E.details
+           []
+           [ E.summary [] [E.text "Technical details"]
+           , E.dl
+               [cls "ls-facts"]
+               ( fact "Capsule" (statusCapsule status)
+                   <> fact "Machine" (statusVm status)
+                   <> fact "Configuration check" (statusAudit status)
+                   <> fact "Template" (statusTemplate status)
+                   <> fact "Updated" (statusUpdated status)
+               )
+           ]
+       ]
+ where
+  readiness
+    | statusAudit status /= "ok" = "not ready: its configuration is refused (" <> statusAudit status <> ")"
+    | statusTemplate status /= "current" = "not ready: it was made from an older template and must be reconfigured"
+    | statusVm status == "Running" = "ready"
+    | statusVm status == "Stopped" = "stopped; it starts when the next step needs it"
+    | otherwise = "not available (" <> statusVm status <> ")"
+  running =
+    case statusActiveRun status of
+      Nothing -> [E.p [cls "ls-muted"] [E.text "Nothing is running in it now."]]
+      Just run ->
+        [ E.p [] [E.text ("Running now: " <> maybe "a step" stepName (statusActiveOp status) <> ".")]
+        , E.form
+            [A.id (elementId 's' "top-capsule-form"), A.method B.FormPOST, A.action (stopCapsuleRunAction project)]
+            [ hidden runField run
+            , E.button [A.id (elementId 's' "top-capsule-run"), attr "type" "submit"] [E.text "Stop the running step"]
+            ]
+        , E.p [cls "ls-muted"] [E.text "Stopping ends the step at once. Lockstep does not run it again by itself; the bug then waits for you."]
+        ]
+  stepName op =
+    case op of
+      "run-live-write" -> "the Implementer's coding step"
+      "run-live-readonly" -> "a reading step (planning, challenge or review)"
+      "run-verify" -> "an independent check"
+      "run-write" -> "a writing step"
+      "run-readonly" -> "a reading step"
+      other -> other
 
 standingWords :: Maybe Standing -> T.Text
 standingWords standing =

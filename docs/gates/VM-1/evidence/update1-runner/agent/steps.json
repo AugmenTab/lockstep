@@ -1,0 +1,4 @@
+[
+ {"name":"mcp__capsule__read","input":{"path":"/input/role.md"}},
+ {"name":"mcp__capsule__answer","input":{"content":"{\"kind\": \"review\", \"verdict\": \"reject\", \"reasons\": [\"the real verdict\"]}"}}
+]

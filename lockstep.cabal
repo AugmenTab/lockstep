@@ -31,6 +31,7 @@ source-repository head
 library
   exposed-modules:
       Lockstep.Application.Activity
+      Lockstep.Application.CapsuleStatus
       Lockstep.Application.Command
       Lockstep.Application.CommandCenter
       Lockstep.Application.ControlPane
@@ -241,6 +242,9 @@ executable lockstep
 test-suite lockstep-capsule
   type: exitcode-stdio-1.0
   main-is: Main.hs
+  other-modules:
+      Lockstep.CapsuleGitTest
+      Lockstep.CapsuleStatusTest
   hs-source-dirs:
       test/capsule
   default-extensions:
@@ -248,12 +252,51 @@ test-suite lockstep-capsule
   ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T -fplugin-opt=Henforcer:--config=henforcer-tests.toml
   build-depends:
       base
+    , bytestring
+    , directory
     , flipstone-prelude
     , henforcer
     , lockstep
+    , process
     , tasty
     , tasty-hunit
+    , temporary
     , text
+    , unix
+  default-language: GHC2021
+
+test-suite lockstep-capsule-e2e
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Lockstep.Support.Postgres
+      Lockstep.Support.Process
+  hs-source-dirs:
+      test/capsule-e2e
+      test/integration
+  default-extensions:
+      NoImplicitPrelude
+  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T -fplugin-opt=Henforcer:--config=henforcer-tests.toml
+  build-tool-depends:
+      lockstep:lockstep
+  build-depends:
+      base
+    , bytestring
+    , directory
+    , flipstone-prelude
+    , henforcer
+    , http-client
+    , http-types
+    , lockstep
+    , network
+    , orville-postgresql
+    , process
+    , tasty
+    , tasty-hunit
+    , temporary
+    , text
+    , time
+    , unix
   default-language: GHC2021
 
 test-suite lockstep-compliance

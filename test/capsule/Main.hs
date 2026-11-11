@@ -17,6 +17,8 @@ import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase, (@?=))
 import Text.Show (show)
 
+import Lockstep.CapsuleGitTest qualified as CapsuleGitTest
+import Lockstep.CapsuleStatusTest qualified as CapsuleStatusTest
 import Lockstep.Effects.Provider.Claude (ProviderConfig (..), capsuleRoleInstructions, claudeCapsuleArgv, parseCapsuleLine)
 import Lockstep.Effects.Roles (View (..), Workspace (..))
 import Lockstep.Kernel.Capsule
@@ -133,6 +135,8 @@ tests script =
             for_ [Planner, Challenger, Implementer, Reviewer] $ \role ->
               assertBool (T.unpack (roleName role)) (T.isInfixOf (T.pack "\"kind\"") (capsuleRoleInstructions role capsuleView))
         ]
+    , CapsuleGitTest.tests
+    , CapsuleStatusTest.tests
     ]
  where
   capsuleView =

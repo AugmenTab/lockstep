@@ -1,0 +1,16 @@
+PASS capsule-config
+PASS capsule-healthy
+PASS capsule-ownership
+PASS capsule-template-current
+PASS host-loopback-isolation
+PASS workspace-writable
+PASS disk-space
+PASS guest-docker
+PASS credential-not-in-guest
+PASS no-host-mounts
+PASS bridge-executor
+PASS bridge-present
+FAIL tool-routing: the helper has not announced capsule mode for vmq1 (start it with --runner)
+FAIL verification-environment: no verify-capsule in /Users/tab/personal/lockstep/.local/evidence/capsule-vm-20261110t235617z/pf-state/capsule/config
+FAIL host-network-exposure: host services reachable from the guest through the Mac's other addresses: tcp/4444 tcp/5000 tcp/5984 tcp/6984 tcp/7000 tcp/7900 tcp/8300 tcp/8310 tcp/8320 tcp/8780 tcp/8781 tcp/9300 tcp/50966 udp/Dockerfile udp/LICENSE-LAUNCHPAD udp/README.md udp/THIRD_PARTY_LICENSES.md udp/app udp/docs udp/fourmolu.yaml udp/henforcer-tests.toml udp/henforcer.toml udp/lockstep udp/lockstep.cabal udp/package.yaml udp/scripts udp/src udp/stack.yaml udp/stack.yaml.lock udp/static udp/test udp/tests udp/137 udp/138 udp/547 udp/5353 udp/49224 udp/50817 udp/51092 udp/51502 udp/51658 udp/52744 udp/52967 udp/53561 udp/53582 udp/55448 udp/56443 udp/56818 udp/57046 udp/57301 udp/58291 udp/58374 udp/59486 udp/59756 udp/60886 udp/62284 udp/62404 udp/62734 udp/63461 udp/64073 udp/65334 udp/65459; bind them to 127.0.0.1, stop them, or accept them with --allow-lan / --allow-lan-udp
+capsule-preflight: 3 failure(s)

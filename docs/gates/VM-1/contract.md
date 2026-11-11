@@ -111,6 +111,30 @@ where they run. The service learns of it from `DIR/runner/capsule` and uses the 
 | L2 | A live Implementer reads its instructions, edits, builds and tests in the capsule, and answers. The answer and tree come back. No built-in Bash. No credential or provider variable in the capsule. Usage is in tokens. The token is in no kept file. | C2 |
 | L3 | A live read-only role reads and answers (`answer` writes only `/output/result.json`). It has no write or exec tool, and nothing it attempted reaches the tree. | C3 |
 
+## 4b. Update 1: D4, C-P5.8 to C-P5.11
+
+**D4 (Option D, `.local/plans/phase-05_update1.md`).** The template sets `networkOpts.hostLoopback: false`. The
+audit requires exactly that, the Lima version must be at least 2.3.0, and an unknown-field warning refuses
+provisioning. `reconfigure` brings older capsules over without touching their data. Checks: `check-capsule-vm`
+D4.1–D4.8. Remaining exposure: `escalation-host-network.md` §2, enforced by preflight `host-network-exposure`.
+
+| # | Requirement | Check |
+|---|---|---|
+| G1–G5 | A tree a capsule returns, made as hostile as a guest can make it, is committed as its bytes through the Supervisor's plumbing. No content filter, text converter, file-system monitor or hook runs, though both the operator's and the repository's configuration name them; a control shows that ordinary Git does run them. Only the work branch moves. | `lockstep-capsule` C-P5.8 |
+| G2 | A `.git` anywhere in the returned tree, in any case, or a symbolic link, is refused before any commit. | ″ |
+| G3 | Change paths that escape, are absolute, contain a backslash or name `.git` are refused (`change-path-invalid`); a symlink change is refused (`change-symlink`). | ″ |
+| G6 | A stale basis cannot move the work branch (`branch-moved`). | ″ |
+| R1 | The helper stopping in the middle of a capsule run: the run is answered `cancelled` or `interrupted`, never as an exit. It is never run again by itself, its guest program is ended, nothing of its tree comes back, and the capsule is usable after. | `check-capsule-recovery` |
+| R1b | The helper killed (`kill -9`) in the middle of a capsule run: the next helper ends the orphaned run (its recorded process, and its guest program through the cancel file) before anything else, answers it `interrupted`, and nothing of its tree comes back, even after the program's own time. | `check-capsule-recovery` |
+| R1c | A run's own process dying while the helper lives (a fault in the helper's run code): the run is answered `interrupted` within seconds, not after the command limit; its guest program is ended; nothing of its tree comes back; the next run works. | `check-capsule-runner` A4 |
+| R2 | The VM killed under a running program: `launch-failed`, never the program's exit; nothing of its tree comes back; the capsule is started again. | ″ |
+| R3 | A capsule made from an older template: `inspect` says `template=stale`, preflight refuses (`capsule-template-current`), `reconfigure` brings it current without losing its disk. | ″ |
+| R4 | A bridged call in flight when its executor dies: `effect-unknown`, never replayed. | `check-capsule-vm` R2 |
+| U1–U4 | The operator's view: the helper's status file is read exactly or not at all. The project page shows readiness (refused configuration and old template as not ready, with the reason), the verification machine, the step under way with a stop control only then, the last step and the last failure. | `lockstep-capsule` C-P5.10 |
+| U5 | The helper keeps the status current: the run under way while it runs; afterwards nothing under way and the last problem. | `check-capsule-runner` U5 |
+| U6 | The stop control stops only the run the helper reports as under way (a stale page stops nothing) through the helper's existing `cancel-run`; the engine treats it as a cancelled step and the bug waits for the person. | `stopCapsuleRun`; mechanism E3 |
+| E2E | The Gate C-EXEC journey (browser, service, PostgreSQL, engine worker, scripted roles) with the engine's runner the helper's channel in capsule mode. Every run executes in the Engineer's capsule, verification only in the verification capsule; the transaction reaches Done; `main` unmoved; Lockstep's commit on the work branch. | `check-capsule-e2e` |
+
 ## 5. Test-first record
 
 - `check-capsule-bridge`: written together with the bridge and the runtime as the P5.1 feasibility spike (handoff

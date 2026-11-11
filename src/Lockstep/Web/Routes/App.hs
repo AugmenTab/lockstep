@@ -57,6 +57,7 @@ module Lockstep.Web.Routes.App
   , CreateTask (..)
   , ChooseChecks (..)
   , EnableExecution (..)
+  , StopCapsuleRun (..)
   , EditTask (..)
   , DecideTask (..)
   , AdmitBug (..)
@@ -68,6 +69,7 @@ module Lockstep.Web.Routes.App
   , createTaskAction
   , chooseChecksAction
   , enableExecutionAction
+  , stopCapsuleRunAction
   , editTaskAction
   , decideTaskAction
   , admitBugAction
@@ -290,6 +292,7 @@ type ActionRoutes =
     , CreateTask
     , ChooseChecks
     , EnableExecution
+    , StopCapsuleRun
     , EditTask
     , DecideTask
     , AdmitBug
@@ -308,6 +311,7 @@ actionRoutes =
       /: R.post createTask
       /: R.post chooseChecks
       /: R.post enableExecution
+      /: R.post stopCapsuleRun
       /: R.post editTask
       /: R.post decideTask
       /: R.post admitBug
@@ -373,6 +377,17 @@ enableExecution =
 enableExecutionAction :: ProjectId -> B.RelativeURL B.Post
 enableExecutionAction pid =
   B.post (EnableExecution pid) enableExecution
+
+-- | Phase 5 (P5.10): stop the step running in the project's Dev Capsule.
+newtype StopCapsuleRun = StopCapsuleRun {stopCapsuleRunProject :: ProjectId}
+
+stopCapsuleRun :: R.Router r => R.Builder r StopCapsuleRun StopCapsuleRun
+stopCapsuleRun =
+  api StopCapsuleRun /- "projects" /+ R.Param projectIdParam stopCapsuleRunProject /- "capsule" /- "stop"
+
+stopCapsuleRunAction :: ProjectId -> B.RelativeURL B.Post
+stopCapsuleRunAction pid =
+  B.post (StopCapsuleRun pid) stopCapsuleRun
 
 newtype EditTask = EditTask {editTaskId :: TaskId}
 

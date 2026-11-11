@@ -1,0 +1,1 @@
+capsule-runtime 1 destroy refused reason=capsule-unknown

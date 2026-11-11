@@ -1,0 +1,12 @@
+lockstep-capsule-status 1
+capsule vmq1
+project -
+verify vmv1
+vm Running
+audit ok
+template current
+active-run -
+active-op -
+last-run run-write cancelled exit 143
+last-failure run-write: cancelled
+updated 2026-11-10T23:53:28Z

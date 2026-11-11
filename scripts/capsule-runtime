@@ -147,7 +147,42 @@ audit_vm() { # CAPSULE -> prints "ok" or a reason
   grep -q '^  forwardAgent: false$' "$cfg" || { echo agent-forwarding; return; }
   grep -q '^vmType: vz$' "$cfg" || { echo not-vz; return; }
   if grep -qE 'docker\.sock|hostSocket' "$cfg"; then echo socket-forwarding; return; fi
+  # D4 (Phase 5 update 1): the gateway must not reach the host's loopback. Exactly one hostLoopback
+  # setting, false, inside networkOpts; anything else (absent, true, repeated) is refused.
+  host_loopback_off "$cfg" || { echo host-loopback-not-disabled; return; }
+  lima_supports_host_loopback || { echo lima-too-old-for-host-loopback; return; }
   echo ok
+}
+
+# Whether the capsule was made from today's template (its own resources substituted): current, or stale
+# after a template change (a new base image, a new setting). A stale capsule is reconfigured, never
+# silently used (P5.9; update 1 §5).
+template_state() { # CAPSULE
+  local want
+  want=$(sed -e "s/@CPUS@/$(record_get "$1" cpus)/" -e "s/@MEMORY@/$(record_get "$1" memory-gib)/" \
+    -e "s/@DISK@/$(record_get "$1" disk-gib)/" "$template")
+  if [ "$want" = "$(cat "$caps/records/$1.yaml" 2>/dev/null)" ]; then echo current; else echo stale; fi
+}
+
+# The images: block of a configuration (its lines up to the next top-level key).
+images_of() { # CONFIG-FILE
+  awk '/^images:/ { inside = 1; print; next } /^[^ #-]/ { inside = 0 } inside { print }' "$1" 2>/dev/null
+}
+
+# networkOpts.hostLoopback: false, and no other hostLoopback anywhere in the file.
+host_loopback_off() { # CONFIG-FILE
+  [ "$(grep -c 'hostLoopback' "$1")" = 1 ] || return 1
+  awk '/^networkOpts:[ ]*$/ { inside = 1; next } /^[^ #]/ { inside = 0 } inside && /^  hostLoopback: false[ ]*$/ { found = 1 } END { exit !found }' "$1"
+}
+
+# The setting exists from Lima 2.3.0; an older Lima would ignore it and leave the gateway open.
+lima_supports_host_loopback() {
+  [ "$backend" = fixture ] && return 0
+  local v major minor
+  v=$(limactl --version 2>/dev/null | sed -n 's/^limactl version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p')
+  read -r major minor <<< "$v"
+  [[ ${major:-} =~ ^[0-9]+$ ]] && [[ ${minor:-} =~ ^[0-9]+$ ]] || return 1
+  [ "$major" -gt 2 ] || { [ "$major" = 2 ] && [ "$minor" -ge 3 ]; }
 }
 
 # The guest side of bridged calls, Lockstep's current copy (it runs in the guest, as guest code).
@@ -198,9 +233,14 @@ op_provision() { # CAPSULE PROJECT [PROFILE[,disposable]]
     if [ ! -f "$caps/records/$cap.yaml" ]; then
       sed -e "s/@CPUS@/$cpus/" -e "s/@MEMORY@/$mem/" -e "s/@DISK@/$disk/" "$template" > "$caps/records/$cap.yaml"
     fi
+    lima_supports_host_loopback || failed provision lima-too-old-for-host-loopback
     if [ "$(vm_status "$cap")" = absent ]; then
       limactl create --tty=false --name="$vm" "$caps/records/$cap.yaml" > "$caps/records/$cap.create.log" 2>&1 ||
         failed provision vm-create-failed
+    fi
+    # Lima only warns about a field it does not know; for the isolation setting that is a refusal.
+    if grep -qE 'unknown field.*(networkOpts|hostLoopback)' "$caps/records/$cap.create.log" 2>/dev/null; then
+      failed provision lima-ignores-host-loopback
     fi
     [ "$(audit_vm "$cap")" = ok ] || failed provision "audit-$(audit_vm "$cap")"
     if [ "$(vm_status "$cap")" != Running ]; then
@@ -228,10 +268,13 @@ op_lifecycle() { # OP CAPSULE PROJECT
     inspect)
       say inspect ok "capsule=$cap" "project=$proj" "backend=$(record_get "$cap" backend)" "status=$st" \
         "phase=$(record_get "$cap" phase)" "profile=$(record_get "$cap" profile)" \
-        "audit=$([ "$backend" = lima ] && audit_vm "$cap" || echo fixture)"
+        "audit=$([ "$backend" = lima ] && audit_vm "$cap" || echo fixture)" \
+        "template=$([ "$backend" = lima ] && template_state "$cap" || echo fixture)"
       ;;
     start)
       if [ "$st" = Running ]; then
+        # Running already: still audited (drift since it started is refused, never silently used).
+        [ "$backend" = fixture ] || [ "$(audit_vm "$cap")" = ok ] || failed start "audit-$(audit_vm "$cap")"
         install_guest_exec "$cap" || failed start guest-exec-install-failed
         say start ok "capsule=$cap" already=yes
         return 0
@@ -264,6 +307,43 @@ op_lifecycle() { # OP CAPSULE PROJECT
       ;;
   esac
   journal "end $o $cap ok"
+}
+
+# Brings an existing capsule's configuration to the current audited template (its own recorded
+# resources), without touching its disk, snapshots or caches: the VM is stopped, its lima.yaml replaced,
+# the record's copy updated, and the audit must then pass. For capsules made before a template change
+# (Phase 5 update 1: networkOpts.hostLoopback). Never reprovisions.
+op_reconfigure() { # CAPSULE PROJECT
+  local cap=$1 proj=$2 vm cfg was new
+  check_ids reconfigure "$cap" "$proj"
+  owned reconfigure "$cap" "$proj"
+  [ "$backend" = lima ] || refuse reconfigure not-supported-by-backend
+  lima_supports_host_loopback || failed reconfigure lima-too-old-for-host-loopback
+  vm=$(vm_of "$cap")
+  cfg=$LIMA_HOME/$vm/lima.yaml
+  [ -f "$cfg" ] && [ ! -L "$cfg" ] || failed reconfigure config-missing
+  new=$caps/records/.$cap.yaml.new
+  sed -e "s/@CPUS@/$(record_get "$cap" cpus)/" -e "s/@MEMORY@/$(record_get "$cap" memory-gib)/" \
+    -e "s/@DISK@/$(record_get "$cap" disk-gib)/" "$template" > "$new"
+  host_loopback_off "$new" || { rm -f "$new"; failed reconfigure template-without-isolation; }
+  # The base image is used only when a disk is made: a template with another image cannot be applied to an
+  # existing disk. That needs a new capsule (an operator's decision for a non-disposable one).
+  if [ "$(images_of "$new")" != "$(images_of "$caps/records/$cap.yaml")" ]; then
+    rm -f "$new"
+    refuse reconfigure base-image-changed-reprovision-required
+  fi
+  was=$(vm_status "$cap")
+  journal "start reconfigure $cap"
+  [ "$was" = Running ] && { limactl stop "$vm" >/dev/null 2>&1 || { rm -f "$new"; failed reconfigure stop-failed; }; }
+  cp "$cfg" "$caps/records/$cap.yaml.before-reconfigure"
+  cp "$new" "$cfg" && mv "$new" "$caps/records/$cap.yaml" || failed reconfigure write-failed
+  [ "$(audit_vm "$cap")" = ok ] || failed reconfigure "audit-$(audit_vm "$cap")"
+  if [ "$was" = Running ]; then
+    limactl start --tty=false "$vm" >> "$caps/records/$cap.start.log" 2>&1 || failed reconfigure start-failed
+    install_guest_exec "$cap" || failed reconfigure guest-exec-install-failed
+  fi
+  journal "end reconfigure $cap ok"
+  say reconfigure ok "capsule=$cap" "status=$(vm_status "$cap")" "audit=ok"
 }
 
 # Snapshots of the whole VM disk, taken while the VM is stopped, as APFS clones (cp -c): cheap,
@@ -300,7 +380,11 @@ op_snapshot() { # OP CAPSULE PROJECT NAME
     else rm -f "$disk.restoring"; copied=no
     fi
   fi
-  [ "$was" = Running ] && { limactl start --tty=false "$vm" >/dev/null 2>&1 || failed "$o" start-failed; }
+  if [ "$was" = Running ]; then
+    # Every start is audited, here too (P5.5 review 3, M2).
+    [ "$(audit_vm "$cap")" = ok ] || failed "$o" "audit-$(audit_vm "$cap")"
+    limactl start --tty=false "$vm" >/dev/null 2>&1 || failed "$o" start-failed
+  fi
   [ "$copied" = yes ] || failed "$o" copy-failed
   journal "end $o $cap $name ok"
   say "$o" ok "capsule=$cap" "snapshot=$name" "status=$(vm_status "$cap")"
@@ -686,6 +770,7 @@ case $op in
   provision) [ $# -ge 2 ] && [ $# -le 3 ] || exit 64; op_provision "$@" ;;
   start | stop | inspect | destroy) [ $# = 2 ] || exit 64; op_lifecycle "$op" "$@" ;;
   snapshot | restore) [ $# = 3 ] || exit 64; op_snapshot "$op" "$@" ;;
+  reconfigure) [ $# = 2 ] || exit 64; op_reconfigure "$@" ;;
   run) [ $# = 4 ] || exit 64; op_run "$@" ;;
   import) [ $# = 3 ] || exit 64; op_import "$@" ;;
   push) [ $# = 4 ] || exit 64; op_push "$@" ;;

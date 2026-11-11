@@ -1,0 +1,9 @@
+lockstep-control-result 1
+id 688cd9d5f8a6d259ffb7b0df8614df33
+op run-live-write
+outcome refused
+reason argv-not-allowed-in-capsule-mode
+started 1794354712
+finished 1794354712
+detail 
+mac 45a58b81d450ce1ce9f8b4b461037bf2b31ae970c97f8687981ad1e10de9a58d

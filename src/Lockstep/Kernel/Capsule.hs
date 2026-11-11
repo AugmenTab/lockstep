@@ -190,6 +190,7 @@ data LifecycleOperation
   | Destroy
   | Snapshot
   | Restore
+  | Reconfigure
   | Import
   | RunScript
   | Push
@@ -211,6 +212,7 @@ lifecycleOperationText operation =
       Destroy -> "destroy"
       Snapshot -> "snapshot"
       Restore -> "restore"
+      Reconfigure -> "reconfigure"
       Import -> "import"
       RunScript -> "run"
       Push -> "push"
@@ -322,6 +324,7 @@ data CapsuleRefusal
   | InvalidWhat
   | TooLarge
   | DisallowedEntry
+  | BaseImageChanged
   deriving (Eq, Ord, Show, Bounded, Enum)
 
 capsuleRefusalText :: CapsuleRefusal -> T.Text
@@ -357,6 +360,7 @@ capsuleRefusalText refusal =
       InvalidWhat -> "invalid-what"
       TooLarge -> "too-large"
       DisallowedEntry -> "entry-not-allowed"
+      BaseImageChanged -> "base-image-changed-reprovision-required"
 
 parseCapsuleRefusal :: T.Text -> Maybe CapsuleRefusal
 parseCapsuleRefusal =

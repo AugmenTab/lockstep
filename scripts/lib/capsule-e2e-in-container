@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Runs the built lockstep-capsule-e2e suite inside the dev container as the host's user, as the
+# production service runs (scripts/service: --user, the runner channel at its own path). Started by
+# scripts/lib/check-capsule-e2e; the suite is built first by `scripts/lib/check-step build`.
+set -euo pipefail
+cd /work
+bin=""
+for d in /work/.stack-work/install/*/*/*/bin; do
+  [ -x "$d/lockstep" ] && bin=$d && break
+done
+[ -n "$bin" ] || { echo "capsule-e2e: no built lockstep binary under .stack-work/install" >&2; exit 2; }
+suite=""
+for f in /work/.stack-work/dist/*/*/build/lockstep-capsule-e2e/lockstep-capsule-e2e; do
+  [ -x "$f" ] && suite=$f && break
+done
+[ -n "$suite" ] || { echo "capsule-e2e: the suite is not built" >&2; exit 2; }
+export PATH="$bin:/usr/local/bin:/usr/bin:/bin"
+export HOME=/tmp
+exec "$suite"

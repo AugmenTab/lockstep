@@ -41,12 +41,13 @@ import System.IO (FilePath)
 import Text.Show (show)
 
 import Lockstep.Application.Activity (readActivity)
+import Lockstep.Application.CapsuleStatus (StopOutcome (..), capsuleStatusFromEnvironment, stopCapsuleRun)
 import Lockstep.Application.Command (IdempotencyKey, WorkspaceState (..), generateIdempotencyKey, idempotencyKeyText, mkIdempotencyKey, readWorkspace)
 import Lockstep.Application.Conversation (Channel (..), Sender (..), StoredRequest (..), postMessage)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason (..), Readiness (..), checkReadiness, revisionNumber)
 import Lockstep.Application.Decisions (DecisionReceipt (..), applyDecision, decidedReceipt, findDecision, listDecisions, receiptApplied)
 import Lockstep.Application.Engine (TransactionView (..), decideCompletion, haltRequest, projectStarted, transactionForWorkOrder, transactionView)
-import Lockstep.Application.Execution (Admission (..), admitBug, enableExecution, executionStatus, findAdmission)
+import Lockstep.Application.Execution (Admission (..), ExecutionStatus (..), admitBug, enableExecution, executionStatus, findAdmission)
 import Lockstep.Application.LedgerView (EffectLine (..), LedgerProjection (..), OrderLine (..), projectLedger)
 import Lockstep.Application.OperatorTrust (Session (..), exchangeSignIn, lookupSession, revokeSession)
 import Lockstep.Application.ProjectChecks (ChecksOutcome (..), ChecksRefusal (FewerChecksUnconfirmed), ExpectedChecks (..), ProjectChecks (..), QueueEntry (..), checksRefusalCode, chooseChecksTyped, projectChecks)
@@ -86,7 +87,7 @@ import Lockstep.Kernel.Task (Priority, parsePriority, taskRefusalWords)
 import Lockstep.Web.ActivityPage (activityPage)
 import Lockstep.Web.ChecksPages (checksPage, choiceLosses, projectChecksSection)
 import Lockstep.Web.DecisionPages (DecisionChoice, choiceFits, decisionChoiceCode, decisionPage, decisionRequest, decisionsOverview, donePage)
-import Lockstep.Web.ExecutionPages (projectExecutionSection, taskFixingSection)
+import Lockstep.Web.ExecutionPages (capsuleSection, projectExecutionSection, taskFixingSection)
 import Lockstep.Web.Fields
   ( acceptanceField
   , acknowledgeField
@@ -105,6 +106,7 @@ import Lockstep.Web.Fields
   , reasonField
   , requestField
   , revisionField
+  , runField
   , textField
   , ticketRevisionField
   , titleField
@@ -138,6 +140,7 @@ import Lockstep.Web.Routes.App
   , SectionFragment (..)
   , ShellRoutes
   , SignOut
+  , StopCapsuleRun (..)
   , TaskFragment (..)
   , checksLink
   , connectProjectAction
@@ -287,6 +290,7 @@ actionRoute route ctx =
         . Shrubbery.branch (\(CreateTask pid) -> createTaskRoute ctx pid)
         . Shrubbery.branch (\(ChooseChecks pid) -> chooseChecksRoute ctx pid)
         . Shrubbery.branch (\(EnableExecution pid) -> enableExecutionRoute ctx pid)
+        . Shrubbery.branch (\(StopCapsuleRun pid) -> stopCapsuleRunRoute ctx pid)
         . Shrubbery.branch (\(EditTask tid) -> editTaskRoute ctx tid)
         . Shrubbery.branch (\(DecideTask tid) -> decideTaskRoute ctx tid)
         . Shrubbery.branch (\(AdmitBug tid) -> admitBugRoute ctx tid)
@@ -652,6 +656,38 @@ enableExecutionRoute ctx pid =
               Left _ -> pure notReady
               Right (Right _) -> projectAnswer db view Nothing
               Right (Left code) -> projectAnswer db view (Just (executionRefusalWords code))
+
+{- | Phase 5 (P5.10): stop the step running in the project's Dev Capsule. Only
+the run the helper reports as under way is stopped (a stale page stops
+nothing); the helper ends it and the engine treats it as a cancelled step, so
+the bug waits for the person. Nothing is ever run again by itself.
+-}
+stopCapsuleRunRoute :: Ctx -> ProjectId -> IO Wai.Response
+stopCapsuleRunRoute ctx pid =
+  withForm ctx $ \fields -> do
+    let
+      db = ctxDb ctx
+    found <- findProject db (identityText pid)
+    case found of
+      Left _ -> pure notReady
+      Right Nothing -> pure notFound
+      Right (Just view) ->
+        case V.runValidator (runField `V.required` V.text) fields of
+          Left _ -> projectAnswer db view (Just unreadableTryAgain)
+          Right run -> do
+            stopped <- stopCapsuleRun (identityText pid) run
+            projectAnswer db view . Just $
+              case stopped of
+                StopRequested -> "Lockstep asked its helper to stop the running step. The bug will wait for you."
+                StopNotRunning -> "That step is no longer running; nothing was stopped."
+                StopNoHelper -> "Lockstep cannot reach its helper, so nothing was stopped."
+
+-- | Lockstep may fix bugs in the project (the capsule section is shown only then).
+isEnabled :: Maybe ExecutionStatus -> Bool
+isEnabled status =
+  case status of
+    Just (Enabled _) -> True
+    _ -> False
 
 admitBugRoute :: Ctx -> TaskId -> IO Wai.Response
 admitBugRoute ctx tid =
@@ -1022,6 +1058,7 @@ projectPage db view notice = do
   execution <- fromRight Nothing <$> executionStatus db folders (projectId view)
   started <- projectStarted db (projectKey view)
   executionKey <- idempotencyKeyText <$> generateIdempotencyKey
+  capsule <- capsuleStatusFromEnvironment (projectId view)
   let
     connectNewId = elementId 'c' "onnect-new"
     connectExistingId = elementId 'c' "onnect-existing"
@@ -1085,6 +1122,7 @@ projectPage db view notice = do
       <> projectTasks view tasks
       <> either (const []) (maybe [] projectChecksSection) checks
       <> projectExecutionSection view execution (started == Right True) executionKey
+      <> maybe [] (capsuleSection (projectKey view)) (if isEnabled execution then capsule else Nothing)
       <> [E.h2 [] [E.text "Its folder"]]
       <> status
       <> [ E.details

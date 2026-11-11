@@ -36,6 +36,10 @@ portForwards:
   ignore: true
 hostResolver:
   enabled: true
+# The user-mode network must not map the gateway (192.168.5.2, host.lima.internal) to the host's
+# loopback (Lima >= 2.3.0; Phase 5 update 1, D4). The runtime refuses a capsule without this.
+networkOpts:
+  hostLoopback: false
 provision:
 - mode: system
   script: |

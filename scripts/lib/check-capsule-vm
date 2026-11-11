@@ -57,7 +57,7 @@ out_lacks() { ! grep -qF -- "$2" "$work/$1.out"; }
 
 cleanup() {
   [ -n "$serve_pid" ] && kill "$serve_pid" 2>/dev/null
-  docker rm -f "$probe" >/dev/null 2>&1
+  docker rm -f "$probe" "$probe-all" >/dev/null 2>&1
   [ -f "$state/capsules/journal" ] && cp "$state/capsules/journal" "$work/runtime-journal.txt"
   [ -f "$state/capsules/records/$cap" ] && cp "$state/capsules/records/$cap" "$work/capsule-record.txt"
   [ -f "$state/capsules/lima/lockstep-$cap/lima.yaml" ] && cp "$state/capsules/lima/lockstep-$cap/lima.yaml" "$work/effective-lima.yaml"
@@ -93,40 +93,63 @@ R provision "$cap" other-project small > "$work/provision-other.txt" 2>&1
 expect "L2 another project cannot take over the capsule" grep -q 'refused reason=capsule-owned-by-another-project' "$work/provision-other.txt"
 
 # ---- D isolation probes inside the guest.
+# Two host probes: one bound to the host's loopback, one to all interfaces (Phase 5 update 1 §3).
 docker run -d --name "$probe" -p 127.0.0.1:18765:8080 busybox:1.36 httpd -f -p 8080 >/dev/null 2>&1
+docker run -d --name "$probe-all" -p 0.0.0.0:18766:8080 busybox:1.36 httpd -f -p 8080 >/dev/null 2>&1
 sleep 2
-# The probe must really listen on the host's loopback, or D4 would pass for nothing.
+# Each probe must really answer on the host, or D4 would pass for nothing.
 host_code=$(curl -s -m 4 -o /dev/null -w '%{http_code}' http://127.0.0.1:18765/ 2>/dev/null)
-expect "D4 precondition: the host-loopback probe answers on the host (HTTP $host_code)" test "${host_code:-000}" != 000
-cat > "$work/isolation.sh" <<'EOF'
-echo "hostname=$(hostname)"
-echo "mounts=[$(findmnt -rn -t virtiofs,9p,fuse.sshfs,nfs,cifs -o TARGET | tr '\n' ' ')]"
-ls /Users >/dev/null 2>&1 && echo users-dir=present || echo users-dir=absent
-echo "ssh-agent=[${SSH_AUTH_SOCK:-}]"
-echo "docker-name=$(docker info --format '{{.Name}}' 2>&1)"
-echo "docker-os=$(docker info --format '{{.OperatingSystem}}' 2>&1)"
-for target in host.lima.internal:18765 192.168.5.2:18765 192.168.5.2:2375 192.168.5.2:5432 192.168.5.2:8000 192.168.5.2:22; do
-  host=${target%:*}
-  port=${target#*:}
-  if timeout 4 bash -c "exec 3<>/dev/tcp/$host/$port" 2>/dev/null; then echo "tcp $target open"; else echo "tcp $target closed"; fi
-done
-echo "listening=[$(ss -Hltn | awk '{print $4}' | tr '\n' ' ')]"
-echo isolation-done
-EOF
-guest_run isolation 120
+expect "D4.1 the host-loopback probe answers on the host itself (HTTP $host_code)" test "${host_code:-000}" != 000
+all_code=$(curl -s -m 4 -o /dev/null -w '%{http_code}' http://127.0.0.1:18766/ 2>/dev/null)
+expect "D4 precondition: the all-interfaces probe answers on the host (HTTP $all_code)" test "${all_code:-000}" != 000
+# The Mac's LAN address(es), for the remaining-exposure investigation (update 1 §4).
+lan=$(ipconfig getifaddr en0 2>/dev/null)
+[ -n "$lan" ] || lan=$(ipconfig getifaddr en1 2>/dev/null)
+echo "host LAN address: ${lan:-none}" > "$work/lan.txt"
+# Host listeners on all interfaces right now (the services a LAN path could reach).
+lsof -nP -iTCP -sTCP:LISTEN > "$work/host-listeners.txt" 2>&1
+gateway_targets="host.lima.internal:18765 192.168.5.2:18765 host.lima.internal:18766 192.168.5.2:18766 192.168.5.2:2375 192.168.5.2:5432 192.168.5.2:8000 192.168.5.2:22 192.168.5.2:5000 192.168.5.2:7000 192.168.5.2:5984 192.168.5.2:4444"
+lan_targets=""
+if [ -n "$lan" ]; then
+  for p in 18765 18766 5000 7000 4444 5984 6984 7900 8300 8310 8320 8780 8781 9300 50966 22 5432 8000; do lan_targets="$lan_targets $lan:$p"; done
+fi
+{
+  echo 'echo "hostname=$(hostname)"'
+  echo 'echo "mounts=[$(findmnt -rn -t virtiofs,9p,fuse.sshfs,nfs,cifs -o TARGET | tr "\n" " ")]"'
+  echo 'ls /Users >/dev/null 2>&1 && echo users-dir=present || echo users-dir=absent'
+  echo 'echo "ssh-agent=[${SSH_AUTH_SOCK:-}]"'
+  echo "echo \"docker-name=\$(docker info --format '{{.Name}}' 2>&1)\""
+  echo "for target in $gateway_targets $lan_targets; do"
+  echo '  h=${target%:*}; p=${target#*:}'
+  echo '  if timeout 4 bash -c "exec 3<>/dev/tcp/$h/$p" 2>/dev/null; then echo "tcp $target open"; else echo "tcp $target closed"; fi'
+  echo 'done'
+  echo 'getent hosts archive.ubuntu.com >/dev/null && echo dns-ok'
+  echo 'curl -s -m 20 -o /dev/null -w "https=%{http_code}\n" https://registry-1.docker.io/v2/'
+  echo 'echo isolation-done'
+} > "$work/isolation.sh"
+guest_run isolation 300
 expect "D1 the guest's Docker is its own (not the host's Docker Desktop)" out_has isolation "docker-name=lima-lockstep-$cap"
 expect "D2 no host directory is mounted in the guest" out_has isolation "mounts=[]"
 expect "D2 the host's /Users is not visible" out_has isolation "users-dir=absent"
 expect "D3 no SSH agent is forwarded" out_has isolation "ssh-agent=[]"
 expect "D4 the probe ran in the guest" out_has isolation "tcp 192.168.5.2:22 "
-for target in host.lima.internal:18765 192.168.5.2:18765 192.168.5.2:2375 192.168.5.2:5432 192.168.5.2:8000 192.168.5.2:22; do
+for target in $gateway_targets; do
   if grep -q "tcp $target open" "$work/isolation.out"; then
     record FAIL "D4 a host service is NOT isolated from the guest (TCP $target connected)"
   else
     record PASS "D4 the guest cannot connect to the host at $target"
   fi
 done
-docker rm -f "$probe" >/dev/null 2>&1
+expect "D4.5 guest DNS works" out_has isolation "dns-ok"
+expect "D4.5 the guest reaches the public internet over HTTPS" grep -qE '^https=[1-5][0-9]{2}$' "$work/isolation.out"
+expect "D4.7 the effective configuration disables host loopback" grep -qx '  hostLoopback: false' "$state/capsules/lima/lockstep-$cap/lima.yaml"
+# Update 1 §4: the Mac's other addresses are not covered by hostLoopback. Recorded, not asserted here.
+for target in $lan_targets; do
+  if grep -q "tcp $target open" "$work/isolation.out"; then note "LAN exposure: the guest CAN connect to the host at $target"
+  else note "LAN: the guest cannot connect to $target"
+  fi
+done
+docker rm -f "$probe" "$probe-all" >/dev/null 2>&1
 
 # ---- the milestone: a project-defined build and test, with guest Docker and Compose.
 proj_src=$work/project
@@ -318,6 +341,57 @@ guest_run resources 60
 note "guest resources: $(head -n 1 "$work/resources.out")"
 du -sh "$state/capsules/lima/lockstep-$cap" > "$work/vm-disk-usage.txt" 2>&1
 note "VM directory on the host: $(cat "$work/vm-disk-usage.txt")"
+
+# ---- D4.8 the isolation setting removed or reversed: refused; an old capsule reconfigured in place.
+printf 'echo kept > /work/keep-across-reconfigure.txt && echo marked\n' > "$work/mark.sh"
+guest_run mark 60
+R stop "$cap" "$proj" > /dev/null 2>&1
+icfg=$state/capsules/lima/lockstep-$cap/lima.yaml
+rcfg=$state/capsules/records/$cap.yaml
+cp "$icfg" "$work/lima.yaml.good"
+# (a) reversed in the effective configuration (drift): refused.
+awk '{ sub(/hostLoopback: false/, "hostLoopback: true"); print }' "$work/lima.yaml.good" > "$icfg"
+R start "$cap" "$proj" > "$work/start-reversed.txt" 2>&1
+expect "D4.8 a capsule whose effective config re-enables host loopback is refused (drift)" grep -q 'audit-config-changed' "$work/start-reversed.txt"
+# ... and reversed in both the configuration and its record (no drift): refused by the setting's own check.
+cp "$icfg" "$rcfg"
+R start "$cap" "$proj" > "$work/start-reversed-both.txt" 2>&1
+expect "D4.8 hostLoopback: true is refused even when the record agrees" grep -q 'audit-host-loopback-not-disabled' "$work/start-reversed-both.txt"
+mkdir -p "$work/pf-state/capsule"
+chmod 700 "$work/pf-state" "$work/pf-state/capsule"
+printf 'lockstep-capsule 1\nruntime-state %s\ncapsule %s\nproject %s\n' "$state" "$cap" "$proj" > "$work/pf-state/capsule/config"
+chmod 600 "$work/pf-state/capsule/config"
+"$root/scripts/capsule-preflight" --helper-state "$work/pf-state" > "$work/preflight-reversed.txt" 2>&1
+expect "D4.8 preflight refuses the reversed setting" grep -q '^FAIL host-loopback-isolation' "$work/preflight-reversed.txt"
+# Negative control (test only, the runtime would refuse): the capsule started WITHOUT the setting does
+# reach the host's loopback, so it is the setting that closes it.
+grep -v -e '^networkOpts:' -e 'hostLoopback' "$work/lima.yaml.good" > "$icfg"
+docker run -d --name "$probe" -p 127.0.0.1:18765:8080 busybox:1.36 httpd -f -p 8080 >/dev/null 2>&1
+env LIMA_HOME="$state/capsules/lima" limactl start --tty=false "lockstep-$cap" > "$work/control-start.txt" 2>&1
+printf 'if timeout 4 bash -c "exec 3<>/dev/tcp/192.168.5.2/18765" 2>/dev/null; then echo control-open; else echo control-closed; fi\n' > "$work/control.sh"
+env LIMA_HOME="$state/capsules/lima" limactl shell --workdir / "lockstep-$cap" bash -s < "$work/control.sh" > "$work/control.out" 2>&1
+expect "D4.8 control: without the setting the guest DOES reach the host's loopback (so the setting is what closes it)" grep -q control-open "$work/control.out"
+env LIMA_HOME="$state/capsules/lima" limactl stop "lockstep-$cap" > /dev/null 2>&1
+docker rm -f "$probe" >/dev/null 2>&1
+# (b) an old capsule: the setting absent in both its config and its record (as made before update 1).
+grep -v -e '^networkOpts:' -e 'hostLoopback' "$work/lima.yaml.good" > "$icfg"
+cp "$icfg" "$rcfg"
+R start "$cap" "$proj" > "$work/start-old.txt" 2>&1
+expect "D4.8 a capsule without the setting is refused" grep -q 'audit-host-loopback-not-disabled' "$work/start-old.txt"
+R inspect "$cap" "$proj" > "$work/inspect-old.txt" 2>&1
+expect "D4.8 inspect reports the missing isolation" grep -q 'audit=host-loopback-not-disabled' "$work/inspect-old.txt"
+"$root/scripts/capsule-preflight" --helper-state "$work/pf-state" > "$work/preflight-old.txt" 2>&1
+expect "D4.8 preflight refuses the capsule" grep -q '^FAIL capsule-healthy:.*host-loopback-not-disabled' "$work/preflight-old.txt"
+# (c) reconfigured in place: the template's setting, the same disk, the snapshot kept.
+timed reconfigure R reconfigure "$cap" "$proj" > "$work/reconfigure.txt" 2>&1
+expect "D4.8 reconfigure brings the old capsule to the isolated configuration" grep -q 'reconfigure ok .*audit=ok' "$work/reconfigure.txt"
+R start "$cap" "$proj" > "$work/start-after.txt" 2>&1
+printf 'cat /work/keep-across-reconfigure.txt\n' > "$work/kept.sh"
+guest_run kept 60
+expect "D4.8 the capsule's disk survived the reconfiguration" out_has kept "kept"
+expect "D4.8 its snapshot too" test -f "$state/capsules/snapshots/$cap/work-0000beef.disk"
+"$root/scripts/capsule-preflight" --helper-state "$work/pf-state" > "$work/preflight-after.txt" 2>&1
+expect "D4.8 preflight passes the capsule's health and isolation again" grep -qx 'PASS capsule-healthy' "$work/preflight-after.txt"
 
 timed final-stop R stop "$cap" "$proj" > "$work/final-stop.txt" 2>&1
 expect "L2 clean final shutdown" grep -q 'stop ok' "$work/final-stop.txt"

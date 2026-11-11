@@ -24,6 +24,7 @@ module Lockstep.Web.Fields
   , confirmFewerField
   , choiceField
   , requestField
+  , runField
   , textField
   , acknowledgeField
 
@@ -93,6 +94,10 @@ choiceField = B.Name (NET.new 'c' "hoice")
 
 requestField :: B.Name
 requestField = B.Name (NET.new 'r' "equest")
+
+-- | Phase 5: the run a stop names (the run under way in the project's Dev Capsule).
+runField :: B.Name
+runField = B.Name (NET.new 'r' "un")
 
 textField :: B.Name
 textField = B.Name (NET.new 't' "ext")

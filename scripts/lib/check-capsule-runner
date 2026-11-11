@@ -107,8 +107,12 @@ seed_tree() { # DIR FIXED(yes|no)
   printf 'build/\n' > "$1/.gitignore"
 }
 # submit OP RUN ARGV... : a signed request for a prepared run directory; waits; sets res
-submit() {
-  local op=$1 run=$2 id body tmp n=0 dir
+submit() { send "$@"; await_res; }
+# send OP RUN ARGV... : the request only; sets res and sub_op/sub_run for await_res
+send() {
+  local op=$1 run=$2 id body tmp dir
+  sub_op=$1
+  sub_run=$2
   shift 2
   dir=$state/runner/work/$run
   : > "$dir/argv"
@@ -120,8 +124,12 @@ submit() {
   printf 'mac %s\n' "$(printf '%s\n' "$body" | hmac)" >> "$tmp"
   mv "$tmp" "$state/runner/requests/$id.rreq"
   res=$state/runner/results/$id.res
-  while [ ! -f "$res" ] && [ $n -lt 9000 ]; do sleep 0.2; n=$((n + 1)); done
-  cp "$res" "$work/res-$op-$run.txt" 2>/dev/null
+}
+# await_res [TENTHS-OF-A-SECOND x2]: waits for the result (default: the capsule's whole command limit)
+await_res() {
+  local n=0 max=${1:-9000}
+  while [ ! -f "$res" ] && [ $n -lt "$max" ]; do sleep 0.2; n=$((n + 1)); done
+  cp "$res" "$work/res-$sub_op-$sub_run.txt" 2>/dev/null
 }
 new_run() { # FIXED -> sets run, dir
   run=$(new_id)
@@ -166,6 +174,31 @@ expect "A2 the failure is the real one" has "$dir/stdout" "FAIL add"
 new_run yes
 submit run-verify "$run" make test
 expect "A3 with no verification capsule, verification is refused" refused_with verification-environment-missing
+
+# A4: a run whose own process dies (not the helper) is answered at once, interrupted, not after the
+# capsule's whole command limit; its guest program is ended; the next run works.
+new_run no
+send run-write "$run" bash -c "echo started > src/a4.txt; sync; sleep 300"
+n=0
+while [ ! -f "$dir/.capsule-pid" ] && [ $n -lt 600 ]; do sleep 0.2; n=$((n + 1)); done
+while [ ! -f "$dir/.capsule-out/stdout" ] && [ $n -lt 1200 ]; do sleep 0.2; n=$((n + 1)); done
+sleep 3
+a4pid=$(cat "$dir/.capsule-pid" 2>/dev/null)
+a4start=$(date +%s)
+[[ $a4pid =~ ^[0-9]+$ ]] && kill -9 "$a4pid" 2>/dev/null
+await_res 150
+a4took=$(( $(date +%s) - a4start ))
+expect "A4 the run's process id is recorded ($a4pid)" bash -c "[[ '$a4pid' =~ ^[0-9]+$ ]]"
+expect "A4 a run whose process died is answered interrupted ($(field outcome))" test "$(field outcome)" = interrupted
+expect "A4 within seconds, not the command limit (${a4took}s)" test "$a4took" -le 30
+expect "A4 its tree did not come back" test ! -e "$dir/tree/src/a4.txt"
+n=0
+while pgrep -f "capsule-runtime.*exec-argv $cap " > /dev/null && [ $n -lt 300 ]; do sleep 0.2; n=$((n + 1)); done
+no_exec_left() { ! pgrep -f "capsule-runtime.*exec-argv $cap " > /dev/null; }
+expect "A4 its guest program was ended (no exec-argv left)" no_exec_left
+new_run yes
+submit run-readonly "$run" make test
+expect "A4 the next run works ($(field outcome) $(fieldline exit))" outcome_is "exited 0"
 stop_helper
 
 # ================================================================ B
@@ -183,6 +216,8 @@ expect "B0 the verification capsule has its trusted snapshot" test -f "$cstate/c
 capsule_config "$vcap"
 start_helper
 expect "B0 capsule mode names the verification capsule" bash -c "tail -n 50 '$state/helper/helper.log' | grep -q 'verification $vcap'"
+# Verification must work from a stopped verification VM too (restore keeps it stopped; the helper starts it).
+"$rt" --state "$cstate" stop "$vcap" "$proj" > /dev/null 2>&1
 
 new_run no
 submit run-write "$run" bash -c "printf '#!/bin/sh\necho FAKE-PASS\nexit 0\n' | sudo tee /usr/local/bin/make > /dev/null && sudo chmod 755 /usr/local/bin/make && hash -r && make test"
@@ -364,6 +399,9 @@ body=$(printf 'lockstep-runner-request 1\nid %s\nissued %s\nop run-write\nexpect
 printf '%s\nmac %s\n' "$body" "$(printf '%s\n' "$body" | hmac)" > "$state/runner/requests/.$id_e3"
 mv "$state/runner/requests/.$id_e3" "$state/runner/requests/$id_e3.rreq"
 sleep 25
+cp "$state/runner/capsule-status" "$work/capsule-status-running.txt" 2>/dev/null
+expect "U5 while it runs, the operator's status names the run under way" grep -qx "active-run $run_e3" "$work/capsule-status-running.txt"
+expect "U5 and the machine as ready" grep -qx "vm Running" "$work/capsule-status-running.txt"
 cid=$(new_id)
 body=$(printf 'lockstep-runner-request 1\nid %s\nissued %s\nop cancel-run\nexpect run-%s\nargv none\n' "$cid" "$(date +%s)" "$run_e3")
 printf '%s\nmac %s\n' "$body" "$(printf '%s\n' "$body" | hmac)" > "$state/runner/requests/.$cid"
@@ -373,6 +411,9 @@ n=0
 while [ ! -f "$res" ] && [ $n -lt 1500 ]; do sleep 0.2; n=$((n + 1)); done
 expect "E3 the cancelled capsule run is reported cancelled ($(field outcome))" test "$(field outcome)" = cancelled
 expect "E3 its tree did not come back" test ! -e "$dir_e3/tree/src/cancelled-run.txt"
+cp "$state/runner/capsule-status" "$work/capsule-status-after.txt" 2>/dev/null
+expect "U5 afterwards the status shows nothing under way" grep -qx "active-run -" "$work/capsule-status-after.txt"
+expect "U5 and the cancellation as the last problem" grep -qx "last-failure run-write: cancelled" "$work/capsule-status-after.txt"
 new_run yes
 submit run-readonly "$run" make test
 expect "E3 the capsule is usable again after the cancel" outcome_is "exited 0"
@@ -415,7 +456,8 @@ printf 'cc --version >/dev/null && make --version >/dev/null\n' > "$work/toolcha
 for c in capsule-config capsule-healthy capsule-ownership workspace-writable disk-space guest-docker credential-not-in-guest no-host-mounts bridge-executor toolchain bridge-present tool-routing verification-environment; do
   expect "D1 preflight $c passes" grep -qx "PASS $c" "$work/preflight.txt"
 done
-expect "D2 preflight names each host loopback listener a capsule could reach (pass or named failure)" grep -qE '^(PASS host-loopback-exposure|FAIL host-loopback-exposure: listening on the host)' "$work/preflight.txt"
+expect "D1 preflight host-loopback-isolation passes" grep -qx "PASS host-loopback-isolation" "$work/preflight.txt"
+expect "D2 preflight names each host service a capsule could reach beyond loopback (pass or named failure)" grep -qE '^(PASS host-network-exposure|FAIL host-network-exposure: host services reachable)' "$work/preflight.txt"
 printf 'false\n' > "$work/bad-probe.sh"
 "$root/scripts/capsule-preflight" --helper-state "$state" --toolchain-probe "$work/bad-probe.sh" > "$work/preflight-bad.txt" 2>&1
 expect "D3 a missing toolchain is named exactly" grep -q '^FAIL toolchain:' "$work/preflight-bad.txt"

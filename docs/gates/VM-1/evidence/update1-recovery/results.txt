@@ -1,0 +1,19 @@
+PASS R1 capsule mode is on
+PASS R1 the run the stopping helper had under way is answered interrupted or cancelled, never as an exit (cancelled)
+PASS R1 it ran once and was never run again by itself (started 1 time(s))
+PASS R1 the guest program was ended (it never finished)
+PASS R1 no process of it is left
+PASS R1 nothing of its tree came back (a file it wrote before the stop is not in the Supervisor's tree)
+PASS R1 the capsule is usable after the restart
+PASS R1b after a helper crash the run is answered interrupted or cancelled, never as an exit (interrupted)
+PASS R1b the orphaned run did not bring its tree back, even after its program's time
+PASS R1b it ran once
+PASS R1b no process of it is left
+PASS R2 a run whose VM died is not reported as the program's exit (launch-failed 125)
+PASS R2 nothing of its tree came back (a file it wrote before the VM died is not in the Supervisor's tree)
+PASS R2 the capsule recovers (started again by the helper) for the next run
+PASS R3 inspect reports the stale template
+PASS R3 preflight refuses a capsule from an older template
+PASS R3 reconfigure brings it current
+PASS R3 inspect then reports the current template
+PASS R3 the capsule's data survived the reconfiguration

@@ -1,0 +1,7 @@
+cpus=2 mem-kib=3998416
+/dev/vda1        29G  3.3G   25G  12% /
+TYPE            TOTAL     ACTIVE    SIZE      RECLAIMABLE
+Images          2         0         577MB     214.9MB (37%)
+Containers      0         0         0B        0B
+Local Volumes   0         0         0B        0B
+Build Cache     10        0         303.1MB   148.3kB
