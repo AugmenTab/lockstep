@@ -1,0 +1,31 @@
+tcp 4444 reachable
+tcp 5000 reachable
+tcp 7000 reachable
+tcp 7900 reachable
+tcp 8300 reachable
+tcp 8310 reachable
+tcp 8320 reachable
+tcp 8780 reachable
+tcp 8781 reachable
+tcp 9300 reachable
+tcp 5984 reachable
+tcp 6984 reachable
+tcp 62417 reachable
+http 8300 / -> 302
+http 8300 /interface/login/login.php -> 200
+http 8310 / -> 200
+http 8310 login form: name="pma_username"
+http 5984 / -> 200
+http 5984 /_all_dbs (no credentials) -> 401
+http 4444 /status (no credentials) -> 200
+selenium "ready": true
+http 7900 / -> 200
+http 8780 / -> 200
+http 8781 / -> 404
+https 9300 / -> 302
+https 6984 / -> 200
+http 7000 / -> 403
+http 5000 / -> 403
+mariadb greeting: Z....11.8.8-MariaDB-ubu2404.s...DvE8%PDD
+udp 5353 mdns: answered (124 bytes)
+udp 137 netbios: no answer (TimeoutError)

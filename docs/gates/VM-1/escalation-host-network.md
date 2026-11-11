@@ -1,4 +1,9 @@
-# Host network isolation: D4 resolved; the remaining LAN-address exposure (decision requested)
+# Host network isolation: D4 resolved; the remaining LAN-address exposure (decided)
+
+> **Update 2 (2026-11-11):** decided. The owner stopped the `development-easy` stack, and a scoped, expiring
+> exception covers the reviewed low-risk listeners for the attended Brigid run only. The `--allow-lan` flags
+> described below were removed. See `lan-exception.md`. The tables below are update 1's measurements, on a
+> different network (10.10.1.203).
 
 - **For:** the owner. **Updated:** 2026-11-10 under `.local/plans/phase-05_update1.md` (Option D).
 - **Correction to the first version of this document:** it said "no Lima setting turns that translation off". That

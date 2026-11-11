@@ -1,0 +1,62 @@
+== test start 2026-11-11T05:17:44Z at 331dcc0144919bfe021834310f6908c48331350a
+    Source:                                             OK (0.03s)
+        ✓ <interactive> passed 100 tests.
+    Span:                                               OK (0.59s)
+        ✓ <interactive> passed 100 tests.
+    Strong:                                             OK (0.62s)
+        ✓ <interactive> passed 100 tests.
+    Style:                                              OK (0.04s)
+        ✓ <interactive> passed 100 tests.
+    Subscript:                                          OK (0.59s)
+        ✓ <interactive> passed 100 tests.
+    Summary:                                            OK (0.60s)
+        ✓ <interactive> passed 100 tests.
+    Superscript:                                        OK (0.57s)
+        ✓ <interactive> passed 100 tests.
+    Table:                                              OK (0.57s)
+        ✓ <interactive> passed 100 tests.
+    TableBody:                                          OK (0.67s)
+        ✓ <interactive> passed 100 tests.
+    TableDataCell:                                      OK (0.65s)
+        ✓ <interactive> passed 100 tests.
+    ContentTemplate:                                    OK (0.64s)
+        ✓ <interactive> passed 100 tests.
+    TextArea:                                           OK (0.04s)
+        ✓ <interactive> passed 100 tests.
+    TableFoot:                                          OK (0.66s)
+        ✓ <interactive> passed 100 tests.
+    TableHeader:                                        OK (0.63s)
+        ✓ <interactive> passed 100 tests.
+    TableHead:                                          OK (0.64s)
+        ✓ <interactive> passed 100 tests.
+    Time:                                               OK (0.65s)
+        ✓ <interactive> passed 100 tests.
+    Title:                                              OK (0.05s)
+        ✓ <interactive> passed 100 tests.
+    TableRow:                                           OK (0.72s)
+        ✓ <interactive> passed 100 tests.
+    Track:                                              OK (0.03s)
+        ✓ <interactive> passed 100 tests.
+    Underline:                                          OK (0.67s)
+        ✓ <interactive> passed 100 tests.
+    UnorderedList:                                      OK (0.69s)
+        ✓ <interactive> passed 100 tests.
+    Variable:                                           OK (0.67s)
+        ✓ <interactive> passed 100 tests.
+    Video:                                              OK (0.26s)
+        ✓ <interactive> passed 100 tests.
+    WordBreakOpportunity:                               OK (0.04s)
+        ✓ <interactive> passed 100 tests.
+  Generated DOM documents behave correctly
+    Large generated DOM is spec compliant:              OK (45.72s)
+        ✓ <interactive> passed 1 test.
+    Generated DOM renders without arithmetic underflow: OK (3.88s)
+        ✓ <interactive> passed 100 tests.
+
+All 736 tests passed (54.51s)
+
+
+
+brigid> Test suite brigid-test passed
+Completed 2 action(s).
+== test end 2026-11-11T05:19:50Z exit=0

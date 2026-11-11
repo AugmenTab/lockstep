@@ -3,13 +3,15 @@
 # prerequisite of a capsule-backed transaction and name the exact one that fails. Read-only toward the
 # project; it starts a stopped capsule, runs a fixed probe in the guest, and nothing else.
 #
-#   scripts/capsule-preflight --helper-state DIR [--repo PATH] [--toolchain-probe FILE] [--allow-lan PORTS]
+#   scripts/capsule-preflight --helper-state DIR [--repo PATH] [--toolchain-probe FILE]
 #
 #   --helper-state   the helper's state directory (holds capsule/config, runner/, provider/)
 #   --repo           the Supervisor's canonical repository (its Git authority is checked)
 #   --toolchain-probe  a trusted script run in the capsule; exit 0 = the project's tools are usable
-#   --allow-lan      comma-separated host ports, bound beyond loopback, that the owner accepts a capsule
-#                    can reach (update 1 §4); any other such listener fails the preflight
+#
+# Host listeners beyond loopback fail the preflight unless DIR/capsule/lan-exception, the owner's scoped
+# and expiring exception for this project and these capsules, names each one (update 2 §3;
+# scripts/capsule/lan-exposure). There is no global or permanent allowance.
 #
 # Prints one line per check, "PASS name" or "FAIL name: reason", and exits 0 only if all pass.
 set -u
@@ -18,20 +20,16 @@ here=$(cd "$(dirname "$0")" && pwd -P)
 root=$(dirname "$here")
 rt=$root/scripts/capsule-runtime
 
-hstate="" repo="" probe="" allow="" allow_udp=""
+hstate="" repo="" probe=""
 while [ $# -gt 0 ]; do
   case $1 in
     --helper-state) hstate=$2; shift 2 ;;
     --repo) repo=$2; shift 2 ;;
     --toolchain-probe) probe=$2; shift 2 ;;
-    --allow-lan) allow=$2; shift 2 ;;
-    --allow-lan-udp) allow_udp=$2; shift 2 ;;
-    *) echo "usage: scripts/capsule-preflight --helper-state DIR [--repo PATH] [--toolchain-probe FILE] [--allow-lan PORTS]" >&2; exit 64 ;;
+    *) echo "usage: scripts/capsule-preflight --helper-state DIR [--repo PATH] [--toolchain-probe FILE]" >&2; exit 64 ;;
   esac
 done
 [ -n "$hstate" ] || { echo "capsule-preflight: --helper-state is required" >&2; exit 64; }
-case $allow in "" | *[!0-9,]*) [ -z "$allow" ] || { echo "capsule-preflight: --allow-lan takes port numbers" >&2; exit 64; } ;; esac
-case $allow_udp in "" | *[!0-9,]*) [ -z "$allow_udp" ] || { echo "capsule-preflight: --allow-lan-udp takes port numbers" >&2; exit 64; } ;; esac
 
 failures=0
 pass() { printf 'PASS %s\n' "$1"; }
@@ -48,6 +46,7 @@ cstate=$(sed -n 's/^runtime-state //p' "$cfg")
 cap=$(sed -n 's/^capsule //p' "$cfg")
 proj=$(sed -n 's/^project //p' "$cfg")
 vcap=$(sed -n 's/^verify-capsule //p' "$cfg")
+lproj=$(sed -n 's/^lockstep-project //p' "$cfg")
 case $(stat -f %Lp "$cfg" 2>/dev/null || stat -c %a "$cfg") in 600) pass capsule-config ;; *) fail capsule-config "$cfg must be mode 0600" ;; esac
 
 # ---- the capsule: exists, belongs to the project, audited, healthy
@@ -132,28 +131,35 @@ fi
 # (networkOpts.hostLoopback: false, checked above), but it can reach every service bound to another of the
 # Mac's addresses (all interfaces, the LAN address) through its ordinary outbound path, as any device on
 # the LAN could. Measured: check-capsule-vm "LAN exposure" notes. Each such listener fails the preflight
-# unless the owner accepts its port with --allow-lan.
-# netstat lists every socket on the host, whatever user owns it (lsof without root sees only this
-# user's): TCP listeners and bound UDP sockets whose local address is not loopback (P5.5 review 3, H1).
-exposed() { # tcp|udp -> "PORT" per line
-  netstat -anv -p "$1" 2>/dev/null | awk -v proto="$1" '
-    $1 ~ /^(tcp|udp)/ && (proto == "udp" || $6 == "LISTEN") {
-      addr = $4; n = split(addr, part, "."); port = part[n]
-      if (addr ~ /^127\./ || addr ~ /^::1\./ || addr ~ /^fe80::1%lo0/) next
-      print port
-    }' | sort -un
-}
-unexpected=""
-for port in $(exposed tcp); do
-  case ",$allow," in *",$port,"*) continue ;; esac
-  unexpected="$unexpected tcp/$port"
-done
-for port in $(exposed udp); do
-  case ",$allow_udp," in *",$port,"*) continue ;; esac
-  unexpected="$unexpected udp/$port"
-done
-if [ -z "$unexpected" ]; then pass host-network-exposure
-else fail host-network-exposure "host services reachable from the guest through the Mac's other addresses:$unexpected; bind them to 127.0.0.1, stop them, or accept them with --allow-lan / --allow-lan-udp"
+# unless the owner's scoped exception (DIR/capsule/lan-exception) names it. netstat lists every socket
+# on the host, whatever user owns it (lsof without root sees only this user's; P5.5 review 3, H1).
+exc=$hstate/capsule/lan-exception
+excarg=()
+private=yes
+if [ -e "$exc" ] || [ -L "$exc" ]; then
+  if [ -L "$exc" ] || [ ! -f "$exc" ]; then private=no
+  else
+    case $(stat -f %Lp "$exc" 2>/dev/null || stat -c %a "$exc") in 600) ;; *) private=no ;; esac
+  fi
+  if [ "$private" = yes ]; then excarg=(--exception "$exc")
+  else excarg=(--exception /nonexistent/lan-exception-not-private)
+  fi
+fi
+lan=$( { netstat -anv -p tcp; netstat -anv -p udp; } 2>/dev/null |
+  "$here/capsule/lan-exposure" --project "$proj" --capsule "$cap" --verify-capsule "$vcap" \
+    --lockstep-project "$lproj" --now "$(date +%s)" ${excarg[@]+"${excarg[@]}"})
+lan_ok=$?
+printf '%s\n' "$lan" | sed -n 's/^approved /NOTE lan-exception accepts /p'
+if [ "$private" = no ]; then
+  fail lan-exception "$exc must be a regular file of mode 0600; it is ignored and nothing is accepted"
+elif printf '%s\n' "$lan" | grep -q '^exception refused: '; then
+  fail lan-exception "$(printf '%s\n' "$lan" | sed -n 's/^exception refused: //p'); nothing is accepted"
+elif [ ${#excarg[@]} -gt 0 ]; then
+  pass lan-exception
+fi
+if [ "$lan_ok" = 0 ]; then pass host-network-exposure
+else
+  fail host-network-exposure "host services reachable from the guest through the Mac's other addresses:$(printf '%s\n' "$lan" | sed -n 's/^exposure refused://p'); bind them to 127.0.0.1, stop them, or have the owner name them in $exc"
 fi
 
 echo "capsule-preflight: $failures failure(s)"

@@ -135,6 +135,19 @@ D4.1–D4.8. Remaining exposure: `escalation-host-network.md` §2, enforced by p
 | U6 | The stop control stops only the run the helper reports as under way (a stale page stops nothing) through the helper's existing `cancel-run`; the engine treats it as a cancelled step and the bug waits for the person. | `stopCapsuleRun`; mechanism E3 |
 | E2E | The Gate C-EXEC journey (browser, service, PostgreSQL, engine worker, scripted roles) with the engine's runner the helper's channel in capsule mode. Every run executes in the Engineer's capsule, verification only in the verification capsule; the transaction reaches Done; `main` unmoved; Lockstep's commit on the work branch. | `check-capsule-e2e` |
 
+## 4c. Update 2: the scoped LAN exception (`check-capsule-lan`)
+
+| # | Requirement | Check |
+|---|---|---|
+| N1 | Every TCP listener and every unconnected, port-bound UDP socket beyond loopback is refused unless named; TCP and UDP are separate | X1, X4 |
+| N2 | An exception naming exactly the reviewed listeners accepts those, and nothing else; a listener that appears later is refused by name | X2, X3, X5, P2, P4 |
+| N3 | The exception is bound to the project, the Lockstep project, the capsule and the verification capsule; another identity's exception accepts nothing | X6, P6 |
+| N4 | It expires, at most 72 h ahead; expired or too far: refused; removed: the refusal returns | X7, P7 |
+| N5 | Malformed, unknown or not 0600: the whole exception is refused | X8, X11, P5 |
+| N6 | `dynamic` covers 49152–65535 only; the process must match | X9, X10 |
+| N7 | It never bypasses another preflight failure | P3 |
+| N8 | Host loopback stays closed; the LAN exposure is real (control); guest Docker, DNS, HTTPS and package downloads work | G0–G2 |
+
 ## 5. Test-first record
 
 - `check-capsule-bridge`: written together with the bridge and the runtime as the P5.1 feasibility spike (handoff

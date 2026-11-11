@@ -1,0 +1,32 @@
+lockstep-lan-exception 1
+# Phase 5 update 2: the attended Brigid dogfood only. Install as DIR/capsule/lan-exception (mode 0600)
+# in the helper state that runs Brigid, with @LOCKSTEP_PROJECT@ replaced by Brigid's Lockstep project id
+# (the same id as the capsule config's lockstep-project line). Every listener below was reviewed on
+# 2026-11-11 (docs/gates/VM-1/lan-exception.md); anything else beyond loopback is refused.
+project brigid
+lockstep-project @LOCKSTEP_PROJECT@
+capsule brigid1
+verify-capsule brigidv
+expires 2026-11-13T23:00:00Z
+purpose attended Brigid dogfood (Gate VM-1, P5.12); owner-approved in phase-05_update2
+# polygon-pong (owner's development app, no data): web and server
+allow tcp * 8780 OrbStack Helper
+allow tcp * 8781 OrbStack Helper
+# macOS AirPlay receiver (Control Center): answers plain HTTP with 403, pairs per device
+allow tcp * 5000 ControlCenter
+allow tcp * 7000 ControlCenter
+# macOS Continuity (rapportd): Apple-ID-paired devices only; its port changes
+allow tcp * dynamic rapportd
+# mDNS (Bonjour): answers service queries, as it does to every LAN device
+allow udp * 5353 mDNSResponder
+allow udp * 5353 Brave Browser He
+# NetBIOS name service (did not answer the guest), DHCPv6 client
+allow udp * 137 netbiosd
+allow udp * 138 netbiosd
+allow udp * 547 dhcp6d
+# System daemons' and the browser's dynamic UDP sockets (AirDrop/Continuity, sync, logging, WebRTC/QUIC)
+allow udp * dynamic sharingd
+allow udp * dynamic replicatord
+allow udp * dynamic syslogd
+allow udp * dynamic Brave Browser He
+allow udp address dynamic Brave Browser He

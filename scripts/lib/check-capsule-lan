@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# Phase 5 update 2 §4: the scoped, expiring LAN exception (scripts/capsule/lan-exposure, used by
+# scripts/capsule-preflight). Three parts, none of which provisions a VM:
+#   X  the decision itself, on this Mac's real listener inventory (captured) and synthetic exceptions;
+#   P  the real preflight on this Mac with the capsules vmq1/vmv1 (check-capsule-vm --keep made them);
+#   G  inside the guest: host loopback still closed, a probe on all interfaces reached (control), and
+#      Docker, DNS and public downloads still working.
+# Every exception it writes names the test project only and is deleted at the end.
+#
+#   scripts/lib/check-capsule-lan          Results: .local/evidence/capsule-lan-<stamp>/results.txt
+set -uo pipefail
+cd "$(dirname "$0")/../.."
+root=$PWD
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+work=$root/.local/evidence/capsule-lan-$stamp
+cstate=$root/.local/cvm
+mkdir -p "$work"
+results=$work/results.txt
+: > "$results"
+failures=0
+cap=vmq1
+vcap=vmv1
+proj=vmq-project
+lp=0b6f7d1e-2c4a-4e8b-9f10-3a5c7e9b1d24
+le=$root/scripts/capsule/lan-exposure
+pf=$root/scripts/capsule-preflight
+rt=$root/scripts/capsule-runtime
+probe=lockstep-lan-probe-$stamp
+state=$work/pf-state
+
+record() { printf '%s %s\n' "$1" "$2" | tee -a "$results"; [ "$1" = PASS ] || failures=$((failures + 1)); }
+expect() { local d=$1; shift; if "$@"; then record PASS "$d"; else record FAIL "$d"; fi; }
+has() { grep -qF -- "$2" "$1"; }
+lacks() { ! grep -qF -- "$2" "$1"; }
+cleanup() {
+  docker rm -f "$probe-lo" "$probe-all" "$probe-new" >/dev/null 2>&1
+  rm -f "$state/capsule/lan-exception"
+}
+trap cleanup EXIT
+
+for c in "$cap" "$vcap"; do
+  [ -f "$cstate/capsules/records/$c" ] || { echo "NOT_RUN: capsule $c is missing (check-capsule-vm --keep, check-capsule-runner)" >&2; exit 2; }
+done
+
+now=$(date +%s)
+at() { date -u -r $((now + $1)) +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$((now + $1))" +%Y-%m-%dT%H:%M:%SZ; }
+# exception FILE [PROJECT LOCKSTEP-PROJECT CAPSULE VERIFY-CAPSULE EXPIRES] < allow lines
+exception() {
+  local f=$1
+  {
+    printf 'lockstep-lan-exception 1\nproject %s\nlockstep-project %s\ncapsule %s\nverify-capsule %s\nexpires %s\npurpose check-capsule-lan (test only)\n' \
+      "${2:-$proj}" "${3:-$lp}" "${4:-$cap}" "${5:-$vcap}" "${6:-$(at 600)}"
+    cat
+  } > "$f"
+  chmod 600 "$f"
+}
+LE() { "$le" --project "$proj" --capsule "$cap" --verify-capsule "$vcap" --lockstep-project "$lp" --now "$now" "$@"; }
+# allow lines for every listener in an evaluation's output (ports the system hands out as "dynamic")
+allows_for() { awk '$1 == "unapproved" { p = ($4 >= 49152) ? "dynamic" : $4; s = "allow " $2 " " $3 " " p; for (i = 5; i <= NF; i++) s = s " " $i; print s }' "$1" | sort -u; }
+
+# ================================================================ X (the decision, on the real inventory)
+{ netstat -anv -p tcp; netstat -anv -p udp; } > "$work/inventory.txt" 2>/dev/null
+LE < "$work/inventory.txt" > "$work/x-none.txt"
+rc=$?
+expect "X1 with no exception, every listener beyond loopback is refused (exit $rc)" test "$rc" = 1
+expect "X1 TCP listeners are named" grep -q '^unapproved tcp ' "$work/x-none.txt"
+expect "X1 UDP listeners are named separately" grep -q '^unapproved udp ' "$work/x-none.txt"
+expect "X1 loopback listeners are not counted" lacks "$work/x-none.txt" " 127."
+allows_for "$work/x-none.txt" > "$work/x-all-allows.txt"
+exception "$work/x-full" < "$work/x-all-allows.txt"
+LE --exception "$work/x-full" < "$work/inventory.txt" > "$work/x-full.txt"
+expect "X2 an exception naming every listener accepts them" has "$work/x-full.txt" "exposure ok"
+first_tcp=$(grep -m 1 '^allow tcp \* [0-9]' "$work/x-all-allows.txt")
+first_port=$(printf '%s' "$first_tcp" | awk '{ print $4 }')
+grep -vxF -- "$first_tcp" "$work/x-all-allows.txt" | exception "$work/x-minus"
+LE --exception "$work/x-minus" < "$work/inventory.txt" > "$work/x-minus.txt"
+expect "X3 a listener the exception does not name is refused ($first_tcp)" grep -q "^exposure refused: tcp/$first_port(" "$work/x-minus.txt"
+expect "X3 and only that one" test "$(grep -c '^unapproved' "$work/x-minus.txt")" = 1
+{ grep -vxF -- "$first_tcp" "$work/x-all-allows.txt"; printf '%s\n' "${first_tcp/allow tcp/allow udp}"; } | exception "$work/x-proto"
+LE --exception "$work/x-proto" < "$work/inventory.txt" > "$work/x-proto.txt"
+expect "X4 a UDP approval does not accept the TCP listener on the same port" grep -q "^unapproved tcp \* $first_port " "$work/x-proto.txt"
+# A listener that appears after the review: the same process, a new port.
+{ cat "$work/inventory.txt"; awk '$6 == "LISTEN" && $4 !~ /^(127\.|::1\.)/ { print; exit }' "$work/inventory.txt" | sed -E 's/^([a-z0-9]+ +[0-9]+ +[0-9]+ +)[^ ]+/\1*.18767/'; } > "$work/inventory-new.txt"
+expect "X5 precondition: the synthetic new listener is in the inventory" grep -q '\*\.18767 ' "$work/inventory-new.txt"
+LE --exception "$work/x-full" < "$work/inventory-new.txt" > "$work/x-new.txt"
+expect "X5 a listener that appeared after the review is refused" grep -q 'tcp/18767(' "$work/x-new.txt"
+for id in project lockstep-project capsule verify-capsule; do
+  case $id in
+    project) exception "$work/x-$id" other-project < "$work/x-all-allows.txt" ;;
+    lockstep-project) exception "$work/x-$id" "$proj" 9d1c2b3a-4e5f-4a6b-8c7d-0e1f2a3b4c5d < "$work/x-all-allows.txt" ;;
+    capsule) exception "$work/x-$id" "$proj" "$lp" brigid1 < "$work/x-all-allows.txt" ;;
+    verify-capsule) exception "$work/x-$id" "$proj" "$lp" "$cap" otherv < "$work/x-all-allows.txt" ;;
+  esac
+  LE --exception "$work/x-$id" < "$work/inventory.txt" > "$work/x-$id.txt"
+  expect "X6 another $id's exception is refused, and accepts nothing" bash -c "grep -q '^exception refused: exception-wrong-$id' '$work/x-$id.txt' && ! grep -q '^approved' '$work/x-$id.txt'"
+done
+exception "$work/x-expired" "$proj" "$lp" "$cap" "$vcap" "$(at -60)" < "$work/x-all-allows.txt"
+LE --exception "$work/x-expired" < "$work/inventory.txt" > "$work/x-expired.txt"
+expect "X7 an expired exception is refused, and accepts nothing" bash -c "grep -q '^exception refused: exception-expired' '$work/x-expired.txt' && ! grep -q '^approved' '$work/x-expired.txt'"
+exception "$work/x-far" "$proj" "$lp" "$cap" "$vcap" "$(at $((73 * 3600)))" < "$work/x-all-allows.txt"
+LE --exception "$work/x-far" < "$work/inventory.txt" > "$work/x-far.txt"
+expect "X7 an exception more than 72 hours ahead is refused (it cannot become permanent)" has "$work/x-far.txt" "exception refused: exception-expiry-too-far"
+{ cat "$work/x-all-allows.txt"; echo "allow tcp * 1-65535 anything"; } | exception "$work/x-bad"
+LE --exception "$work/x-bad" < "$work/inventory.txt" > "$work/x-bad.txt"
+expect "X8 a malformed line (a port range) refuses the whole exception" has "$work/x-bad.txt" "exception refused: exception-malformed"
+{ cat "$work/x-all-allows.txt"; echo "allow-all"; } | exception "$work/x-bad2"
+LE --exception "$work/x-bad2" < "$work/inventory.txt" > "$work/x-bad2.txt"
+expect "X8 an unknown directive refuses the whole exception" has "$work/x-bad2.txt" "exception refused: exception-malformed"
+grep -v '^allow tcp \* [0-9]' "$work/x-all-allows.txt" | { cat; echo "allow tcp * dynamic OrbStack Helper"; } | exception "$work/x-dyn"
+LE --exception "$work/x-dyn" < "$work/inventory.txt" > "$work/x-dyn.txt"
+expect "X9 'dynamic' does not cover a fixed port below 49152" grep -q "^unapproved tcp \* $first_port " "$work/x-dyn.txt"
+proc_of=$(printf '%s' "$first_tcp" | cut -d ' ' -f 5-)
+{ grep -vxF -- "$first_tcp" "$work/x-all-allows.txt"; echo "allow tcp * $first_port not-$proc_of"; } | exception "$work/x-proc" 2>/dev/null
+LE --exception "$work/x-proc" < "$work/inventory.txt" > "$work/x-proc.txt"
+expect "X10 the port approved for another process does not accept this one" grep -q "^unapproved tcp \* $first_port " "$work/x-proc.txt"
+LE --exception "$work/does-not-exist" < "$work/inventory.txt" > "$work/x-missing.txt"
+expect "X11 a named but missing exception file is refused" has "$work/x-missing.txt" "exception refused: exception-missing"
+
+# ================================================================ P (the real preflight on this Mac)
+mkdir -p "$state/capsule" "$state/runner"
+chmod 700 "$state" "$state/capsule"
+printf 'lockstep-capsule 1\nruntime-state %s\ncapsule %s\nproject %s\nverify-capsule %s\nlockstep-project %s\n' "$cstate" "$cap" "$proj" "$vcap" "$lp" > "$state/capsule/config"
+chmod 600 "$state/capsule/config"
+"$pf" --helper-state "$state" > "$work/p-none.txt" 2>&1
+expect "P1 without an exception the preflight refuses this Mac's LAN listeners" grep -q '^FAIL host-network-exposure: host services reachable' "$work/p-none.txt"
+expect "P1 host loopback stays isolated" grep -q '^PASS host-loopback-isolation' "$work/p-none.txt"
+# A test-only exception for the test project, naming the listeners present now (10 minutes).
+{ netstat -anv -p tcp; netstat -anv -p udp; } 2>/dev/null | LE > "$work/p-live.txt"
+allows_for "$work/p-live.txt" | exception "$state/capsule/lan-exception"
+cp "$state/capsule/lan-exception" "$work/p-exception-used.txt"
+"$pf" --helper-state "$state" > "$work/p-full.txt" 2>&1
+rc=$?
+expect "P2 the exception is accepted for its own project and capsules" grep -q '^PASS lan-exception' "$work/p-full.txt"
+expect "P2 the listeners it names are accepted (named in NOTE lines)" grep -q '^NOTE lan-exception accepts ' "$work/p-full.txt"
+expect "P2 so the network check passes" grep -q '^PASS host-network-exposure' "$work/p-full.txt"
+expect "P3 an unrelated failure is not bypassed (no helper: tool-routing fails, preflight exits $rc)" bash -c "grep -q '^FAIL tool-routing' '$work/p-full.txt' && [ $rc = 1 ]"
+docker run -d --name "$probe-new" -p 0.0.0.0:18767:8080 busybox:1.36 httpd -f -p 8080 >/dev/null 2>&1
+sleep 2
+"$pf" --helper-state "$state" > "$work/p-new.txt" 2>&1
+expect "P4 a service started after the review is refused by name" grep -q '^FAIL host-network-exposure: .*tcp/18767(' "$work/p-new.txt"
+docker rm -f "$probe-new" >/dev/null 2>&1
+chmod 644 "$state/capsule/lan-exception"
+"$pf" --helper-state "$state" > "$work/p-mode.txt" 2>&1
+expect "P5 an exception others can read or write is ignored" bash -c "grep -q '^FAIL lan-exception: .*mode 0600' '$work/p-mode.txt' && grep -q '^FAIL host-network-exposure' '$work/p-mode.txt'"
+chmod 600 "$state/capsule/lan-exception"
+# The same exception file, with the capsule config switched to another project's identity.
+sed -i '' 's/^lockstep-project .*/lockstep-project 9d1c2b3a-4e5f-4a6b-8c7d-0e1f2a3b4c5d/' "$state/capsule/config"
+"$pf" --helper-state "$state" > "$work/p-other.txt" 2>&1
+expect "P6 another project cannot reuse this exception" bash -c "grep -q '^FAIL lan-exception: exception-wrong-lockstep-project' '$work/p-other.txt' && grep -q '^FAIL host-network-exposure' '$work/p-other.txt'"
+sed -i '' "s/^lockstep-project .*/lockstep-project $lp/" "$state/capsule/config"
+rm -f "$state/capsule/lan-exception"
+"$pf" --helper-state "$state" > "$work/p-removed.txt" 2>&1
+expect "P7 removing the exception restores the refusal" bash -c "grep -q '^FAIL host-network-exposure' '$work/p-removed.txt' && ! grep -qE '^(PASS|NOTE) lan-exception' '$work/p-removed.txt'"
+
+# ================================================================ G (inside the guest)
+lan=$(ipconfig getifaddr en0 2>/dev/null)
+[ -n "$lan" ] || lan=$(ipconfig getifaddr en1 2>/dev/null)
+echo "host LAN address: ${lan:-none}" > "$work/lan.txt"
+docker run -d --name "$probe-lo" -p 127.0.0.1:18765:8080 busybox:1.36 httpd -f -p 8080 >/dev/null 2>&1
+docker run -d --name "$probe-all" -p 0.0.0.0:18766:8080 busybox:1.36 httpd -f -p 8080 >/dev/null 2>&1
+sleep 2
+code=$(curl -s -m 4 -o /dev/null -w '%{http_code}' http://127.0.0.1:18765/ 2>/dev/null)
+expect "G0 the loopback probe answers on the host itself (HTTP $code)" test "${code:-000}" != 000
+expect "G0 the host has a LAN address ($lan)" test -n "$lan"
+cat > "$work/guest.sh" <<EOF
+for t in 192.168.5.2:18765 host.lima.internal:18765 $lan:18765 192.168.5.2:18766 $lan:18766; do
+  h=\${t%:*}; p=\${t#*:}
+  if timeout 4 bash -c "exec 3<>/dev/tcp/\$h/\$p" 2>/dev/null; then echo "tcp \$t open"; else echo "tcp \$t closed"; fi
+done
+getent hosts archive.ubuntu.com > /dev/null && echo dns-ok
+curl -s -m 20 -o /dev/null -w "https=%{http_code}\n" https://registry-1.docker.io/v2/
+docker pull -q busybox:1.36 > /dev/null 2>&1 && docker run --rm busybox:1.36 echo docker-run-ok
+cd /tmp && sudo apt-get update -qq > /dev/null 2>&1 && apt-get download -qq hello > /dev/null 2>&1 && ls hello_*.deb > /dev/null 2>&1 && echo apt-download-ok
+rm -f /tmp/hello_*.deb
+EOF
+rm -f "$cstate/capsules/records/$cap.run.out"
+"$rt" --state "$cstate" run "$cap" "$proj" "$work/guest.sh" 300 > "$work/guest.reply" 2>&1
+cp "$cstate/capsules/records/$cap.run.out" "$work/guest.out" 2>/dev/null || : > "$work/guest.out"
+expect "G1 the guest cannot reach the host's loopback through the gateway" has "$work/guest.out" "tcp 192.168.5.2:18765 closed"
+expect "G1 nor through host.lima.internal" has "$work/guest.out" "tcp host.lima.internal:18765 closed"
+expect "G1 nor through the LAN address" has "$work/guest.out" "tcp $lan:18765 closed"
+expect "G1 nor an all-interfaces service through the gateway" has "$work/guest.out" "tcp 192.168.5.2:18766 closed"
+expect "G1 control: the guest does reach an all-interfaces service at the LAN address (the exposure the exception governs)" has "$work/guest.out" "tcp $lan:18766 open"
+expect "G2 guest DNS works" has "$work/guest.out" "dns-ok"
+expect "G2 public HTTPS works" grep -qE '^https=(200|401)' "$work/guest.out"
+expect "G2 guest Docker pulls and runs" has "$work/guest.out" "docker-run-ok"
+expect "G2 public package downloads work" has "$work/guest.out" "apt-download-ok"
+
+echo "check-capsule-lan: $failures failure(s); results in $results"
+[ "$failures" = 0 ]

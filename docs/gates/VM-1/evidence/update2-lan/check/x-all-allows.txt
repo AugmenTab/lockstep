@@ -1,0 +1,12 @@
+allow tcp * 5000 ControlCenter
+allow tcp * 7000 ControlCenter
+allow tcp * 8780 OrbStack Helper
+allow tcp * 8781 OrbStack Helper
+allow tcp * dynamic rapportd
+allow udp * 137 netbiosd
+allow udp * 138 netbiosd
+allow udp * 5353 Brave Browser He
+allow udp * 5353 mDNSResponder
+allow udp * 547 dhcp6d
+allow udp * dynamic replicatord
+allow udp address dynamic Brave Browser He

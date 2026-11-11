@@ -1,0 +1,42 @@
+PASS X1 with no exception, every listener beyond loopback is refused (exit 1)
+PASS X1 TCP listeners are named
+PASS X1 UDP listeners are named separately
+PASS X1 loopback listeners are not counted
+PASS X2 an exception naming every listener accepts them
+PASS X3 a listener the exception does not name is refused (allow tcp * 5000 ControlCenter)
+PASS X3 and only that one
+PASS X4 a UDP approval does not accept the TCP listener on the same port
+PASS X5 precondition: the synthetic new listener is in the inventory
+PASS X5 a listener that appeared after the review is refused
+PASS X6 another project's exception is refused, and accepts nothing
+PASS X6 another lockstep-project's exception is refused, and accepts nothing
+PASS X6 another capsule's exception is refused, and accepts nothing
+PASS X6 another verify-capsule's exception is refused, and accepts nothing
+PASS X7 an expired exception is refused, and accepts nothing
+PASS X7 an exception more than 72 hours ahead is refused (it cannot become permanent)
+PASS X8 a malformed line (a port range) refuses the whole exception
+PASS X8 an unknown directive refuses the whole exception
+PASS X9 'dynamic' does not cover a fixed port below 49152
+PASS X10 the port approved for another process does not accept this one
+PASS X11 a named but missing exception file is refused
+PASS P1 without an exception the preflight refuses this Mac's LAN listeners
+PASS P1 host loopback stays isolated
+PASS P2 the exception is accepted for its own project and capsules
+PASS P2 the listeners it names are accepted (named in NOTE lines)
+PASS P2 so the network check passes
+PASS P3 an unrelated failure is not bypassed (no helper: tool-routing fails, preflight exits 1)
+PASS P4 a service started after the review is refused by name
+PASS P5 an exception others can read or write is ignored
+PASS P6 another project cannot reuse this exception
+PASS P7 removing the exception restores the refusal
+PASS G0 the loopback probe answers on the host itself (HTTP 404)
+PASS G0 the host has a LAN address (192.168.1.197)
+PASS G1 the guest cannot reach the host's loopback through the gateway
+PASS G1 nor through host.lima.internal
+PASS G1 nor through the LAN address
+PASS G1 nor an all-interfaces service through the gateway
+PASS G1 control: the guest does reach an all-interfaces service at the LAN address (the exposure the exception governs)
+PASS G2 guest DNS works
+PASS G2 public HTTPS works
+PASS G2 guest Docker pulls and runs
+PASS G2 public package downloads work

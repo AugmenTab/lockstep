@@ -46,6 +46,10 @@ provision:
     #!/bin/bash
     set -eux
     export DEBIAN_FRONTEND=noninteractive
+    # needrestart only lists services to restart, never restarts them: an apt install a guest program
+    # makes would otherwise restart sshd and cut the session that runs it (and the bridge's exec channel).
+    mkdir -p /etc/needrestart/conf.d
+    printf '%s\n' "\$nrconf{restart} = 'l';" > /etc/needrestart/conf.d/lockstep.conf
     if ! command -v docker >/dev/null 2>&1; then
       apt-get update
       apt-get install -y --no-install-recommends docker.io docker-compose-v2 docker-buildx git build-essential ca-certificates curl python3 jq rsync

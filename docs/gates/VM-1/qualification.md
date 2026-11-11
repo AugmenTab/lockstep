@@ -20,7 +20,8 @@ not evidence of a real subscription session.** The Implementer does not accept t
 | P5.9 recovery | **Qualified** for: helper stop, helper crash, the run's own process dying, VM killed mid-run, executor crash, stale template | `check-capsule-recovery` 19/19 (`evidence/update1-recovery/`); runner A4; VM R2 |
 | P5.10 preflight and operator view | **Qualified** | preflight (VM D4.8, recovery R3); `lockstep-capsule` C-P5.10; runner U5 |
 | P5.11 full synthetic transaction through the real service | **Qualified** (scripted roles) | `check-capsule-e2e` 6/6 (`evidence/update1-e2e/`) |
-| P5.12 Brigid / Gate VM-1 | **Blocked**; see "Before Brigid" | — |
+| P5.10 LAN exception (update 2) | **Qualified**: scoped, expiring, exact; the LAN prerequisite for the attended Brigid run is satisfied under `lan-exception.md` | `check-capsule-lan` 42/42 (`evidence/update2-lan/check/`) |
+| P5.12 Brigid / Gate VM-1 | **Ready for the attended live run**: Brigid's capsules prepared, its real test suite passing in verification from the snapshot, preflight 0 failures. **Waits on the owner's live-run authorization** | `brigid-readiness.md`; `evidence/update2-brigid/` |
 
 Regression on the final tree: `scripts/check --integration`: format, lint, build, unit 870/870, guard, integration
 571/571, backup/restore (`evidence/check-integration-update1.log`).
@@ -119,17 +120,20 @@ Results:
 - `main` did not move. Lockstep's commit is on the work branch, with the fixed `calc.py` and the frozen test.
 - There is no remote.
 
-## Before Brigid (P5.12): exact blockers
+## Before Brigid (P5.12): exact blockers (update 2)
 
-1. **The owner's decision on the LAN-address exposure** (`escalation-host-network.md` §3, E1/E2/E3). Until it is
-   made, preflight refuses this Mac (`host-network-exposure`).
+1. ~~The owner's decision on the LAN-address exposure.~~ Decided on 2026-11-11 (`lan-exception.md`).
 2. **Separate authorization of a real-provider session** (phase-05 §5; not given).
-3. Once both are in place, Brigid is the **first live use** of the capsule path with a real model. Until then the
-   live path is qualified only against the stand-in.
+3. The operator steps in `brigid-readiness.md` §5. They touch the installed service and the helper state,
+   outside this repository.
+4. Brigid will be the **first live use** of the capsule path with a real model. Until then the live path is
+   qualified only against the stand-in.
 
 ## Known limitations
 
-1. The guest can reach the Mac's LAN address (above). Public egress is open and not recorded per destination.
+1. The guest can reach the Mac's LAN address. Preflight refuses any listener there unless the owner's scoped
+   exception names it (`lan-exception.md`). There is no packet filter; a host-enforced boundary is deferred
+   work, required before unattended or multi-project use. Public egress is open and not recorded per destination.
    `hostResolver` gives the guest the host's DNS.
 2. The VM image is not pinned by digest.
 3. A full guest disk grows the host's sparse file to the profile's size; VZ does not reclaim it (28 G after the

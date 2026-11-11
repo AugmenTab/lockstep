@@ -1,0 +1,18 @@
+lockstep-lan-exception 1
+project vmq-project
+lockstep-project 0b6f7d1e-2c4a-4e8b-9f10-3a5c7e9b1d24
+capsule vmq1
+verify-capsule vmv1
+expires 2026-11-11T05:28:24Z
+purpose check-capsule-lan (test only)
+allow tcp * 7000 ControlCenter
+allow tcp * 8780 OrbStack Helper
+allow tcp * 8781 OrbStack Helper
+allow tcp * dynamic rapportd
+allow udp * 137 netbiosd
+allow udp * 138 netbiosd
+allow udp * 5353 Brave Browser He
+allow udp * 5353 mDNSResponder
+allow udp * 547 dhcp6d
+allow udp * dynamic replicatord
+allow udp address dynamic Brave Browser He

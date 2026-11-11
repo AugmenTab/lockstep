@@ -1,0 +1,25 @@
+unapproved tcp * 5000 ControlCenter
+unapproved tcp * 62417 rapportd
+unapproved tcp * 7000 ControlCenter
+unapproved tcp * 8780 OrbStack Helper
+unapproved tcp * 8781 OrbStack Helper
+unapproved udp * 137 netbiosd
+unapproved udp * 138 netbiosd
+unapproved udp * 5353 Brave Browser He
+unapproved udp * 5353 mDNSResponder
+unapproved udp * 547 dhcp6d
+unapproved udp * 59756 replicatord
+unapproved udp address 50283 Brave Browser He
+unapproved udp address 50696 Brave Browser He
+unapproved udp address 52086 Brave Browser He
+unapproved udp address 53804 Brave Browser He
+unapproved udp address 58003 Brave Browser He
+unapproved udp address 58122 Brave Browser He
+unapproved udp address 58485 Brave Browser He
+unapproved udp address 59432 Brave Browser He
+unapproved udp address 59775 Brave Browser He
+unapproved udp address 61495 Brave Browser He
+unapproved udp address 61950 Brave Browser He
+unapproved udp address 65351 Brave Browser He
+exception refused: exception-wrong-verify-capsule
+exposure refused: tcp/5000(ControlCenter) tcp/62417(rapportd) tcp/7000(ControlCenter) tcp/8780(OrbStack Helper) tcp/8781(OrbStack Helper) udp/137(netbiosd) udp/138(netbiosd) udp/5353(Brave Browser He) udp/5353(mDNSResponder) udp/547(dhcp6d) udp/59756(replicatord) udp/50283(Brave Browser He) udp/50696(Brave Browser He) udp/52086(Brave Browser He) udp/53804(Brave Browser He) udp/58003(Brave Browser He) udp/58122(Brave Browser He) udp/58485(Brave Browser He) udp/59432(Brave Browser He) udp/59775(Brave Browser He) udp/61495(Brave Browser He) udp/61950(Brave Browser He) udp/65351(Brave Browser He)
