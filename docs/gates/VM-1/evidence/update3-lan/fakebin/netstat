@@ -1,0 +1,8 @@
+#!/bin/sh
+case "$LOCKSTEP_TEST_NETSTAT:$*" in
+  tcp-fail:*"-p tcp"*) /usr/sbin/netstat "$@" | head -n 4; echo "netstat: sysctl: net.inet.tcp.pcblist_n: Operation not permitted" >&2; exit 1 ;;
+  udp-fail:*"-p udp"*) /usr/sbin/netstat "$@" | head -n 4; echo "netstat: sysctl: net.inet.udp.pcblist_n: Operation not permitted" >&2; exit 1 ;;
+  garbled:*) printf 'Active Internet connections (servers and established)\nProto Recv-Q Send-Q Local Address Foreign Address State\ntcp 0 0 0.0.0.0:22 0.0.0.0:* LISTEN\n'; exit 0 ;;
+  silent:*) exit 0 ;;
+esac
+exec /usr/sbin/netstat "$@"

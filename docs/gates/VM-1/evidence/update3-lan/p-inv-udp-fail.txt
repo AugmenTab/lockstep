@@ -1,0 +1,16 @@
+PASS capsule-config
+PASS capsule-healthy
+PASS capsule-ownership
+PASS capsule-template-current
+PASS host-loopback-isolation
+PASS workspace-writable
+PASS disk-space
+PASS guest-docker
+PASS credential-not-in-guest
+PASS no-host-mounts
+PASS bridge-executor
+PASS bridge-present
+FAIL tool-routing: the helper has not announced capsule mode for vmq1 (start it with --runner)
+PASS verification-environment
+FAIL host-network-exposure: could not list the host's UDP listeners (netstat -anv -p udp exited 1: netstat: sysctl: net.inet.udp.pcblist_n: Operation not permitted ); the exposure is unknown, so nothing is accepted. Fix netstat on this Mac and rerun
+capsule-preflight: 2 failure(s)

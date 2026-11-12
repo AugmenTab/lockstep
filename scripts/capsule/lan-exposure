@@ -3,7 +3,14 @@
 # expiring LAN exception accepts each one (Phase 5 update 2 §3). Used by scripts/capsule-preflight.
 #
 #   lan-exposure --project P --capsule C --verify-capsule V --lockstep-project U [--exception FILE]
-#                --now EPOCH  < (netstat -anv -p tcp; netstat -anv -p udp)
+#                --now EPOCH --tcp FILE --udp FILE
+#
+# --tcp and --udp are the complete outputs of "netstat -anv -p tcp" and "netstat -anv -p udp", each from a
+# run that exited 0 (the caller checks that; update 3). Each must have the exact macOS structure: the
+# title line, the column header ending in the process and the eight trailing columns, and only rows of its
+# own protocol whose process column reads NAME:PID. Anything else is not an inventory: the verdict is
+# "inventory refused: REASON" and nothing is accepted. A file with the two header lines and no rows is a
+# genuinely empty inventory.
 #
 # A listener is a TCP socket in LISTEN or an unconnected UDP socket bound to a port, whose local address
 # is not loopback. (A connected UDP socket only receives from its one peer; a "*.*" socket has no port.)
@@ -25,11 +32,12 @@
 # included; a listener nothing names is refused, so a service started later is refused too.
 #
 # Prints one line per listener ("approved"/"unapproved", with the allow line that matched), then the
-# verdict: "exposure ok", "exposure refused: LIST" or "exception refused: REASON". Exits 0 only on ok.
+# verdict: "exposure ok", "exposure refused: LIST", "exception refused: REASON" or
+# "inventory refused: REASON". Exits 0 only on ok.
 set -u
 export LC_ALL=C
 
-project="" capsule="" vcapsule="" lproject="" exception="" now=""
+project="" capsule="" vcapsule="" lproject="" exception="" now="" tcpf="" udpf=""
 while [ $# -gt 0 ]; do
   case $1 in
     --project) project=$2; shift 2 ;;
@@ -38,15 +46,50 @@ while [ $# -gt 0 ]; do
     --lockstep-project) lproject=$2; shift 2 ;;
     --exception) exception=$2; shift 2 ;;
     --now) now=$2; shift 2 ;;
-    *) echo "usage: lan-exposure --project P --capsule C --verify-capsule V --lockstep-project U [--exception FILE] --now EPOCH" >&2; exit 64 ;;
+    --tcp) tcpf=$2; shift 2 ;;
+    --udp) udpf=$2; shift 2 ;;
+    *) echo "usage: lan-exposure --project P --capsule C --verify-capsule V --lockstep-project U [--exception FILE] --now EPOCH --tcp FILE --udp FILE" >&2; exit 64 ;;
   esac
 done
 [[ $now =~ ^[0-9]{9,11}$ ]] || { echo "lan-exposure: --now takes epoch seconds" >&2; exit 64; }
+[ -n "$tcpf" ] && [ -n "$udpf" ] || { echo "lan-exposure: --tcp and --udp are required" >&2; exit 64; }
 
 max_ahead=$((72 * 3600))
 
+# The inventory's structure (update 3). Prints nothing if FILE is a well-formed netstat -anv listing for
+# PROTO, otherwise the first problem. The parse below relies on exactly this: the process at NF-8, the TCP
+# state at $6, the UDP foreign address at $5.
+inventory_problem() {
+  local proto=$1 file=$2
+  [ -f "$file" ] && [ ! -L "$file" ] || { echo "$proto inventory missing"; return; }
+  [ -s "$file" ] || { echo "$proto inventory empty (netstat printed nothing)"; return; }
+  awk -v proto="$proto" '
+    function bad(why) { print proto " inventory line " NR ": " why; exit }
+    NR == 1 { if ($0 != "Active Internet connections (including servers)") bad("unrecognized title"); next }
+    NR == 2 {
+      if ($0 !~ /^Proto +Recv-Q +Send-Q +Local Address +Foreign Address +\(state\) /) bad("unrecognized column header")
+      if ($(NF-8) != "process:pid" || $NF != "fltrs") bad("column header without the process and flag columns (not netstat -anv)")
+      next
+    }
+    {
+      if ($1 !~ ("^" proto "(4|6|46)?$")) bad("not a " proto " row")
+      if (NF < (proto == "tcp" ? 19 : 18)) bad("too few columns")
+      if ($4 !~ /\.([0-9]+|\*)$/) bad("unrecognized local address")
+      if (proto == "tcp" && $6 !~ /^[A-Z_0-9]+$/) bad("unrecognized state")
+      if ($(NF-8) !~ /:[0-9]+$/) bad("no process:pid column")
+    }
+    END { if (NR < 2) print proto " inventory truncated (no column header)" }' "$file" | head -n 1
+}
+inventory=""
+for p in tcp udp; do
+  f=$tcpf; [ "$p" = udp ] && f=$udpf
+  inventory=$(inventory_problem "$p" "$f")
+  [ -z "$inventory" ] || break
+done
+
 # The listeners: "PROTO BIND PORT PROCESS" (PROTO tcp|udp; BIND * or address; PROCESS may hold spaces).
-listeners=$(awk '
+listeners=""
+[ -n "$inventory" ] || listeners=$(cat "$tcpf" "$udpf" | awk '
   $1 ~ /^(tcp|udp)(4|6|46)?$/ {
     proto = substr($1, 1, 3)
     if (proto == "tcp") { if ($6 != "LISTEN") next; first = 11 }
@@ -123,6 +166,12 @@ while IFS= read -r l; do
   fi
 done <<< "$listeners"
 
+# An inventory that cannot be read is no evidence that nothing listens: refuse, accept nothing.
+if [ -n "$inventory" ]; then
+  [ -z "$reason" ] || echo "exception refused: $reason"
+  echo "inventory refused: $inventory"
+  exit 1
+fi
 if [ -n "$reason" ]; then
   echo "exception refused: $reason"
   [ -n "$unapproved" ] && echo "exposure refused:$unapproved"

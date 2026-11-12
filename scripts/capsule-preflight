@@ -145,19 +145,38 @@ if [ -e "$exc" ] || [ -L "$exc" ]; then
   else excarg=(--exception /nonexistent/lan-exception-not-private)
   fi
 fi
-lan=$( { netstat -anv -p tcp; netstat -anv -p udp; } 2>/dev/null |
-  "$here/capsule/lan-exposure" --project "$proj" --capsule "$cap" --verify-capsule "$vcap" \
-    --lockstep-project "$lproj" --now "$(date +%s)" ${excarg[@]+"${excarg[@]}"})
-lan_ok=$?
+# Update 3: each inventory is collected on its own and counts only if its netstat exited 0; an incomplete
+# inventory is never handed on as if it were the whole truth. lan-exposure then checks the structure.
+inv=$(mktemp -d "${TMPDIR:-/tmp}/lockstep-preflight-inv.XXXXXX")
+trap 'rm -f "$probe_script"; rm -rf "$inv"' EXIT
+collected=yes
+for p in tcp udp; do
+  netstat -anv -p "$p" > "$inv/$p" 2> "$inv/$p.err"
+  rc=$?
+  if [ "$rc" != 0 ]; then
+    collected=no
+    fail host-network-exposure "could not list the host's $(printf '%s' "$p" | tr a-z A-Z) listeners (netstat -anv -p $p exited $rc: $(head -c 200 "$inv/$p.err" | tr '\n' ' ')); the exposure is unknown, so nothing is accepted. Fix netstat on this Mac and rerun"
+  fi
+done
+lan=""
+lan_ok=1
+if [ "$collected" = yes ]; then
+  lan=$("$here/capsule/lan-exposure" --project "$proj" --capsule "$cap" --verify-capsule "$vcap" \
+    --lockstep-project "$lproj" --now "$(date +%s)" --tcp "$inv/tcp" --udp "$inv/udp" ${excarg[@]+"${excarg[@]}"})
+  lan_ok=$?
+fi
 printf '%s\n' "$lan" | sed -n 's/^approved /NOTE lan-exception accepts /p'
 if [ "$private" = no ]; then
   fail lan-exception "$exc must be a regular file of mode 0600; it is ignored and nothing is accepted"
 elif printf '%s\n' "$lan" | grep -q '^exception refused: '; then
   fail lan-exception "$(printf '%s\n' "$lan" | sed -n 's/^exception refused: //p'); nothing is accepted"
-elif [ ${#excarg[@]} -gt 0 ]; then
+elif [ ${#excarg[@]} -gt 0 ] && [ "$collected" = yes ] && ! printf '%s\n' "$lan" | grep -q '^inventory refused: '; then
   pass lan-exception
 fi
-if [ "$lan_ok" = 0 ]; then pass host-network-exposure
+if [ "$collected" = no ]; then :
+elif printf '%s\n' "$lan" | grep -q '^inventory refused: '; then
+  fail host-network-exposure "the host's listener inventory is not in the expected macOS netstat format ($(printf '%s\n' "$lan" | sed -n 's/^inventory refused: //p')); the exposure is unknown, so nothing is accepted. Check that /usr/sbin/netstat is the system's and rerun"
+elif [ "$lan_ok" = 0 ]; then pass host-network-exposure
 else
   fail host-network-exposure "host services reachable from the guest through the Mac's other addresses:$(printf '%s\n' "$lan" | sed -n 's/^exposure refused://p'); bind them to 127.0.0.1, stop them, or have the owner name them in $exc"
 fi

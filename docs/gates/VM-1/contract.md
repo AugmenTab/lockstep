@@ -147,6 +147,7 @@ D4.1–D4.8. Remaining exposure: `escalation-host-network.md` §2, enforced by p
 | N6 | `dynamic` covers 49152–65535 only; the process must match | X9, X10 |
 | N7 | It never bypasses another preflight failure | P3 |
 | N8 | Host loopback stays closed; the LAN exposure is real (control); guest Docker, DNS, HTTPS and package downloads work | G0–G2 |
+| N9 | Update 3: the TCP and UDP inventories are collected separately and count only if each `netstat` exited 0; an inventory not in the exact macOS `netstat -anv` structure (empty, truncated, another format, a row of the other protocol, a row cut short) is refused with an actionable `host-network-exposure` failure, and a valid exception accepts nothing against it; a well-formed listing with no rows is an empty inventory | X0, X12, X13, P8, P9 |
 
 ## 5. Test-first record
 

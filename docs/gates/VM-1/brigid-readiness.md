@@ -65,6 +65,9 @@ capsules, a stand-in Lockstep project id, and the exception carrying that same i
   workspace, disk, guest Docker, no credential in the guest, no host mounts, the bridge, tool routing, the
   verification environment, `lan-exception` and `host-network-exposure`.
 - **Exception notes:** each accepted listener is named, and they are only the reviewed ones (`lan-exception.md` §1).
+- **Rerun after update 3** (fail-closed inventory), 2026-11-12: 0 failures again, with 11 accepted listeners,
+  all reviewed (`evidence/update3-brigid-readiness/preflight.txt`). If `netstat` fails or its listing is not
+  recognized, `host-network-exposure` now fails with the cause, whatever the exception says.
 
 ## 5. What you do for the attended run (in order)
 

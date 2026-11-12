@@ -21,7 +21,8 @@ not evidence of a real subscription session.** The Implementer does not accept t
 | P5.10 preflight and operator view | **Qualified** | preflight (VM D4.8, recovery R3); `lockstep-capsule` C-P5.10; runner U5 |
 | P5.11 full synthetic transaction through the real service | **Qualified** (scripted roles) | `check-capsule-e2e` 6/6 (`evidence/update1-e2e/`) |
 | P5.10 LAN exception (update 2) | **Qualified**: scoped, expiring, exact; the LAN prerequisite for the attended Brigid run is satisfied under `lan-exception.md` | `check-capsule-lan` 42/42 (`evidence/update2-lan/check/`) |
-| P5.12 Brigid / Gate VM-1 | **Ready for the attended live run**: Brigid's capsules prepared, its real test suite passing in verification from the snapshot, preflight 0 failures. **Waits on the owner's live-run authorization** | `brigid-readiness.md`; `evidence/update2-brigid/` |
+| P5.10 fail-closed inventory (update 3) | **Qualified**: TCP and UDP collected separately, each counted only if `netstat` exited 0; an unrecognized or malformed listing is refused (contract N9) | `check-capsule-lan` 63/63 (`evidence/update3-lan/`); runner D2 (91/91) |
+| P5.12 Brigid / Gate VM-1 | **Ready for the attended live run**: Brigid's capsules prepared, its real test suite passing in verification from the snapshot, preflight 0 failures (rerun after update 3: `evidence/update3-brigid-readiness/`). **Waits on the owner's live-run authorization** | `brigid-readiness.md`; `evidence/update2-brigid/` |
 
 Regression on the final tree: `scripts/check --integration`: format, lint, build, unit 870/870, guard, integration
 571/571, backup/restore (`evidence/check-integration-update1.log`).

@@ -1,0 +1,1 @@
+inventory refused: tcp inventory line 3: too few columns

@@ -2,7 +2,9 @@
 # Phase 5 update 2 §4: the scoped, expiring LAN exception (scripts/capsule/lan-exposure, used by
 # scripts/capsule-preflight). Three parts, none of which provisions a VM:
 #   X  the decision itself, on this Mac's real listener inventory (captured) and synthetic exceptions;
+#      Update 3 (X12, X13): an empty, truncated, foreign or malformed inventory is refused;
 #   P  the real preflight on this Mac with the capsules vmq1/vmv1 (check-capsule-vm --keep made them);
+#      Update 3 (P8, P9): a failing TCP or UDP netstat, or an unrecognized listing, is refused;
 #   G  inside the guest: host loopback still closed, a probe on all interfaces reached (control), and
 #      Docker, DNS and public downloads still working.
 # Every exception it writes names the test project only and is deleted at the end.
@@ -59,8 +61,12 @@ LE() { "$le" --project "$proj" --capsule "$cap" --verify-capsule "$vcap" --locks
 allows_for() { awk '$1 == "unapproved" { p = ($4 >= 49152) ? "dynamic" : $4; s = "allow " $2 " " $3 " " p; for (i = 5; i <= NF; i++) s = s " " $i; print s }' "$1" | sort -u; }
 
 # ================================================================ X (the decision, on the real inventory)
-{ netstat -anv -p tcp; netstat -anv -p udp; } > "$work/inventory.txt" 2>/dev/null
-LE < "$work/inventory.txt" > "$work/x-none.txt"
+netstat -anv -p tcp > "$work/inventory-tcp.txt" 2>/dev/null
+expect "X0 the TCP inventory was collected (netstat exited 0)" test $? = 0
+netstat -anv -p udp > "$work/inventory-udp.txt" 2>/dev/null
+expect "X0 the UDP inventory was collected (netstat exited 0)" test $? = 0
+INV=(--tcp "$work/inventory-tcp.txt" --udp "$work/inventory-udp.txt")
+LE "${INV[@]}" > "$work/x-none.txt"
 rc=$?
 expect "X1 with no exception, every listener beyond loopback is refused (exit $rc)" test "$rc" = 1
 expect "X1 TCP listeners are named" grep -q '^unapproved tcp ' "$work/x-none.txt"
@@ -68,21 +74,21 @@ expect "X1 UDP listeners are named separately" grep -q '^unapproved udp ' "$work
 expect "X1 loopback listeners are not counted" lacks "$work/x-none.txt" " 127."
 allows_for "$work/x-none.txt" > "$work/x-all-allows.txt"
 exception "$work/x-full" < "$work/x-all-allows.txt"
-LE --exception "$work/x-full" < "$work/inventory.txt" > "$work/x-full.txt"
+LE --exception "$work/x-full" "${INV[@]}" > "$work/x-full.txt"
 expect "X2 an exception naming every listener accepts them" has "$work/x-full.txt" "exposure ok"
 first_tcp=$(grep -m 1 '^allow tcp \* [0-9]' "$work/x-all-allows.txt")
 first_port=$(printf '%s' "$first_tcp" | awk '{ print $4 }')
 grep -vxF -- "$first_tcp" "$work/x-all-allows.txt" | exception "$work/x-minus"
-LE --exception "$work/x-minus" < "$work/inventory.txt" > "$work/x-minus.txt"
+LE --exception "$work/x-minus" "${INV[@]}" > "$work/x-minus.txt"
 expect "X3 a listener the exception does not name is refused ($first_tcp)" grep -q "^exposure refused: tcp/$first_port(" "$work/x-minus.txt"
 expect "X3 and only that one" test "$(grep -c '^unapproved' "$work/x-minus.txt")" = 1
 { grep -vxF -- "$first_tcp" "$work/x-all-allows.txt"; printf '%s\n' "${first_tcp/allow tcp/allow udp}"; } | exception "$work/x-proto"
-LE --exception "$work/x-proto" < "$work/inventory.txt" > "$work/x-proto.txt"
+LE --exception "$work/x-proto" "${INV[@]}" > "$work/x-proto.txt"
 expect "X4 a UDP approval does not accept the TCP listener on the same port" grep -q "^unapproved tcp \* $first_port " "$work/x-proto.txt"
 # A listener that appears after the review: the same process, a new port.
-{ cat "$work/inventory.txt"; awk '$6 == "LISTEN" && $4 !~ /^(127\.|::1\.)/ { print; exit }' "$work/inventory.txt" | sed -E 's/^([a-z0-9]+ +[0-9]+ +[0-9]+ +)[^ ]+/\1*.18767/'; } > "$work/inventory-new.txt"
+{ cat "$work/inventory-tcp.txt"; awk '$6 == "LISTEN" && $4 !~ /^(127\.|::1\.)/ { print; exit }' "$work/inventory-tcp.txt" | sed -E 's/^([a-z0-9]+ +[0-9]+ +[0-9]+ +)[^ ]+/\1*.18767/'; } > "$work/inventory-new.txt"
 expect "X5 precondition: the synthetic new listener is in the inventory" grep -q '\*\.18767 ' "$work/inventory-new.txt"
-LE --exception "$work/x-full" < "$work/inventory-new.txt" > "$work/x-new.txt"
+LE --exception "$work/x-full" --tcp "$work/inventory-new.txt" --udp "$work/inventory-udp.txt" > "$work/x-new.txt"
 expect "X5 a listener that appeared after the review is refused" grep -q 'tcp/18767(' "$work/x-new.txt"
 for id in project lockstep-project capsule verify-capsule; do
   case $id in
@@ -91,30 +97,60 @@ for id in project lockstep-project capsule verify-capsule; do
     capsule) exception "$work/x-$id" "$proj" "$lp" brigid1 < "$work/x-all-allows.txt" ;;
     verify-capsule) exception "$work/x-$id" "$proj" "$lp" "$cap" otherv < "$work/x-all-allows.txt" ;;
   esac
-  LE --exception "$work/x-$id" < "$work/inventory.txt" > "$work/x-$id.txt"
+  LE --exception "$work/x-$id" "${INV[@]}" > "$work/x-$id.txt"
   expect "X6 another $id's exception is refused, and accepts nothing" bash -c "grep -q '^exception refused: exception-wrong-$id' '$work/x-$id.txt' && ! grep -q '^approved' '$work/x-$id.txt'"
 done
 exception "$work/x-expired" "$proj" "$lp" "$cap" "$vcap" "$(at -60)" < "$work/x-all-allows.txt"
-LE --exception "$work/x-expired" < "$work/inventory.txt" > "$work/x-expired.txt"
+LE --exception "$work/x-expired" "${INV[@]}" > "$work/x-expired.txt"
 expect "X7 an expired exception is refused, and accepts nothing" bash -c "grep -q '^exception refused: exception-expired' '$work/x-expired.txt' && ! grep -q '^approved' '$work/x-expired.txt'"
 exception "$work/x-far" "$proj" "$lp" "$cap" "$vcap" "$(at $((73 * 3600)))" < "$work/x-all-allows.txt"
-LE --exception "$work/x-far" < "$work/inventory.txt" > "$work/x-far.txt"
+LE --exception "$work/x-far" "${INV[@]}" > "$work/x-far.txt"
 expect "X7 an exception more than 72 hours ahead is refused (it cannot become permanent)" has "$work/x-far.txt" "exception refused: exception-expiry-too-far"
 { cat "$work/x-all-allows.txt"; echo "allow tcp * 1-65535 anything"; } | exception "$work/x-bad"
-LE --exception "$work/x-bad" < "$work/inventory.txt" > "$work/x-bad.txt"
+LE --exception "$work/x-bad" "${INV[@]}" > "$work/x-bad.txt"
 expect "X8 a malformed line (a port range) refuses the whole exception" has "$work/x-bad.txt" "exception refused: exception-malformed"
 { cat "$work/x-all-allows.txt"; echo "allow-all"; } | exception "$work/x-bad2"
-LE --exception "$work/x-bad2" < "$work/inventory.txt" > "$work/x-bad2.txt"
+LE --exception "$work/x-bad2" "${INV[@]}" > "$work/x-bad2.txt"
 expect "X8 an unknown directive refuses the whole exception" has "$work/x-bad2.txt" "exception refused: exception-malformed"
 grep -v '^allow tcp \* [0-9]' "$work/x-all-allows.txt" | { cat; echo "allow tcp * dynamic OrbStack Helper"; } | exception "$work/x-dyn"
-LE --exception "$work/x-dyn" < "$work/inventory.txt" > "$work/x-dyn.txt"
+LE --exception "$work/x-dyn" "${INV[@]}" > "$work/x-dyn.txt"
 expect "X9 'dynamic' does not cover a fixed port below 49152" grep -q "^unapproved tcp \* $first_port " "$work/x-dyn.txt"
 proc_of=$(printf '%s' "$first_tcp" | cut -d ' ' -f 5-)
 { grep -vxF -- "$first_tcp" "$work/x-all-allows.txt"; echo "allow tcp * $first_port not-$proc_of"; } | exception "$work/x-proc" 2>/dev/null
-LE --exception "$work/x-proc" < "$work/inventory.txt" > "$work/x-proc.txt"
+LE --exception "$work/x-proc" "${INV[@]}" > "$work/x-proc.txt"
 expect "X10 the port approved for another process does not accept this one" grep -q "^unapproved tcp \* $first_port " "$work/x-proc.txt"
-LE --exception "$work/does-not-exist" < "$work/inventory.txt" > "$work/x-missing.txt"
+LE --exception "$work/does-not-exist" "${INV[@]}" > "$work/x-missing.txt"
 expect "X11 a named but missing exception file is refused" has "$work/x-missing.txt" "exception refused: exception-missing"
+
+# Update 3: an inventory that is missing, incomplete or in another format is refused, and the full
+# exception accepts nothing against it. Only a well-formed listing with no rows is an empty inventory.
+head -n 2 "$work/inventory-tcp.txt" > "$work/inv-empty-tcp.txt"
+head -n 2 "$work/inventory-udp.txt" > "$work/inv-empty-udp.txt"
+LE --tcp "$work/inv-empty-tcp.txt" --udp "$work/inv-empty-udp.txt" > "$work/x-empty-set.txt"
+expect "X12 a well-formed inventory with no listeners is accepted with no exception" has "$work/x-empty-set.txt" "exposure ok"
+: > "$work/inv-nothing.txt"
+netstat -an -p tcp > "$work/inv-no-v.txt" 2>/dev/null
+printf 'Active Internet connections (servers and established)\nProto Recv-Q Send-Q Local Address           Foreign Address         State\ntcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN\n' > "$work/inv-linux.txt"
+sed -n '1,2p' "$work/inventory-tcp.txt" > "$work/inv-foreign-row.txt"
+sed -n '3p' "$work/inventory-udp.txt" >> "$work/inv-foreign-row.txt"
+{ sed -n '1,2p' "$work/inventory-tcp.txt"; awk '$6 == "LISTEN" { print $1, $2, $3, $4, $5, $6, $7, $8; exit }' "$work/inventory-tcp.txt"; } > "$work/inv-short-row.txt"
+head -n 1 "$work/inventory-tcp.txt" > "$work/inv-title-only.txt"
+for c in "tcp nothing netstat printed nothing" "tcp no-v without the -v columns" "tcp linux another netstat's format" \
+         "tcp foreign-row a UDP row in the TCP inventory" "tcp short-row a row cut short" "tcp title-only no column header" \
+         "udp nothing netstat printed nothing (UDP)"; do
+  read -r which name what <<< "$c"
+  if [ "$which" = tcp ]; then args=(--tcp "$work/inv-$name.txt" --udp "$work/inventory-udp.txt")
+  else args=(--tcp "$work/inventory-tcp.txt" --udp "$work/inv-$name.txt")
+  fi
+  LE --exception "$work/x-full" "${args[@]}" > "$work/x-inv-$which-$name.txt"
+  rc=$?
+  expect "X13 a malformed inventory is refused even with a valid exception: $what (exit $rc)" \
+    bash -c "[ $rc = 1 ] && grep -q '^inventory refused: $which inventory' '$work/x-inv-$which-$name.txt' && ! grep -q '^approved' '$work/x-inv-$which-$name.txt' && ! grep -q '^exposure ok' '$work/x-inv-$which-$name.txt'"
+done
+LE --exception "$work/x-full" --tcp "$work/does-not-exist" --udp "$work/inventory-udp.txt" > "$work/x-inv-missing.txt"
+expect "X13 a missing inventory file is refused" has "$work/x-inv-missing.txt" "inventory refused: tcp inventory missing"
+LE --exception "$work/x-expired" --tcp "$work/inv-nothing.txt" --udp "$work/inventory-udp.txt" > "$work/x-inv-expired.txt"
+expect "X13 with an expired exception too, both refusals are named" bash -c "grep -q '^exception refused: exception-expired' '$work/x-inv-expired.txt' && grep -q '^inventory refused: ' '$work/x-inv-expired.txt'"
 
 # ================================================================ P (the real preflight on this Mac)
 mkdir -p "$state/capsule" "$state/runner"
@@ -125,7 +161,9 @@ chmod 600 "$state/capsule/config"
 expect "P1 without an exception the preflight refuses this Mac's LAN listeners" grep -q '^FAIL host-network-exposure: host services reachable' "$work/p-none.txt"
 expect "P1 host loopback stays isolated" grep -q '^PASS host-loopback-isolation' "$work/p-none.txt"
 # A test-only exception for the test project, naming the listeners present now (10 minutes).
-{ netstat -anv -p tcp; netstat -anv -p udp; } 2>/dev/null | LE > "$work/p-live.txt"
+netstat -anv -p tcp > "$work/p-live-tcp.txt" 2>/dev/null
+netstat -anv -p udp > "$work/p-live-udp.txt" 2>/dev/null
+LE --tcp "$work/p-live-tcp.txt" --udp "$work/p-live-udp.txt" > "$work/p-live.txt"
 allows_for "$work/p-live.txt" | exception "$state/capsule/lan-exception"
 cp "$state/capsule/lan-exception" "$work/p-exception-used.txt"
 "$pf" --helper-state "$state" > "$work/p-full.txt" 2>&1
@@ -139,6 +177,37 @@ sleep 2
 "$pf" --helper-state "$state" > "$work/p-new.txt" 2>&1
 expect "P4 a service started after the review is refused by name" grep -q '^FAIL host-network-exposure: .*tcp/18767(' "$work/p-new.txt"
 docker rm -f "$probe-new" >/dev/null 2>&1
+# Update 3: the inventory itself fails. A stand-in netstat, first on PATH for these runs only, makes one
+# command fail (after printing part of its listing), or print another format, or nothing at all. The
+# valid exception is still in place: none of these may pass, and nothing may be accepted.
+mkdir -p "$work/fakebin"
+cat > "$work/fakebin/netstat" <<'EOF'
+#!/bin/sh
+case "$LOCKSTEP_TEST_NETSTAT:$*" in
+  tcp-fail:*"-p tcp"*) /usr/sbin/netstat "$@" | head -n 4; echo "netstat: sysctl: net.inet.tcp.pcblist_n: Operation not permitted" >&2; exit 1 ;;
+  udp-fail:*"-p udp"*) /usr/sbin/netstat "$@" | head -n 4; echo "netstat: sysctl: net.inet.udp.pcblist_n: Operation not permitted" >&2; exit 1 ;;
+  garbled:*) printf 'Active Internet connections (servers and established)\nProto Recv-Q Send-Q Local Address Foreign Address State\ntcp 0 0 0.0.0.0:22 0.0.0.0:* LISTEN\n'; exit 0 ;;
+  silent:*) exit 0 ;;
+esac
+exec /usr/sbin/netstat "$@"
+EOF
+chmod 755 "$work/fakebin/netstat"
+LOCKSTEP_TEST_NETSTAT=none PATH="$work/fakebin:$PATH" "$pf" --helper-state "$state" > "$work/p-stand-in-ok.txt" 2>&1
+expect "P8 control: through the stand-in passing calls on, the valid inventory still passes with the exception" \
+  bash -c "grep -q '^PASS host-network-exposure' '$work/p-stand-in-ok.txt' && grep -q '^PASS lan-exception' '$work/p-stand-in-ok.txt'"
+for m in tcp-fail udp-fail garbled silent; do
+  LOCKSTEP_TEST_NETSTAT=$m PATH="$work/fakebin:$PATH" "$pf" --helper-state "$state" > "$work/p-inv-$m.txt" 2>&1
+  rc=$?
+  case $m in
+    tcp-fail) want="could not list the host's TCP listeners (netstat -anv -p tcp exited 1: netstat: sysctl" ;;
+    udp-fail) want="could not list the host's UDP listeners (netstat -anv -p udp exited 1: netstat: sysctl" ;;
+    *) want="the host's listener inventory is not in the expected macOS netstat format" ;;
+  esac
+  expect "P9 inventory $m: refused with an actionable host-network-exposure failure (exit $rc)" \
+    bash -c "[ $rc = 1 ] && grep -qF \"FAIL host-network-exposure: $want\" '$work/p-inv-$m.txt'"
+  expect "P9 inventory $m: nothing passes the network check and nothing is accepted" \
+    bash -c "! grep -qE '^(PASS host-network-exposure|PASS lan-exception|NOTE lan-exception)' '$work/p-inv-$m.txt'"
+done
 chmod 644 "$state/capsule/lan-exception"
 "$pf" --helper-state "$state" > "$work/p-mode.txt" 2>&1
 expect "P5 an exception others can read or write is ignored" bash -c "grep -q '^FAIL lan-exception: .*mode 0600' '$work/p-mode.txt' && grep -q '^FAIL host-network-exposure' '$work/p-mode.txt'"

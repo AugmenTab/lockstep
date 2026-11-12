@@ -1,0 +1,16 @@
+PASS capsule-config
+PASS capsule-healthy
+PASS capsule-ownership
+PASS capsule-template-current
+PASS host-loopback-isolation
+PASS workspace-writable
+PASS disk-space
+PASS guest-docker
+PASS credential-not-in-guest
+PASS no-host-mounts
+PASS bridge-executor
+PASS bridge-present
+FAIL tool-routing: the helper has not announced capsule mode for vmq1 (start it with --runner)
+PASS verification-environment
+FAIL host-network-exposure: the host's listener inventory is not in the expected macOS netstat format (tcp inventory line 1: unrecognized title); the exposure is unknown, so nothing is accepted. Check that /usr/sbin/netstat is the system's and rerun
+capsule-preflight: 2 failure(s)

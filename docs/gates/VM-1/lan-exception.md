@@ -72,6 +72,12 @@ that is not a regular file of mode 0600 is ignored, and nothing is accepted.
 - **Policy, not text.** An unknown or malformed line refuses the whole exception.
 - **Narrow.** It changes only `host-network-exposure`. Every other preflight check still fails on its own.
 - **Recorded.** Preflight prints a `NOTE lan-exception accepts …` line for every listener it accepts.
+- **Fail-closed inventory (update 3).** Preflight runs `netstat -anv -p tcp` and `netstat -anv -p udp`
+  separately and uses an inventory only if its command exited 0. `lan-exposure` then requires the exact
+  macOS structure: the title line, the `-v` column header with `process:pid` and the eight trailing
+  columns, and only rows of that file's protocol with a `NAME:PID` process. If a command fails, prints
+  nothing, or prints anything else, `host-network-exposure` fails with the cause and nothing is accepted,
+  whatever the exception says. A well-formed listing with no rows is a genuinely empty inventory.
 
 The exception for Brigid, as installed for the run: `evidence/update2-lan/brigid-lan-exception.txt`
 (project `brigid`, capsules `brigid1`/`brigidv`, expires 2026-11-13T23:00Z).
