@@ -33,6 +33,7 @@ module Lockstep.Effects.Roles
   , runPrepared
   , crashCode
   , providerAuthRejected
+  , reviewInspected
   , decodeAnswer
   , encodeDiscovery
   , encodeCandidate
@@ -45,6 +46,7 @@ import Data.Bits ((.|.))
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
+import Data.List qualified as L
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
@@ -63,6 +65,7 @@ import Lockstep.Effects.HelperRunner (HelperFailure (..), PreparedRun (..), Runn
 import Lockstep.Effects.Process (Cancel, RunResult (..), runDirect)
 import Lockstep.Foundation.Fleece (encodeText)
 import Lockstep.Foundation.RunnerProtocol (RunProfile (..), isRunName)
+import Lockstep.Kernel.GitBasis (treePathValid)
 import Lockstep.Kernel.Roles
   ( Candidate (..)
   , CandidateTest (..)
@@ -835,23 +838,44 @@ fromImplementation :: DocImplementation -> Either T.Text Implementation
 fromImplementation (DocImplementation _ s extra) =
   known extra >> Right (Implementation s)
 
+{- | A review answer. Stabilization S3: the optional @inspected@ is the
+Reviewer's own list of the files it read; the Supervisor compares it with the
+change ('reviewInspected'). It is not part of the Kernel's 'Review'.
+-}
 data DocReview
-  = DocReview T.Text T.Text [T.Text] Extra
+  = DocReview T.Text T.Text [T.Text] (Maybe [T.Text]) Extra
 
 reviewSchema :: FC.Fleece t => FC.Schema t DocReview
 reviewSchema =
   FC.object $
     FC.additional
       ( FC.constructor DocReview
-          #+ FC.required "kind" (\(DocReview k _ _ _) -> k) FC.text
-          #+ FC.required "verdict" (\(DocReview _ v _ _) -> v) FC.text
-          #+ FC.required "reasons" (\(DocReview _ _ r _) -> r) (FC.list FC.text)
+          #+ FC.required "kind" (\(DocReview k _ _ _ _) -> k) FC.text
+          #+ FC.required "verdict" (\(DocReview _ v _ _ _) -> v) FC.text
+          #+ FC.required "reasons" (\(DocReview _ _ r _ _) -> r) (FC.list FC.text)
+          #+ FC.optional "inspected" (\(DocReview _ _ _ i _) -> i) (FC.list FC.text)
       )
-      (FC.additionalFields (\(DocReview _ _ _ e) -> e) FC.anyJSON)
+      (FC.additionalFields (\(DocReview _ _ _ _ e) -> e) FC.anyJSON)
+
+{- | S3: the files a review answer says its Reviewer read, if it says; a list
+longer than 500 or a path that is not a valid tree path is malformed.
+-}
+reviewInspected :: BS.ByteString -> Either T.Text (Maybe [T.Text])
+reviewInspected bytes =
+  case FA.decode reviewSchema (LBS.fromStrict bytes) of
+    Left _ -> Left (T.pack "malformed-output review")
+    Right (DocReview _ _ _ inspected _) -> traverse checkInspected inspected
+
+checkInspected :: [T.Text] -> Either T.Text [T.Text]
+checkInspected paths =
+  if L.length paths <= 500 && L.all treePathValid paths
+    then Right paths
+    else Left (T.pack "malformed-output inspected")
 
 fromReview :: DocReview -> Either T.Text Review
-fromReview (DocReview _ v reasons extra) = do
+fromReview (DocReview _ v reasons inspected extra) = do
   known extra
+  traverse_ checkInspected inspected
   verdict <-
     case v of
       x | x == T.pack "approve" -> Right Approve

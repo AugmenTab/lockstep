@@ -12,6 +12,7 @@ import Lockstep.Application.ReadinessTest qualified as ReadinessTest
 import Lockstep.Effects.ClaudeAdapterTest qualified as ClaudeAdapterTest
 import Lockstep.Effects.ExecutorTest qualified as ExecutorTest
 import Lockstep.Effects.ReconcilerTest qualified as ReconcilerTest
+import Lockstep.Effects.ReviewScopeTest qualified as ReviewScopeTest
 import Lockstep.Effects.RoleCrashTest qualified as RoleCrashTest
 import Lockstep.Foundation.CliControlTest qualified as CliControlTest
 import Lockstep.Foundation.CliDbTest qualified as CliDbTest
@@ -155,4 +156,5 @@ main =
       , ClaudeAdapterTest.tests
       , RoleCrashTest.tests
       , ReproductionRetryTest.tests
+      , ReviewScopeTest.tests
       ]

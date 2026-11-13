@@ -25,13 +25,15 @@ module Lockstep.Kernel.Roles
   , Review (..)
   , RoleAnswer (..)
   , checkAnswer
+  , reviewScopeGap
+  , changedPaths
   , textValid
   , criterionIdValid
   ) where
 
 import Data.Char qualified as Char
 import Data.List qualified as L
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, isNothing)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (Show)
@@ -296,3 +298,32 @@ checkAnswer role answer =
     rule "test-invalid" (maybe True (\(t, k) -> treePathValid (filePath t) && contentValid (fileText t) && checkValid k) (findingTest f))
   review r = do
     rule "reasons-invalid" (not (L.null (reviewReasons r)) && L.length (reviewReasons r) <= 20 && L.all textValid (reviewReasons r))
+
+{- | Stabilization S3: why an approval may not stand as a comprehensive review,
+or Nothing when it may. Its inputs: whether the Reviewer must declare what it
+read (every provider-backed Reviewer must), the files the change touches
+(basis to candidate, the frozen tests included), the files of the candidate
+tree, and the files the Reviewer says it read, if it says. An approval stands
+only if it declares a list, the list names only files of the candidate tree
+or the change, and it covers every file of the change.
+-}
+reviewScopeGap :: Bool -> [T.Text] -> [T.Text] -> Maybe [T.Text] -> Maybe T.Text
+reviewScopeGap required changed tree inspected =
+  case inspected of
+    Nothing
+      | required -> Just (T.pack "The Reviewer did not say which files it read, so its approval cannot count as a review of the whole change.")
+      | otherwise -> Nothing
+    Just read'
+      | not (L.null unknown) -> Just (T.pack "The Reviewer says it read files that are not in the change: " <> T.intercalate (T.pack ", ") unknown <> T.pack ".")
+      | not (L.null missed) -> Just (T.pack "The Reviewer approved without reading all of the change; it did not read: " <> T.intercalate (T.pack ", ") missed <> T.pack ".")
+      | otherwise -> Nothing
+     where
+      unknown = L.sort (L.nub [p | p <- read', p `L.notElem` tree, p `L.notElem` changed])
+      missed = L.sort (L.nub [p | p <- changed, p `L.notElem` read'])
+
+{- | S3: the files a change touches between two trees: added, changed (bytes or
+mode) and removed, sorted.
+-}
+changedPaths :: [(T.Text, T.Text)] -> [(T.Text, T.Text)] -> [T.Text]
+changedPaths before after =
+  L.sort (L.nub ([p | (p, v) <- after, L.lookup p before /= Just v] <> [p | (p, _) <- before, isNothing (L.lookup p after)]))

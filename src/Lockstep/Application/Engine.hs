@@ -91,7 +91,7 @@ import Lockstep.Application.EngineRecords qualified as Records
 import Lockstep.Application.Identity (newIdentity)
 import Lockstep.Application.Repositories (ownershipHolds)
 import Lockstep.Application.Tasks (TaskView (..), findTaskIn)
-import Lockstep.Effects.GitSupervisor (Basis (..), CommitMeta (..), advanceBranch, branchHead, commitChanges, commitTime, createWorkBranch, observeBasis, snapshotChanges, writeSnapshot)
+import Lockstep.Effects.GitSupervisor (Basis (..), CommitMeta (..), advanceBranch, branchHead, commitChanges, commitTime, createWorkBranch, observeBasis, snapshotChanges, treeEntries, writeSnapshot)
 import Lockstep.Effects.Process (RunResult (..))
 import Lockstep.Effects.Roles (Adapter (..), Runner (..), RunnerFailure (..), Workspace (..), decodeAnswer, prepareRole, readAnswer, runPrepared)
 import Lockstep.Effects.Roles qualified as Roles
@@ -100,7 +100,7 @@ import Lockstep.Foundation.Fleece (decodeText)
 import Lockstep.Foundation.Json (Json (..), renderJson, string, strings)
 import Lockstep.Foundation.RunnerProtocol (RunProfile (..))
 import Lockstep.Kernel.Candidate (MutantRun (..), classifyTest, disposeFinding, quoteGrounded)
-import Lockstep.Kernel.GitBasis (Change (..), TreeEntry (..), TreeMode (..), protectedPathValid, treePathValid, workBranch)
+import Lockstep.Kernel.GitBasis (Change (..), TreeEntry (..), TreeMode (..), protectedPathValid, treeModeText, treePathValid, workBranch)
 import Lockstep.Kernel.Identity (InvocationId (..), ProjectId (..), TaskId (..), TransactionId (..), WorkOrderId (..), identityText, parseIdentity)
 import Lockstep.Kernel.Roles
   ( Candidate (..)
@@ -117,7 +117,9 @@ import Lockstep.Kernel.Roles
   , Role (..)
   , RoleAnswer (..)
   , Verdict (..)
+  , changedPaths
   , checkAnswer
+  , reviewScopeGap
   , roleName
   )
 import Lockstep.Kernel.Runner
@@ -1613,33 +1615,71 @@ reviewStage runtime engine row = do
     (_, Left code, _) -> settle runtime row (SupervisorFailed code) [] id
     (_, _, Nothing) -> settle runtime row (SupervisorFailed (T.pack "candidate-commit-missing")) [] id
     (Right rs, Right (title, acceptance), Just candidate) -> do
-      let
-        kinds = [RecordVerification, RecordVerificationSummary, RecordFinding, RecordPostFinding]
-        context =
-          renderJson $
-            JObject
-              [ (T.pack "role", string (roleName Reviewer))
-              , (T.pack "stage", string (stageName StageReview))
-              , (T.pack "ticket", JObject [(T.pack "title", string title), (T.pack "what_done_looks_like", string acceptance)])
-              , (T.pack "contract", JRaw (fromMaybe (T.pack "null") (latestRecord RecordContract rs)))
-              , (T.pack "candidate", string candidate)
-              , (T.pack "freeze", string (fromMaybe T.empty (Store.txRowFreeze row)))
-              , (T.pack "evidence", JArray [JObject [(T.pack "kind", string (recordKindText (Store.recordRowKind r))), (T.pack "body", JRaw (Store.recordRowBody r))] | r <- rs, Store.recordRowKind r `L.elem` kinds])
-              , (T.pack "answer", JObject [(T.pack "file", string (T.pack "result.json")), (T.pack "kind", string (T.pack "review"))])
-              ]
-      invoked <- invokeRecorded runtime engine row Reviewer StageReview candidate [] [] context
-      case invoked of
-        Left code -> pure (Left code)
-        Right (Left input) -> settle runtime row input [] id
-        Right (Right (AnswerReview r, _, _, invocation)) -> do
+      scope <- changeScope (Store.txRowFolder row) (Store.txRowBasis row) candidate
+      case scope of
+        Left code -> settle runtime row (SupervisorFailed code) [] id
+        Right (changed, tree) -> do
           let
-            input =
-              case reviewVerdict r of
-                Approve -> ReviewApproved
-                Reject -> ReviewRejected
-                NeedsHuman -> ReviewNeedsHuman
-          settle runtime row input [(RecordReview, record reviewSchema (ReviewRecord candidate (reviewVerdict r) (reviewReasons r) (Just (identityText invocation))))] id
-        Right (Right _) -> settle runtime row (RoleFailed (T.pack "answer-invalid wrong-stage")) [] id
+            kinds = [RecordVerification, RecordVerificationSummary, RecordFinding, RecordPostFinding]
+            context =
+              renderJson $
+                JObject
+                  [ (T.pack "role", string (roleName Reviewer))
+                  , (T.pack "stage", string (stageName StageReview))
+                  , (T.pack "ticket", JObject [(T.pack "title", string title), (T.pack "what_done_looks_like", string acceptance)])
+                  , (T.pack "contract", JRaw (fromMaybe (T.pack "null") (latestRecord RecordContract rs)))
+                  , (T.pack "candidate", string candidate)
+                  , (T.pack "freeze", string (fromMaybe T.empty (Store.txRowFreeze row)))
+                  , -- S3: every file the change touches, tests included; the Reviewer reads them all.
+                    (T.pack "change", JObject [(T.pack "basis", string (fromMaybe T.empty (Store.txRowBasis row))), (T.pack "files", strings changed)])
+                  , (T.pack "evidence", JArray [JObject [(T.pack "kind", string (recordKindText (Store.recordRowKind r))), (T.pack "body", JRaw (Store.recordRowBody r))] | r <- rs, Store.recordRowKind r `L.elem` kinds])
+                  , (T.pack "answer", JObject [(T.pack "file", string (T.pack "result.json")), (T.pack "kind", string (T.pack "review"))])
+                  ]
+          invoked <- invokeRecorded runtime engine row Reviewer StageReview candidate [] [] context
+          case invoked of
+            Left code -> pure (Left code)
+            Right (Left input) -> settle runtime row input [] id
+            Right (Right (AnswerReview r, _, _, invocation)) -> do
+              stored <- db runtime (Right . L.find ((== invocation) . Store.invocationRowId) <$> Store.transactionInvocations (Store.txRowId row))
+              case stored of
+                Left code -> pure (Left code)
+                Right found -> do
+                  let
+                    -- A provider-backed Reviewer must say what it read; the scripted test double need not.
+                    required = maybe True ((/= T.pack "scripted") . Store.invocationRowAdapter) found
+                    inspected = found >>= Store.invocationRowAnswer >>= fromRight Nothing . Roles.reviewInspected . TE.encodeUtf8
+                    gap =
+                      case reviewVerdict r of
+                        Approve -> reviewScopeGap required changed tree inspected
+                        _ -> Nothing
+                    (verdict, reasons) =
+                      case gap of
+                        Just g -> (NeedsHuman, reviewReasons r <> [T.pack "Lockstep: " <> g])
+                        Nothing -> (reviewVerdict r, reviewReasons r)
+                    input =
+                      case verdict of
+                        Approve -> ReviewApproved
+                        Reject -> ReviewRejected
+                        NeedsHuman -> ReviewNeedsHuman
+                  settle runtime row input [(RecordReview, record reviewSchema (ReviewRecord candidate verdict reasons (Just (identityText invocation))))] id
+            Right (Right _) -> settle runtime row (RoleFailed (T.pack "answer-invalid wrong-stage")) [] id
+
+{- | S3: the files the change touches from the basis to the candidate (added,
+changed in bytes or mode, removed), and the files of the candidate tree.
+-}
+changeScope :: T.Text -> Maybe T.Text -> T.Text -> IO (Either T.Text ([T.Text], [T.Text]))
+changeScope folder basis candidate =
+  case basis of
+    Nothing -> pure (Left (T.pack "basis-missing"))
+    Just b -> do
+      before <- treeEntries (T.unpack folder) b
+      after <- treeEntries (T.unpack folder) candidate
+      pure $ do
+        (bs, _) <- before
+        (as, _) <- after
+        let
+          keyed e = (entryPath e, entryBlob e <> T.pack " " <> treeModeText (entryMode e))
+        Right (changedPaths (fmap keyed bs) (fmap keyed as), fmap entryPath as)
 
 -- Acceptance (C-P4.10-14 A1) ------------------------------------------------------------------------
 
