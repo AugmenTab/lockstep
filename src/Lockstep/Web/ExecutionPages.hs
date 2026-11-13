@@ -36,7 +36,7 @@ import Lockstep.Kernel.Profile (profileIdText)
 import Lockstep.Kernel.Roles (CandidateTest (..), Criterion (..), Verdict (..))
 import Lockstep.Kernel.Runner (OutcomeKind (..))
 import Lockstep.Kernel.Task (TaskReadiness (..))
-import Lockstep.Kernel.Transaction (Disposition (..), FixedHalt (..), HaltCode (..), Stage (..), StateName (..), haltCodeFromText, noCodingAgent, parseStage, parseStateName)
+import Lockstep.Kernel.Transaction (Disposition (..), FixedHalt (..), HaltCode (..), Stage (..), StateName (..), haltCodeFromText, noCodingAgent, parseStage, parseStateName, providerAuthRejectedCode)
 import Lockstep.Web.Fields (choiceField, expectedField, expectedSetField, keyField, requestField, revisionField, runField, ticketRevisionField)
 import Lockstep.Web.Fragment (attr, cls, elementId)
 import Lockstep.Web.Routes.App (admitBugAction, completionAction, enableExecutionAction, haltDecisionAction, stopCapsuleRunAction)
@@ -410,6 +410,9 @@ haltWords code =
   case code of
     HaltRoleFailed c
       | c == noCodingAgent -> "No coding helper is set up for Lockstep."
+      | c == providerAuthRejectedCode ->
+          "Anthropic did not accept your Claude subscription sign-in (HTTP 401): its access token has most likely expired and could not be renewed. "
+            <> "Sign in again with the helper's --provider-auth-login, or allow the renewal host it names in its log (docs/architecture/provider-auth-renewal.md), then try this step again."
       | otherwise -> "One of Lockstep's helpers failed."
     HaltUncertainInvocation _ -> "Lockstep could not tell whether one of its helpers finished. It will not run it again by itself."
     HaltSupervisorFailed _ -> couldNotFinish

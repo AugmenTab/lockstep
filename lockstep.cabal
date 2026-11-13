@@ -489,6 +489,7 @@ test-suite lockstep-unit
       Lockstep.Effects.ClaudeAdapterTest
       Lockstep.Effects.ExecutorTest
       Lockstep.Effects.ReconcilerTest
+      Lockstep.Effects.RoleCrashTest
       Lockstep.Foundation.CliControlTest
       Lockstep.Foundation.CliDbTest
       Lockstep.Foundation.CliFinalReviewTest

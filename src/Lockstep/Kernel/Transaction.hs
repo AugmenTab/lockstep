@@ -23,6 +23,7 @@ module Lockstep.Kernel.Transaction
   , plainCodeText
   , mkPlainCode
   , noCodingAgent
+  , providerAuthRejectedCode
   , haltCodeText
   , haltCodeFromText
   , Counters (..)
@@ -278,6 +279,13 @@ mkPlainCode text =
 noCodingAgent :: T.Text
 noCodingAgent =
   T.pack "no-coding-agent"
+
+{- | Stabilization S1: the role-failure code of a role whose provider refused
+its sign-in (HTTP 401; an expired access token that could not be renewed).
+-}
+providerAuthRejectedCode :: T.Text
+providerAuthRejectedCode =
+  T.pack "provider-auth-rejected"
 
 haltCodeText :: HaltCode -> T.Text
 haltCodeText code =

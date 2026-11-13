@@ -313,7 +313,7 @@ execute_capsule_live_run() { # ID OP RUN
   local results=$runner_results journal_file=$helper/runner-journal
   local net=$live_net_prefix$3 filter=$egress_prefix$3 role=reviewer bind_role summary=$provider_dir/ledger/runs/$3
   local started finished rc=125 outcome marker=$runner_work/$3/.timed-out failed=$runner_work/$3/.egress-failed
-  local watchdog p out_bytes err_bytes n status tokens inv tx chan serve_pid="" refusal changed=0 mcp
+  local watchdog p out_bytes err_bytes n status tokens inv tx chan serve_pid="" refusal changed=0 mcp refused_hosts
   local -a argv=() args=() filter_args=()
   [ "$op" = run-live-write ] && role=implementer
   read -r wall outlim errlim <<< "$(runner_limits "$op")"
@@ -378,7 +378,7 @@ execute_capsule_live_run() { # ID OP RUN
   rm -f "$marker" "$failed" "$summary" "$summary.ready"
   mkdir -p "$provider_dir/ledger/runs" 2>/dev/null || true
   filter_args=(--run "$run" --ledger /ledger --allow "$egress_hosts")
-  [ -n "$test_upstream" ] && filter_args+=(--map "api.anthropic.com=$test_upstream")
+  [ -n "$test_upstream" ] && filter_args+=(--map "$(offline_map)")
   rc=125
   if docker network create --internal "$net" >/dev/null 2>&1 &&
     docker run -d --name "$filter" --network "$net" --network-alias lockstep-egress --read-only \
@@ -468,6 +468,7 @@ execute_capsule_live_run() { # ID OP RUN
   out_bytes=$(wc -c < "$dir/stdout" | tr -d ' ')
   err_bytes=$(wc -c < "$dir/stderr" | tr -d ' ')
   tokens=$(native_tokens "$dir/stdout")
+  refused_hosts=$(native_refused_hosts "$summary")
   if [ -e "$runner_work/$run/.cancelled" ]; then outcome=cancelled
   elif [ -e "$marker" ]; then outcome=timed-out
   elif [ -e "$failed" ]; then outcome=provider-stopped
@@ -482,19 +483,20 @@ execute_capsule_live_run() { # ID OP RUN
   if [ "$outcome" = provider-stopped ]; then
     write_result "$id" "$op" provider-stopped - "$started" "$finished" "" \
       "exit $rc" "run $run" "image $provider_image" "provider-stop egress-failed" \
-      "egress.micro 0" "egress.tokens $tokens" "capsule $target" || true
+      "egress.micro 0" "egress.tokens $tokens" "egress.refused $refused_hosts" "capsule $target" || true
   elif [ "$collect" = failed ]; then
     write_result "$id" "$op" launch-failed - "$started" "$finished" "the capsule's tree could not be collected safely" \
-      "exit $rc" "run $run" "image $provider_image" "egress.micro 0" "egress.tokens $tokens" "capsule $target" || true
+      "exit $rc" "run $run" "image $provider_image" "egress.micro 0" "egress.tokens $tokens" \
+      "egress.refused $refused_hosts" "capsule $target" || true
   else
     write_result "$id" "$op" "$outcome" - "$started" "$finished" "" \
       "exit $rc" "run $run" "image $provider_image" \
       "stdout-bytes $out_bytes" "stderr-bytes $err_bytes" \
       "stdout-sha256 $(sha256 < "$dir/stdout")" "stderr-sha256 $(sha256 < "$dir/stderr")" \
       "limits $wall $outlim $errlim" "egress.micro 0" "egress.tokens $tokens" \
-      "capsule $target" "invocation $inv" "protected-changed $changed" || true
+      "egress.refused $refused_hosts" "capsule $target" "invocation $inv" "protected-changed $changed" || true
   fi
   rm -f "$failed" "$dir/.capsule-pid"
   journal "end $id $outcome"
-  log "$op $id: $outcome (exit $rc, $tokens tokens, capsule $target)"
+  log "$op $id: $outcome (exit $rc, $tokens tokens, capsule $target)$(native_refusal_note "$refused_hosts")"
 }

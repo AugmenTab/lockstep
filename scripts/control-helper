@@ -1241,6 +1241,10 @@ fi
 
 # C-P4.L.N: the CLI's identity inside the role container (C-P4.L.R3), which owns the auth volume.
 provider_cli_uid=2000000000
+# S1: the host the pinned CLI (2.1.312) renews an expired subscription access token at: its own OAuth
+# TOKEN_URL, https://platform.claude.com/v1/oauth/token (read from the pinned binary; check-live-renewal
+# verifies it). Not allowed unless the owner lists it in provider/egress-hosts (a security decision).
+provider_renewal_host=platform.claude.com
 
 # The egress allowlist (provider/egress-hosts): exact hostnames, one a line, no wildcard. Prints them
 # comma-joined for the filter; fails if missing, empty or malformed.
@@ -1334,6 +1338,12 @@ init_provider() {
       log "live runs off: native subscription uses no credential file; remove $provider_dir/credential"
       return 0
     fi
+    # S1: the sign-in check before each run is local (a login is stored); it cannot see an expired
+    # access token. Name the renewal path once, so an expiry is never a surprise.
+    case ",$egress_hosts," in
+      *",$provider_renewal_host,"*) log "native renewal: the CLI may renew an expired access token at $provider_renewal_host (allowed in egress-hosts)" ;;
+      *) log "native renewal: blocked: the CLI renews an expired access token at $provider_renewal_host, which $provider_dir/egress-hosts does not allow; a run that starts after the access token expires fails with HTTP 401 (provider-auth-rejected) until the owner signs in again (--provider-auth-login) or allows that host (docs/architecture/provider-auth-renewal.md)" ;;
+    esac
   fi
   tmp=$(mktemp "$runner/.provider.XXXXXX") || return 0
   printf 'lockstep-provider 1 %s\n' "${BASH_REMATCH[1]}" > "$tmp"
@@ -1512,7 +1522,7 @@ execute_native_run() { # ID OP RUN
   local results=$runner_results journal_file=$helper/runner-journal
   local net=$live_net_prefix$3 filter=$egress_prefix$3 role=readonly summary=$provider_dir/ledger/runs/$3
   local started finished rc=125 outcome marker=$runner_work/$3/.timed-out failed=$runner_work/$3/.egress-failed
-  local watchdog p out_bytes err_bytes n status tokens
+  local watchdog p out_bytes err_bytes n status tokens refused_hosts
   local -a argv=() args=() filter_args=()
   [ "$op" = run-live-write ] && role=write
   read -r wall outlim errlim <<< "$(runner_limits "$op")"
@@ -1534,9 +1544,9 @@ execute_native_run() { # ID OP RUN
   journal "start $id $op"
   rm -f "$marker" "$failed" "$summary" "$summary.ready"
   mkdir -p "$provider_dir/ledger/runs" 2>/dev/null || true
-  # The filter allows only the configured hosts; offline-test maps the real host to the stand-in.
+  # The filter allows only the configured hosts; offline-test maps each of them to the stand-in.
   filter_args=(--run "$run" --ledger /ledger --allow "$egress_hosts")
-  [ -n "$test_upstream" ] && filter_args+=(--map "api.anthropic.com=$test_upstream")
+  [ -n "$test_upstream" ] && filter_args+=(--map "$(offline_map)")
   if docker network create --internal "$net" >/dev/null 2>&1 &&
     docker run -d --name "$filter" --network "$net" --network-alias lockstep-egress --read-only \
       --tmpfs /tmp:rw,nosuid,nodev,size=16777216 --cap-drop ALL --security-opt no-new-privileges \
@@ -1608,6 +1618,7 @@ execute_native_run() { # ID OP RUN
   err_bytes=$(wc -c < "$dir/stderr" | tr -d ' ')
   # Usage in tokens (C-P4.L.N N5), from the CLI's own JSON result on stdout; no dollars.
   tokens=$(native_tokens "$dir/stdout")
+  refused_hosts=$(native_refused_hosts "$summary")
   if [ -e "$runner_work/$run/.cancelled" ]; then outcome=cancelled
   elif [ -e "$marker" ]; then outcome=timed-out
   elif [ -e "$failed" ]; then outcome=provider-stopped
@@ -1619,16 +1630,48 @@ execute_native_run() { # ID OP RUN
   if [ "$outcome" = provider-stopped ]; then
     write_result "$id" "$op" provider-stopped - "$started" "$finished" "" \
       "exit $rc" "run $run" "image $runner_image" "provider-stop egress-failed" \
-      "egress.micro 0" "egress.tokens $tokens" || true
+      "egress.micro 0" "egress.tokens $tokens" "egress.refused $refused_hosts" || true
   else
     write_result "$id" "$op" "$outcome" - "$started" "$finished" "" \
       "exit $rc" "run $run" "image $runner_image" \
       "stdout-bytes $out_bytes" "stderr-bytes $err_bytes" \
       "stdout-sha256 $(sha256 < "$dir/stdout")" "stderr-sha256 $(sha256 < "$dir/stderr")" \
-      "limits $wall $outlim $errlim" "egress.micro 0" "egress.tokens $tokens" || true
+      "limits $wall $outlim $errlim" "egress.micro 0" "egress.tokens $tokens" \
+      "egress.refused $refused_hosts" || true
   fi
   journal "end $id $outcome"
-  log "$op $id: $outcome (exit $rc, $tokens tokens)"
+  log "$op $id: $outcome (exit $rc, $tokens tokens)$(native_refusal_note "$refused_hosts")"
+}
+
+# S1 (post-Phase-5 stabilization): the hosts the passthrough filter refused in a run, from its summary
+# ("refused-hosts HOST:PORT:REASON,..."; only names, ports and codes), or "-". As a result field value
+# ([A-Za-z0-9._:-], at most 80): entries joined by "_" (no host name has one), whole entries only.
+native_refused_hosts() { # SUMMARY-FILE
+  local v e out="" IFS=,
+  v=$(sed -n 's/^refused-hosts //p' "$1" 2>/dev/null | head -n 1 | tr -cd 'a-z0-9.,:-' | cut -c 1-600)
+  for e in $v; do
+    [ -n "$e" ] && [ "$e" != - ] || continue
+    [ $((${#out} + ${#e} + 1)) -le 80 ] || break
+    out="$out${out:+_}$e"
+  done
+  printf '%s' "${out:--}"
+}
+
+# A note for the helper log when a run had refusals; names the renewal host when it was among them.
+native_refusal_note() { # REFUSED-HOSTS
+  case $1 in
+    - | "") ;;
+    *"$provider_renewal_host:443:host-refused"*)
+      printf '; egress refused %s: the CLI could not renew an expired sign-in (its renewal host %s is not in %s/egress-hosts); see docs/architecture/provider-auth-renewal.md' "$1" "$provider_renewal_host" "$provider_dir" ;;
+    *) printf '; egress refused %s' "$1" ;;
+  esac
+}
+
+# Offline test only: every allowed host is mapped to the stand-in ("HOST=UPSTREAM,...").
+offline_map() {
+  local h out="" IFS=,
+  for h in $egress_hosts; do out="$out${out:+,}$h=$test_upstream"; done
+  printf '%s' "$out"
 }
 
 # The run's token usage from the CLI's JSON result (stdout): input + output + cache, in the image's

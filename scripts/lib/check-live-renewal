@@ -1,0 +1,291 @@
+#!/usr/bin/env bash
+# Native sign-in renewal and egress refusal diagnostics (post-Phase-5 stabilization S1). The real
+# helper in its offline-test mode, the real pinned CLI, and one TLS stand-in for both provider hosts on
+# an internal network. Synthetic credentials only; no provider is contacted; no real login; no model.
+# Results: .local/evidence/live-renewal-<stamp>/
+#
+#   V  the pinned CLI renews at platform.claude.com (its OAuth TOKEN_URL), the helper's renewal host
+#   R  the filter records each refusal (host, port, reason, run, time) and nothing of the request:
+#      no path, query, user information, header, cookie or body; refused hosts stay refused; the
+#      record is bounded
+#   X  an expired access token, the renewal host not allowed: the run fails with the provider's 401,
+#      the refusal of platform.claude.com is in the signed result and the helper log names the cause
+#   N  the renewal host allowed: the CLI renews by itself and the run completes; the renewed sign-in
+#      is kept in the auth volume for the next role session (no second renewal)
+#   C  no synthetic token in any file Lockstep keeps; no API key or token in the role container
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+root=$PWD
+
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+work=$root/.local/evidence/live-renewal-$stamp
+mkdir -p "$work/agent"
+results=$work/results.txt
+: > "$results"
+failures=0
+instance=s1rn
+image=lockstep-provider:claude-2.1.312
+model=claude-sonnet-5-5
+effort=medium
+cli_uid=2000000000
+state=$root/.local/live-renewal-$stamp
+vol=lockstep-provider-auth-$instance
+expired=sk-ant-oat01-expired-$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
+renewed=sk-ant-oat01-renewed-$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
+refresh=sk-ant-ort01-refresh-$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
+
+record() { printf '%s %s\n' "$1" "$2" | tee -a "$results"; [ "$1" = PASS ] || failures=$((failures + 1)); }
+expect() { local d=$1; shift; if "$@"; then record PASS "$d"; else record FAIL "$d"; fi; }
+
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  echo "NOT_RUN: the image $image is missing; run scripts/provider-image first" >&2
+  exit 2
+fi
+
+netA=lockstep-rn-a-$stamp
+filterA=lockstep-rn-filtera-$stamp
+upA=lockstep-rn-upa-$stamp
+net=lockstep-rn-$stamp
+agent=lockstep-rn-agent-$stamp
+helper_pid=""
+stop_helper() { if [ -n "$helper_pid" ]; then kill "$helper_pid" 2>/dev/null || true; wait "$helper_pid" 2>/dev/null || true; helper_pid=""; fi; }
+cleanup() {
+  stop_helper
+  docker ps -aq --filter "name=^lockstep-run-$instance-" | while read -r c; do docker rm -f "$c" >/dev/null 2>&1 || true; done
+  docker ps -aq --filter "name=^lockstep-egress-$instance-" | while read -r c; do docker rm -f "$c" >/dev/null 2>&1 || true; done
+  docker network ls -q --filter "name=^lockstep-live-$instance-" | while read -r n; do docker network rm "$n" >/dev/null 2>&1 || true; done
+  docker rm -f "$filterA" "$upA" "$agent" >/dev/null 2>&1 || true
+  docker network rm "$netA" "$net" >/dev/null 2>&1 || true
+  docker volume rm -f "$vol" >/dev/null 2>&1 || true
+  [ -f "$state/helper/helper.log" ] && cp "$state/helper/helper.log" "$work/helper.log"
+  [ -d "$state/provider/ledger/runs" ] && cp -R "$state/provider/ledger/runs" "$work/ledger-runs"
+  rm -rf "$state" "$work/ca.key"
+}
+trap cleanup EXIT
+
+umask 077
+mkdir -p "$state/helper" "$state/pane" "$state/provider"
+chmod 700 "$state" "$state/helper" "$state/pane" "$state/provider"
+head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$state/helper/channel.key"
+# One certificate for both stand-in names.
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$work/ca.key" -out "$work/ca.pem" -days 2 \
+  -subj /CN=api.anthropic.com -addext "subjectAltName=DNS:api.anthropic.com,DNS:platform.claude.com" >/dev/null 2>&1
+chmod 644 "$work/ca.pem" "$work/ca.key"
+chmod 777 "$work/agent"
+
+if command -v sha256sum >/dev/null 2>&1; then sha256() { sha256sum | cut -d ' ' -f 1; }; else sha256() { shasum -a 256 | cut -d ' ' -f 1; }; fi
+
+standin_args=(--cert /etc/standin.pem --key /etc/standin.key --log /log/requests.jsonl --steps /log/steps.json
+  --expired "$expired" --renewed "$renewed")
+standin_mounts=(--mount "type=bind,source=$root/scripts/lib/live-renewal-standin,target=/opt/standin,readonly"
+  --mount "type=bind,source=$work/ca.pem,target=/etc/standin.pem,readonly"
+  --mount "type=bind,source=$work/ca.key,target=/etc/standin.key,readonly"
+  --mount "type=bind,source=$work/agent,target=/log")
+
+# ---------------------------------------------------------------- V  the renewal host of the pinned CLI
+token_url=$(docker run --rm --network none --entrypoint grep "$image" -a -o -m 1 -E 'TOKEN_URL:"https://[a-z0-9.-]+/v1/oauth/token"' /usr/local/bin/claude 2>/dev/null || true)
+expect "V the pinned CLI's OAuth TOKEN_URL is on platform.claude.com ($token_url)" \
+  test "$token_url" = 'TOKEN_URL:"https://platform.claude.com/v1/oauth/token"'
+expect "V the helper's renewal host is that host" grep -qx 'provider_renewal_host=platform.claude.com' "$root/scripts/control-helper"
+
+# ---------------------------------------------------------------- R  refusal diagnostics, the filter alone
+printf '[]' > "$work/agent/steps.json"; chmod 644 "$work/agent/steps.json"
+: > "$work/agent/requests.jsonl"; chmod 666 "$work/agent/requests.jsonl"
+docker network create --internal "$netA" >/dev/null
+docker run -d --name "$upA" --network "$netA" --network-alias standin --read-only --user "$(id -u):$(id -g)" \
+  --cap-drop ALL "${standin_mounts[@]}" "$image" python3 /opt/standin standin "${standin_args[@]}" >/dev/null
+mkdir -p "$work/ledgerA"; chmod 777 "$work/ledgerA"
+runA=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+docker run -d --name "$filterA" --network "$netA" --network-alias lockstep-egress --read-only --tmpfs /tmp \
+  --cap-drop ALL --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
+  --mount "type=bind,source=$work/ledgerA,target=/ledger" \
+  "$image" python3 /opt/lockstep/egress-proxy passthrough --run "$runA" --ledger /ledger \
+  --allow api.anthropic.com --map api.anthropic.com=standin:8443 >/dev/null
+sleep 2
+probe() { docker run --rm --network "$netA" --read-only --cap-drop ALL \
+  --mount "type=bind,source=$root/scripts/lib/live-renewal-standin,target=/opt/p,readonly" "$image" python3 /opt/p "$@"; }
+allowed=$(probe connect api.anthropic.com 443 || true)
+denied=$(probe connect evil.example.com 443 || true)
+wrong_port=$(probe connect api.anthropic.com 8443 || true)
+leaked=$(probe leak || true)
+refusals=$work/ledgerA/runs/$runA.refusals
+summaryA=$work/ledgerA/runs/$runA
+expect "R an allowed host still tunnels ($allowed)" test "$allowed" = "status 200"
+expect "R a host not allowed stays refused ($denied)" test "$denied" = "status 403"
+expect "R a port not allowed stays refused ($wrong_port)" test "$wrong_port" = "status 403"
+expect "R plain (non-CONNECT) requests stay refused ($(echo $leaked))" test "$(echo $leaked)" = "status 403 status 403"
+expect "R the refused host and port are recorded with the reason, run and time" \
+  grep -qE "^refused [0-9]{10} $runA evil\.example\.com 443 host-refused CONNECT\$" "$refusals"
+expect "R a refused port is recorded" grep -qE "^refused [0-9]{10} $runA api\.anthropic\.com 8443 host-refused CONNECT\$" "$refusals"
+expect "R a plain request is recorded by its URL's host and port only" grep -qE "^refused [0-9]{10} $runA leak\.example 8081 method-refused POST\$" "$refusals"
+expect "R an origin-form request is recorded by its Host header" grep -qE "^refused [0-9]{10} $runA origin\.example 80 method-refused GET\$" "$refusals"
+expect "R the summary keeps its fields and adds the refused hosts" \
+  test "$(sed -n 's/^refused-hosts //p' "$summaryA")" = "api.anthropic.com:8443:host-refused,evil.example.com:443:host-refused,leak.example:8081:method-refused,origin.example:80:method-refused"
+expect "R the summary's counts are unchanged in form (refused 4, tunnels 1)" \
+  test "$(sed -n 's/^refused //p;s/^tunnels //p' "$summaryA" | tr '\n' ' ')" = "1 4 "
+expect "R no path, query, user information, header, cookie or body is in any filter record" \
+  test -z "$(grep -r -l -F 'SECRET-' "$work/ledgerA" 2>/dev/null || true)"
+many=$(probe connect evil.example.com 443 70 || true)
+expect "R many refusals are all refused ($many)" test "$many" = "status 403"
+expect "R the record is bounded at 64 lines ($(wc -l < "$refusals" | tr -d ' '))" test "$(wc -l < "$refusals" | tr -d ' ')" = 64
+expect "R and every refusal is still counted (74)" grep -qx 'refused 74' "$summaryA"
+docker rm -f "$filterA" "$upA" >/dev/null 2>&1 || true
+docker network rm "$netA" >/dev/null 2>&1 || true
+
+# ---------------------------------------------------------------- the auth volume, with an EXPIRED access token
+docker volume rm -f "$vol" >/dev/null 2>&1 || true
+docker volume create "$vol" >/dev/null
+docker run --rm --user 0:0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges \
+  --mount "type=volume,source=$vol,target=/auth" "$image" chown "$cli_uid:$cli_uid" /auth >/dev/null
+docker run --rm --user 0:0 --cap-drop ALL --cap-add FOWNER --security-opt no-new-privileges \
+  --mount "type=volume,source=$vol,target=/auth" "$image" chmod 700 /auth >/dev/null
+# Expired an hour ago (milliseconds), as a sign-in left alone past its access token's life would be.
+past=$((($(date +%s) - 3600) * 1000))
+printf '{"claudeAiOauth":{"accessToken":"%s","refreshToken":"%s","expiresAt":%s,"scopes":["user:inference","user:profile"],"subscriptionType":"max"}}' \
+  "$expired" "$refresh" "$past" > "$work/creds.json"
+chmod 644 "$work/creds.json"
+docker run --rm --user "$cli_uid:$cli_uid" --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+  --mount "type=volume,source=$vol,target=/auth" --mount "type=bind,source=$work/creds.json,target=/tmp/c.json,readonly" \
+  "$image" cp /tmp/c.json /auth/.credentials.json >/dev/null
+rm -f "$work/creds.json"
+# What the volume holds, read as the CLI identity (synthetic tokens; prints only which one).
+held() { docker run --rm --user "$cli_uid:$cli_uid" --read-only --tmpfs /tmp --network none --cap-drop ALL \
+  --mount "type=volume,source=$vol,target=/auth" "$image" \
+  sh -c "if grep -q '$renewed' /auth/.credentials.json; then echo renewed; elif grep -q '$expired' /auth/.credentials.json; then echo expired; else echo other; fi" 2>/dev/null; }
+auth_status() { docker run --rm --user "$cli_uid:$cli_uid" --read-only --tmpfs /tmp --network none --cap-drop ALL \
+  --env HOME=/tmp --env CLAUDE_CONFIG_DIR=/auth --mount "type=volume,source=$vol,target=/auth" \
+  "$image" claude auth status --json 2>/dev/null | grep -o '"loggedIn": [a-z]*'; }
+expect "the offline sign-in check says logged in although the access token has expired" test "$(auth_status)" = '"loggedIn": true'
+
+# ---------------------------------------------------------------- the helper, native (offline-test) mode
+cat > "$state/provider/config" <<EOF
+lockstep-provider 1
+provider claude-code
+model $model
+effort $effort
+billing subscription
+token-limit 100000000
+invocation-limit 1000
+request-max-tokens 16000
+invocation-output-tokens 60000
+invocation-requests 50
+EOF
+chmod 600 "$state/provider/config"
+docker network create --internal "$net" >/dev/null
+printf 'lockstep-offline-test 1\nupstream standin:8443\nca %s\negress-network %s\n' "$work/ca.pem" "$net" \
+  > "$state/provider/offline-test"
+chmod 600 "$state/provider/offline-test"
+
+start_helper() {
+  log_mark=0
+  [ -f "$state/helper/helper.log" ] && log_mark=$(wc -l < "$state/helper/helper.log" | tr -d ' ')
+  "$root/scripts/control-helper" --state "$state" --instance "$instance" --runner < /dev/null >> "$work/helper.out" 2>&1 &
+  helper_pid=$!
+  for _ in $(seq 1 150); do grep -q "started (pid $helper_pid" "$state/helper/helper.log" 2>/dev/null && break; sleep 0.1; done
+  local key i=0 b
+  key=$(head -c 64 "$state/runner/channel.key")
+  ipad=""; opad=""
+  while [ $i -lt 64 ]; do
+    if [ $i -lt 32 ]; then b=$((16#${key:$((i * 2)):2})); else b=0; fi
+    ipad="$ipad$(printf '\\x%02x' $((b ^ 0x36)))"; opad="$opad$(printf '\\x%02x' $((b ^ 0x5c)))"; i=$((i + 1))
+  done
+}
+since() { tail -n "+$((log_mark + 1))" "$state/helper/helper.log"; }
+native_on() { since | grep -q "live runs on (OFFLINE TEST.*subscription, native"; }
+hex_escapes() { local h=$1 o="" j=0; while [ $j -lt ${#h} ]; do o="$o\\x${h:$j:2}"; j=$((j + 2)); done; printf '%s' "$o"; }
+hmac() { local inner; inner=$({ printf "$ipad"; cat; } | sha256); { printf "$opad"; printf "$(hex_escapes "$inner")"; } | sha256; }
+new_id() { head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+implement() {
+  local run=$1 id dir session line body tmp n=0
+  local -a argv=()
+  id=$(new_id); dir=$state/runner/work/$run
+  mkdir -p "$dir/tree" "$dir/input" "$dir/output"
+  printf 'def add(a, b):\n    return a - b\n' > "$dir/tree/calc.py"
+  printf '{"role":"implementer","answer":{"file":"result.json","kind":"implementation"}}\n' > "$dir/input/context.json"
+  printf 'Fix add.\n' > "$dir/input/role.md"
+  session="${run:0:8}-${run:8:4}-${run:12:4}-${run:16:4}-${run:20:12}"
+  while IFS= read -r line; do
+    line=${line//\{MODEL\}/$model}; line=${line//\{EFFORT\}/$effort}; line=${line//\{SESSION\}/$session}; line=${line//\{INPUT\}//input}
+    argv+=("$line")
+  done < "$root/test/fixtures/live/claude-argv"
+  : > "$dir/argv"; for a in "${argv[@]}"; do printf '%s\0' "$a" >> "$dir/argv"; done
+  body=$(printf 'lockstep-runner-request 1\nid %s\nissued %s\nop run-live-write\nexpect run-%s\nargv %s\n' "$id" "$(date +%s)" "$run" "$(sha256 < "$dir/argv")")
+  tmp=$state/runner/requests/.$id; printf '%s\n' "$body" > "$tmp"; printf 'mac %s\n' "$(printf '%s\n' "$body" | hmac)" >> "$tmp"
+  mv "$tmp" "$state/runner/requests/$id.rreq"
+  res=$state/runner/results/$id.res
+  while [ ! -f "$res" ] && [ $n -lt 1500 ]; do sleep 0.1; n=$((n + 1)); done
+}
+start_standin() {
+  docker rm -f "$agent" >/dev/null 2>&1 || true
+  printf '%s' "$1" > "$work/agent/steps.json"; chmod 644 "$work/agent/steps.json"
+  : > "$work/agent/requests.jsonl"; chmod 666 "$work/agent/requests.jsonl"
+  docker run -d --name "$agent" --network "$net" --network-alias standin --read-only --user "$(id -u):$(id -g)" \
+    --cap-drop ALL "${standin_mounts[@]}" "$image" python3 /opt/standin standin "${standin_args[@]}" >/dev/null
+  sleep 1.5
+}
+field() { sed -n "s/^$1 //p" "$res" | head -n 1; }
+fieldline() { sed -n "s/^field $1 //p" "$res" | head -n 1; }
+outcome_is() { [ "$(field outcome) $(fieldline exit)" = "$1" ]; }
+seen() { grep -c -F "$1" "$work/agent/requests.jsonl" || true; }
+answer='{"name":"Edit","input":{"file_path":"/output/result.json","old_string":"","new_string":"{\"kind\":\"implementation\",\"summary\":\"add adds\"}"}}'
+envcheck='{"name":"Bash","input":{"command":"echo api=${ANTHROPIC_API_KEY:-none} oauth=${CLAUDE_CODE_OAUTH_TOKEN:-none} end","description":"env"}}'
+
+# X: the renewal host is not allowed (the configuration of the Brigid run)
+printf 'api.anthropic.com\n' > "$state/provider/egress-hosts"; chmod 600 "$state/provider/egress-hosts"
+start_standin "[$answer]"
+start_helper
+expect "the helper names native subscription mode" native_on
+expect "X the helper names the blocked renewal path at start" sh -c "tail -n +$((log_mark + 1)) '$state/helper/helper.log' | grep -q 'native renewal: blocked: the CLI renews an expired access token at platform.claude.com'"
+if native_on; then
+  run=$(new_id); implement "$run"
+  cp "$res" "$work/result-x.txt" 2>/dev/null || true
+  expect "X the run is not refused by the offline check (it cannot see the expiry)" test "$(field outcome)" = exited
+  expect "X the run fails (exit $(fieldline exit))" test "$(fieldline exit)" != 0
+  expect "X the CLI reports the provider's 401" grep -q '"api_error_status":401' "$state/runner/work/$run/stdout"
+  expect "X the CLI never reached the renewal endpoint ($(seen '"kind": "token"') token requests)" test "$(seen '"kind": "token"')" = 0
+  expect "X it sent the expired token ($(seen '"token": "expired"') times)" test "$(seen '"token": "expired"')" -ge 1
+  expect "X the signed result names the refused renewal host ($(fieldline egress.refused))" \
+    sh -c "printf '%s' '$(fieldline egress.refused)' | grep -q 'platform.claude.com:443:host-refused'"
+  expect "X the helper log names the cause" sh -c "tail -n +$((log_mark + 1)) '$state/helper/helper.log' | grep -q 'could not renew an expired sign-in'"
+  expect "X the volume still holds the expired sign-in ($(held))" test "$(held)" = expired
+else
+  record FAIL "native mode is not on; X is not run"
+fi
+stop_helper
+
+# N: the renewal host allowed (the remedy this handoff asks the owner to decide)
+printf 'api.anthropic.com\nplatform.claude.com\n' > "$state/provider/egress-hosts"; chmod 600 "$state/provider/egress-hosts"
+start_standin "[$envcheck,$answer]"
+start_helper
+expect "N the helper names the open renewal path at start" sh -c "tail -n +$((log_mark + 1)) '$state/helper/helper.log' | grep -q 'native renewal: the CLI may renew an expired access token at platform.claude.com'"
+if native_on; then
+  run=$(new_id); implement "$run"
+  cp "$res" "$work/result-n1.txt" 2>/dev/null || true
+  expect "N the run with an expired access token completes (exit 0)" outcome_is "exited 0"
+  expect "N its answer was written" test -s "$state/runner/work/$run/output/result.json"
+  expect "N the CLI renewed once at the token endpoint ($(seen '"grant": "refresh_token"'))" test "$(seen '"grant": "refresh_token"')" = 1
+  expect "N then used only the renewed token ($(seen '"token": "renewed"') renewed, $(seen '"token": "expired"') expired)" \
+    sh -c "[ $(seen '"token": "renewed"') -ge 1 ] && [ $(seen '"token": "expired"') = 0 ]"
+  expect "N nothing was refused ($(fieldline egress.refused))" test "$(fieldline egress.refused)" = -
+  expect "C no API key and no token in the role container's environment" grep -q 'api=none oauth=none end' "$work/agent/requests.jsonl"
+  expect "N the renewed sign-in is kept in the auth volume ($(held))" test "$(held)" = renewed
+  # The next role session: a new container, the same volume, no second renewal.
+  start_standin "[$answer]"
+  run=$(new_id); implement "$run"
+  cp "$res" "$work/result-n2.txt" 2>/dev/null || true
+  expect "N the next role session completes (exit 0)" outcome_is "exited 0"
+  expect "N without renewing again ($(seen '"kind": "token"') token requests)" test "$(seen '"kind": "token"')" = 0
+  expect "N with the renewed token ($(seen '"token": "renewed"'))" test "$(seen '"token": "renewed"')" -ge 1
+else
+  record FAIL "native mode is not on; N is not run"
+fi
+stop_helper
+
+# C: no synthetic token anywhere Lockstep keeps anything
+for t in "$expired" "$renewed" "$refresh"; do
+  expect "C the synthetic token ${t:0:20}... is in no kept file (results, work, helper log, ledger, evidence)" \
+    test -z "$(grep -r -l -F "$t" "$state/runner" "$state/helper" "$state/provider/ledger" "$work/helper.out" "$work/agent" "$work"/result-*.txt 2>/dev/null || true)"
+done
+
+echo "check-live-renewal: $failures failure(s); results in $results"
+[ "$failures" = 0 ]

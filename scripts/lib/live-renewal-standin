@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+# Test tools for native sign-in renewal (stabilization S1; test only; never a real login, never a model).
+# Synthetic tokens only. Chosen by the first argument:
+#
+#   live-renewal-standin standin --cert F --key F --log F --steps F --expired TOKEN --renewed TOKEN
+#       One TLS server standing in for both provider hosts the pinned CLI uses with a subscription:
+#       api.anthropic.com (POST /v1/messages) and platform.claude.com (POST /v1/oauth/token). The
+#       Messages API answers only the RENEWED access token (a scripted turn, as live-standin-secret);
+#       the EXPIRED one gets the provider's 401 "OAuth access token has expired"; the token endpoint
+#       renews a refresh grant to RENEWED. Each request is logged as one JSON line naming what it was
+#       and which token it carried ("expired", "renewed" or "other"), never a token itself.
+#
+#   live-renewal-standin connect HOST PORT [TIMES]
+#       Asks the filter at lockstep-egress:8080 for a CONNECT tunnel to HOST:PORT (TIMES times), with a
+#       Proxy-Authorization header carrying SECRET-PROXYAUTH-7f3a. Prints "status N[,M...]": the
+#       distinct status codes the filter answered.
+#
+#   live-renewal-standin leak
+#       Sends the filter two plain requests full of secrets (an absolute URL with user information, a
+#       secret path and query, an Authorization header, a cookie and a body; then an origin-form one
+#       with a Host header). Prints each status. The check then greps the filter's records for them.
+import http.client
+import http.server
+import json
+import secrets
+import socket
+import ssl
+import string
+import sys
+
+ALPHABET = string.ascii_letters + string.digits
+
+
+def new_id():
+    return "toolu_01" + "".join(secrets.choice(ALPHABET) for _ in range(22))
+
+
+def tool_results(messages):
+    out = []
+    for m in messages:
+        content = m.get("content") if isinstance(m, dict) else None
+        if isinstance(content, list):
+            for b in content:
+                if isinstance(b, dict) and b.get("type") == "tool_result":
+                    out.append(b)
+    return out
+
+
+def stream(model, block, stop):
+    events = [{"type": "message_start", "message": {
+        "id": "msg_renewal", "type": "message", "role": "assistant", "model": model, "content": [],
+        "stop_reason": None, "stop_sequence": None,
+        "usage": {"input_tokens": 100, "output_tokens": 1, "cache_creation_input_tokens": 0,
+                  "cache_read_input_tokens": 0}}}]
+    if block["type"] == "text":
+        events.append({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}})
+        events.append({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": block["text"]}})
+    else:
+        events.append({"type": "content_block_start", "index": 0, "content_block": {
+            "type": "tool_use", "id": block["id"], "name": block["name"], "input": {}}})
+        events.append({"type": "content_block_delta", "index": 0, "delta": {
+            "type": "input_json_delta", "partial_json": json.dumps(block["input"])}})
+    events.append({"type": "content_block_stop", "index": 0})
+    events.append({"type": "message_delta", "delta": {"stop_reason": stop, "stop_sequence": None},
+                   "usage": {"output_tokens": 40}})
+    events.append({"type": "message_stop"})
+    return b"".join(b"event: " + e["type"].encode() + b"\ndata: " + json.dumps(e).encode() + b"\n\n" for e in events)
+
+
+def standin(a):
+    def log(entry):
+        with open(a["--log"], "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+
+    def which(token):
+        if token == a["--expired"]:
+            return "expired"
+        if token == a["--renewed"]:
+            return "renewed"
+        return "other"
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *_):
+            pass
+
+        def answer(self, status, kind, payload):
+            self.send_response(status)
+            self.send_header("content-type", kind)
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_GET(self):
+            log({"kind": "get", "path": self.path.split("?", 1)[0][:80]})
+            self.answer(404, "application/json", b'{"type":"error","error":{"type":"not_found_error","message":"stand-in"}}')
+
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("content-length", "0")))
+            path = self.path.split("?", 1)[0]
+            try:
+                request = json.loads(body)
+            except ValueError:
+                request = {}
+            if path == "/v1/oauth/token":
+                grant = request.get("grant_type") if isinstance(request, dict) else None
+                log({"kind": "token", "grant": grant})
+                if grant != "refresh_token":
+                    self.answer(400, "application/json", b'{"error":"unsupported_grant_type"}')
+                    return
+                payload = json.dumps({"access_token": a["--renewed"], "refresh_token": "sk-ant-ort01-renewed-fake",
+                                      "expires_in": 28800, "token_type": "Bearer",
+                                      "scope": "user:inference user:profile"}).encode()
+                self.answer(200, "application/json", payload)
+                return
+            if path != "/v1/messages":
+                log({"kind": "post", "path": path[:80]})
+                self.answer(404, "application/json", b'{"type":"error","error":{"type":"not_found_error","message":"stand-in"}}')
+                return
+            auth = self.headers.get("authorization", "")
+            token = auth[7:] if auth.startswith("Bearer ") else ""
+            seen = which(token)
+            results = tool_results(request.get("messages", []))
+            # Only a fixed marker line a tool printed (the check's environment probe), never the result.
+            clean = any("api=none oauth=none end" in json.dumps(r.get("content")) for r in results)
+            log({"kind": "messages", "token": seen, "env": "api=none oauth=none end" if clean else "-"})
+            if seen != "renewed":
+                message = "OAuth access token has expired." if seen == "expired" else "Invalid bearer token"
+                payload = json.dumps({"type": "error", "error": {"type": "authentication_error", "message": message}}).encode()
+                self.answer(401, "application/json", payload)
+                return
+            with open(a["--steps"], encoding="utf-8") as f:
+                steps = json.load(f)
+            n = len(tool_results(request.get("messages", [])))
+            if n < len(steps):
+                block = dict(steps[n], type="tool_use", id=new_id())
+            else:
+                block = {"type": "text", "text": "The answer is in /output/result.json."}
+            payload = stream(request.get("model", "?"), block, "end_turn" if block["type"] == "text" else "tool_use")
+            self.answer(200, "text/event-stream", payload)
+
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", 8443), Handler)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(a["--cert"], a["--key"])
+    server.socket = ctx.wrap_socket(server.socket, server_side=True)
+    server.serve_forever()
+
+
+def connect(host, port, times=1):
+    statuses = []
+    for _ in range(times):
+        try:
+            s = socket.create_connection(("lockstep-egress", 8080), timeout=20)
+            s.sendall(("CONNECT %s:%s HTTP/1.1\r\nHost: %s:%s\r\nProxy-Authorization: Basic SECRET-PROXYAUTH-7f3a\r\n\r\n"
+                       % (host, port, host, port)).encode("ascii"))
+            line = s.recv(4096).split(b"\r\n", 1)[0].decode("ascii", "replace")
+            s.close()
+            parts = line.split(" ")
+            statuses.append(parts[1] if len(parts) > 1 else "?")
+        except OSError as e:
+            statuses.append("error-" + type(e).__name__)
+    print("status", ",".join(sorted(set(statuses))))
+
+
+def leak():
+    try:
+        c = http.client.HTTPConnection("lockstep-egress", 8080, timeout=20)
+        c.request("POST", "http://user:SECRET-USERINFO-7f3a@leak.example:8081/SECRET-PATH-7f3a?token=SECRET-QUERY-7f3a",
+                  "SECRET-BODY-7f3a", {"Authorization": "Bearer SECRET-AUTH-7f3a", "Cookie": "s=SECRET-COOKIE-7f3a",
+                                       "content-type": "text/plain"})
+        r = c.getresponse()
+        r.read()
+        print("status", r.status)
+    except Exception as e:  # noqa: BLE001 - a probe reports every outcome
+        print("error", type(e).__name__)
+    try:
+        c = http.client.HTTPConnection("lockstep-egress", 8080, timeout=20)
+        c.request("GET", "/SECRET-ORIGINPATH-7f3a?k=SECRET-ORIGINQUERY-7f3a", headers={
+            "Host": "origin.example", "Authorization": "Bearer SECRET-AUTH2-7f3a"})
+        r = c.getresponse()
+        r.read()
+        print("status", r.status)
+    except Exception as e:  # noqa: BLE001 - a probe reports every outcome
+        print("error", type(e).__name__)
+
+
+def main():
+    if len(sys.argv) >= 2 and sys.argv[1] == "standin":
+        standin(dict(zip(sys.argv[2::2], sys.argv[3::2])))
+        return 0
+    if len(sys.argv) in (4, 5) and sys.argv[1] == "connect":
+        connect(sys.argv[2], sys.argv[3], int(sys.argv[4]) if len(sys.argv) == 5 else 1)
+        return 0
+    if len(sys.argv) == 2 and sys.argv[1] == "leak":
+        leak()
+        return 0
+    print("usage: live-renewal-standin standin ... | connect HOST PORT | leak", file=sys.stderr)
+    return 64
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

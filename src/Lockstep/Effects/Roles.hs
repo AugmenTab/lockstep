@@ -31,6 +31,8 @@ module Lockstep.Effects.Roles
   , invokeRole
   , prepareRole
   , runPrepared
+  , crashCode
+  , providerAuthRejected
   , decodeAnswer
   , encodeDiscovery
   , encodeCandidate
@@ -82,6 +84,7 @@ import Lockstep.Kernel.Roles
   , expectationName
   )
 import Lockstep.Kernel.Runner (Limits, RoleEnding (..), RoleKind (..), RunOutcome (..), RunSpec (..), roleEndingText, roleLimits, runnerEnvironment)
+import Lockstep.Kernel.Transaction (providerAuthRejectedCode)
 
 -- Runners -------------------------------------------------------------------------
 
@@ -402,7 +405,7 @@ runPrepared runner role workspace argv protected = do
             Left code -> RoleFailed code (Just result)
             Right a -> RoleAnswered a result
         Exited 75 -> pure (RoleFailed (T.pack "provider-refused") (Just result))
-        Exited _ -> pure (RoleFailed (T.pack "role-crashed") (Just result))
+        Exited _ -> pure (RoleFailed (crashCode result) (Just result))
         TimedOut -> pure (RoleFailed (T.pack "role-timed-out") (Just result))
         OutputLimit _ -> pure (RoleFailed (T.pack "role-output-limit") (Just result))
         OutputHeld _ -> pure (RoleFailed (T.pack "role-output-held") (Just result))
@@ -413,6 +416,40 @@ runPrepared runner role workspace argv protected = do
  where
   checkAnswerCode r a =
     either (\c -> Left (T.pack "answer-invalid " <> c)) Right (checkAnswer r a)
+
+{- | Stabilization S1: the code of a role that exited non-zero. The provider's
+own refusal of the sign-in (the CLI's JSON result reports @api_error_status@
+401, as for an expired access token that could not be renewed) is
+@provider-auth-rejected@, so the operator sees the cause instead of a crash;
+anything else is @role-crashed@. The output is evidence only: it is read for
+this one status and nothing else, and never as an answer.
+-}
+crashCode :: RunResult -> T.Text
+crashCode result =
+  if providerAuthRejected (resultStdout result)
+    then providerAuthRejectedCode
+    else T.pack "role-crashed"
+
+-- | The CLI's JSON result is an error whose provider status is 401.
+providerAuthRejected :: BS.ByteString -> Bool
+providerAuthRejected out =
+  case FA.decode cliErrorSchema (LBS.fromStrict out) of
+    Right (CliError (Just True) (Just 401) _) -> True
+    _ -> False
+
+-- | The two fields of the CLI's @--output-format json@ result read here; every other field is ignored.
+data CliError
+  = CliError (Maybe Bool) (Maybe Integer) Extra
+
+cliErrorSchema :: FC.Fleece t => FC.Schema t CliError
+cliErrorSchema =
+  FC.object $
+    FC.additional
+      ( FC.constructor CliError
+          #+ FC.optional "is_error" (\(CliError e _ _) -> e) FC.boolean
+          #+ FC.optional "api_error_status" (\(CliError _ s _) -> s) FC.integer
+      )
+      (FC.additionalFields (\(CliError _ _ x) -> x) FC.anyJSON)
 
 kindOf :: Role -> RoleKind
 kindOf r =

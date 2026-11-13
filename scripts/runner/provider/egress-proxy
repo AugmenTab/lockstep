@@ -847,25 +847,92 @@ def arguments(argv, names):
 # so this never reads the request or the token. It accepts only CONNECT to an allowed host on 443 and
 # relays the bytes; everything else is refused. A --map HOST=ALIAS:PORT sends an allowed host to a
 # stand-in (the offline check only); without it the host is reached as itself.
+# Each refusal is recorded (S1): DIR/runs/RUN.refusals, one line "refused UNIX RUN HOST PORT REASON
+# METHOD", and the summary's "refused-hosts HOST:PORT:REASON,...". Nothing else of the request.
 
-def passthrough_summary(path, allowed, tunnels, refused, hosts):
+def passthrough_summary(path, allowed, tunnels, refused, hosts, refused_hosts=()):
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="ascii") as f:
-        f.write("mode passthrough\nallowed %s\ntunnels %d\nrefused %d\nhosts %s\n"
-                % (",".join(sorted(allowed)), tunnels, refused, ",".join(sorted(hosts)) or "-"))
+        f.write("mode passthrough\nallowed %s\ntunnels %d\nrefused %d\nhosts %s\nrefused-hosts %s\n"
+                % (",".join(sorted(allowed)), tunnels, refused, ",".join(sorted(hosts)) or "-",
+                   ",".join(sorted(refused_hosts)) or "-"))
     os.replace(tmp, path)
+
+
+# Stabilization S1 (post-Phase-5 handoff §2.2): what a refused request is recorded with. Only the
+# hostname and port it asked for, why it was refused, the run and the time: never a header (no
+# Authorization, no cookie), a body, a URL path or query, or user information in an authority. The
+# names are checked against a strict alphabet; anything else is recorded as "-".
+REFUSAL_LOG_MAX = 64
+REFUSED_HOSTS_MAX = 16
+
+
+def clean_host(text):
+    host = text.strip().lower().rstrip(".")
+    return host if re.fullmatch(r"[a-z0-9.-]{1,253}", host) else "-"
+
+
+def clean_port(text):
+    return text if re.fullmatch(r"[0-9]{1,5}", text) else "-"
+
+
+def refused_target(method, target, host_header):
+    """The (host, port) a refused request named. CONNECT names "host:port"; a proxied plain request
+    an absolute URL, of which only the authority is read (user information dropped); any other the
+    Host header. Never anything after the authority."""
+    if method == "CONNECT":
+        host, sep, port = target.rpartition(":")
+        return (clean_host(host), clean_port(port)) if sep else (clean_host(target), "-")
+    authority, default = None, "80"
+    lowered = target[:8].lower()
+    if lowered.startswith("http://") or lowered.startswith("https://"):
+        default = "443" if lowered.startswith("https://") else "80"
+        rest = target.split("://", 1)[1]
+        authority = re.split(r"[/?#]", rest, maxsplit=1)[0]
+    elif host_header:
+        authority = host_header
+    if not authority:
+        return ("-", "-")
+    authority = authority.rpartition("@")[2]
+    if authority.startswith("["):
+        return ("-", "-")
+    host, sep, port = authority.partition(":")
+    return (clean_host(host), clean_port(port) if sep else default)
 
 
 def run_passthrough(allowed, mapping, run, ledger_dir):
     os.makedirs(os.path.join(ledger_dir, "runs"), mode=0o700, exist_ok=True)
     summary_path = os.path.join(ledger_dir, "runs", run)
-    state = {"tunnels": 0, "refused": 0, "hosts": set()}
+    refusals_path = summary_path + ".refusals"
+    state = {"tunnels": 0, "refused": 0, "hosts": set(), "refused-hosts": set(), "logged": 0}
     lock = threading.Lock()
     passthrough_summary(summary_path, allowed, 0, 0, state["hosts"])
 
     def record():
         with lock:
-            passthrough_summary(summary_path, allowed, state["tunnels"], state["refused"], state["hosts"])
+            passthrough_summary(summary_path, allowed, state["tunnels"], state["refused"], state["hosts"],
+                                state["refused-hosts"])
+
+    def note_refusal(method, target, host_header, code):
+        """One line for a refused request (at most REFUSAL_LOG_MAX a run), its host in the summary."""
+        host, port = refused_target(method, target or "", host_header or "")
+        verb = method if re.fullmatch(r"[A-Z]{1,10}", method or "") else "-"
+        with lock:
+            state["refused"] += 1
+            if len(state["refused-hosts"]) < REFUSED_HOSTS_MAX:
+                state["refused-hosts"].add("%s:%s:%s" % (host, port, code))
+            if state["logged"] >= REFUSAL_LOG_MAX:
+                return
+            state["logged"] += 1
+            line = "refused %d %s %s %s %s %s\n" % (int(time.time()), run, host, port, code, verb)
+            try:
+                fd = os.open(refusals_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+                try:
+                    os.write(fd, line.encode("ascii"))
+                finally:
+                    os.close(fd)
+            except OSError:
+                pass
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -876,8 +943,7 @@ def run_passthrough(allowed, mapping, run, ledger_dir):
             pass
 
         def deny(self, code):
-            with lock:
-                state["refused"] += 1
+            note_refusal(self.command, self.path, self.headers.get("host") if self.headers else None, code)
             record()
             try:
                 self.send_response(403)

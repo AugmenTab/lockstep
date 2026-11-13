@@ -20,20 +20,24 @@ here=$(cd "$(dirname "$0")" && pwd -P)
 root=$(dirname "$here")
 rt=$root/scripts/capsule-runtime
 
-hstate="" repo="" probe=""
+hstate="" repo="" probe="" instance=main
 while [ $# -gt 0 ]; do
   case $1 in
     --helper-state) hstate=$2; shift 2 ;;
     --repo) repo=$2; shift 2 ;;
     --toolchain-probe) probe=$2; shift 2 ;;
-    *) echo "usage: scripts/capsule-preflight --helper-state DIR [--repo PATH] [--toolchain-probe FILE]" >&2; exit 64 ;;
+    --instance) instance=$2; shift 2 ;;
+    *) echo "usage: scripts/capsule-preflight --helper-state DIR [--repo PATH] [--toolchain-probe FILE] [--instance NAME]" >&2; exit 64 ;;
   esac
 done
 [ -n "$hstate" ] || { echo "capsule-preflight: --helper-state is required" >&2; exit 64; }
+case $instance in "" | *[!abcdefghijklmnopqrstuvwxyz0123456789-]*) echo "capsule-preflight: --instance is invalid" >&2; exit 64 ;; esac
 
 failures=0
 pass() { printf 'PASS %s\n' "$1"; }
 fail() { printf 'FAIL %s: %s\n' "$1" "$2"; failures=$((failures + 1)); }
+# A finding that does not stop a run now but will stop one later (not counted as a failure).
+warn() { printf 'WARN %s: %s\n' "$1" "$2"; }
 
 # ---- configuration
 cfg=$hstate/capsule/config
@@ -118,6 +122,28 @@ elif [ -f "$cstate/capsules/snapshots/$vcap/verify.disk" ] && "$rt" --state "$cs
   pass verification-environment
 else
   fail verification-environment "the verification capsule $vcap or its 'verify' snapshot is missing or not audited"
+fi
+
+# ---- Native provider sign-in (stabilization S1), only when the helper is set up for it (provider/egress-hosts).
+# Model-free and offline: the CLI's own `auth status` against the auth volume, with no network. It says
+# only that a login is STORED; it cannot see whether the provider will accept the access token (it may
+# have expired), so the line says so. The renewal path: the pinned CLI renews an expired access token at
+# its TOKEN_URL host, which must be in egress-hosts or an expired token fails the run with HTTP 401.
+hosts_file=$hstate/provider/egress-hosts
+renewal_host=platform.claude.com
+if [ -f "$hosts_file" ]; then
+  status=$(docker run --rm --user 2000000000:2000000000 --read-only --tmpfs /tmp --network none \
+    --cap-drop ALL --security-opt no-new-privileges --log-driver none \
+    --env HOME=/tmp --env CLAUDE_CONFIG_DIR=/auth --mount "type=volume,source=lockstep-provider-auth-$instance,target=/auth" \
+    lockstep-provider:claude-2.1.312 claude auth status --json 2>/dev/null < /dev/null || true)
+  case $status in
+    *'"loggedIn": true'*) pass provider-login-stored
+      printf 'NOTE provider-login-stored is a local check: a login is stored; the provider was not asked whether it accepts it\n' ;;
+    *) fail provider-login-stored "no stored sign-in in the volume lockstep-provider-auth-$instance; run: scripts/control-helper --state $hstate${instance:+ --instance $instance} --provider-auth-login" ;;
+  esac
+  if grep -qx "$renewal_host" "$hosts_file"; then pass provider-renewal-path
+  else warn provider-renewal-path "$hosts_file does not allow $renewal_host, where the CLI renews an expired access token; a run that starts after it expires fails with HTTP 401 until the owner signs in again (docs/architecture/provider-auth-renewal.md)"
+  fi
 fi
 
 # ---- Supervisor Git authority
