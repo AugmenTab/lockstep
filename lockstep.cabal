@@ -418,6 +418,7 @@ test-suite lockstep-integration
       Lockstep.SnapshotBoundsTest
       Lockstep.StabilizationReproductionTest
       Lockstep.StabilizationReviewTest
+      Lockstep.StabilizationSessionTest
       Lockstep.Support.App
       Lockstep.Support.Control
       Lockstep.Support.Decisions

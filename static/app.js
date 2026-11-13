@@ -7,6 +7,9 @@
   'use strict';
 
   var KEY = 'lockstep.app.session';
+  // Stabilization S4: the page the operator was on when the sign-in ended (only an address this
+  // script routes), so the next sign-in in this browser returns there, once.
+  var RETURN_KEY = 'lockstep.app.return';
   var app = document.getElementById('app');
   var SECTIONS = [
     ['home', 'Home'],
@@ -63,6 +66,19 @@
   }
   function forgetSession() {
     try { window.localStorage.removeItem(KEY); } catch (e) { /* nothing stored */ }
+  }
+  function rememberReturn(path) {
+    if (!path || !routeFor(path)) { return; }
+    try { window.localStorage.setItem(RETURN_KEY, path); } catch (e) { /* storage unavailable: home next time */ }
+  }
+  // The remembered page, removed as it is read; null unless it is still an address this script routes.
+  function takeReturn() {
+    var path = null;
+    try {
+      path = window.localStorage.getItem(RETURN_KEY);
+      window.localStorage.removeItem(RETURN_KEY);
+    } catch (e) { return null; }
+    return path && routeFor(path) ? path : null;
   }
 
   function node(tag, className, text) {
@@ -186,7 +202,8 @@
   document.body.addEventListener('htmx:responseError', function (event) {
     if (event.detail.xhr && event.detail.xhr.status === 401) {
       forgetSession();
-      notice = 'Your sign-in has ended.';
+      rememberReturn(current);
+      notice = 'Your sign-in has ended. Lockstep keeps working on its own: nothing was decided for you, and every decision waiting for you is still waiting. Sign in again and you will come back to this page.';
       renderSignedOut();
       return;
     }
@@ -241,6 +258,12 @@
       if (response.ok) {
         var body = await response.json();
         storeSession(body.session);
+        // A sign-in that lands on the home page goes back to where the last one ended, if anywhere.
+        var back = takeReturn();
+        if (back && initial === '/app/home') {
+          initial = back;
+          window.history.replaceState(null, '', initial);
+        }
       } else {
         notice = 'This sign-in link was already used or has expired.';
       }
