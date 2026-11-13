@@ -426,7 +426,7 @@ haltWords code =
         FixedRepositoryDirty -> "The project's folder has changes that are not committed. Commit or remove them, then try again."
         FixedRepositoryMissing -> "The project's folder is not there any more."
         FixedNotARepository -> "The project's folder is not a Git folder."
-        FixedReproductionMissing -> "The command the Planner gave to show the bug ran, but did not show it. Running it again would not change that. You can have the Planner look for the cause again, go on without reproducing it (the tests must still fail because of the bug), or stop."
+        FixedReproductionMissing -> "Lockstep could not show the bug with a separate command. You can have the Planner look for the cause again, go on without reproducing it (the tests must still fail because of the bug), or stop."
         FixedVerificationEnvironmentMissing -> "A program the checks need is not installed where the checks run."
         FixedVerificationRunFailed -> "The checks did not finish normally."
         FixedProtectedTestChanged -> "A test that was fixed in place was changed."

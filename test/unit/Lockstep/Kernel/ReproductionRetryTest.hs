@@ -66,6 +66,9 @@ tests =
         haltChoices StageBasis "repository-dirty" @?= ["retry", "stop"]
         haltChoices StageDiscovery "role-failed role-crashed" @?= ["retry", "stop"]
         haltChoices StageCandidate "candidates-exhausted" @?= ["retry", "stop"]
+        -- Review finding 1: verifying the same commit again can only find the same changed protected test.
+        haltChoices StageVerify "protected-test-changed" @?= ["stop"]
+        haltChoices StageImplement "protected-test-changed" @?= ["retry", "stop"]
         assertBool "discovery names the Planner" ("Planner" `T.isInfixOf` retryOperation StageDiscovery)
         assertBool "candidate names the Planner" ("Planner" `T.isInfixOf` retryOperation StageCandidate)
         assertBool "reproduction names its command" ("reproduction command" `T.isInfixOf` retryOperation StageReproduction)

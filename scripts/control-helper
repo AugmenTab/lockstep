@@ -1645,15 +1645,22 @@ execute_native_run() { # ID OP RUN
 
 # S1 (post-Phase-5 stabilization): the hosts the passthrough filter refused in a run, from its summary
 # ("refused-hosts HOST:PORT:REASON,..."; only names, ports and codes), or "-". As a result field value
-# ([A-Za-z0-9._:-], at most 80): entries joined by "_" (no host name has one), whole entries only.
+# ([A-Za-z0-9._:-], at most 80): entries joined by "_" (no host name has one), whole entries only, the
+# renewal host's first (it names the cause of an expired sign-in); "more" ends a list that was cut (so a
+# list none of whose entries fit is "more", never "-", which says there was none).
 native_refused_hosts() { # SUMMARY-FILE
-  local v e out="" IFS=,
+  local v e out="" cut=0 IFS=,
   v=$(sed -n 's/^refused-hosts //p' "$1" 2>/dev/null | head -n 1 | tr -cd 'a-z0-9.,:-' | cut -c 1-600)
   for e in $v; do
-    [ -n "$e" ] && [ "$e" != - ] || continue
-    [ $((${#out} + ${#e} + 1)) -le 80 ] || break
-    out="$out${out:+_}$e"
+    case $e in "$provider_renewal_host":*) ;; *) continue ;; esac
+    if [ $((${#out} + ${#e} + 6)) -le 80 ]; then out="$out${out:+_}$e"; else cut=1; fi
   done
+  for e in $v; do
+    [ -n "$e" ] && [ "$e" != - ] || continue
+    case $e in "$provider_renewal_host":*) continue ;; esac
+    if [ $((${#out} + ${#e} + 6)) -le 80 ]; then out="$out${out:+_}$e"; else cut=1; fi
+  done
+  [ "$cut" = 1 ] && out="$out${out:+_}more"
   printf '%s' "${out:--}"
 }
 

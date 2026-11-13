@@ -27,7 +27,8 @@ actually executes again is therefore the stage's own work. Since S2 the halt's q
 | Missing required input (operator fixes, then retries) | `repository-dirty`, `repository-missing`, `not-a-repository`, `verification-environment-missing`, `role-failed provider-auth-rejected` (sign in again or decide S1-SD1), `role-failed no-coding-agent` | retry, stop |
 | Replanning required | `reproduction-missing` (a supplied command did not reproduce) | accept-non-reproduction, **replan**, stop |
 | Explicit human decision | `finding-needs-human`, `review-needs-human` (including an incomplete review, S3), `candidates-exhausted`, `attempts-exhausted`, `green-regression-failed` | retry (the role runs again), stop |
-| Permanent refusal for this transaction | a scope or basis refusal the Planner or operator cannot change (`HaltRefused` codes) | retry (re-checks; harmless), stop |
+| Permanent for this transaction | `protected-test-changed` at verify (the same candidate commit would be verified again and found again) | **stop only** (review finding 1) |
+| A refusal with its own code (`HaltRefused`) | at basis: ownership or repository refusals the operator can fix; at candidate: scope refusals of the Planner's answer, where a retry runs the Planner again; at verify or candidate: `verification-environment-missing` and the like, fixable in the environment | retry, stop — a retry either runs a role again or re-checks a condition the operator can change |
 | Unknown external effect | `uncertain-invocation …` (a role whose end is unknown) | retry, stop — never run by itself (E4); a retry runs the role once more at a new revision, in a fresh workspace, and its earlier run's tree is discarded |
 
 ## The ineffective retry that was removed

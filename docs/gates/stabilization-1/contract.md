@@ -25,7 +25,7 @@
 | S2.2 | **A supplied command is still run and its outcome recorded.** One that does not reproduce still halts `reproduction-missing` (evidence that the Planner's understanding may be wrong). |
 | S2.3 | **No ineffective retry.** At `reproduction-missing` the choices are `accept-non-reproduction`, `replan` (the Planner's discovery runs again, which may give a different command) and `stop`. `retry` (the same deterministic command, the same basis) is no longer offered there; a decision request accepts only its own choices. |
 | S2.4 | **A retry names what runs again.** Each halt's question and page say which operation a retry executes (`retryOperation`, per stage). Retry still re-enters exactly the halted stage; uncertain effects are still never replayed by themselves. |
-| S2.5 | **Halt classes reviewed** (`docs/gates/stabilization-1/retry-model.md`): every other halt's retry re-runs a role (new answer possible), re-checks a condition the operator can fix, or re-runs a command whose environment can change; none is known-impossible. |
+| S2.5 | **Halt classes reviewed** (`docs/gates/stabilization-1/retry-model.md`): every other halt's retry re-runs a role (new answer possible), re-checks a condition the operator can fix, or re-runs a command whose environment can change. The one other known-impossible retry found by the independent review, `protected-test-changed` at verify, now offers only stop. |
 | S2.6 | **Frozen tests amended** only where they encode the contradiction (`amendments.md`, A-STAB-1, A-STAB-2), under this handoff's explicit authorization (§3.3: "follow the established amendment/supersession procedure… authorizes the specific semantic correction above"). DG-06 D-6.6 is superseded in part, recorded in the decision register. |
 
 ## S3 — Test quality and review depth
@@ -48,10 +48,11 @@
 | File | Kind | Covers |
 |---|---|---|
 | `scripts/lib/check-live-renewal` (new) | host: real Docker, helper, pinned CLI, TLS stand-in | S1.1–S1.3: V, R, X, N, C (41 checks) |
+| `scripts/lib/check-refused-hosts` (new) | host bash 3.2, the helper's own function | S1.3: the result field's encoding, renewal host first (8 checks) |
 | `test/unit/Lockstep/Effects/RoleCrashTest.hs` (new) | unit | S1.4 |
-| `test/unit/Lockstep/Kernel/ReproductionRetryTest.hs` (new) | unit | S2.1–S2.4 rules |
-| `test/integration/Lockstep/StabilizationReproductionTest.hs` (new) | integration: PostgreSQL, Git, processes | S2 cases 1–10 of handoff §3.3 |
-| `test/unit/Lockstep/Effects/RoleInstructionsTest.hs` (new) | unit | S3.1, S3.2 instructions |
-| `test/integration/Lockstep/StabilizationReviewTest.hs` (new) | integration | S3.2: incomplete review is never an approval |
-| `test/integration/Lockstep/StabilizationSessionTest.hs` (new) | integration | S4.1, S4.2 |
+| `test/unit/Lockstep/Kernel/ReproductionRetryTest.hs` (new) | unit | S2.1–S2.5 rules |
+| `test/integration/Lockstep/StabilizationReproductionTest.hs` (new) | integration: PostgreSQL, Git, processes | S2 cases of handoff §3.3 (1–9; 10 is the unchanged freeze tests) |
+| `test/unit/Lockstep/Effects/ReviewScopeTest.hs` (new) | unit | S3.1, S3.2 instructions; the scope rule |
+| `test/integration/Lockstep/StabilizationReviewTest.hs` (new) | integration | S3.2: an incomplete review is never an approval |
+| `test/integration/Lockstep/StabilizationSessionTest.hs` (new) | integration: real browser, service, PostgreSQL | S4.2 (S4.1 by construction: no engine module reads operator sessions) |
 | Existing qualification | `scripts/check --integration`, live checks, capsule runner | no regression |

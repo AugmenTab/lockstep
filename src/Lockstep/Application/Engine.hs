@@ -1654,7 +1654,8 @@ reviewStage runtime engine row = do
                         _ -> Nothing
                     (verdict, reasons) =
                       case gap of
-                        Just g -> (NeedsHuman, reviewReasons r <> [T.pack "Lockstep: " <> g])
+                        -- Within the answer's own limits: at most 20 reasons of at most 4000 characters.
+                        Just g -> (NeedsHuman, L.take 19 (reviewReasons r) <> [T.take 4000 (T.pack "Lockstep: " <> g)])
                         Nothing -> (reviewVerdict r, reviewReasons r)
                     input =
                       case verdict of
@@ -1816,10 +1817,10 @@ haltQuestion stage code =
     <> T.pack "). What should happen next? "
     <> choicesExplained
  where
-  choicesExplained =
-    if T.pack "retry" `L.elem` haltChoices stage code
-      then retryOperation stage
-      else
-        T.pack
-          "The command the Planner gave ran and did not show the bug; running it again would not change that. "
+  choices = haltChoices stage code
+  choicesExplained
+    | T.pack "retry" `L.elem` choices = retryOperation stage
+    | T.pack "replan" `L.elem` choices =
+        T.pack "The reproduction did not show the bug; running the same command again would not change that. "
           <> T.pack "Replan runs the Planner's search for the cause again; going on without reproducing it still needs tests that fail because of the bug."
+    | otherwise = T.pack "Running this step again could not change the outcome, so only stopping is offered."

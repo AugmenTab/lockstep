@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# The helper's egress.refused field (stabilization S1, review finding 2): the real function, taken out
+# of scripts/control-helper, on summaries made here. The renewal host's entry always comes first, a cut
+# list ends "more" (also when nothing fit), none is "-", and every value fits the
+# result protocol ([A-Za-z0-9._:-], at most 80 characters).
+set -u
+cd "$(dirname "$0")/../.."
+work=$(mktemp -d "${TMPDIR:-/tmp}/lockstep-refused-hosts.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+failures=0
+expect() { if [ "$2" = "$3" ]; then printf 'PASS %s\n' "$1"; else printf 'FAIL %s: expected [%s], got [%s]\n' "$1" "$3" "$2"; failures=$((failures + 1)); fi; }
+
+sed -n '/^native_refused_hosts() {/,/^}/p' scripts/control-helper > "$work/fn.sh"
+provider_renewal_host=$(sed -n 's/^provider_renewal_host=//p' scripts/control-helper)
+# shellcheck source=/dev/null
+. "$work/fn.sh"
+
+summary() { printf 'mode passthrough\nallowed api.anthropic.com\ntunnels 1\nrefused 3\nhosts -\nrefused-hosts %s\n' "$1" > "$work/s"; }
+valid() { printf '%s' "$1" | grep -Eq '^[A-Za-z0-9._:-]{1,80}$' && echo yes || echo no; }
+
+summary -
+expect "none refused is -" "$(native_refused_hosts "$work/s")" -
+summary "github.com:443:host-refused,platform.claude.com:443:host-refused"
+out=$(native_refused_hosts "$work/s")
+expect "the renewal host comes first, whatever sorts before it" "${out%%_*}" "platform.claude.com:443:host-refused"
+expect "and the other follows" "$out" "platform.claude.com:443:host-refused_github.com:443:host-refused"
+summary "-:-:method-refused,a.example:443:host-refused,b.example:443:host-refused,files.pythonhosted.org:443:host-refused,platform.claude.com:443:host-refused"
+out=$(native_refused_hosts "$work/s")
+expect "crowded: the renewal host still first" "${out%%_*}" "platform.claude.com:443:host-refused"
+expect "crowded: a cut list says more" "${out##*_}" more
+expect "crowded: the value fits the protocol" "$(valid "$out")" yes
+long=$(printf 'h%.0s' $(seq 1 90)).example
+summary "$long:443:host-refused"
+expect "an entry too long for the field is more, never -" "$(native_refused_hosts "$work/s")" more
+: > "$work/s"
+expect "no summary at all is -" "$(native_refused_hosts "$work/s")" -
+
+echo "check-refused-hosts: $failures failure(s)"
+[ "$failures" = 0 ]

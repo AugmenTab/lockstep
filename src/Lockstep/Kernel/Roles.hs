@@ -36,7 +36,7 @@ import Data.List qualified as L
 import Data.Maybe (isJust, isNothing)
 import Data.Text qualified as T
 import Flipstone.Prelude
-import Text.Show (Show)
+import Text.Show (Show, show)
 
 import Lockstep.Kernel.GitBasis (treePathValid)
 
@@ -314,10 +314,14 @@ reviewScopeGap required changed tree inspected =
       | required -> Just (T.pack "The Reviewer did not say which files it read, so its approval cannot count as a review of the whole change.")
       | otherwise -> Nothing
     Just read'
-      | not (L.null unknown) -> Just (T.pack "The Reviewer says it read files that are not in the change: " <> T.intercalate (T.pack ", ") unknown <> T.pack ".")
-      | not (L.null missed) -> Just (T.pack "The Reviewer approved without reading all of the change; it did not read: " <> T.intercalate (T.pack ", ") missed <> T.pack ".")
+      | not (L.null unknown) -> Just (T.pack "The Reviewer says it read files that are not in the change: " <> named unknown <> T.pack ".")
+      | not (L.null missed) -> Just (T.pack "The Reviewer approved without reading all of the change; it did not read: " <> named missed <> T.pack ".")
       | otherwise -> Nothing
      where
+      -- At most 20 paths named, then how many more.
+      named ps =
+        T.intercalate (T.pack ", ") (L.take 20 ps)
+          <> if L.length ps > 20 then T.pack " and " <> T.pack (show (L.length ps - 20)) <> T.pack " more" else T.empty
       unknown = L.sort (L.nub [p | p <- read', p `L.notElem` tree, p `L.notElem` changed])
       missed = L.sort (L.nub [p | p <- changed, p `L.notElem` read'])
 

@@ -118,10 +118,11 @@ again) or stopping; never a retry, which would run the same command at the same
 basis again. Otherwise retrying the stage ('retryOperation') or stopping.
 -}
 haltChoices :: Stage -> T.Text -> [T.Text]
-haltChoices stage code =
-  if replanHalt stage code
-    then [T.pack "accept-non-reproduction", T.pack "replan", T.pack "stop"]
-    else [T.pack "retry", T.pack "stop"]
+haltChoices stage code
+  | replanHalt stage code = [T.pack "accept-non-reproduction", T.pack "replan", T.pack "stop"]
+  -- A protected test changed in the candidate: verifying the same commit again can only find it again.
+  | stage == StageVerify && haltCodeFromText code == HaltFixed FixedProtectedTestChanged = [T.pack "stop"]
+  | otherwise = [T.pack "retry", T.pack "stop"]
 
 -- | The one halt where non-reproduction may be accepted and a replan is offered.
 replanHalt :: Stage -> T.Text -> Bool
