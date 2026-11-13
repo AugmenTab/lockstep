@@ -64,7 +64,7 @@ tests =
     , testCase "discovery: the Planner's answer is recorded as data, with its invocation" discovery
     , testCase "a citation outside the source halts at discovery" badCitation
     , testCase "reproduction: the bug's own command fails with its signature at the basis" reproduced
-    , testCase "a command that passes, or none at all, is reproduction-missing; only then is accepting it offered" notReproduced
+    , testCase "a command that passes is reproduction-missing, where accepting it or a replan is offered; none at all goes on to the tests" notReproduced
     , testCase "a role that crashes, or no coding agent at all, halts with its reason" roleFailures
     , testCase "an invocation cut short is never run again: after a restart it is uncertain and halts" cutShort
     , testCase "records and invocations cannot be changed afterwards" immutable
@@ -343,13 +343,13 @@ notReproduced =
     inputOf report @?= "not-reproduced"
     (viewState (viewAfter report), viewStage (viewAfter report), viewHalt (viewAfter report)) @?= ("halted", "reproduction", Just "reproduction-missing")
     requests <- requestsFor sc bug
-    fmap storedChoices requests @?= [["accept-non-reproduction", "retry", "stop"]]
+    fmap storedChoices requests @?= [["accept-non-reproduction", "replan", "stop"]]
     bug2 <- admittedBug sc "no-command"
     engine2 <- engineWith sc [[discoveryAnswer goodCitation ""]]
     view2 <- reachDiscovery sc bug2 engine2
     _ <- step sc engine2 view2
     report2 <- step sc engine2 view2
-    viewHalt (viewAfter report2) @?= Just "reproduction-missing"
+    (inputOf report2, viewHalt (viewAfter report2), viewStage (viewAfter report2)) @?= ("reproduction-omitted", Nothing, "candidate")
 
 roleFailures :: Assertion
 roleFailures =

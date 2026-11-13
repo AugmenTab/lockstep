@@ -244,6 +244,26 @@ Phase 4 live-provider integration, offline, 2026-10-29 (the owner's instruction 
 - **Not done by it.** Nothing was pushed or merged; Brigid's `main` and the owner's checkout are unchanged. The
   LAN exception stays attended-only and expires 2026-11-13T23:00Z.
 
+Post-Phase-5 operational stabilization, 2026-11-13 (the owner's instruction in the session, "Read
+@.local/plans/phase-05_update4.md and implement"; handoff sha256
+`622eb5d51c179f50fc87c2e16f0fb5952d166dc186e6f5d50752f8e2f18471cb`; recorded by the writing agent; contract
+`docs/gates/stabilization-1/contract.md`, branch `stabilization-1`):
+
+- **Authorized**: S1 native sign-in diagnostics and renewal path, S2 reproduction and retry semantics, S3 Planner and
+  Reviewer requirements, S4 attended-session continuity; the frozen-test amendments the S2 correction needs
+  (`docs/gates/stabilization-1/amendments.md`).
+- **Superseded in part (S2):** DG-06 D-6.6 / C-P4.6 E7, "no command … → halted `reproduction-missing`". Now: a
+  discovery without a separate reproduction command is recorded as not reproduced and goes on to the candidate
+  tests, which must still be RED at the basis. A supplied command that does not reproduce still halts; there the
+  choices are accept-non-reproduction, replan, stop (no retry of the same command).
+- **Requested, not decided (S1-SD1):** allow the exact host `platform.claude.com` (the pinned CLI's OAuth token
+  endpoint) in the owner's `provider/egress-hosts`, so an expired subscription access token can renew itself
+  (`docs/architecture/provider-auth-renewal.md` §4). Until the owner decides, nothing changes in the owner's
+  configuration; an expired token fails with the named diagnostic `provider-auth-rejected`.
+- **Not authorized by it**: real-provider traffic; a change to the credential-provisioning model (`setup-token`
+  evaluated, not adopted); extending the LAN exception; Phase 6, V3 restructuring, integrations, a Verifier role,
+  push or merge; acceptance of the milestone (the owner's).
+
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.
 

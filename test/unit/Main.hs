@@ -54,6 +54,7 @@ import Lockstep.Kernel.RemediationTest qualified as RemediationTest
 import Lockstep.Kernel.RemediationThirdReviewTest qualified as RemediationThirdReviewTest
 import Lockstep.Kernel.RemoteTest qualified as RemoteTest
 import Lockstep.Kernel.RepositoryTest qualified as RepositoryTest
+import Lockstep.Kernel.ReproductionRetryTest qualified as ReproductionRetryTest
 import Lockstep.Kernel.RolesTest qualified as KernelRolesTest
 import Lockstep.Kernel.RunnerTest qualified as RunnerTest
 import Lockstep.Kernel.SchedulerPropertyTest qualified as SchedulerPropertyTest
@@ -153,4 +154,5 @@ main =
       , KernelCandidateTest.tests
       , ClaudeAdapterTest.tests
       , RoleCrashTest.tests
+      , ReproductionRetryTest.tests
       ]

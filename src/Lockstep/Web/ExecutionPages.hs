@@ -36,7 +36,7 @@ import Lockstep.Kernel.Profile (profileIdText)
 import Lockstep.Kernel.Roles (CandidateTest (..), Criterion (..), Verdict (..))
 import Lockstep.Kernel.Runner (OutcomeKind (..))
 import Lockstep.Kernel.Task (TaskReadiness (..))
-import Lockstep.Kernel.Transaction (Disposition (..), FixedHalt (..), HaltCode (..), Stage (..), StateName (..), haltCodeFromText, noCodingAgent, parseStage, parseStateName, providerAuthRejectedCode)
+import Lockstep.Kernel.Transaction (Disposition (..), FixedHalt (..), HaltCode (..), Stage (..), StateName (..), haltCodeFromText, noCodingAgent, parseStage, parseStateName, providerAuthRejectedCode, retryOperation)
 import Lockstep.Web.Fields (choiceField, expectedField, expectedSetField, keyField, requestField, revisionField, runField, ticketRevisionField)
 import Lockstep.Web.Fragment (attr, cls, elementId)
 import Lockstep.Web.Routes.App (admitBugAction, completionAction, enableExecutionAction, haltDecisionAction, stopCapsuleRunAction)
@@ -273,8 +273,13 @@ transactionSection a tx request key =
       [cls "ls-choice"]
       [ -- The choices are the stored request's text: their ids stay escaped attributes.
         E.input [A.type_ HTML.InputRadio, attr "id" ("halt-" <> name), A.name choiceField, attr "value" name]
-      , E.label [attr "for" ("halt-" <> name)] [E.text (choiceWords name)]
+      , E.label [attr "for" ("halt-" <> name)] [E.text (choiceWords name <> retryWords name)]
       ]
+  -- S2: a retry says what it actually runs again.
+  retryWords name =
+    case (T.unpack name, stage) of
+      ("retry", Just s) -> " (" <> retryOperation s <> ")"
+      _ -> ""
   doneId = elementId 'c' "ompletion-done"
   notDoneId = elementId 'c' "ompletion-not-done"
   completionForm =
@@ -421,7 +426,7 @@ haltWords code =
         FixedRepositoryDirty -> "The project's folder has changes that are not committed. Commit or remove them, then try again."
         FixedRepositoryMissing -> "The project's folder is not there any more."
         FixedNotARepository -> "The project's folder is not a Git folder."
-        FixedReproductionMissing -> "Lockstep could not make the bug happen. You can go on without reproducing it, try again, or stop."
+        FixedReproductionMissing -> "The command the Planner gave to show the bug ran, but did not show it. Running it again would not change that. You can have the Planner look for the cause again, go on without reproducing it (the tests must still fail because of the bug), or stop."
         FixedVerificationEnvironmentMissing -> "A program the checks need is not installed where the checks run."
         FixedVerificationRunFailed -> "The checks did not finish normally."
         FixedProtectedTestChanged -> "A test that was fixed in place was changed."
@@ -460,7 +465,8 @@ choiceWords name =
   case T.unpack name of
     "retry" -> "Try this step again"
     "stop" -> "Stop fixing this bug"
-    "accept-non-reproduction" -> "Go on without reproducing it"
+    "accept-non-reproduction" -> "Go on without reproducing it (the tests must still fail because of the bug)"
+    "replan" -> "Have the Planner look for the cause again"
     _ -> name
 
 outcomeWords :: OutcomeKind -> Maybe Integer -> T.Text

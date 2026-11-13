@@ -45,6 +45,7 @@ module Lockstep.Kernel.Transaction
   , stateFromColumns
   , reproduces
   , haltChoices
+  , retryOperation
   ) where
 
 import Data.List qualified as L
@@ -110,14 +111,41 @@ reproduces check outcome out err =
         && (checkSignature check `T.isInfixOf` out || checkSignature check `T.isInfixOf` err)
     _ -> False
 
-{- | The choices a person is offered for a halt: accepting non-reproduction only
-where reproduction is missing; otherwise retrying the stage or stopping.
+{- | The choices a person is offered for a halt. Where a supplied reproduction
+command did not reproduce (stabilization S2): accepting non-reproduction (the
+candidate tests must still be RED), a replan (the Planner's discovery runs
+again) or stopping; never a retry, which would run the same command at the same
+basis again. Otherwise retrying the stage ('retryOperation') or stopping.
 -}
 haltChoices :: Stage -> T.Text -> [T.Text]
 haltChoices stage code =
-  if stage == StageReproduction && haltCodeFromText code == HaltFixed FixedReproductionMissing
-    then [T.pack "accept-non-reproduction", T.pack "retry", T.pack "stop"]
+  if replanHalt stage code
+    then [T.pack "accept-non-reproduction", T.pack "replan", T.pack "stop"]
     else [T.pack "retry", T.pack "stop"]
+
+-- | The one halt where non-reproduction may be accepted and a replan is offered.
+replanHalt :: Stage -> T.Text -> Bool
+replanHalt stage code =
+  stage == StageReproduction && haltCodeFromText code == HaltFixed FixedReproductionMissing
+
+{- | Stabilization S2: what a retry at a halted stage actually executes again
+(the stage runs from its start), in the words a person reads.
+-}
+retryOperation :: Stage -> T.Text
+retryOperation stage =
+  T.pack $
+    case stage of
+      StageBasis -> "Retry checks the project's folder and its Git state again (fix the folder first)."
+      StageDiscovery -> "Retry runs the Planner's search for the cause again."
+      StageReproduction -> "Retry runs the same reproduction command again."
+      StageCandidate -> "Retry asks the Planner for new candidate tests and runs them at the basis."
+      StageChallengePre -> "Retry runs the challenger on the candidate tests again."
+      StageFreeze -> "Retry makes the Supervisor's commit of the tests again."
+      StageImplement -> "Retry runs the Implementer again."
+      StageVerify -> "Retry runs the verification commands again."
+      StageChallengePost -> "Retry runs the challenger on the change again."
+      StageReview -> "Retry runs the Reviewer again."
+      StageAccept -> "Retry makes the Supervisor's acceptance commit again."
 
 data Stage
   = StageBasis
@@ -465,6 +493,8 @@ data TxInput
   | DiscoveryAnswered
   | Reproduced
   | NotReproduced
+  | -- | S2: the discovery gave no reproduction command; nothing ran, nothing was reproduced
+    ReproductionOmitted
   | CandidateClassified [BaselineClass]
   | CandidateRejected T.Text
   | RegressionFailed
@@ -485,6 +515,8 @@ data TxInput
   | ScopeRefused T.Text
   | HumanRetry
   | HumanAcceptNonReproduction
+  | -- | S2: a person sends the transaction back to the Planner's discovery
+    HumanReplan
   | HumanStop
   | HumanDone
   deriving (Eq, Show)
@@ -498,6 +530,7 @@ txInputName input =
       DiscoveryAnswered -> "discovery-answered"
       Reproduced -> "reproduced"
       NotReproduced -> "not-reproduced"
+      ReproductionOmitted -> "reproduction-omitted"
       CandidateClassified _ -> "candidate-classified"
       CandidateRejected _ -> "candidate-rejected"
       RegressionFailed -> "regression-failed"
@@ -518,12 +551,13 @@ txInputName input =
       ScopeRefused _ -> "scope-refused"
       HumanRetry -> "human-retry"
       HumanAcceptNonReproduction -> "human-accept-non-reproduction"
+      HumanReplan -> "human-replan"
       HumanStop -> "human-stop"
       HumanDone -> "human-done"
 
 humanInput :: TxInput -> Bool
 humanInput input =
-  input `L.elem` [HumanRetry, HumanAcceptNonReproduction, HumanStop, HumanDone]
+  input `L.elem` [HumanRetry, HumanAcceptNonReproduction, HumanReplan, HumanStop, HumanDone]
 
 {- | T2: the next transaction, or a refusal code. Check order: @agent-assertion@;
 @not-authorized@ (a person's input from the Supervisor, or a Supervisor's
@@ -578,7 +612,9 @@ stepTransaction principal input tx
           HumanStop -> to (Stopped code)
           HumanRetry -> to (Running stage)
           HumanAcceptNonReproduction
-            | stage == StageReproduction && haltCodeFromText code == HaltFixed FixedReproductionMissing -> to (Running StageCandidate)
+            | replanHalt stage code -> to (Running StageCandidate)
+          HumanReplan
+            | replanHalt stage code -> to (Running StageDiscovery)
           _ -> illegal
       Accepted ->
         case input of
@@ -593,6 +629,8 @@ stepTransaction principal input tx
       (StageDiscovery, DiscoveryAnswered) -> to (Running StageReproduction)
       (StageReproduction, Reproduced) -> to (Running StageCandidate)
       (StageReproduction, NotReproduced) -> halt StageReproduction FixedReproductionMissing
+      -- S2: no separate command is not a halt; the candidate tests must still be RED.
+      (StageReproduction, ReproductionOmitted) -> to (Running StageCandidate)
       (StageCandidate, CandidateClassified classes) ->
         let
           made = counters {candidatesMade = candidatesMade counters + 1}

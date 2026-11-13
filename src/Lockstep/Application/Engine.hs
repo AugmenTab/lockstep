@@ -146,6 +146,7 @@ import Lockstep.Kernel.Transaction
   , noCodingAgent
   , recordKindText
   , reproduces
+  , retryOperation
   , stageName
   , stateColumns
   , stateNameOf
@@ -968,9 +969,14 @@ invocationRow row invocation stage what runner adapter argv =
 
 {- | E7: the discovery's reproduction command, run at the basis by the
 Supervisor (a fresh snapshot, the runner's verification profile). It
-reproduces only if it fails with its signature ('reproduces'); without a
-command, or when it does not reproduce, the transaction halts with
-@reproduction-missing@ (only a person may accept non-reproduction).
+reproduces only if it fails with its signature ('reproduces'); when it does
+not reproduce, the transaction halts with @reproduction-missing@ (a person
+accepts non-reproduction, replans or stops).
+
+Stabilization S2: a discovery without a command is not a halt. The record says
+nothing ran and nothing was reproduced (@command@ null, @reproduced@ false),
+and the transaction goes on to the candidate tests, which must still show the
+bug RED at the basis.
 -}
 reproductionStage :: DatabaseRuntime -> Engine -> Store.TransactionRow -> IO (Either T.Text TxInput)
 reproductionStage runtime engine row = do
@@ -983,7 +989,7 @@ reproductionStage runtime engine row = do
         [] -> settle runtime row (SupervisorFailed (T.pack "discovery-missing")) [] id
         d : _ ->
           case discoveryReproduction d of
-            Nothing -> settle runtime row NotReproduced [(RecordReproduction, record reproductionSchema (Reproduction Nothing Nothing Nothing Nothing False Nothing Nothing Nothing))] id
+            Nothing -> settle runtime row ReproductionOmitted [(RecordReproduction, record reproductionSchema (Reproduction Nothing Nothing Nothing Nothing False Nothing Nothing Nothing))] id
             Just check -> runCheck basis check
  where
   runCheck basis check = do
@@ -1757,8 +1763,23 @@ resumeOf request =
     ("answered", Just "retry") -> Just (request, T.pack "retry", HumanRetry)
     ("answered", Just "stop") -> Just (request, T.pack "stop", HumanStop)
     ("answered", Just "accept-non-reproduction") -> Just (request, T.pack "accept-non-reproduction", HumanAcceptNonReproduction)
+    ("answered", Just "replan") -> Just (request, T.pack "replan", HumanReplan)
     _ -> Nothing
 
+-- | The halt's question; S2: it names what each offered choice executes.
 haltQuestion :: Stage -> T.Text -> T.Text
 haltQuestion stage code =
-  T.pack "Lockstep stopped this bug fix at the " <> stageName stage <> T.pack " step (" <> code <> T.pack "). What should happen next?"
+  T.pack "Lockstep stopped this bug fix at the "
+    <> stageName stage
+    <> T.pack " step ("
+    <> code
+    <> T.pack "). What should happen next? "
+    <> choicesExplained
+ where
+  choicesExplained =
+    if T.pack "retry" `L.elem` haltChoices stage code
+      then retryOperation stage
+      else
+        T.pack
+          "The command the Planner gave ran and did not show the bug; running it again would not change that. "
+          <> T.pack "Replan runs the Planner's search for the cause again; going on without reproducing it still needs tests that fail because of the bug."

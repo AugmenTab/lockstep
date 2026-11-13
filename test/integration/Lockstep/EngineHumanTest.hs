@@ -308,12 +308,12 @@ nonReproduction :: Assertion
 nonReproduction =
   withScenario $ \sc -> do
     bug <- admittedBug sc "non-reproduction"
-    engine <- engineWith sc happy {planner = [discoveryWith "", candidate]}
+    engine <- engineWith sc happy {planner = [discoveryWith "\"reproduction\":{\"argv\":[\"python3\",\"-c\",\"print(1)\"],\"signature\":\"add is wrong\"},", candidate]}
     view <- begin sc bug
     report <- stepTimes sc engine view 3
     viewHalt (viewAfter report) @?= Just "reproduction-missing"
     request <- openRequestFor sc bug
-    storedChoices request @?= ["accept-non-reproduction", "retry", "stop"]
+    storedChoices request @?= ["accept-non-reproduction", "replan", "stop"]
     _ <- answer sc "accept-1" request "accept-non-reproduction"
     resumed <- stepOnce sc engine view
     (inputOf resumed, viewStage (viewAfter resumed)) @?= ("human-accept-non-reproduction", "candidate")

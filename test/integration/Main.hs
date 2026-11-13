@@ -80,6 +80,7 @@ import Lockstep.RolesTest qualified as RolesTest
 import Lockstep.ServeWorkerTest qualified as ServeWorkerTest
 import Lockstep.ServiceDbTest qualified as ServiceDbTest
 import Lockstep.SnapshotBoundsTest qualified as SnapshotBoundsTest
+import Lockstep.StabilizationReproductionTest qualified as StabilizationReproductionTest
 import Lockstep.TasksBrowserTest qualified as TasksBrowserTest
 import Lockstep.TasksPageTest qualified as TasksPageTest
 import Lockstep.TasksTest qualified as TasksTest
@@ -167,4 +168,5 @@ main =
       , EngineRecoveryTwoTest.tests
       , EngineOwnershipTest.tests
       , LiveAdapterTest.tests
+      , StabilizationReproductionTest.tests
       ]
