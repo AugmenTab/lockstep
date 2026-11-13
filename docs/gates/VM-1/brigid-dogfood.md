@@ -5,7 +5,8 @@
 - **Owner's verdict (2026-11-12, in session, given before this packet was written):** "approved. I don't care
   for the way the test was written, but that isn't what we're testing, and it's partially my fault for not having
   examples already."
-- **Still open for you:** **Human Done** on the task page. The transaction stopped at `accepted`, waiting for you.
+- **Decision: ACCEPTED** by the owner on 2026-11-13: "Marked it done, and it's confirmed." Human Done was recorded
+  at 04:28:32Z (transaction `done`). Register entry: `docs/governance/DECISION_REGISTER.md`, "Gate VM-1".
 - **Evidence:** everything cited below is in `evidence/p5.12-brigid/`.
 
 ## 1. Result
@@ -18,7 +19,7 @@
 | Work branch | `lockstep/c7fd1644-d812-4368-9894-87faf8bc471b` |
 | Frozen tests | `cd0c17f` "Lockstep: frozen tests" (only `brigid/test/Spec.hs`, +69) |
 | Accepted | `73b0203` "Fix: HXML scrollToInputOffset serializes to the wrong attribute name." (only the two renderers, +2/−2) |
-| Final state | `accepted` at 21:45:34Z, waiting for your Done |
+| Final state | `accepted` at 21:45:34Z; **`done`** at 2026-11-13T04:28:32Z (your Done) |
 | `main` | unchanged at `9344bfb`; nothing pushed or merged |
 | Your checkout | `/Users/tab/personal/brigid` untouched (clean, `main...origin/main`) |
 
@@ -126,7 +127,7 @@ That's 740 tests: the basis's 736, plus the 4 new ones. None of the existing tes
 | 5 | ~21:03Z | Signed in to the app again (the 12 h session expired at 18:02Z) | Avoidable environment troubleshooting |
 | 6 | before 21:19Z | Retried the reproduction stop, on the Implementer's wrong advice; it could not help | Avoidable: Implementer's error |
 | 7 | 21:19Z | Accepted non-reproduction | Required by the Supervisor's stop, but avoidable: the role is told the command is optional (retro) |
-| 8 | pending | Human Done | Final Done |
+| 8 | 2026-11-13 04:28Z | Human Done | Final Done |
 
 - **Not needed:** permission prompts (none; the 6 role results whose kept tail includes the field all show
   `permission_denials: []`, and the other 2 tails were cut before it), manual test

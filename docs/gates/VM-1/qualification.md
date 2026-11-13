@@ -1,4 +1,4 @@
-# Gate VM-1: qualification record (P5.1–P5.11 qualified; P5.12 live run done, the owner's acceptance pending)
+# Gate VM-1: qualification record (P5.1–P5.11 qualified; P5.12 done; Gate VM-1 accepted by the owner 2026-11-13)
 
 Everything below is **model-free**. No provider was contacted, and only synthetic credentials were used (an
 `sk-ant-oat01-fake-…` OAuth file in a throwaway Docker volume). Model invocation count: **0**. The live paths ran
@@ -22,7 +22,7 @@ not evidence of a real subscription session.** The Implementer does not accept t
 | P5.11 full synthetic transaction through the real service | **Qualified** (scripted roles) | `check-capsule-e2e` 6/6 (`evidence/update1-e2e/`) |
 | P5.10 LAN exception (update 2) | **Qualified**: scoped, expiring, exact; the LAN prerequisite for the attended Brigid run is satisfied under `lan-exception.md` | `check-capsule-lan` 42/42 (`evidence/update2-lan/check/`) |
 | P5.10 fail-closed inventory (update 3) | **Qualified**: TCP and UDP collected separately, each counted only if `netstat` exited 0; an unrecognized or malformed listing is refused (contract N9) | `check-capsule-lan` 63/63 (`evidence/update3-lan/`); runner D2 (91/91) |
-| P5.12 Brigid / Gate VM-1 | **Live run done, 2026-11-12**: the fix `73b0203` was accepted on the work branch (frozen tests `cd0c17f`, basis `9344bfb`), with 542,209 tokens across 8 role runs. The Engineer set up its own toolchain in `brigid1`. Verification passed, and so did the Implementer's rerun: 740/740. Five avoidable interventions are recorded. The owner gave "approved" in session; **the owner still needs to record Done and Gate VM-1** | `brigid-dogfood.md`; `evidence/p5.12-brigid/` |
+| P5.12 Brigid / Gate VM-1 | **Live run done, 2026-11-12**: the fix `73b0203` was accepted on the work branch (frozen tests `cd0c17f`, basis `9344bfb`), with 542,209 tokens across 8 role runs. The Engineer set up its own toolchain in `brigid1`. Verification passed, and so did the Implementer's rerun: 740/740. Five avoidable interventions are recorded. **Done, and Gate VM-1 ACCEPTED by the owner on 2026-11-13** | `brigid-dogfood.md`; `evidence/p5.12-brigid/` |
 
 Regression on the final tree: `scripts/check --integration`: format, lint, build, unit 870/870, guard, integration
 571/571, backup/restore (`evidence/check-integration-update1.log`).
