@@ -1,0 +1,63 @@
+scripts/capsule-preflight --helper-state .local/control --repo /Users/tab/lockstep-projects/brigid
+(2026-11-12 ~06:07Z; Lockstep 0bd82b2; Brigid project ab412d95-5690-4033-80b8-730386cb4ad7; basis 9344bfb)
+
+PASS capsule-config
+PASS capsule-healthy
+PASS capsule-ownership
+PASS capsule-template-current
+PASS host-loopback-isolation
+PASS workspace-writable
+PASS disk-space
+PASS guest-docker
+PASS credential-not-in-guest
+PASS no-host-mounts
+PASS bridge-executor
+PASS bridge-present
+PASS tool-routing
+PASS verification-environment
+PASS git-authority
+NOTE lan-exception accepts tcp * 5000 ControlCenter (allow tcp * 5000 ControlCenter)
+NOTE lan-exception accepts tcp * 60683 rapportd (allow tcp * dynamic rapportd)
+NOTE lan-exception accepts tcp * 7000 ControlCenter (allow tcp * 7000 ControlCenter)
+NOTE lan-exception accepts tcp * 8780 OrbStack Helper (allow tcp * 8780 OrbStack Helper)
+NOTE lan-exception accepts tcp * 8781 OrbStack Helper (allow tcp * 8781 OrbStack Helper)
+NOTE lan-exception accepts udp * 137 netbiosd (allow udp * 137 netbiosd)
+NOTE lan-exception accepts udp * 138 netbiosd (allow udp * 138 netbiosd)
+NOTE lan-exception accepts udp * 5353 Brave Browser He (allow udp * 5353 Brave Browser He)
+NOTE lan-exception accepts udp * 5353 mDNSResponder (allow udp * 5353 mDNSResponder)
+NOTE lan-exception accepts udp * 547 dhcp6d (allow udp * 547 dhcp6d)
+NOTE lan-exception accepts udp * 59749 syslogd (allow udp * dynamic syslogd)
+NOTE lan-exception accepts udp * 61173 sharingd (allow udp * dynamic sharingd)
+PASS lan-exception
+PASS host-network-exposure
+capsule-preflight: 0 failure(s)
+
+Setup interventions so far (for the gate record):
+- Owner: initial authorization ("I authorize the live Brigid run").
+- Owner decision: basis 9344bfb (GitHub main moved after readiness prep).
+- Owner: created the project in the app (the Implementer had first pointed at the wrong sign-in page and
+  started the service without its project folders: avoidable, Implementer's setup errors).
+- Owner question recorded for the Planner: why a separate copy instead of the owner's checkout.
+
+Run log:
+- 06:08:42Z handed over; branch lockstep/c7fd1644-d812-4368-9894-87faf8bc471b made.
+- 06:08:59Z discovery/planner (run 71a6485a…, brigidv): role-crashed, exit 1, 0 tokens. CLI result:
+  "Failed to authenticate. API Error: 401 OAuth access token has expired." (api_error_status 401).
+  claude auth status (offline) had said loggedIn true. Egress summary: tunnels 4, refused 6 (hosts not
+  recorded). Intervention needed (avoidable environment troubleshooting): owner re-runs
+  --provider-auth-login, then "Try this step again".
+  Follow-ups for the Planner: preflight cannot see an expired token; the filter does not record refused hosts.
+- Owner re-logged in (--provider-auth-login) after the 401; retro note added for the Planner (setup-token vs auth login).
+- 15:45:43Z discovery/planner retry (run 98f4938a..., brigidv): answered, exit 0, 48470 tokens, 11 turns. Read-only; diagnosis cites the two renderers. It deliberately omitted the "optional" reproduction command.
+- 15:46:20Z Supervisor: reproduction {"command":null,"reproduced":false} -> halted, reproduction-missing. Waiting on the owner (retry or accept non-reproduction). Mismatch for the Planner: the role is told reproduction is optional, the Supervisor halts without one.
+- ~21:03Z owner signed out of the app (12 h operator session expired 18:02Z); new sign-in link issued. Retro friction: session shorter than an attended run.
+- Owner chose retry on reproduction-missing.
+- Retry on reproduction re-ran only the reproduction stage with the same null command -> halted reproduction-missing again (no role run, 0 tokens). The Implementer had wrongly said retry would re-run the Planner: an avoidable wasted intervention. Retro: retry at reproduction cannot help when discovery gave no command.
+- Owner chose accept-non-reproduction.
+- 21:2xZ owner feedback on the candidate test: a standalone one-attribute check file (brigid/test/HXML/ScrollToInputOffsetCheck.hs) is poor test design; existing suite is test/Spec.hs + test/HTML/Render/{Attributes,Elements}.hs (no HXML render tests yet). Owner notes this is not what the gate measures. Recorded for the retro; no intervention in the run.
+- 21:19-21:45Z after accept-non-reproduction: candidate 131425 (red-wrong-reason: standalone file), candidate 101045 (red-confirmed, in test/Spec.hs), challenge-pre 57690, implement (brigid1, write) 102828, verify x2 exit 0, challenge-post 61049, review 39702 (approve).
+- 21:45:34Z ACCEPTED: 73b0203 on lockstep/c7fd1644-d812-4368-9894-87faf8bc471b (freeze cd0c17f, basis 9344bfb). Diff: 2 renderer lines + 69 lines in test/Spec.hs.
+- Role tokens total 542209 (failed 401 run: 0). Owner checkout /Users/tab/personal/brigid untouched (clean, main...origin/main).
+- Gate VM-1 NOT self-accepted; evidence packet next, owner decides.
+- 2026-11-12 owner verdict in session: "approved. I dont care for the way the test was written, but that isnt what were testing..." Human Done still pending in the app.
+- 2026-11-13 04:20-04:24Z Implementer rerun (model-free) of scripts/test at 73b0203 in brigidv from verify: 474 + 266 = 740 passed, exit 0. Packet: docs/gates/VM-1/brigid-dogfood.md.

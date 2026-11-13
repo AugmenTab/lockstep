@@ -1,0 +1,115 @@
+diff --git a/brigid/src/Brigid/HXML/Render/ByteString.hs b/brigid/src/Brigid/HXML/Render/ByteString.hs
+index d1da68e..49a78fb 100644
+--- a/brigid/src/Brigid/HXML/Render/ByteString.hs
++++ b/brigid/src/Brigid/HXML/Render/ByteString.hs
+@@ -344,7 +344,7 @@ renderAttribute attr =
+ 
+     Attr_ScrollToInputOffset scrollToInputOffset ->
+       Just
+-        . buildAttribute "scroll-orientation"
++        . buildAttribute "scroll-to-input-offset"
+         $ Render.showBytesBuilder scrollToInputOffset
+ 
+     Attr_SecureText secureText ->
+diff --git a/brigid/src/Brigid/HXML/Render/Text.hs b/brigid/src/Brigid/HXML/Render/Text.hs
+index 0af6129..e45a9f9 100644
+--- a/brigid/src/Brigid/HXML/Render/Text.hs
++++ b/brigid/src/Brigid/HXML/Render/Text.hs
+@@ -343,7 +343,7 @@ renderAttribute attr =
+ 
+     Attr_ScrollToInputOffset scrollToInputOffset ->
+       Just
+-        . buildAttribute "scroll-orientation"
++        . buildAttribute "scroll-to-input-offset"
+         $ Render.showIntegerToTextBuilder scrollToInputOffset
+ 
+     Attr_SecureText secureText ->
+diff --git a/brigid/test/Spec.hs b/brigid/test/Spec.hs
+index 04ddc37..669d342 100644
+--- a/brigid/test/Spec.hs
++++ b/brigid/test/Spec.hs
+@@ -2,15 +2,84 @@ module Main
+   ( main
+   ) where
+ 
++import Data.ByteString.Char8 qualified as BS8
++import Data.Text qualified as T
+ import Test.Tasty qualified as Tasty
++import Test.Tasty.HUnit qualified as HUnit
++
++import Brigid.HXML.Attributes qualified as A
++import Brigid.HXML.Elements qualified as E
++import Brigid.HXML.Render.ByteString qualified as RenderBS
++import Brigid.HXML.Render.Text qualified as RenderText
++import Brigid.HXML.Types qualified as HXML
+ 
+ import HTML.Render.Attributes qualified as Attrs
+ import HTML.Render.Elements qualified as Elements
+ 
++viewOffset :: E.HXML
++viewOffset =
++  E.doc []
++    [ E.screen []
++        [ E.body []
++            [ E.view [ A.scrollToInputOffset 50 ] [] ]
++        ]
++    ]
++
++viewBoth :: E.HXML
++viewBoth =
++  E.doc []
++    [ E.screen []
++        [ E.body []
++            [ E.view [ A.scrollOrientation HXML.Horizontal
++                     , A.scrollToInputOffset 50
++                     ]
++                []
++            ]
++        ]
++    ]
++
++hxmlTests :: Tasty.TestTree
++hxmlTests =
++  Tasty.testGroup "HXML scrollToInputOffset"
++    [ HUnit.testCase "text: scroll-to-input-offset name" $ do
++        let out = RenderText.renderHXML viewOffset
++        HUnit.assertBool
++          ("expected scroll-to-input-offset=\"50\" in: " <> T.unpack out)
++          (T.isInfixOf "scroll-to-input-offset=\"50\"" out)
++        HUnit.assertBool
++          ("unexpected scroll-orientation in: " <> T.unpack out)
++          (not $ T.isInfixOf "scroll-orientation" out)
++    , HUnit.testCase "bytes: scroll-to-input-offset name" $ do
++        let out = RenderBS.renderHXML viewOffset
++        HUnit.assertBool
++          ("expected scroll-to-input-offset=\"50\" in: " <> BS8.unpack out)
++          (BS8.isInfixOf "scroll-to-input-offset=\"50\"" out)
++        HUnit.assertBool
++          ("unexpected scroll-orientation in: " <> BS8.unpack out)
++          (not $ BS8.isInfixOf "scroll-orientation" out)
++    , HUnit.testCase "text: both attributes coexist" $ do
++        let out = RenderText.renderHXML viewBoth
++        HUnit.assertBool
++          ("expected scroll-to-input-offset=\"50\" in: " <> T.unpack out)
++          (T.isInfixOf "scroll-to-input-offset=\"50\"" out)
++        HUnit.assertBool
++          ("expected scroll-orientation in: " <> T.unpack out)
++          (T.isInfixOf "scroll-orientation=\"horizontal\"" out)
++    , HUnit.testCase "bytes: both attributes coexist" $ do
++        let out = RenderBS.renderHXML viewBoth
++        HUnit.assertBool
++          ("expected scroll-to-input-offset=\"50\" in: " <> BS8.unpack out)
++          (BS8.isInfixOf "scroll-to-input-offset=\"50\"" out)
++        HUnit.assertBool
++          ("expected scroll-orientation in: " <> BS8.unpack out)
++          (BS8.isInfixOf "scroll-orientation=\"horizontal\"" out)
++    ]
++
+ main :: IO ()
+ main = do
+   Tasty.defaultMain $
+     Tasty.testGroup "Brigid tests"
+       [ Elements.tests
+       , Attrs.tests
++      , hxmlTests
+       ]

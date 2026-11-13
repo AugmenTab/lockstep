@@ -1,0 +1,16 @@
+     stage      |     what     |  runner   |       adapter       |          started_at           | millis |   outcome    | exit_code | stdout_bytes | stderr_bytes 
+----------------+--------------+-----------+---------------------+-------------------------------+--------+--------------+-----------+--------------+--------------
+ discovery      | planner      | container | claude-code-capsule | 2026-11-12 06:08:41.922469+00 |  17000 | role-crashed |         1 |         1312 |            0
+ discovery      | planner      | container | claude-code-capsule | 2026-11-12 15:45:43.262434+00 |  33000 | answered     |         0 |         2743 |            0
+ candidate      | planner      | container | claude-code-capsule | 2026-11-12 21:19:29.905288+00 |  54000 | answered     |         0 |         3041 |            0
+ candidate      | baseline     | container | supervisor          | 2026-11-12 21:20:26.643972+00 | 166000 | exited       |         1 |          165 |        25369
+ candidate      | planner      | container | claude-code-capsule | 2026-11-12 21:23:16.347019+00 |  59000 | answered     |         0 |         3220 |            0
+ candidate      | baseline     | container | supervisor          | 2026-11-12 21:24:18.30568+00  | 168000 | exited       |         1 |            0 |        91178
+ challenge-pre  | challenger   | container | claude-code-capsule | 2026-11-12 21:27:10.154584+00 |  30000 | answered     |         0 |         2732 |            0
+ implement      | implementer  | container | claude-code-capsule | 2026-11-12 21:27:46.320031+00 | 612000 | answered     |         0 |         2563 |            0
+ verify         | verification | container | supervisor          | 2026-11-12 21:38:02.219013+00 | 216000 | exited       |         0 |            0 |        89225
+ verify         | verification | container | supervisor          | 2026-11-12 21:41:38.343742+00 | 172000 | exited       |         0 |            0 |        89193
+ challenge-post | challenger   | container | claude-code-capsule | 2026-11-12 21:44:34.264143+00 |  25000 | answered     |         0 |         2694 |            0
+ review         | reviewer     | container | claude-code-capsule | 2026-11-12 21:45:04.560524+00 |  26000 | answered     |         0 |         2539 |            0
+(12 rows)
+
