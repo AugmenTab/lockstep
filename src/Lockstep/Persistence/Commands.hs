@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeFamilies #-}
+
 {- | Storage for the workspace and command receipts (contract C-P1.4 E5, E7).
 Callers run these inside one transaction; 'lockWorkspace' takes the row lock
 that serializes every command.
@@ -11,21 +13,29 @@ module Lockstep.Persistence.Commands
   , findReceiptByKey
   , findReceiptById
   , insertReceipt
+  , receiptTable
+  , receiptIdField
+  , receiptKindField
+  , receiptActorField
+  , receiptOutcomeField
+  , receiptRevisionField
+  , receiptAcceptedAtField
   ) where
 
-import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import Data.ByteString qualified as BS
+import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Text qualified as T
-import Data.Text.Encoding qualified as TE
 import Data.Time qualified as Time
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
-import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
-import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
+
+import Lockstep.Kernel.Identity (ReceiptId (..))
+import Lockstep.Persistence.Entity (EntityKey, serialKeyField)
+import Lockstep.Persistence.Fields (digestField, forUpdate, headMay, hexDigest, setNow)
 
 data ReceiptRow
   = ReceiptRow
-  { rowId :: Int64
+  { rowId :: ReceiptId
   , rowKey :: T.Text
   , rowKind :: T.Text
   , rowDigestHex :: T.Text
@@ -35,6 +45,8 @@ data ReceiptRow
   , rowRevision :: Int64
   , rowAcceptedAt :: Time.UTCTime
   }
+
+type instance EntityKey ReceiptRow = ReceiptId
 
 data NewReceipt
   = NewReceipt
@@ -48,109 +60,109 @@ data NewReceipt
   , newRevision :: Int64
   }
 
-text :: T.Text -> RawSql.RawSql
-text =
-  RawSql.parameter . SqlValue.fromText
+-- lockstep_workspace ---------------------------------------------------------------
 
-int64 :: Int64 -> RawSql.RawSql
-int64 =
-  RawSql.parameter . SqlValue.fromInt64
-
-sql :: String -> RawSql.RawSql
-sql =
-  RawSql.fromString
-
-workspaceMarshaller :: O.AnnotatedSqlMarshaller (T.Text, Int64) (T.Text, Int64)
-workspaceMarshaller =
-  O.annotateSqlMarshallerEmptyAnnotation $
+-- | The one workspace row: (name, revision).
+workspaceTable :: O.TableDefinition (O.HasKey Bool) (T.Text, Int64) (T.Text, Int64)
+workspaceTable =
+  O.mkTableDefinition "lockstep_workspace" (O.primaryKey singletonField) $
     (,)
-      <$> O.marshallField fst (O.unboundedTextField "name")
-      <*> O.marshallField snd (O.bigIntegerField "revision")
+      <$> O.marshallField fst workspaceNameField
+      <*> O.marshallField snd workspaceRevisionField
+
+-- | The primary key, always @true@ (a CHECK constraint keeps the table to one row).
+singletonField :: O.FieldDefinition O.NotNull Bool
+singletonField =
+  O.booleanField "singleton"
+
+workspaceNameField :: O.FieldDefinition O.NotNull T.Text
+workspaceNameField =
+  O.unboundedTextField "name"
+
+workspaceRevisionField :: O.FieldDefinition O.NotNull Int64
+workspaceRevisionField =
+  O.bigIntegerField "revision"
+
+theWorkspace :: O.SelectOptions
+theWorkspace =
+  O.where_ (O.fieldEquals singletonField True)
 
 -- | The workspace name and revision, locked until the transaction ends.
 lockWorkspace :: O.MonadOrville m => m (Maybe (T.Text, Int64))
 lockWorkspace =
-  headMay
-    <$> O.executeAndDecode
-      O.SelectQuery
-      (sql "SELECT name, revision FROM lockstep_workspace WHERE singleton FOR UPDATE")
-      workspaceMarshaller
+  O.findFirstEntityBy workspaceTable (theWorkspace <> forUpdate)
 
 readWorkspace :: O.MonadOrville m => m (Maybe (T.Text, Int64))
 readWorkspace =
-  headMay
-    <$> O.executeAndDecode
-      O.SelectQuery
-      (sql "SELECT name, revision FROM lockstep_workspace WHERE singleton")
-      workspaceMarshaller
+  O.findFirstEntityBy workspaceTable theWorkspace
 
 updateWorkspace :: O.MonadOrville m => T.Text -> Int64 -> m ()
 updateWorkspace name revision =
-  O.executeVoid O.UpdateQuery $
-    sql "UPDATE lockstep_workspace SET name = "
-      <> text name
-      <> sql ", revision = "
-      <> int64 revision
-      <> sql ", updated_at = now() WHERE singleton"
+  O.updateFields
+    workspaceTable
+    (O.setField workspaceNameField name :| [O.setField workspaceRevisionField revision, setNow (O.utcTimestampField "updated_at")])
+    (Just (O.fieldEquals singletonField True))
 
-receiptColumns :: String
-receiptColumns =
-  "SELECT id, idempotency_key, command_kind, encode(payload_digest, 'hex') AS digest_hex, actor, expected_revision, outcome, resulting_revision, accepted_at FROM lockstep_command_receipts WHERE "
+-- lockstep_command_receipts --------------------------------------------------------
 
-receiptMarshaller :: O.AnnotatedSqlMarshaller ReceiptRow ReceiptRow
-receiptMarshaller =
-  O.annotateSqlMarshallerEmptyAnnotation $
-    ReceiptRow
-      <$> O.marshallField rowId (O.bigIntegerField "id")
-      <*> O.marshallField rowKey (O.unboundedTextField "idempotency_key")
-      <*> O.marshallField rowKind (O.unboundedTextField "command_kind")
-      <*> O.marshallField rowDigestHex (O.unboundedTextField "digest_hex")
-      <*> O.marshallField rowActor (O.unboundedTextField "actor")
-      <*> O.marshallField rowExpected (O.bigIntegerField "expected_revision")
-      <*> O.marshallField rowOutcome (O.unboundedTextField "outcome")
-      <*> O.marshallField rowRevision (O.bigIntegerField "resulting_revision")
-      <*> O.marshallField rowAcceptedAt (O.utcTimestampField "accepted_at")
+{- | A receipt is written as a 'NewReceipt' and read back as a 'ReceiptRow'
+with its id, its payload digest as lowercase hex, and the time the database
+accepted it. Its key is the database's, so the write type differs from the
+read type and it has no 'Lockstep.Persistence.Entity.mkEntityTable' marshaller
+of its own; the key is still 'ReceiptRow''s ('EntityKey').
+-}
+receiptTable :: O.TableDefinition (O.HasKey (EntityKey ReceiptRow)) NewReceipt ReceiptRow
+receiptTable =
+  O.mkTableDefinition "lockstep_command_receipts" (O.primaryKey receiptIdField) $
+    (\receiptId key _version kind digest actor expected outcome revision acceptedAt -> ReceiptRow receiptId key kind (hexDigest digest) actor expected outcome revision acceptedAt)
+      <$> O.marshallReadOnlyField receiptIdField
+      <*> O.marshallField newKey receiptKeyField
+      <*> O.marshallField newVersion (O.integerField "envelope_version")
+      <*> O.marshallField newKind receiptKindField
+      <*> O.marshallField newDigest (digestField "payload_digest")
+      <*> O.marshallField newActor receiptActorField
+      <*> O.marshallField newExpected (O.bigIntegerField "expected_revision")
+      <*> O.marshallField newOutcome receiptOutcomeField
+      <*> O.marshallField newRevision receiptRevisionField
+      <*> O.marshallReadOnlyField receiptAcceptedAtField
+
+receiptIdField :: O.FieldDefinition O.NotNull ReceiptId
+receiptIdField =
+  serialKeyField "id"
+
+receiptKindField :: O.FieldDefinition O.NotNull T.Text
+receiptKindField =
+  O.unboundedTextField "command_kind"
+
+receiptActorField :: O.FieldDefinition O.NotNull T.Text
+receiptActorField =
+  O.unboundedTextField "actor"
+
+receiptOutcomeField :: O.FieldDefinition O.NotNull T.Text
+receiptOutcomeField =
+  O.unboundedTextField "outcome"
+
+receiptRevisionField :: O.FieldDefinition O.NotNull Int64
+receiptRevisionField =
+  O.bigIntegerField "resulting_revision"
+
+receiptAcceptedAtField :: O.FieldDefinition O.NotNull Time.UTCTime
+receiptAcceptedAtField =
+  O.utcTimestampField "accepted_at"
+
+receiptKeyField :: O.FieldDefinition O.NotNull T.Text
+receiptKeyField =
+  O.unboundedTextField "idempotency_key"
 
 findReceiptByKey :: O.MonadOrville m => T.Text -> m (Maybe ReceiptRow)
 findReceiptByKey key =
-  headMay <$> O.executeAndDecode O.SelectQuery (sql receiptColumns <> sql "idempotency_key = " <> text key) receiptMarshaller
+  O.findFirstEntityBy receiptTable (O.where_ (O.fieldEquals receiptKeyField key))
 
-findReceiptById :: O.MonadOrville m => Int64 -> m (Maybe ReceiptRow)
-findReceiptById receiptId =
-  headMay <$> O.executeAndDecode O.SelectQuery (sql receiptColumns <> sql "id = " <> int64 receiptId) receiptMarshaller
+findReceiptById :: O.MonadOrville m => ReceiptId -> m (Maybe ReceiptRow)
+findReceiptById =
+  O.findEntity receiptTable
 
 -- | Inserts a receipt; returns its id and acceptance time.
-insertReceipt :: O.MonadOrville m => NewReceipt -> m (Maybe (Int64, Time.UTCTime))
+insertReceipt :: O.MonadOrville m => NewReceipt -> m (Maybe (ReceiptId, Time.UTCTime))
 insertReceipt receipt =
-  headMay
-    <$> O.executeAndDecode
-      O.InsertQuery
-      ( sql "INSERT INTO lockstep_command_receipts (idempotency_key, envelope_version, command_kind, payload_digest, actor, expected_revision, outcome, resulting_revision) VALUES ("
-          <> text (newKey receipt)
-          <> sql ", "
-          <> RawSql.parameter (SqlValue.fromInt32 (newVersion receipt))
-          <> sql ", "
-          <> text (newKind receipt)
-          <> sql ", decode("
-          <> text (TE.decodeLatin1 (convertToBase Base16 (newDigest receipt)))
-          <> sql ", 'hex'), "
-          <> text (newActor receipt)
-          <> sql ", "
-          <> int64 (newExpected receipt)
-          <> sql ", "
-          <> text (newOutcome receipt)
-          <> sql ", "
-          <> int64 (newRevision receipt)
-          <> sql ") RETURNING id, accepted_at"
-      )
-      ( O.annotateSqlMarshallerEmptyAnnotation $
-          (,)
-            <$> O.marshallField fst (O.bigIntegerField "id")
-            <*> O.marshallField snd (O.utcTimestampField "accepted_at")
-      )
-
-headMay :: [a] -> Maybe a
-headMay xs =
-  case xs of
-    [] -> Nothing
-    x : _ -> Just x
+  fmap (\row -> (rowId row, rowAcceptedAt row)) . headMay <$> O.insertAndReturnEntities receiptTable (receipt :| [])

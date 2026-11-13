@@ -27,14 +27,24 @@ module Lockstep.Kernel.Effect
   , Lease (..)
   , Observation (..)
   , Settlement (..)
+  , Provenance (..)
+  , Reason (..)
+  , attestedReasonText
+  , reasonOf
   , IntentState (..)
   , Intent (..)
   , newIntents
   , IntentInput (..)
   , stepIntent
   , intentStateName
+  , IntentStateName (..)
+  , intentStateNameOf
+  , intentStateNameText
+  , parseIntentStateName
+  , parseEffectClass
   , EffectRefusal (..)
   , effectRefusalCode
+  , effectRefusalMessage
   ) where
 
 import Data.Char qualified as Char
@@ -45,9 +55,10 @@ import Data.Time (UTCTime)
 import Flipstone.Prelude
 import Text.Show (Show)
 
+import Lockstep.Kernel.Enum (parseEnumText)
 import Lockstep.Kernel.Identity (TicketId, Uuid, WorkOrderId)
 import Lockstep.Kernel.Profile (ContentDigest, Hasher (..))
-import Lockstep.Kernel.Transition (Command (..), Principal (..))
+import Lockstep.Kernel.Transition (Command (..), Principal (..), principalLabel)
 
 data EffectClass
   = Repeatable
@@ -108,6 +119,8 @@ mkEffectSpec name terms budget
         TermsUnqueryable | budget /= 0 -> Left UnsafeRetryBudget
         TermsIdempotent idem
           | keyLifetimeSeconds idem < 1 -> Left (InvalidEffectSpec (T.pack "the key lifetime must be at least one second"))
+          -- The stored lifetime is a PostgreSQL bigint; a longer one cannot be recorded faithfully.
+          | keyLifetimeSeconds idem > toInteger (maxBound :: Int64) -> Left (InvalidEffectSpec (T.pack "the key lifetime must be at most 9223372036854775807 seconds"))
           | not (refusesChangedParameters idem) -> Left IdempotencyUndocumented
         _ -> Right (EffectSpec name terms budget)
 
@@ -178,6 +191,50 @@ data Settlement
   = SettledApplied T.Text
   | SettledNotApplied T.Text
   deriving (Eq, Show)
+
+{- | Where an outcome's reason comes from: the destination's own answer (or
+Lockstep's lookup of it), or a person who attested it (C-P2.7 R5; DG-04
+binding requirement 6).
+-}
+data Provenance
+  = Observed
+  | HumanAttested
+  deriving (Eq, Show)
+
+{- | An outcome's reason with its provenance. The states keep a reason as the
+text that is stored ('IntentNotApplied', 'Settlement'); an attested one is
+that text after 'attestedReasonText's marker. 'reasonOf' reads it back.
+-}
+data Reason
+  = Reason
+  { reasonProvenance :: Provenance
+  , reasonText :: T.Text
+  -- ^ the reason as stored (for an attested one, with its marker)
+  }
+  deriving (Eq, Show)
+
+-- | The stored reason of a person's attestation: the evidence after the fixed marker @human-attested: @.
+attestedReasonText :: T.Text -> T.Text
+attestedReasonText evidence =
+  attestedMarker <> evidence
+
+{- | The provenance of a stored reason, decided here and nowhere else: a reason
+that begins with the marker of 'attestedReasonText' is 'HumanAttested'; any
+other is 'Observed'. The reader is the prefix rule the frozen suite pins (unit
+@RemediationTest@ "a 'human-attested:' outcome is ATTESTED without the
+record"), so the guarantee is on the writer side: only a person's resolution
+('Lockstep.Kernel.Reconciliation.resolveIntent') writes the marker, and an
+observation whose text carries it is refused as malformed where observations
+become reasons ('observed'). The resolution's attestation record is the other,
+independent, source of the same fact.
+-}
+reasonOf :: T.Text -> Reason
+reasonOf text =
+  Reason (if attestedMarker `T.isPrefixOf` text then HumanAttested else Observed) text
+
+attestedMarker :: T.Text
+attestedMarker =
+  T.pack "human-attested: "
 
 data IntentState
   = IntentPending
@@ -323,13 +380,28 @@ cell intent input =
       IntentUnknown _ -> True
       _ -> False
 
--- | E6: a missing answer is an unknown outcome, never a failure.
+{- | E6: a missing answer is an unknown outcome, never a failure. This is the
+one place an observation's text becomes an intent's reason. A destination
+never speaks for a person (DG-04 binding requirement 6): an answer whose text
+carries the attestation marker ('attestedReasonText') is not stored as it
+came, since it would read back as attested ('reasonOf'); it is a malformed
+answer, an unknown outcome, as the executor makes any other invalid answer.
+-}
 observed :: Observation -> IntentState
 observed observation =
   case observation of
-    DestinationApplied result -> IntentApplied result
-    DestinationNotApplied reason -> IntentNotApplied reason
-    NoAnswer reason -> IntentUnknown reason
+    DestinationApplied result
+      | forged result -> malformed
+      | otherwise -> IntentApplied result
+    DestinationNotApplied reason
+      | forged reason -> malformed
+      | otherwise -> IntentNotApplied reason
+    NoAnswer reason
+      | forged reason -> malformed
+      | otherwise -> IntentUnknown reason
+ where
+  forged text = reasonProvenance (reasonOf text) == HumanAttested
+  malformed = IntentUnknown (T.pack "malformed-answer")
 
 inputName :: IntentInput -> T.Text
 inputName input =
@@ -342,17 +414,55 @@ inputName input =
       IntentAbandon _ -> "abandon"
 
 intentStateName :: IntentState -> T.Text
-intentStateName state =
+intentStateName =
+  intentStateNameText . intentStateNameOf
+
+-- | Which state an intent is in, without its lease or outcome (the stored @state@ column).
+data IntentStateName
+  = NamePending
+  | NameClaimed
+  | NameDispatched
+  | NameConfirmedApplied
+  | NameConfirmedNotApplied
+  | NameOutcomeUnknown
+  | NameSettled
+  | NameAbandoned
+  deriving (Eq, Show, Enum, Bounded)
+
+intentStateNameOf :: IntentState -> IntentStateName
+intentStateNameOf state =
+  case state of
+    IntentPending -> NamePending
+    IntentClaimed _ -> NameClaimed
+    IntentDispatched _ -> NameDispatched
+    IntentApplied _ -> NameConfirmedApplied
+    IntentNotApplied _ -> NameConfirmedNotApplied
+    IntentUnknown _ -> NameOutcomeUnknown
+    IntentSettled _ -> NameSettled
+    IntentAbandoned _ -> NameAbandoned
+
+intentStateNameText :: IntentStateName -> T.Text
+intentStateNameText name =
   T.pack $
-    case state of
-      IntentPending -> "pending"
-      IntentClaimed _ -> "claimed"
-      IntentDispatched _ -> "dispatched"
-      IntentApplied _ -> "confirmed-applied"
-      IntentNotApplied _ -> "confirmed-not-applied"
-      IntentUnknown _ -> "outcome-unknown"
-      IntentSettled _ -> "settled"
-      IntentAbandoned _ -> "abandoned"
+    case name of
+      NamePending -> "pending"
+      NameClaimed -> "claimed"
+      NameDispatched -> "dispatched"
+      NameConfirmedApplied -> "confirmed-applied"
+      NameConfirmedNotApplied -> "confirmed-not-applied"
+      NameOutcomeUnknown -> "outcome-unknown"
+      NameSettled -> "settled"
+      NameAbandoned -> "abandoned"
+
+-- | The state name of its text; derived from 'intentStateNameText'.
+parseIntentStateName :: T.Text -> Maybe IntentStateName
+parseIntentStateName =
+  parseEnumText intentStateNameText
+
+-- | The effect class of its name; derived from 'effectClassName'.
+parseEffectClass :: T.Text -> Maybe EffectClass
+parseEffectClass =
+  parseEnumText effectClassName
 
 data EffectRefusal
   = InvalidEffectSpec T.Text
@@ -395,3 +505,25 @@ effectRefusalCode refusal =
       AlreadyObserved -> "already-observed"
       OutcomeUnknownBlocks -> "outcome-unknown"
       RetriesExhausted -> "retries-exhausted"
+
+-- | The refusal in words (its code is 'effectRefusalCode').
+effectRefusalMessage :: EffectRefusal -> T.Text
+effectRefusalMessage refusal =
+  case refusal of
+    InvalidEffectSpec reason -> T.pack "the effect spec is not valid: " <> reason
+    IdempotencyUndocumented -> T.pack "an idempotent effect must document its key lifetime"
+    UnsafeRetryBudget -> T.pack "this effect class may not be retried"
+    InvalidEffectKey reason -> T.pack "the effect key is not valid: " <> reason
+    InvalidEffectParameters -> T.pack "the effect parameters are not valid"
+    DuplicateEffectKey key -> T.pack "the effect key " <> effectKeyText key <> T.pack " is declared twice"
+    EffectAgentAssertion -> T.pack "an agent's assertion is never a command"
+    EffectAlreadySettled -> T.pack "the intent is already settled"
+    EffectNotAuthorized principal -> principalLabel principal <> T.pack " may not step an effect intent"
+    StaleClaim -> T.pack "the intent's claim has moved on"
+    IllegalIntentTransition state input -> T.pack "a " <> input <> T.pack " is not possible while the intent is " <> state
+    ClaimHeld -> T.pack "another claim on the intent is still held"
+    LeaseExpired -> T.pack "the intent's lease has expired"
+    DispatchedNeedsRecovery -> T.pack "the intent was dispatched and needs recovery first"
+    AlreadyObserved -> T.pack "the intent's outcome is already observed"
+    OutcomeUnknownBlocks -> T.pack "the intent's outcome is unknown; a person must resolve it"
+    RetriesExhausted -> T.pack "the intent's retries are spent"

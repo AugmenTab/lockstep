@@ -15,6 +15,7 @@ module Lockstep.Kernel.Recovery
   , renderRecovery
   , RecoveryRefusal (..)
   , recoveryRefusalCode
+  , recoveryRefusalMessage
   ) where
 
 import Data.Text qualified as T
@@ -31,7 +32,7 @@ import Lockstep.Kernel.Effect
   , effectSpecClass
   , intentStateName
   )
-import Lockstep.Kernel.Transition (Command (..), Principal (..))
+import Lockstep.Kernel.Transition (Command (..), Principal (..), principalLabel)
 
 data RecoveryInput
   = RecoveryInput
@@ -141,3 +142,13 @@ recoveryRefusalCode refusal =
       RecoveryNotAuthorized _ -> "not-authorized"
       NothingToRecover _ -> "nothing-to-recover"
       RecoveryLeaseActive -> "lease-active"
+
+-- | The refusal in words (its code is 'recoveryRefusalCode').
+recoveryRefusalMessage :: RecoveryRefusal -> T.Text
+recoveryRefusalMessage refusal =
+  case refusal of
+    RecoveryAgentAssertion -> T.pack "an agent's assertion is never a command"
+    RecoveryAlreadySettled -> T.pack "the intent is already settled"
+    RecoveryNotAuthorized principal -> principalLabel principal <> T.pack " may not recover an effect intent"
+    NothingToRecover state -> T.pack "an intent that is " <> state <> T.pack " has nothing to recover"
+    RecoveryLeaseActive -> T.pack "the intent's lease is still active"

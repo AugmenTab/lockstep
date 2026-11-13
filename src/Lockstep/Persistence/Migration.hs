@@ -16,12 +16,12 @@ module Lockstep.Persistence.Migration
   , planMigrations
   ) where
 
-import Crypto.Hash qualified as Hash
 import Data.List qualified as L
 import Data.Text qualified as T
-import Data.Text.Encoding qualified as TE
 import Flipstone.Prelude
-import Text.Show (Show, show)
+import Text.Show (Show)
+
+import Lockstep.Foundation.Digest (sha256Hex, sha256Utf8)
 
 newtype MigrationId
   = MigrationId Int
@@ -66,10 +66,13 @@ mkChecksum :: T.Text -> Checksum
 mkChecksum =
   Checksum
 
+{- | SHA-256 of the migration's UTF-8 SQL, as 64 lowercase hex characters.
+The ledger stores this value and applied migrations are immutable, so the
+encoding is explicit ('sha256Hex'), never a 'Show' instance.
+-}
 migrationChecksum :: Migration -> Checksum
-migrationChecksum migration =
-  Checksum . T.pack . show $
-    Hash.hashWith Hash.SHA256 (TE.encodeUtf8 (migrationSql migration))
+migrationChecksum =
+  Checksum . sha256Hex . sha256Utf8 . migrationSql
 
 data AppliedMigration
   = AppliedMigration

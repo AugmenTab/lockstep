@@ -12,12 +12,17 @@ module Lockstep.Kernel.Reconciliation
   , reconcileIntent
   , Resolution (..)
   , resolveIntent
+  , ResolutionBasis (..)
+  , resolutionBasisText
+  , parseResolutionBasis
   , LateVerdict (..)
   , judgeLateObservation
   , renderLookup
   , renderResolution
+  , attestsApplied
   , ReconcileRefusal (..)
   , reconcileRefusalCode
+  , reconcileRefusalMessage
   ) where
 
 import Data.Char qualified as Char
@@ -34,13 +39,18 @@ import Lockstep.Kernel.Effect
   , Lease (..)
   , LookupTerms (..)
   , Observation (..)
+  , Provenance (..)
+  , Reason (..)
   , Settlement (..)
+  , attestedReasonText
   , effectSpecBudget
   , effectSpecClass
   , effectSpecTerms
   , intentStateName
+  , reasonOf
   )
-import Lockstep.Kernel.Transition (Command (..), Principal (..))
+import Lockstep.Kernel.Enum (parseEnumText)
+import Lockstep.Kernel.Transition (Command (..), Principal (..), principalLabel)
 
 data LookupResult
   = LookupFound T.Text
@@ -90,7 +100,10 @@ reconcileIntent intent (Command principal input)
 reconciled :: LookupTerms -> LookupResult -> IntentState
 reconciled terms result =
   case result of
-    LookupFound r -> IntentApplied r
+    -- A destination never speaks for a person: a result carrying the attestation marker is malformed ('Lockstep.Kernel.Effect.reasonOf').
+    LookupFound r
+      | reasonProvenance (reasonOf r) == HumanAttested -> IntentUnknown (T.pack "malformed-answer")
+      | otherwise -> IntentApplied r
     LookupNotFound
       | not (lookupAuthoritative terms) -> IntentUnknown (T.pack "lookup: not found, not authoritative")
       | not (lookupExcludesLateApplication terms) -> IntentUnknown (T.pack "lookup: not found, late application not excluded")
@@ -129,7 +142,39 @@ resolveIntent intent (Command principal (generation, choice))
         state -> Left (NotUnknown (intentStateName state))
  where
   to state = intent {intentState = state}
-  attested evidence = T.pack "human-attested: " <> evidence
+  attested = attestedReasonText
+
+-- | What decided an intent's resolution, as its record keeps it (the @basis@ of C-P2.7 §4, C-P2.9-R1).
+data ResolutionBasis
+  = -- | a lookup at the destination (R3)
+    ResolvedByLookup
+  | -- | a person attested whether it applied (R5)
+    ResolvedByAttestation
+  | -- | a person chose to retry, acknowledging the duplication risk (R5)
+    ResolvedByRetry
+  | -- | an applied observation that came late (R7)
+    ResolvedByLateObservation
+  | -- | a person abandoned it
+    ResolvedByAbandon
+  | -- | a person carried it into the work order's current activation
+    ResolvedByCarry
+  deriving (Eq, Show, Enum, Bounded)
+
+resolutionBasisText :: ResolutionBasis -> T.Text
+resolutionBasisText basis =
+  T.pack $
+    case basis of
+      ResolvedByLookup -> "lookup"
+      ResolvedByAttestation -> "human-attested"
+      ResolvedByRetry -> "human-retry"
+      ResolvedByLateObservation -> "late-observation"
+      ResolvedByAbandon -> "human-abandon"
+      ResolvedByCarry -> "human-carry"
+
+-- | The basis of its text; derived from 'resolutionBasisText'.
+parseResolutionBasis :: T.Text -> Maybe ResolutionBasis
+parseResolutionBasis =
+  parseEnumText resolutionBasisText
 
 validEvidence :: T.Text -> Bool
 validEvidence text =
@@ -193,10 +238,25 @@ renderLookup result =
 renderResolution :: Resolution -> T.Text
 renderResolution resolution =
   case resolution of
-    AttestApplied e -> T.pack "attested-applied evidence=" <> quoted e
+    AttestApplied e -> attestedAppliedWord <> T.pack " evidence=" <> quoted e
     AttestNotApplied e -> T.pack "attested-not-applied evidence=" <> quoted e
     RetryAcknowledgingDuplication True -> T.pack "retry duplication-acknowledged"
     RetryAcknowledgingDuplication False -> T.pack "retry duplication-not-acknowledged"
+
+{- | Whether a stored human record ('renderResolution', basis
+'ResolvedByAttestation') attests an application: the one reader of that
+text's leading word. The other attestation's word, @attested-not-applied@,
+does not begin with it.
+-}
+attestsApplied :: T.Text -> Bool
+attestsApplied text =
+  case T.stripPrefix attestedAppliedWord text of
+    Just rest -> T.isPrefixOf (T.pack " ") rest
+    Nothing -> False
+
+attestedAppliedWord :: T.Text
+attestedAppliedWord =
+  T.pack "attested-applied"
 
 quoted :: T.Text -> T.Text
 quoted text =
@@ -235,3 +295,18 @@ reconcileRefusalCode refusal =
       NotUnknown _ -> "not-unknown"
       InvalidEvidence -> "invalid-evidence"
       DuplicationNotAcknowledged -> "duplication-risk-not-acknowledged"
+
+-- | The refusal in words (its code is 'reconcileRefusalCode').
+reconcileRefusalMessage :: ReconcileRefusal -> T.Text
+reconcileRefusalMessage refusal =
+  case refusal of
+    ReconcileAgentAssertion -> T.pack "an agent's assertion is never a command"
+    ReconcileAlreadySettled -> T.pack "the intent is already settled"
+    ReconcileNotAuthorized principal -> principalLabel principal <> T.pack " may not reconcile an effect intent"
+    NotQueryable -> T.pack "only a queryable effect can be looked up at its destination"
+    NothingToReconcile state -> T.pack "an intent that is " <> state <> T.pack " has nothing to reconcile"
+    ReconcileLeaseActive -> T.pack "the intent's lease is still active"
+    ReconcileStaleClaim -> T.pack "the intent's claim has moved on"
+    NotUnknown state -> T.pack "only an unknown outcome is resolved; the intent is " <> state
+    InvalidEvidence -> T.pack "the resolution's evidence is not valid"
+    DuplicationNotAcknowledged -> T.pack "a retry must acknowledge the duplication risk"

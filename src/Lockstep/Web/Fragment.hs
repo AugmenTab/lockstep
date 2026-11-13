@@ -9,7 +9,7 @@ module Lockstep.Web.Fragment
   , namedEntities
   , cls
   , attr
-  , href
+  , elementId
   ) where
 
 import Brigid.HTML.Attributes qualified as A
@@ -20,6 +20,7 @@ import Brigid.Types qualified as B
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import Data.List qualified as L
+import Data.NonEmptyText qualified as NET
 import Data.Text qualified as T
 import Flipstone.Prelude
 
@@ -56,12 +57,20 @@ cls =
 
 {- | An attribute whose value is escaped: ampersands, angle brackets and double
 quotes are escaped here (C-C.R1 R8), so typed text never appears as markup
-anywhere in a page and no value depends on Brigid escaping quotes.
+anywhere in a page and no value depends on Brigid escaping quotes. The one
+attribute escaper of the web layer. Checked in ghci (@.local/ghci/tdE-7.ghci@):
+Brigid 0.4's 'A.customAttribute' escapes only @\"@ and @'@ (as @&#34;@, @&#39;@),
+its typed 'A.value' escapes nothing, and its text escapes @&@, @<@ and @>@.
 -}
 attr :: T.Text -> T.Text -> A.Attribute tag
 attr name =
   A.customAttribute name . T.replace "\"" "&quot;" . T.replace ">" "&gt;" . T.replace "<" "&lt;" . T.replace "&" "&amp;"
 
-href :: T.Text -> A.Attribute E.Anchor
-href =
-  A.href . B.mkRawURL
+{- | An element id declared in code (as Artificer's @B.Id@ values), used both for
+the element's @id@ and for every @for@ (and @hx-target@) that points at it. Only
+for ids built from fixed words and canonical identities; an id made from stored
+text stays an escaped 'attr'.
+-}
+elementId :: Char -> T.Text -> B.Id
+elementId first rest =
+  B.Id (NET.new first rest)

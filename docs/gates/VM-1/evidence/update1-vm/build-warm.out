@@ -1,0 +1,17 @@
+./build/test
+PASS add
+docker-build-ok
+ Network tree_default  Creating
+ Network tree_default  Created
+ Container tree-db-1  Creating
+ Container tree-db-1  Created
+ Container tree-db-1  Starting
+ Container tree-db-1  Started
+PONG
+ Container tree-db-1  Stopping
+ Container tree-db-1  Stopped
+ Container tree-db-1  Removing
+ Container tree-db-1  Removed
+ Network tree_default  Removing
+ Network tree_default  Removed
+project-test-ok

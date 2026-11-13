@@ -10,6 +10,9 @@ module Lockstep.Application.Decisions
   , UnknownFacts (..)
   , decisionId
   , DecisionReceipt (..)
+  , ReceiptOutcome (..)
+  , receiptOutcomeCode
+  , receiptApplied
   , listDecisions
   , findDecision
   , decidedReceipt
@@ -24,7 +27,7 @@ import Orville.PostgreSQL qualified as O
 import Text.Show (Show, show)
 
 import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
-import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), Locked (..), SessionLock (..), withDatabase, withSessionLock)
+import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), Locked (..), NotReadyReason (DatabaseCorrupt), SessionLock (..), withDatabase, withSessionLock)
 import Lockstep.Application.Ledger
   ( LedgerFailure (..)
   , Receipt (..)
@@ -37,6 +40,7 @@ import Lockstep.Application.Ledger
   , resolveOutcome
   , showWorkOrder
   )
+import Lockstep.Application.LedgerRefusal (LedgerRefusal (StaleRevision), StaleSubject (StaleStep), refusalFailure)
 import Lockstep.Application.LedgerView (EffectLine (..), LedgerProjection (..), OrderLine (..), TicketLine (..), projectLedger)
 import Lockstep.Application.Profiles (sha256Hasher)
 import Lockstep.Kernel.Decision
@@ -45,11 +49,11 @@ import Lockstep.Kernel.Decision
   , decisionChoiceName
   , decisionExpected
   , decisionPayload
-  , decisionSubject
+  , decisionSubjectId
   )
 import Lockstep.Kernel.Effect (Intent (..), OperationId (..), effectSpecName, intentStateName)
 import Lockstep.Kernel.EffectView (EffectStatus (..))
-import Lockstep.Kernel.Identity (WorkOrderId (..), parseUuid, uuidText)
+import Lockstep.Kernel.Identity (Uuid, WorkOrderId (..), identityText, parseUuid, uuidText)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
 import Lockstep.Kernel.Reconciliation (Resolution (..))
 import Lockstep.Kernel.Transition (Command (..), Principal (..))
@@ -88,8 +92,8 @@ data OpenDecision
 decisionId :: OpenDecision -> T.Text
 decisionId decision =
   case decision of
-    StoppedWork facts -> case stoppedOrder facts of WorkOrderId u -> uuidText u
-    UnknownOutcome facts -> case unknownOperation facts of OperationId u -> uuidText u
+    StoppedWork facts -> identityText (stoppedOrder facts)
+    UnknownOutcome facts -> identityText (unknownOperation facts)
 
 data DecisionReceipt
   = DecisionReceipt
@@ -148,42 +152,79 @@ longer open; current only while the subject's ledger basis is still the one
 that decision produced (C-C.R1 R4).
 -}
 decidedReceipt :: DatabaseRuntime -> T.Text -> IO (Either LedgerFailure (Maybe DecisionReceipt))
-decidedReceipt runtime subject = do
-  found <- withDatabase runtime (Store.latestReceiptFor subject)
-  case found of
-    Left _ -> pure (Left unavailable)
-    Right Nothing -> pure (Right Nothing)
-    Right (Just row) -> Right . Just <$> receiptOf runtime False row
+decidedReceipt runtime rawSubject =
+  case parseUuid rawSubject of
+    -- Text that is not a canonical identity names no subject, so it has no receipt.
+    Left _ -> pure (Right Nothing)
+    Right subject -> do
+      found <- withDatabase runtime (Store.latestReceiptFor subject)
+      case found of
+        Left reason -> pure (Left (databaseFailure reason))
+        Right Nothing -> pure (Right Nothing)
+        Right (Just row) -> fmap Just <$> receiptOf runtime False row
+
+-- | What a receipt records; its code is the stored @outcome@ column ('DecisionReceipt.receiptOutcome').
+data ReceiptOutcome
+  = ReceiptApplied
+  | ReceiptRefused
+  deriving (Eq, Show, Enum, Bounded)
+
+receiptOutcomeCode :: ReceiptOutcome -> T.Text
+receiptOutcomeCode outcome =
+  T.pack $
+    case outcome of
+      ReceiptApplied -> "applied"
+      ReceiptRefused -> "refused"
+
+-- | Whether the receipt records an applied decision (its outcome is 'ReceiptApplied's code).
+receiptApplied :: DecisionReceipt -> Bool
+receiptApplied receipt =
+  receiptOutcome receipt == receiptOutcomeCode ReceiptApplied
 
 unavailable :: LedgerFailure
 unavailable =
   LedgerUnavailable (T.pack "unavailable")
 
-receiptOf :: DatabaseRuntime -> Bool -> Store.ReceiptRow -> IO DecisionReceipt
+-- | A database failure: stored data that does not read is an integrity failure, anything else unavailability.
+databaseFailure :: NotReadyReason -> LedgerFailure
+databaseFailure reason =
+  case reason of
+    DatabaseCorrupt detail -> LedgerIntegrity detail
+    _ -> unavailable
+
+receiptOf :: DatabaseRuntime -> Bool -> Store.ReceiptRow -> IO (Either LedgerFailure DecisionReceipt)
 receiptOf runtime replayed row = do
   current <-
     case Store.receiptRowBasis row of
-      Nothing -> pure False
-      Just stored -> (== Just stored) <$> currentBasis runtime (Store.receiptRowChoice row) (Store.receiptRowSubject row)
-  pure
-    DecisionReceipt
-      { receiptSubject = Store.receiptRowSubject row
-      , receiptChoice = Store.receiptRowChoice row
-      , receiptExpected = fromIntegral (Store.receiptRowExpected row)
-      , receiptOutcome = Store.receiptRowOutcome row
-      , receiptRefusal = Store.receiptRowRefusal row
-      , receiptReplayed = replayed
-      , receiptCurrent = current
-      }
+      Nothing -> pure (Right False)
+      Just stored -> fmap (== Just stored) <$> currentBasis runtime (Store.receiptRowChoice row) (Store.receiptRowSubject row)
+  pure $ do
+    isCurrent <- current
+    pure
+      DecisionReceipt
+        { receiptSubject = uuidText (Store.receiptRowSubject row)
+        , receiptChoice = Store.receiptRowChoice row
+        , receiptExpected = fromIntegral (Store.receiptRowExpected row)
+        , receiptOutcome = Store.receiptRowOutcome row
+        , receiptRefusal = Store.receiptRowRefusal row
+        , receiptReplayed = replayed
+        , receiptCurrent = isCurrent
+        }
 
--- | The subject's ledger basis as it is now: the stopped work's revision, or the step's state and generation.
-currentBasis :: DatabaseRuntime -> T.Text -> T.Text -> IO (Maybe T.Text)
-currentBasis runtime choice subject =
-  case parseUuid subject of
-    Left _ -> pure Nothing
-    Right u
-      | choice `L.elem` fmap T.pack ["put-back", "cancel"] -> either (const Nothing) (Just . orderBasis . woRevision) <$> showWorkOrder runtime (WorkOrderId u)
-      | otherwise -> either (const Nothing) (Just . intentBasis) <$> loadIntent runtime (OperationId u)
+{- | The subject's ledger basis as it is now: the stopped work's revision, or
+the step's state and generation. A subject the Ledger refuses (no longer
+there in that form) has none; an integrity or database failure is returned.
+-}
+currentBasis :: DatabaseRuntime -> T.Text -> Uuid -> IO (Either LedgerFailure (Maybe T.Text))
+currentBasis runtime choice subject
+  | choice `L.elem` fmap T.pack ["put-back", "cancel"] = basisOf (orderBasis . woRevision) <$> showWorkOrder runtime (WorkOrderId subject)
+  | otherwise = basisOf intentBasis <$> loadIntent runtime (OperationId subject)
+ where
+  basisOf f result =
+    case result of
+      Right value -> Right (Just (f value))
+      Left (LedgerRefused _ _) -> Right Nothing
+      Left failure -> Left failure
 
 orderBasis :: Int -> T.Text
 orderBasis revision =
@@ -225,7 +266,7 @@ applyDecision runtime key request
             case result of
               Right answer -> answer
               Left LockBusy -> Right (Left (T.pack "decision-busy"))
-              Left (LockUnavailable _) -> Left unavailable
+              Left (LockUnavailable reason) -> Left (databaseFailure reason)
  where
   keyText =
     idempotencyKeyText key
@@ -237,7 +278,7 @@ underLock runtime keyText digest request lock = do
     Just stored -> replayOrConflict stored
     Nothing -> do
       attempted <- onLockConnection lock (Store.attemptDigest keyText)
-      marked <- maybe (onLockConnection lock (Store.insertAttempt keyText digest (decisionSubject request))) (const (pure False)) attempted
+      marked <- maybe (onLockConnection lock (Store.insertAttempt keyText digest (decisionSubjectId request))) (const (pure False)) attempted
       case (marked, attempted) of
         (False, Just earlier)
           | earlier /= digest -> pure (Right (Left (T.pack "key-conflict")))
@@ -245,21 +286,21 @@ underLock runtime keyText digest request lock = do
         (True, _) -> do
           performed <- perform runtime request
           case performed of
-            Right basis -> store (row "applied" Nothing (Just basis))
-            Left (LedgerRefused code _) -> store (row "refused" (Just code) Nothing)
+            Right basis -> store (row ReceiptApplied Nothing (Just basis))
+            Left (LedgerRefused code _) -> store (row ReceiptRefused (Just code) Nothing)
             Left failure -> pure (Left failure)
  where
   replayOrConflict found
-    | Store.receiptRowDigest found == digest = Right . Right <$> receiptOf runtime True found
+    | Store.receiptRowDigest found == digest = fmap Right <$> receiptOf runtime True found
     | otherwise = pure (Right (Left (T.pack "key-conflict")))
   row outcome refusal basis =
     Store.ReceiptRow
       { Store.receiptRowKey = keyText
       , Store.receiptRowDigest = digest
-      , Store.receiptRowSubject = decisionSubject request
+      , Store.receiptRowSubject = decisionSubjectId request
       , Store.receiptRowChoice = decisionChoiceName request
       , Store.receiptRowExpected = fromIntegral (decisionExpected request)
-      , Store.receiptRowOutcome = T.pack outcome
+      , Store.receiptRowOutcome = receiptOutcomeCode outcome
       , Store.receiptRowRefusal = refusal
       , Store.receiptRowActor = T.pack "application-session"
       , Store.receiptRowBasis = basis
@@ -275,7 +316,7 @@ underLock runtime keyText digest request lock = do
             if inserted then pure (Just (Left receipt)) else fmap Right <$> Store.findReceipt keyText
     case stored of
       Nothing -> pure (Left unavailable)
-      Just (Left receipt') -> Right . Right <$> receiptOf runtime False receipt'
+      Just (Left receipt') -> fmap Right <$> receiptOf runtime False receipt'
       Just (Right found) -> replayOrConflict found
 
 -- | The one existing operation for each choice, as a Human; the subject's ledger basis after it.
@@ -292,7 +333,7 @@ perform runtime request =
       case current of
         Left failure -> pure (Left failure)
         Right intent
-          | intentGeneration intent /= n -> pure (Left (LedgerRefused (T.pack "stale-revision") (T.pack "the step changed since the page was shown")))
+          | intentGeneration intent /= n -> pure (Left (refusalFailure (StaleRevision StaleStep)))
           | otherwise -> step (abandonIntentAcknowledged runtime op (T.strip t) acknowledged)
  where
   order =

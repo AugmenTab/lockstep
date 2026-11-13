@@ -1,0 +1,57 @@
+# The Dev Capsule VM (Phase 5; docs/architecture/dev-capsules.md §3, §7; contract C-P5.2 L4).
+# The only VM configuration Lockstep uses. scripts/capsule-runtime substitutes the three numeric
+# resources (the CPU, memory and disk placeholders below) from a fixed profile and nothing else, then audits the
+# effective configuration Lima stores before every start. Upstream templates are NOT used: they
+# mount the host home, forward the guest's ports and (the docker template) its Docker socket.
+vmType: vz
+os: Linux
+arch: aarch64
+images:
+- location: "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-arm64.img"
+  arch: aarch64
+cpus: @CPUS@
+memory: "@MEMORY@GiB"
+disk: "@DISK@GiB"
+# No host directory is shared with the guest, read-only or otherwise.
+mounts: []
+ssh:
+  localPort: 0
+  forwardAgent: false
+  forwardX11: false
+  forwardX11Trusted: false
+# Lima's bundled containerd/nerdctl are off; the guest runs Docker Engine instead (below).
+containerd:
+  system: false
+  user: false
+# No guest port, and no guest socket, is ever forwarded to the host.
+portForwards:
+- guestIPMustBeZero: false
+  guestIP: "0.0.0.0"
+  guestPortRange: [1, 65535]
+  proto: any
+  ignore: true
+- guestIP: "127.0.0.1"
+  guestPortRange: [1, 65535]
+  proto: any
+  ignore: true
+hostResolver:
+  enabled: true
+# The user-mode network must not map the gateway (192.168.5.2, host.lima.internal) to the host's
+# loopback (Lima >= 2.3.0; Phase 5 update 1, D4). The runtime refuses a capsule without this.
+networkOpts:
+  hostLoopback: false
+provision:
+- mode: system
+  script: |
+    #!/bin/bash
+    set -eux
+    export DEBIAN_FRONTEND=noninteractive
+    # needrestart only lists services to restart, never restarts them: an apt install a guest program
+    # makes would otherwise restart sshd and cut the session that runs it (and the bridge's exec channel).
+    mkdir -p /etc/needrestart/conf.d
+    printf '%s\n' "\$nrconf{restart} = 'l';" > /etc/needrestart/conf.d/lockstep.conf
+    if ! command -v docker >/dev/null 2>&1; then
+      apt-get update
+      apt-get install -y --no-install-recommends docker.io docker-compose-v2 docker-buildx git build-essential ca-certificates curl python3 jq rsync
+    fi
+    systemctl enable --now docker

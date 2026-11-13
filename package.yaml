@@ -63,6 +63,7 @@ library:
     - json-fleece-core
     - memory
     - mtl
+    - non-empty-text
     - ogma
     - orb
     - orville-postgresql
@@ -75,6 +76,8 @@ library:
     - time
     - unix
     - unliftio
+    - uuid
+    - uuid-types
     - wai
     - warp
 
@@ -139,6 +142,92 @@ tests:
       - -threaded
       - -rtsopts
       - "\"-with-rtsopts=-M96m -T\""
+      - -fplugin-opt=Henforcer:--config=henforcer-tests.toml
+    when:
+      - condition: false
+        other-modules: Paths_lockstep
+  # Stack-compliance pass (2026-11-07): behaviour checks for the Orville and
+  # Fleece conversions, kept apart from the frozen suites. Needs LOCKSTEP_TEST_PG_*.
+  lockstep-compliance:
+    main:        Main.hs
+    source-dirs: test/compliance
+    dependencies:
+      - lockstep
+      - brigid
+      - bytestring
+      - http-types
+      - containers
+      - crypton
+      - json-fleece-aeson
+      - memory
+      - orville-postgresql
+      - should-not-typecheck
+      - tasty
+      - tasty-hunit
+      - text
+      - time
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-T
+      - -fplugin-opt=Henforcer:--config=henforcer-tests.toml
+    when:
+      - condition: false
+        other-modules: Paths_lockstep
+  # Phase 5 (docs/architecture/dev-capsules.md): the Capsule Runtime's typed vocabulary against the
+  # runtime script's own words; run from the checkout's root. Apart from the frozen suites.
+  lockstep-capsule:
+    main:        Main.hs
+    source-dirs: test/capsule
+    dependencies:
+      - lockstep
+      - bytestring
+      - directory
+      - process
+      - tasty
+      - tasty-hunit
+      - temporary
+      - text
+      - unix
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-T
+      - -fplugin-opt=Henforcer:--config=henforcer-tests.toml
+    when:
+      - condition: false
+        other-modules: Paths_lockstep
+  # Phase 5 P5.11: the Gate C-EXEC journey with every run in real Dev Capsules; needs the host helper in
+  # capsule mode (scripts/lib/check-capsule-e2e), so it is not part of scripts/check.
+  lockstep-capsule-e2e:
+    main:        Main.hs
+    source-dirs:
+      - test/capsule-e2e
+      - test/integration
+    other-modules:
+      - Lockstep.Support.Postgres
+      - Lockstep.Support.Process
+    dependencies:
+      - lockstep
+      - bytestring
+      - directory
+      - http-client
+      - http-types
+      - network
+      - orville-postgresql
+      - process
+      - tasty
+      - tasty-hunit
+      - temporary
+      - text
+      - time
+      - unix
+    build-tools:
+      - lockstep:lockstep
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-T
       - -fplugin-opt=Henforcer:--config=henforcer-tests.toml
     when:
       - condition: false

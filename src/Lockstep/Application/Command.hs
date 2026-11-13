@@ -15,6 +15,7 @@ module Lockstep.Application.Command
   , generateIdempotencyKey
   , Revision (..)
   , revisionInt
+  , mkRevision
   , InvalidReason (..)
   , renderInvalidReason
   , OperatorCommand (..)
@@ -39,7 +40,6 @@ module Lockstep.Application.Command
   , findReceipt
   ) where
 
-import Control.Exception (throwIO)
 import Crypto.Hash (SHA256 (SHA256), hashWith)
 import Crypto.Random (getRandomBytes)
 import Data.ByteArray qualified as BA
@@ -51,7 +51,6 @@ import Data.Text.Encoding qualified as TE
 import Data.Time qualified as Time
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
-import System.IO.Error (userError)
 import Text.Show (Show, show)
 
 import Lockstep.Application.Database
@@ -61,7 +60,9 @@ import Lockstep.Application.Database
   , checkReadiness
   , withDatabase
   )
+import Lockstep.Kernel.Identity (ReceiptId, receiptIdNumber)
 import Lockstep.Persistence.Commands qualified as Store
+import Lockstep.Persistence.Integrity (integrityViolation)
 import Lockstep.Persistence.Jobs qualified as Jobs
 
 -- | Who submitted the command; authority was checked by the caller (E1).
@@ -92,6 +93,7 @@ data InvalidReason
   | NameHasControl
   | KeyMalformed
   | RevisionNegative
+  | RevisionTooLarge
   | StepsOutOfRange
   | StepMillisOutOfRange
   | FailAtOutOfRange
@@ -105,6 +107,7 @@ renderInvalidReason reason =
     NameHasControl -> "the workspace name contains a control character"
     KeyMalformed -> "the idempotency key must be 16-64 characters of A-Z a-z 0-9 - _"
     RevisionNegative -> "the expected revision is negative"
+    RevisionTooLarge -> "the expected revision is larger than " <> show (maxBound :: Int64)
     StepsOutOfRange -> "steps must be 1-20"
     StepMillisOutOfRange -> "step milliseconds must be 0-5000"
     FailAtOutOfRange -> "the failure step must be between 1 and the number of steps"
@@ -160,6 +163,15 @@ revisionInt :: Revision -> Int64
 revisionInt (Revision n) =
   n
 
+{- | A caller-supplied expected revision: 0 to 'maxBound' 'Int64'. The range
+is checked on the 'Integer' before it is narrowed, so no value wraps.
+-}
+mkRevision :: Integer -> Either InvalidReason Revision
+mkRevision expected
+  | expected < 0 = Left RevisionNegative
+  | expected > toInteger (maxBound :: Int64) = Left RevisionTooLarge
+  | otherwise = Right (Revision (fromInteger expected))
+
 data OperatorCommand
   = RenameWorkspace WorkspaceName
   | QueueNoop NoopSpec
@@ -196,7 +208,7 @@ noopPayload spec =
 buildQueue :: Actor -> T.Text -> Integer -> Integer -> Integer -> Maybe Integer -> Either InvalidReason CommandEnvelope
 buildQueue actor keyText expected steps millis failAt = do
   key <- mkIdempotencyKey keyText
-  revision <- if expected < 0 then Left RevisionNegative else Right (Revision (fromInteger expected))
+  revision <- mkRevision expected
   stepsInt <- bounded StepsOutOfRange steps
   millisInt <- bounded StepMillisOutOfRange millis
   failInt <- traverse (bounded FailAtOutOfRange) failAt
@@ -231,10 +243,7 @@ buildRename :: Actor -> T.Text -> Integer -> T.Text -> Either InvalidReason Comm
 buildRename actor keyText expected nameText = do
   key <- mkIdempotencyKey keyText
   name <- mkWorkspaceName nameText
-  revision <-
-    if expected < 0
-      then Left RevisionNegative
-      else Right (Revision (fromInteger expected))
+  revision <- mkRevision expected
   pure (mkEnvelope actor key revision (RenameWorkspace name))
 
 -- | SHA-256 of the kind, expected revision and payload; not the actor (E3).
@@ -344,7 +353,7 @@ fromRow row = do
       { priorDigest = digest
       , priorReceipt =
           Receipt
-            { receiptId = Store.rowId row
+            { receiptId = receiptIdNumber (Store.rowId row)
             , receiptKey = Store.rowKey row
             , receiptKind = Store.rowKind row
             , receiptOutcome = outcome
@@ -379,7 +388,10 @@ submitCommand runtime envelope = do
       Right outcome -> outcome
  where
   key = idempotencyKeyText (envelopeKey envelope)
-  record outcome revision = do
+  record outcome revision =
+    fmap snd <$> recorded outcome revision
+  -- The receipt with its typed identity ('Receipt' carries it as a number: a frozen-test boundary).
+  recorded outcome revision = do
     inserted <-
       Store.insertReceipt
         Store.NewReceipt
@@ -394,24 +406,24 @@ submitCommand runtime envelope = do
           }
     case inserted of
       -- An effect must never commit without its receipt: abort the transaction (review finding 7).
-      Nothing -> liftIO (throwIO (userError "lockstep: the command receipt insert returned no row"))
-      Just _ -> pure ()
-    pure $
-      case inserted of
-        Nothing -> Left (CommandNotReady DatabaseError)
-        Just (newId, acceptedAt) ->
-          Right
-            Receipt
-              { receiptId = newId
-              , receiptKey = key
-              , receiptKind = commandKind (envelopeCommand envelope)
-              , receiptOutcome = outcome
-              , receiptExpected = envelopeExpected envelope
-              , receiptRevision = revision
-              , receiptActor = envelopeActor envelope
-              , receiptAcceptedAt = acceptedAt
-              , receiptReplayed = False
-              }
+      Nothing -> integrityViolation "the command receipt insert returned no row"
+      Just (newId, acceptedAt) ->
+        pure
+          ( Right
+              ( newId
+              , Receipt
+                  { receiptId = receiptIdNumber newId
+                  , receiptKey = key
+                  , receiptKind = commandKind (envelopeCommand envelope)
+                  , receiptOutcome = outcome
+                  , receiptExpected = envelopeExpected envelope
+                  , receiptRevision = revision
+                  , receiptActor = envelopeActor envelope
+                  , receiptAcceptedAt = acceptedAt
+                  , receiptReplayed = False
+                  }
+              )
+          )
   admit = do
     locked <- Store.lockWorkspace
     row <- Store.findReceiptByKey key
@@ -428,16 +440,16 @@ submitCommand runtime envelope = do
                 Store.updateWorkspace (workspaceNameText newName) (revisionInt next)
                 record Applied next
               QueueNoop spec -> do
-                recorded <- record Queued next
-                case recorded of
-                  Right receipt -> do
+                queued <- recorded Queued next
+                case queued of
+                  Right (newId, receipt) -> do
                     Jobs.insertNoopJob
-                      (receiptId receipt)
+                      newId
                       (fromIntegral (noopSteps spec))
                       (fromIntegral (noopStepMillis spec))
                       (fmap fromIntegral (noopFailAtStep spec))
-                    pure recorded
-                  Left _ -> pure recorded
+                    pure (Right receipt)
+                  Left refusal -> pure (Left refusal)
           RefuseStale now ->
             record RefusedStale now
       _ ->
@@ -450,7 +462,7 @@ readWorkspace runtime = do
     found <- result
     maybe (Left DatabaseError) (\(name, revision) -> Right (WorkspaceState name (Revision revision))) found
 
-findReceipt :: DatabaseRuntime -> Int64 -> IO (Maybe Receipt)
+findReceipt :: DatabaseRuntime -> ReceiptId -> IO (Maybe Receipt)
 findReceipt runtime receiptId = do
   result <- withDatabase runtime (Store.findReceiptById receiptId)
   pure (either (const Nothing) (>>= fmap priorReceipt . fromRow) result)

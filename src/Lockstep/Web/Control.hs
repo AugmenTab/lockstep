@@ -11,18 +11,18 @@ module Lockstep.Web.Control
   , runControlPane
   ) where
 
+import Beeline.Routing qualified as R
 import Data.ByteString qualified as BS
-import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as LBS
-import Data.Char qualified as Char
 import Data.List qualified as L
+import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
-import Data.Text.Encoding.Error qualified as TEE
 import Flipstone.Prelude
 import Network.HTTP.Types qualified as HTTP
 import Network.Wai qualified as Wai
 import Network.Wai.Handler.Warp qualified as Warp
+import Shrubbery qualified
 import System.Exit (ExitCode (ExitFailure), exitWith)
 import System.IO (FilePath, hFlush, hPutStrLn, putStrLn, stderr, stdout)
 import Text.Show (show)
@@ -48,12 +48,47 @@ import Lockstep.Application.ControlPane
   , takeHandover
   )
 import Lockstep.Foundation.Config (BindHost (Loopback), Port, ServeConfig (..), portNumber)
-import Lockstep.Foundation.ControlProtocol (ControlResult (..), outcomeName, parseOp, requestIdText)
+import Lockstep.Foundation.ControlProtocol (ControlResult (..), RequestId, outcomeName, parseOp, requestIdText)
 import Lockstep.Foundation.FolderProtocol (validFolderExpect, validFolderPath)
 import Lockstep.Foundation.InstallProtocol (InstallExpect, InstallOp, parseInstallExpect, parseInstallOp, validFor)
 import Lockstep.Foundation.LifecycleProtocol (LifecycleOp, expectedFor, parseLifecycleExpect, parseLifecycleOp)
+import Lockstep.Web.Components.Shell (controlShell)
+import Lockstep.Web.Json
+  ( FolderEntry (..)
+  , FolderListBody (..)
+  , IdBody (..)
+  , ResultBody (..)
+  , SessionBody (..)
+  , StateBody (..)
+  , UrlBody (..)
+  , folderListSchema
+  , idSchema
+  , resultSchema
+  , sessionSchema
+  , stateSchema
+  , urlSchema
+  )
 import Lockstep.Web.RequestGuard (RouteClass (..), guardRequest)
-import Lockstep.Web.SecureResponse (errorJson, jsonResponse, jsonString, readBodyLimited, respondWith)
+import Lockstep.Web.Routes.Control
+  ( Asset (..)
+  , FoldersAdd (..)
+  , FoldersList (..)
+  , Handover (..)
+  , Health
+  , Install (..)
+  , Lifecycle (..)
+  , OpenApplication (..)
+  , PreflightRoutes
+  , RequestResult (..)
+  , Requests (..)
+  , Routes
+  , Session (..)
+  , ShellRoutes
+  , SignOut (..)
+  , controlAssetName
+  , routes
+  )
+import Lockstep.Web.SecureResponse (errorJson, jsonResponse, readBodyLimited, respondWith)
 import Lockstep.Web.Server (serverSettings)
 import Lockstep.Web.Static (StaticAsset (..), lookupAsset)
 
@@ -68,7 +103,9 @@ runControlPane port state = do
     Right runtime -> do
       let
         settings =
-          Warp.setOnException (\_ _ -> pure ())
+          -- As 'lockstep serve' (C-P1.3 E11): a fixed line, never the request (which may hold a
+          -- query string); a client that went away is not reported.
+          Warp.setOnException (\_ err -> when (Warp.defaultShouldDisplayException err) (hPutStrLn stderr "lockstep: control pane: a request failed in the HTTP layer"))
             . Warp.setBeforeMainLoop (putStrLn ("Control pane listening on 127.0.0.1:" <> show (portNumber port)) >> hFlush stdout)
             $ serverSettings (ServeConfig Loopback port)
       Warp.runSettings settings (controlApplication port runtime)
@@ -80,104 +117,43 @@ notFound =
 -- | The shell every page address returns: no state, no data; the script loads the rest.
 shell :: Wai.Response
 shell =
-  respondWith
-    HTTP.status200
-    [(HTTP.hContentType, "text/html; charset=utf-8")]
-    ( LBS.fromStrict . BS8.pack . L.unlines $
-        [ "<!doctype html>"
-        , "<html lang=\"en\">"
-        , "<head>"
-        , "<meta charset=\"utf-8\">"
-        , "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-        , "<title>Lockstep</title>"
-        , "<link rel=\"stylesheet\" href=\"/static/lockstep.css\">"
-        , "</head>"
-        , "<body class=\"control\">"
-        , "<main id=\"app\" class=\"control-main\" aria-live=\"polite\"><p>Opening Lockstep\226\128\166</p></main>"
-        , "<noscript><p>Lockstep needs JavaScript turned on in this browser.</p></noscript>"
-        , "<script src=\"/static/control.js\"></script>"
-        , "</body>"
-        , "</html>"
-        ]
-    )
+  respondWith HTTP.status200 [(HTTP.hContentType, "text/html; charset=utf-8")] controlShell
 
-data Route
-  = Shell
-  | Asset StaticAsset
-  | Health
-  | Session
-  | SignOut
-  | Requests
-  | Lifecycle
-  | Install
-  | OpenApplication
-  | FoldersList
-  | FoldersAdd
-  | Handover T.Text
-  | RequestResult T.Text
-  | Preflight
-
-isApi :: Route -> Bool
-isApi route =
-  case route of
-    Shell -> False
-    Asset _ -> False
-    Health -> False
-    _ -> True
-
-matchRoute :: BS.ByteString -> [T.Text] -> Maybe Route
-matchRoute method path =
-  let
-    get = method == HTTP.methodGet || method == HTTP.methodHead
-    post = method == HTTP.methodPost
-    options = method == HTTP.methodOptions
-  in
-    case path of
-      [] | get -> Just Shell
-      ["sign-in"] | get -> Just Shell
-      ["static", name]
-        | get && name `L.elem` ["control.js", "lockstep.css"] -> Asset <$> lookupAsset name
-      ["api", "health"] | get -> Just Health
-      ["api", "session"]
-        | post -> Just Session
-        | options -> Just Preflight
-      ["api", "sign-out"]
-        | post -> Just SignOut
-        | options -> Just Preflight
-      ["api", "requests"]
-        | post -> Just Requests
-        | options -> Just Preflight
-      ["api", "lifecycle"]
-        | post -> Just Lifecycle
-        | options -> Just Preflight
-      ["api", "install"]
-        | post -> Just Install
-        | options -> Just Preflight
-      ["api", "open-application"]
-        | post -> Just OpenApplication
-        | options -> Just Preflight
-      ["api", "folders"]
-        | get -> Just FoldersList
-        | post -> Just FoldersAdd
-        | options -> Just Preflight
-      ["api", "handover", rid]
-        | get && T.length rid == 32 && T.all (\c -> Char.isDigit c || (c >= 'a' && c <= 'f')) rid -> Just (Handover rid)
-        | options -> Just Preflight
-      ["api", "requests", rid]
-        | get && T.length rid == 32 && T.all (\c -> Char.isDigit c || (c >= 'a' && c <= 'f')) rid -> Just (RequestResult rid)
-        | options -> Just Preflight
-      _ -> Nothing
+{- | The route for a request (the typed tree of "Lockstep.Web.Routes.Control");
+a HEAD is answered as the GET of the same address, as before.
+-}
+matchRoute :: Wai.Request -> Maybe Routes
+matchRoute request =
+  case HTTP.parseMethod (Wai.requestMethod request) of
+    Left _ -> Nothing
+    Right method ->
+      either (const Nothing) Just $
+        R.recognizeRoute routes (if method == HTTP.HEAD then HTTP.GET else method) (Wai.pathInfo request)
 
 controlApplication :: Port -> PaneRuntime -> Wai.Application
 controlApplication port runtime request respond =
-  case matchRoute (Wai.requestMethod request) (Wai.pathInfo request) of
+  case matchRoute request of
     Nothing -> respond notFound
-    Just Preflight -> respond (errorJson HTTP.status405 "method-not-allowed")
     Just route ->
-      case guardRequest port (if isApi route then OperatorRoute else PublicRead) request of
-        Left _ -> respond (errorJson HTTP.status403 "refused")
-        Right () -> handle route
+      Shrubbery.dissect
+        ( Shrubbery.branchBuild
+            . Shrubbery.branch (\(_ :: ShellRoutes) -> guarded PublicRead (respond shell))
+            . Shrubbery.branch (\(Asset asset) -> guarded PublicRead (serveAsset asset))
+            . Shrubbery.branch (\(_ :: Health) -> guarded PublicRead (respond (respondWith HTTP.status204 [("X-Lockstep-Control", paneIdentity runtime)] "")))
+            . Shrubbery.branch (guarded OperatorRoute . handle)
+            . Shrubbery.branch (\(_ :: PreflightRoutes) -> respond (errorJson HTTP.status405 "method-not-allowed"))
+            $ Shrubbery.branchEnd
+        )
+        route
  where
+  guarded routeClass action =
+    case guardRequest port routeClass request of
+      Left _ -> respond (errorJson HTTP.status403 "refused")
+      Right () -> action
+  serveAsset asset =
+    case lookupAsset (controlAssetName asset) of
+      Just a -> respond (respondWith HTTP.status200 [(HTTP.hContentType, assetContentType a)] (LBS.fromStrict (assetBody a)))
+      Nothing -> respond notFound
   sessionHeader =
     L.lookup "X-Lockstep-Session" (Wai.requestHeaders request)
   withSession action = do
@@ -188,77 +164,97 @@ controlApplication port runtime request respond =
     case body of
       Nothing -> respond (errorJson HTTP.status413 "too-large")
       Just bytes -> action bytes
-  handle route =
-    case route of
-      Shell -> respond shell
-      Asset asset -> respond (respondWith HTTP.status200 [(HTTP.hContentType, assetContentType asset)] (LBS.fromStrict (assetBody asset)))
-      Health -> respond (respondWith HTTP.status204 [("X-Lockstep-Control", paneIdentity runtime)] "")
-      Session -> withBody $ \bytes -> do
-        session <- exchangeSignIn runtime (TE.decodeUtf8With TEE.lenientDecode bytes)
-        respond $ case session of
-          Just s -> jsonResponse HTTP.status200 ("{\"session\":" <> jsonString s <> "}")
-          Nothing -> errorJson HTTP.status403 "sign-in-refused"
-      SignOut -> withBody $ \_ -> withSession $ do
-        traverse_ (endSession runtime) sessionHeader
-        respond (respondWith HTTP.status204 [] "")
-      Requests -> withBody $ \bytes -> withSession $
-        case parseOp (TE.decodeUtf8With TEE.lenientDecode bytes) of
-          Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
-          Just op -> do
-            submitted <- submitRequest runtime op
-            respond $ case submitted of
-              Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
-              Left err -> submitError err
-      Lifecycle -> withBody $ \bytes -> withSession $
-        case parseLifecycleBody (TE.decodeUtf8With TEE.lenientDecode bytes) of
-          Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
-          Just op -> do
-            submitted <- submitLifecycle runtime op
-            respond $ case submitted of
-              Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
-              Left err -> submitError err
-      Install -> withBody $ \bytes -> withSession $
-        case parseInstallBody (TE.decodeUtf8With TEE.lenientDecode bytes) of
-          Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
-          Just (op, expect) -> do
-            submitted <- submitInstall runtime op expect
-            respond $ case submitted of
-              Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
-              Left err -> submitError err
-      OpenApplication -> withBody $ \_ -> withSession $ do
-        submitted <- submitOpenApplication runtime
-        respond $ case submitted of
-          Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
-          Left err -> submitError err
-      FoldersList -> withSession $ do
-        list <- readFolders runtime
-        respond . jsonResponse HTTP.status200 $
-          "{\"digest\":"
-            <> jsonString (folderListDigest list)
-            <> ",\"folders\":["
-            <> T.intercalate "," ["{\"mode\":" <> jsonString m <> ",\"path\":" <> jsonString p <> "}" | (m, p) <- folderListEntries list]
-            <> "]}"
-      FoldersAdd -> withBody $ \bytes -> withSession $
-        case parseFolderBody (TE.decodeUtf8With TEE.lenientDecode bytes) of
-          Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
-          Just (expect, path) -> do
-            submitted <- submitFolder runtime expect path
-            respond $ case submitted of
-              Right rid -> jsonResponse HTTP.status202 ("{\"id\":" <> jsonString (requestIdText rid) <> "}")
-              Left err -> submitError err
-      Handover rid -> withSession $ do
-        url <- takeHandover runtime rid
-        respond $ case url of
-          Just u -> jsonResponse HTTP.status200 ("{\"url\":" <> jsonString u <> "}")
-          Nothing -> notFound
-      RequestResult rid -> withSession $ do
-        view <- readResult runtime rid
-        respond $ case view of
-          ResultUnknown -> notFound
-          ResultPending -> jsonResponse HTTP.status200 "{\"state\":\"pending\"}"
-          ResultUntrusted -> jsonResponse HTTP.status200 "{\"state\":\"untrusted\"}"
-          ResultDone result -> jsonResponse HTTP.status200 (resultJson result)
-      Preflight -> respond (errorJson HTTP.status405 "method-not-allowed")
+  handle =
+    Shrubbery.dissect
+      . Shrubbery.branchBuild
+      . Shrubbery.branch
+        ( \Session -> withBody $ \bytes -> do
+            -- A body that is not UTF-8 is no token: refused like any other.
+            session <- maybe (pure Nothing) (exchangeSignIn runtime) (utf8 bytes)
+            respond $ case session of
+              Just s -> jsonResponse HTTP.status200 sessionSchema (SessionBody s)
+              Nothing -> errorJson HTTP.status403 "sign-in-refused"
+        )
+      . Shrubbery.branch
+        ( \SignOut -> withBody $ \_ -> withSession $ do
+            traverse_ (endSession runtime) sessionHeader
+            respond (respondWith HTTP.status204 [] "")
+        )
+      . Shrubbery.branch
+        ( \Requests -> withBody $ \bytes -> withSession $
+            case utf8 bytes >>= parseOp of
+              Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
+              Just op -> do
+                submitted <- submitRequest runtime op
+                respond (accepted submitted)
+        )
+      . Shrubbery.branch
+        ( \Lifecycle -> withBody $ \bytes -> withSession $
+            case utf8 bytes >>= parseLifecycleBody of
+              Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
+              Just op -> do
+                submitted <- submitLifecycle runtime op
+                respond (accepted submitted)
+        )
+      . Shrubbery.branch
+        ( \Install -> withBody $ \bytes -> withSession $
+            case utf8 bytes >>= parseInstallBody of
+              Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
+              Just (op, expect) -> do
+                submitted <- submitInstall runtime op expect
+                respond (accepted submitted)
+        )
+      . Shrubbery.branch
+        ( \OpenApplication -> withBody $ \_ -> withSession $ do
+            submitted <- submitOpenApplication runtime
+            respond (accepted submitted)
+        )
+      . Shrubbery.branch
+        ( \FoldersList -> withSession $ do
+            list <- readFolders runtime
+            respond $
+              jsonResponse
+                HTTP.status200
+                folderListSchema
+                (FolderListBody (folderListDigest list) [FolderEntry m p | (m, p) <- folderListEntries list])
+        )
+      . Shrubbery.branch
+        ( \FoldersAdd -> withBody $ \bytes -> withSession $
+            case utf8 bytes >>= parseFolderBody of
+              Nothing -> respond (errorJson HTTP.status400 "unknown-operation")
+              Just (expect, path) -> do
+                submitted <- submitFolder runtime expect path
+                respond (accepted submitted)
+        )
+      . Shrubbery.branch
+        ( \(Handover rid) -> withSession $ do
+            url <- takeHandover runtime (requestIdText rid)
+            respond $ case url of
+              Just u -> jsonResponse HTTP.status200 urlSchema (UrlBody u)
+              Nothing -> notFound
+        )
+      . Shrubbery.branch
+        ( \(RequestResult rid) -> withSession $ do
+            view <- readResult runtime (requestIdText rid)
+            respond $ case view of
+              ResultUnknown -> notFound
+              ResultPending -> jsonResponse HTTP.status200 stateSchema (StateBody "pending")
+              ResultUntrusted -> jsonResponse HTTP.status200 stateSchema (StateBody "untrusted")
+              ResultDone result -> jsonResponse HTTP.status200 resultSchema (resultBody result)
+        )
+      $ Shrubbery.branchEnd
+
+-- | A request body as text: UTF-8 or nothing (a body that is not is an unknown operation, 400).
+utf8 :: BS.ByteString -> Maybe T.Text
+utf8 =
+  either (const Nothing) Just . TE.decodeUtf8'
+
+-- | A submitted request: 202 with its id, or the reason it was not written.
+accepted :: Either SubmitError RequestId -> Wai.Response
+accepted submitted =
+  case submitted of
+    Right rid -> jsonResponse HTTP.status202 idSchema (IdBody (requestIdText rid))
+    Left err -> submitError err
 
 submitError :: SubmitError -> Wai.Response
 submitError err =
@@ -300,17 +296,16 @@ parseFolderBody body = do
     then Just (expect, path)
     else Nothing
 
-resultJson :: ControlResult -> T.Text
-resultJson result =
-  T.concat
-    [ "{\"state\":\"done\""
-    , ",\"id\":" <> jsonString (resultId result)
-    , ",\"op\":" <> jsonString (resultOp result)
-    , ",\"outcome\":" <> jsonString (outcomeName (resultOutcome result))
-    , ",\"reason\":" <> maybe "null" jsonString (resultReason result)
-    , ",\"started\":" <> T.pack (show (resultStarted result))
-    , ",\"finished\":" <> T.pack (show (resultFinished result))
-    , ",\"fields\":{" <> T.intercalate "," [jsonString k <> ":" <> jsonString v | (k, v) <- resultFields result] <> "}"
-    , ",\"detail\":" <> jsonString (resultDetail result)
-    , "}"
-    ]
+resultBody :: ControlResult -> ResultBody
+resultBody result =
+  ResultBody
+    { resultBodyState = "done"
+    , resultBodyId = resultId result
+    , resultBodyOp = resultOp result
+    , resultBodyOutcome = outcomeName (resultOutcome result)
+    , resultBodyReason = resultReason result
+    , resultBodyStarted = resultStarted result
+    , resultBodyFinished = resultFinished result
+    , resultBodyFields = Map.fromList (resultFields result)
+    , resultBodyDetail = resultDetail result
+    }

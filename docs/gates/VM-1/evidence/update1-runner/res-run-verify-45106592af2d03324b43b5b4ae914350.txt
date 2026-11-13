@@ -1,0 +1,19 @@
+lockstep-control-result 1
+id b46a26647888996ca5740a5f8a250108
+op run-verify
+outcome exited
+reason -
+started 1794354758
+finished 1794354770
+field exit 0
+field run 45106592af2d03324b43b5b4ae914350
+field image capsule:vmv1
+field stdout-bytes 20
+field stderr-bytes 0
+field stdout-sha256 ad06abb012c4a9b92e2555cc8c2a368429a4cf71c853992603e27b036b20ca3b
+field stderr-sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+field limits 1800 8388608 2097152
+field capsule vmv1
+field protected-changed 0
+detail 
+mac 96552eefbd9e3ddfad54a3fed164d910cafa5aef0dd97c111c185affde62452c

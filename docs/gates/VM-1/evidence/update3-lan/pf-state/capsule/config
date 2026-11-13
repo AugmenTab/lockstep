@@ -1,0 +1,6 @@
+lockstep-capsule 1
+runtime-state /Users/tab/personal/lockstep/.local/cvm
+capsule vmq1
+project vmq-project
+verify-capsule vmv1
+lockstep-project 0b6f7d1e-2c4a-4e8b-9f10-3a5c7e9b1d24

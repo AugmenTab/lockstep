@@ -1,0 +1,16 @@
+PASS capsule-config
+PASS capsule-healthy
+PASS capsule-ownership
+PASS capsule-template-current
+PASS host-loopback-isolation
+PASS workspace-writable
+PASS disk-space
+PASS guest-docker
+PASS credential-not-in-guest
+PASS no-host-mounts
+PASS bridge-executor
+PASS bridge-present
+FAIL tool-routing: the helper has not announced capsule mode for vmq1 (start it with --runner)
+PASS verification-environment
+FAIL host-network-exposure: host services reachable from the guest through the Mac's other addresses: tcp/5000(ControlCenter) tcp/60683(rapportd) tcp/7000(ControlCenter) tcp/8780(OrbStack Helper) tcp/8781(OrbStack Helper) udp/137(netbiosd) udp/138(netbiosd) udp/5353(Brave Browser He) udp/5353(mDNSResponder) udp/547(dhcp6d) udp/57224(syslogd) udp/61173(sharingd); bind them to 127.0.0.1, stop them, or have the owner name them in /Users/tab/personal/lockstep/.local/evidence/capsule-lan-20261112t052426z/pf-state/capsule/lan-exception
+capsule-preflight: 2 failure(s)

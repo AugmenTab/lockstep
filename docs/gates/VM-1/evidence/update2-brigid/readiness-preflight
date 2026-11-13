@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Brigid readiness (Phase 5 update 2 §6): the full capsule preflight for Brigid's capsules, with the
+# scoped LAN exception, through a real helper in capsule mode in a throwaway state directory. The
+# Lockstep project id is a stand-in (the owner's service assigns the real one when Brigid is
+# registered); the exception names that same id, so the check is the one the real run will make.
+#
+#   .local/brigid/readiness-preflight     Output: .local/brigid/readiness/
+set -uo pipefail
+cd "$(dirname "$0")/../.."
+root=$PWD
+out=$root/.local/brigid/readiness
+state=$root/.local/brigid/pf-state
+cstate=$root/.local/cvm
+lp=7c0e5a2b-9d4f-4b61-8a3e-2f6d1c9b0e57
+rm -rf "$state"
+mkdir -p "$out" "$state/helper" "$state/pane" "$state/capsule"
+chmod 700 "$state" "$state/helper" "$state/pane" "$state/capsule"
+umask 077
+head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$state/helper/channel.key"
+printf 'lockstep-capsule 1\nruntime-state %s\ncapsule brigid1\nproject brigid\nverify-capsule brigidv\nlockstep-project %s\n' "$cstate" "$lp" > "$state/capsule/config"
+sed "s/@LOCKSTEP_PROJECT@/$lp/" "$root/.local/brigid/lan-exception" > "$state/capsule/lan-exception"
+chmod 600 "$state/capsule/config" "$state/capsule/lan-exception"
+"$root/scripts/control-helper" --state "$state" --instance brigidready --runner < /dev/null > "$out/helper.out" 2>&1 &
+helper_pid=$!
+for _ in $(seq 1 1200); do grep -q "started (pid $helper_pid" "$state/helper/helper.log" 2>/dev/null && break; sleep 0.1; done
+"$root/scripts/capsule-preflight" --helper-state "$state" > "$out/preflight.txt" 2>&1
+rc=$?
+kill "$helper_pid" 2>/dev/null
+wait "$helper_pid" 2>/dev/null
+cp "$state/helper/helper.log" "$out/helper.log"
+cp "$state/capsule/lan-exception" "$out/lan-exception-used.txt"
+rm -rf "$state"
+echo "preflight exit $rc"
+exit $rc

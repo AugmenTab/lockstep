@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+# The guest side of one bridged tool call (Phase 5, docs/architecture/dev-capsules.md §6).
+#
+# Installed in every Dev Capsule at /opt/lockstep/guest-exec at provision time. The trusted host
+# executor (scripts/capsule-runtime) pipes one request ({"v":1,"seq":N,"op":OP,"args":{...}}) to
+#
+#   guest-exec --workspace DIR --limit-seconds N --output-limit BYTES
+#
+# and prints one JSON result. This program runs INSIDE the untrusted guest: nothing it prints is
+# trusted by the host. The host takes outcome, deadline and size from its own observation and only
+# relays this program's JSON to the provider as tool output.
+#
+#   guest-exec --cancel SEQ     ends the process group of the running call SEQ (host cancellation)
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+
+# Per-user state for cancellation (the guest user runs both the call and its cancel).
+STATE = os.path.join(os.path.expanduser("~"), ".cache", "lockstep-exec")
+# Where a role's answer goes (the run's /output, which the helper brings back).
+ANSWER_DIR = "/output"
+
+
+def no_duplicates(pairs):
+    keys = [k for k, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError("duplicate key")
+    return dict(pairs)
+
+
+def result(seq, status, **kw):
+    out = {"v": 1, "seq": seq, "status": status}
+    out.update(kw)
+    return out
+
+
+def resolve(workspace, path):
+    if not isinstance(path, str) or path == "" or "\0" in path:
+        raise ValueError("bad path")
+    return path if path.startswith("/") else os.path.join(workspace, path)
+
+
+def cut(data, limit):
+    if len(data) > limit:
+        return data[:limit].decode("utf-8", "replace"), True
+    return data.decode("utf-8", "replace"), False
+
+
+def op_read(ws, a, limit):
+    p = resolve(ws, a.get("path"))
+    with open(p, "rb") as f:
+        data = f.read(limit * 4)
+    lines = data.decode("utf-8", "replace").splitlines(keepends=True)
+    start = max(int(a.get("offset") or 1), 1)
+    count = int(a.get("limit") or 2000)
+    chosen = lines[start - 1:start - 1 + count]
+    text = "".join("%6d\t%s" % (start + i, ln) for i, ln in enumerate(chosen))
+    out, trunc = cut(text.encode(), limit)
+    return {"stdout": out, "truncated": trunc}
+
+
+def op_list(ws, a, limit):
+    p = resolve(ws, a.get("path") or ".")
+    rows = []
+    for name in sorted(os.listdir(p)):
+        full = os.path.join(p, name)
+        kind = "link" if os.path.islink(full) else "dir" if os.path.isdir(full) else "file"
+        rows.append("%s %s" % (kind, name))
+    out, trunc = cut("\n".join(rows).encode(), limit)
+    return {"stdout": out, "truncated": trunc}
+
+
+def op_search(ws, a, limit, deadline):
+    p = resolve(ws, a.get("path") or ".")
+    pat = a.get("pattern")
+    if not isinstance(pat, str) or pat == "":
+        raise ValueError("bad pattern")
+    r = subprocess.run(["grep", "-rnE", "--exclude-dir=.git", "--", pat, p], capture_output=True,
+                       timeout=max(deadline - time.monotonic(), 1))
+    out, t1 = cut(r.stdout, limit)
+    err, t2 = cut(r.stderr, 65536)
+    return {"exit": r.returncode, "stdout": out, "stderr": err, "truncated": t1 or t2}
+
+
+def op_write(ws, a, _limit):
+    p = resolve(ws, a.get("path"))
+    content = a.get("content")
+    if not isinstance(content, str):
+        raise ValueError("bad content")
+    os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(content)
+    return {"stdout": "wrote %d bytes to %s" % (len(content.encode()), p)}
+
+
+def op_answer(_ws, a, _limit):
+    # The role's answer, and nothing else: one fixed file outside the project's tree.
+    content = a.get("content")
+    if not isinstance(content, str) or content == "" or len(content.encode()) > 262144:
+        raise ValueError("bad answer")
+    os.makedirs(ANSWER_DIR, exist_ok=True)
+    with open(os.path.join(ANSWER_DIR, "result.json"), "w", encoding="utf-8") as f:
+        f.write(content)
+    return {"stdout": "answer saved (%d bytes)" % len(content.encode())}
+
+
+def op_edit(ws, a, _limit):
+    p = resolve(ws, a.get("path"))
+    old, new = a.get("old_string"), a.get("new_string")
+    if not isinstance(old, str) or not isinstance(new, str) or old == "":
+        raise ValueError("bad edit")
+    with open(p, encoding="utf-8") as f:
+        text = f.read()
+    n = text.count(old)
+    if n != 1:
+        return {"failed": "old_string occurs %d times (must be exactly once)" % n}
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(text.replace(old, new, 1))
+    return {"stdout": "edited %s" % p}
+
+
+def op_exec(ws, a, limit, deadline, seq):
+    cmd = a.get("command")
+    if not isinstance(cmd, str) or cmd == "":
+        raise ValueError("bad command")
+    want = a.get("timeout_seconds")
+    budget = deadline - time.monotonic()
+    if isinstance(want, int) and 0 < want < budget:
+        budget = want
+    os.makedirs(STATE, exist_ok=True)
+    started = time.monotonic()
+    proc = subprocess.Popen(fresh_groups() + ["/bin/bash", "-c", cmd], cwd=ws, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    with open(os.path.join(STATE, "%d.pgid" % seq), "w") as f:
+        f.write(str(proc.pid))
+    outcome = "exited"
+    try:
+        out, err = proc.communicate(timeout=max(budget, 1))
+    except subprocess.TimeoutExpired:
+        outcome = "timed-out"
+        kill_group(proc.pid)
+        out, err = proc.communicate()
+    if os.path.exists(os.path.join(STATE, "%d.cancelled" % seq)):
+        outcome = "cancelled"
+    o, t1 = cut(out, limit)
+    e, t2 = cut(err, limit)
+    return {"outcome": outcome, "exit": proc.returncode, "stdout": o, "stderr": e, "truncated": t1 or t2,
+            "elapsed_ms": int((time.monotonic() - started) * 1000)}
+
+
+def fresh_groups():
+    # A session opened before provisioning added the user to the docker group lacks it; sudo to the
+    # same user re-reads the groups (the Engineer's own sudo, inside the guest).
+    try:
+        import grp
+        import pwd
+        docker = grp.getgrnam("docker")
+        user = pwd.getpwuid(os.getuid()).pw_name
+    except (ImportError, KeyError):
+        return []
+    if os.getuid() == 0 or docker.gr_gid in os.getgroups() or user not in docker.gr_mem:
+        return []
+    return ["sudo", "-n", "-H", "-u", user, "--"]
+
+
+def kill_group(pgid):
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            return
+        time.sleep(0.5)
+
+
+def cancel(seq):
+    path = os.path.join(STATE, "%d.pgid" % seq)
+    try:
+        with open(path) as f:
+            pgid = int(f.read().strip())
+    except (OSError, ValueError):
+        print("not-running")
+        return 0
+    with open(os.path.join(STATE, "%d.cancelled" % seq), "w") as f:
+        f.write("1")
+    kill_group(pgid)
+    print("cancelled")
+    return 0
+
+
+def main():
+    argv = sys.argv[1:]
+    if len(argv) == 2 and argv[0] == "--cancel" and re.fullmatch(r"[0-9]{1,9}", argv[1]):
+        return cancel(int(argv[1]))
+    opts = {"--workspace": None, "--op": None, "--limit-seconds": "600", "--output-limit": "1048576"}
+    while argv:
+        k = argv.pop(0)
+        if k not in opts or not argv:
+            print(json.dumps(result(None, "refused", detail="usage")))
+            return 64
+        opts[k] = argv.pop(0)
+    ws = opts["--workspace"]
+    try:
+        os.makedirs(ws, exist_ok=True)
+    except OSError:
+        print(json.dumps(result(None, "failed", detail="workspace-unavailable")))
+        return 0
+    limit = int(opts["--output-limit"])
+    deadline = time.monotonic() + int(opts["--limit-seconds"])
+    raw = sys.stdin.buffer.read(8 * 1024 * 1024)
+    try:
+        req = json.loads(raw, object_pairs_hook=no_duplicates)
+        seq = int(req["seq"])
+        op = req["op"]
+        args = req.get("args") or {}
+    except (ValueError, KeyError, TypeError):
+        print(json.dumps(result(None, "refused", detail="malformed-request")))
+        return 0
+    # The host checked the operation against the binding and names it here; the request must agree.
+    if op != opts["--op"]:
+        print(json.dumps(result(seq, "refused", detail="op-mismatch")))
+        return 0
+    try:
+        if op == "read":
+            body = op_read(ws, args, limit)
+        elif op == "list":
+            body = op_list(ws, args, limit)
+        elif op == "search":
+            body = op_search(ws, args, limit, deadline)
+        elif op == "write":
+            body = op_write(ws, args, limit)
+        elif op == "edit":
+            body = op_edit(ws, args, limit)
+        elif op == "exec":
+            body = op_exec(ws, args, limit, deadline, seq)
+        elif op == "answer":
+            body = op_answer(ws, args, limit)
+        else:
+            print(json.dumps(result(seq, "refused", detail="unknown-op")))
+            return 0
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        print(json.dumps(result(seq, "failed", detail="%s: %s" % (type(e).__name__, e))))
+        return 0
+    if "failed" in body:
+        print(json.dumps(result(seq, "failed", detail=body["failed"])))
+    else:
+        print(json.dumps(result(seq, "ok", **body)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

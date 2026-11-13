@@ -1,0 +1,3 @@
+capsule-runtime 1 push ok capsule=vmq1
+/Users/tab/personal/lockstep/scripts/capsule-runtime: line 482: 49016 Terminated: 15          "${via[@]}" timeout --kill-after=10 "$lim" bash -lc 'cd /work/tree && mapfile -d "" -t a && exec "${a[@]}" < /dev/null' < "$argv" > >(head -c 8388609 > "$out/stdout") 2> >(head -c 8388609 > "$out/stderr")
+capsule-runtime 1 start ok capsule=vmq1 status=Running

@@ -1,0 +1,1 @@
+capsule-runtime 1 bind ok invocation=88133fe45dc02e25d7c3efd51455c20b capsule=vmq1 role=implementer requests=/Users/tab/personal/lockstep/.local/cvm/capsules/invocations/88133fe45dc02e25d7c3efd51455c20b/channel/requests results=/Users/tab/personal/lockstep/.local/cvm/capsules/invocations/88133fe45dc02e25d7c3efd51455c20b/channel/results

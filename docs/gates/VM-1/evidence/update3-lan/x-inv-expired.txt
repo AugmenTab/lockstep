@@ -1,0 +1,2 @@
+exception refused: exception-expired (2026-11-12T05:23:26Z)
+inventory refused: tcp inventory empty (netstat printed nothing)

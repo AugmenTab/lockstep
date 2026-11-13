@@ -16,22 +16,53 @@ module Lockstep.Persistence.Profiles
   , insertRepositoryProfile
   , repositoryDefault
   , insertProfileDecision
+  , profileIdColumn
   ) where
 
+import Data.List qualified as L
+import Data.List.NonEmpty (NonEmpty ((:|)))
+import Data.List.NonEmpty qualified as NE
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
+import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
-import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
+
+import Lockstep.Kernel.Identity (EngineerId, RepositoryId (..))
+import Lockstep.Kernel.Profile (ProfileId, mkProfileId, profileIdText)
+import Lockstep.Persistence.Entity (foreignKeyTo, identityField)
+import Lockstep.Persistence.Fields
+  ( codeField
+  , headMay
+  , joinedOn
+  , qualified
+  , qualifiedEquals
+  , qualifiedReference
+  , selectJoined
+  , tableReference
+  )
+import Lockstep.Persistence.Repositories
+  ( engineerIdField
+  , engineerNameField
+  , engineerTable
+  , repositoryIdField
+  , repositoryOwnerField
+  , repositoryReleasedAtField
+  , repositoryTable
+  )
 
 data ProfileRow
   = ProfileRow
-  { profileRowId :: T.Text
+  { profileRowId :: ProfileId
   , profileRowVersion :: Int32
   , profileRowDigest :: T.Text
   , profileRowDocument :: T.Text
   }
 
+{- | A Profile decision as recorded. Its profile is the one the request named,
+as given: a refused request may name text that is no Profile id (the decision
+log keeps it so), so the column stays text here.
+-}
 data NewProfileDecision
   = NewProfileDecision
   { profileDecisionOperation :: T.Text
@@ -39,161 +70,155 @@ data NewProfileDecision
   , profileDecisionVersion :: Maybe Int32
   , profileDecisionDigest :: Maybe T.Text
   , profileDecisionEngineer :: Maybe T.Text
-  , profileDecisionRepository :: Maybe T.Text
+  , profileDecisionRepository :: Maybe RepositoryId
   , profileDecisionOutcome :: T.Text
   , profileDecisionRefusal :: Maybe T.Text
   }
 
--- | An Engineer and its active repository, if any (identities as UUID text).
+-- | An Engineer and its active repository, if any.
 data EngineerRepository
   = EngineerRepository
-  { engineerRowId :: T.Text
-  , engineerRowRepository :: Maybe T.Text
+  { engineerRowId :: EngineerId
+  , engineerRowRepository :: Maybe RepositoryId
   }
 
-sql :: String -> RawSql.RawSql
-sql =
-  RawSql.fromString
+-- lockstep_profiles ----------------------------------------------------------------
 
-text :: T.Text -> RawSql.RawSql
-text =
-  RawSql.parameter . SqlValue.fromText
-
-int :: Int32 -> RawSql.RawSql
-int =
-  RawSql.parameter . SqlValue.fromInt32
-
-maybeOf :: (a -> RawSql.RawSql) -> Maybe a -> RawSql.RawSql
-maybeOf =
-  maybe (sql "NULL")
-
-uuid :: T.Text -> RawSql.RawSql
-uuid value =
-  sql "CAST(" <> text value <> sql " AS uuid)"
-
--- | Serializes Profile additions until the transaction ends; reads stay possible.
-lockProfiles :: O.MonadOrville m => m ()
-lockProfiles =
-  O.executeVoid O.OtherQuery (sql "LOCK TABLE lockstep_profiles IN EXCLUSIVE MODE")
-
-insertProfile :: O.MonadOrville m => ProfileRow -> m ()
-insertProfile row =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_profiles (profile_id, version, digest, document) VALUES ("
-      <> text (profileRowId row)
-      <> sql ", "
-      <> int (profileRowVersion row)
-      <> sql ", "
-      <> text (profileRowDigest row)
-      <> sql ", "
-      <> text (profileRowDocument row)
-      <> sql ")"
-
-profileMarshaller :: O.AnnotatedSqlMarshaller ProfileRow ProfileRow
-profileMarshaller =
-  O.annotateSqlMarshallerEmptyAnnotation $
+-- | Keyed by (profile id, version); the key is not used to look rows up, so the table is declared without one.
+profileTable :: O.TableDefinition O.NoKey ProfileRow ProfileRow
+profileTable =
+  O.mkTableDefinitionWithoutKey "lockstep_profiles" $
     ProfileRow
-      <$> O.marshallField profileRowId (O.unboundedTextField "profile_id")
-      <*> O.marshallField profileRowVersion (O.integerField "version")
+      <$> O.marshallField profileRowId profileIdField
+      <*> O.marshallField profileRowVersion profileVersionField
       <*> O.marshallField profileRowDigest (O.unboundedTextField "digest")
       <*> O.marshallField profileRowDocument (O.unboundedTextField "document")
 
-selectProfiles :: O.MonadOrville m => RawSql.RawSql -> m [ProfileRow]
-selectProfiles rest =
-  O.executeAndDecode
-    O.SelectQuery
-    (sql "SELECT profile_id, version, digest, document FROM lockstep_profiles " <> rest)
-    profileMarshaller
+-- | A Profile id column: a stored text that is not a valid Profile id fails to decode.
+profileIdField :: O.FieldDefinition O.NotNull ProfileId
+profileIdField =
+  profileIdColumn "profile_id"
+
+-- | Any @profile_id@ column, typed as the Kernel's 'ProfileId' (its smart constructor decides).
+profileIdColumn :: String -> O.FieldDefinition O.NotNull ProfileId
+profileIdColumn =
+  codeField "profile id" profileIdText mkProfileId
+
+profileVersionField :: O.FieldDefinition O.NotNull Int32
+profileVersionField =
+  O.integerField "version"
+
+{- | Serializes Profile additions until the transaction ends; reads stay
+possible. Orville has no table-lock statement.
+-}
+lockProfiles :: O.MonadOrville m => m ()
+lockProfiles =
+  O.executeVoid O.OtherQuery (RawSql.fromString "LOCK TABLE lockstep_profiles IN EXCLUSIVE MODE")
+
+insertProfile :: O.MonadOrville m => ProfileRow -> m ()
+insertProfile =
+  O.insertEntity profileTable
 
 -- | Every stored version of one Profile, oldest first.
-profileVersions :: O.MonadOrville m => T.Text -> m [ProfileRow]
+profileVersions :: O.MonadOrville m => ProfileId -> m [ProfileRow]
 profileVersions profileId =
-  selectProfiles (sql "WHERE profile_id = " <> text profileId <> sql " ORDER BY version")
+  O.findEntitiesBy
+    profileTable
+    (O.where_ (O.fieldEquals profileIdField profileId) <> O.orderBy (O.orderByField profileVersionField O.ascendingOrder))
 
 allProfiles :: O.MonadOrville m => m [ProfileRow]
 allProfiles =
-  selectProfiles (sql "ORDER BY profile_id, version")
+  O.findEntitiesBy profileTable (O.orderBy (O.orderByField profileIdField O.ascendingOrder <> O.orderByField profileVersionField O.ascendingOrder))
 
 -- | One version, or the latest when none is given.
-findProfile :: O.MonadOrville m => T.Text -> Maybe Int32 -> m (Maybe ProfileRow)
+findProfile :: O.MonadOrville m => ProfileId -> Maybe Int32 -> m (Maybe ProfileRow)
 findProfile profileId version =
-  headMay
-    <$> selectProfiles
-      ( sql "WHERE profile_id = "
-          <> text profileId
-          <> maybe (sql "") (\v -> sql " AND version = " <> int v) version
-          <> sql " ORDER BY version DESC LIMIT 1"
-      )
+  O.findFirstEntityBy
+    profileTable
+    ( O.where_ (L.foldl' O.andExpr (O.fieldEquals profileIdField profileId) [O.fieldEquals profileVersionField v | Just v <- [version]])
+        <> O.orderBy (O.orderByField profileVersionField O.descendingOrder)
+    )
 
--- | The latest version of every Profile, by id.
+{- | The latest version of every Profile, by id: the last row of each id in
+'allProfiles' order (one statement, as the former @(profile_id, version) IN
+(SELECT ... max(version) ... GROUP BY profile_id)@ was).
+-}
 latestProfiles :: O.MonadOrville m => m [ProfileRow]
 latestProfiles =
-  selectProfiles
-    (sql "WHERE (profile_id, version) IN (SELECT profile_id, max(version) FROM lockstep_profiles GROUP BY profile_id) ORDER BY profile_id")
+  fmap NE.last . NE.groupBy (\a b -> profileRowId a == profileRowId b) <$> allProfiles
 
+-- The Engineer's active repository ---------------------------------------------------
+
+{- | The Engineer named, and the repository it owns now, if any. Both tables
+have an @id@ column, so the Engineer's is selected as @engineer_id@.
+-}
 engineerRepository :: O.MonadOrville m => T.Text -> m (Maybe EngineerRepository)
 engineerRepository name =
-  headMay
-    <$> O.executeAndDecode
-      O.SelectQuery
-      ( sql "SELECT e.id::text AS engineer_id, r.id::text AS repository_id FROM lockstep_engineers e LEFT JOIN lockstep_repositories r ON r.owner_engineer_id = e.id AND r.released_at IS NULL WHERE e.name = "
-          <> text name
-      )
-      ( O.annotateSqlMarshallerEmptyAnnotation $
-          EngineerRepository
-            <$> O.marshallField engineerRowId (O.unboundedTextField "engineer_id")
-            <*> O.marshallField engineerRowRepository (O.nullableField (O.unboundedTextField "repository_id"))
-      )
+  let
+    engineerId = qualified engineerTable engineerIdField
+  in
+    headMay
+      <$> selectJoined
+        ( EngineerRepository
+            <$> O.marshallSyntheticField (O.syntheticField (qualifiedReference engineerId) "engineer_id" (O.fieldType engineerIdField))
+            <*> O.marshallQualifyFields (O.tableIdentifier repositoryTable) (O.marshallReadOnlyField (O.nullableField repositoryIdField))
+        )
+        ( joinedOn
+            engineerTable
+            [
+              ( Expr.leftJoinType
+              , tableReference repositoryTable
+              , Expr.equals (qualifiedReference (qualified repositoryTable repositoryOwnerField)) (qualifiedReference engineerId)
+                  `O.andExpr` Expr.isNull (qualifiedReference (qualified repositoryTable repositoryReleasedAtField))
+              )
+            ]
+        )
+        (O.where_ (qualifiedEquals (qualified engineerTable engineerNameField) name))
 
-insertRepositoryProfile :: O.MonadOrville m => T.Text -> T.Text -> m ()
+-- lockstep_repository_profiles -------------------------------------------------------
+
+-- | (repository, Profile id): every assignment, newest last.
+repositoryProfileTable :: O.TableDefinition O.NoKey (RepositoryId, ProfileId) (RepositoryId, ProfileId)
+repositoryProfileTable =
+  O.mkTableDefinitionWithoutKey "lockstep_repository_profiles" $
+    (,)
+      <$> O.marshallField fst repositoryProfileRepositoryField
+      <*> O.marshallField snd profileIdField
+
+repositoryProfileRepositoryField :: O.FieldDefinition O.NotNull RepositoryId
+repositoryProfileRepositoryField =
+  foreignKeyTo repositoryTable repositoryIdField "repository_id"
+
+insertRepositoryProfile :: O.MonadOrville m => RepositoryId -> ProfileId -> m ()
 insertRepositoryProfile repositoryId profileId =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_repository_profiles (repository_id, profile_id) VALUES ("
-      <> uuid repositoryId
-      <> sql ", "
-      <> text profileId
-      <> sql ")"
+  O.insertEntity repositoryProfileTable (repositoryId, profileId)
 
 -- | The repository's current default Profile id: the latest assignment.
-repositoryDefault :: O.MonadOrville m => T.Text -> m (Maybe T.Text)
+repositoryDefault :: O.MonadOrville m => RepositoryId -> m (Maybe ProfileId)
 repositoryDefault repositoryId =
-  headMay
-    <$> O.executeAndDecode
-      O.SelectQuery
-      ( sql "SELECT profile_id FROM lockstep_repository_profiles WHERE repository_id = "
-          <> uuid repositoryId
-          <> sql " ORDER BY id DESC LIMIT 1"
-      )
-      (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.unboundedTextField "profile_id")))
+  fmap snd
+    <$> O.findFirstEntityBy
+      repositoryProfileTable
+      (O.where_ (O.fieldEquals repositoryProfileRepositoryField repositoryId) <> O.orderBy (O.orderByField (O.bigIntegerField "id") O.descendingOrder))
+
+-- lockstep_profile_decisions ---------------------------------------------------------
+
+-- | A decision as written; read back as its id.
+profileDecisionTable :: O.TableDefinition O.NoKey NewProfileDecision Int64
+profileDecisionTable =
+  O.mkTableDefinitionWithoutKey "lockstep_profile_decisions" $
+    O.marshallReadOnlyField (O.bigIntegerField "id")
+      <* O.marshallField profileDecisionOperation (O.unboundedTextField "operation")
+      <* O.marshallField profileDecisionProfile (O.nullableField (O.unboundedTextField "profile_id"))
+      <* O.marshallField profileDecisionVersion (O.nullableField profileVersionField)
+      <* O.marshallField profileDecisionDigest (O.nullableField (O.unboundedTextField "digest"))
+      <* O.marshallField profileDecisionEngineer (O.nullableField (O.unboundedTextField "engineer_name"))
+      -- Typed, without a constraint: the schema declares none for the decision log.
+      <* O.marshallField profileDecisionRepository (O.nullableField (identityField "repository_id"))
+      <* O.marshallField profileDecisionOutcome (O.unboundedTextField "outcome")
+      <* O.marshallField profileDecisionRefusal (O.nullableField (O.unboundedTextField "refusal_code"))
 
 -- | Records one decision; returns its id.
 insertProfileDecision :: O.MonadOrville m => NewProfileDecision -> m (Maybe Int64)
 insertProfileDecision decision =
-  headMay
-    <$> O.executeAndDecode
-      O.InsertQuery
-      ( sql "INSERT INTO lockstep_profile_decisions (operation, profile_id, version, digest, engineer_name, repository_id, outcome, refusal_code) VALUES ("
-          <> text (profileDecisionOperation decision)
-          <> sql ", "
-          <> maybeOf text (profileDecisionProfile decision)
-          <> sql ", "
-          <> maybeOf int (profileDecisionVersion decision)
-          <> sql ", "
-          <> maybeOf text (profileDecisionDigest decision)
-          <> sql ", "
-          <> maybeOf text (profileDecisionEngineer decision)
-          <> sql ", "
-          <> maybeOf uuid (profileDecisionRepository decision)
-          <> sql ", "
-          <> text (profileDecisionOutcome decision)
-          <> sql ", "
-          <> maybeOf text (profileDecisionRefusal decision)
-          <> sql ") RETURNING id"
-      )
-      (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.bigIntegerField "id")))
-
-headMay :: [a] -> Maybe a
-headMay xs =
-  case xs of
-    [] -> Nothing
-    x : _ -> Just x
+  headMay <$> O.insertAndReturnEntities profileDecisionTable (decision :| [])

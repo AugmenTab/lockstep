@@ -21,19 +21,22 @@ module Lockstep.Application.EngineWorker
   , stopEngineWorkerWithin
   , requestEngineStop
   , engineOnce
+  , PassFailure (..)
   ) where
 
 import Control.Concurrent (ThreadId, forkFinally, killThread, threadDelay)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, readMVar, tryPutMVar, tryReadMVar)
 import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
 import Control.Monad (unless)
-import Data.Maybe (isJust)
+import Data.Maybe (catMaybes, isJust)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import System.Timeout (timeout)
+import Text.Show (Show)
 
-import Lockstep.Application.Database (DatabaseRuntime)
-import Lockstep.Application.Engine (Engine, StepReport (..), activeTransactionIds, advance, pendingWorkOrders, startTransaction)
+import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, reasonDiagnosis)
+import Lockstep.Application.Engine (Engine, StepReport (..), activeTransactionIds, advanceTransaction, pendingWorkOrders, startTransactionFor)
+import Lockstep.Kernel.Identity (TransactionId (..), WorkOrderId (..), identityText)
 
 data EngineWorker
   = EngineWorker
@@ -42,22 +45,44 @@ data EngineWorker
   , workerThread :: ThreadId
   }
 
+-- | Why a step of a pass did not happen.
+data PassFailure
+  = -- | The engine refused the step, with its code.
+    PassRefused T.Text
+  | -- | The database could not be used, or holds data that does not read.
+    PassDatabase NotReadyReason
+  deriving (Eq, Show)
+
 {- | One pass: the pending bugs started, then each active transaction
-advanced once; what each advance did ('Left' for a refusal or an unready
-database).
+advanced once; what each advance did. A list that could not be read is
+reported under its name, never taken as empty.
 -}
-engineOnce :: DatabaseRuntime -> Engine -> IO [(T.Text, Either T.Text T.Text)]
+engineOnce :: DatabaseRuntime -> Engine -> IO [(T.Text, Either PassFailure T.Text)]
 engineOnce runtime engine =
   enginePass runtime engine (pure False)
 
 -- | A pass that ends early, between transactions, once the check says so.
-enginePass :: DatabaseRuntime -> Engine -> IO Bool -> IO [(T.Text, Either T.Text T.Text)]
+enginePass :: DatabaseRuntime -> Engine -> IO Bool -> IO [(T.Text, Either PassFailure T.Text)]
 enginePass runtime engine stopping = do
   pending <- pendingWorkOrders runtime
-  traverse_ (startTransaction runtime) (fromRight [] pending)
+  started <-
+    case pending of
+      Left reason -> pure [(T.pack "pending work orders", Left (PassDatabase reason))]
+      Right workOrders -> catMaybes <$> traverse start workOrders
   active <- activeTransactionIds runtime
-  each (fromRight [] active)
+  case active of
+    Left reason -> pure (started <> [(T.pack "active transactions", Left (PassDatabase reason))])
+    Right ids -> (started <>) <$> each ids
  where
+  -- A start that happened is seen as its transaction's advance; one that did not is reported
+  -- (a refusal, such as an Engineer whose writer is busy, is tried again next pass).
+  start workOrder = do
+    started <- startTransactionFor runtime workOrder
+    pure $
+      case started of
+        Left reason -> Just (T.pack "start " <> identityText workOrder, Left (PassDatabase reason))
+        Right (Left code) -> Just (T.pack "start " <> identityText workOrder, Left (PassRefused code))
+        Right (Right _) -> Nothing
   each ids =
     case ids of
       [] -> pure []
@@ -69,12 +94,12 @@ enginePass runtime engine stopping = do
             stepped <- one txId
             (stepped :) <$> each rest
   one txId = do
-    stepped <- advance runtime engine txId
+    stepped <- advanceTransaction runtime engine txId
     pure
-      ( txId
+      ( identityText txId
       , case stepped of
-          Left _ -> Left (T.pack "database-not-ready")
-          Right (Left code) -> Left code
+          Left reason -> Left (PassDatabase reason)
+          Right (Left code) -> Left (PassRefused code)
           Right (Right (Stepped input _)) -> Right input
           Right (Right (Idle why _)) -> Right (T.pack "idle " <> why)
       )
@@ -94,7 +119,9 @@ startEngineWorker runtime engine interval logLine = do
           Left (e :: SomeException)
             | Just (_ :: SomeAsyncException) <- fromException e -> throwIO e
             | otherwise -> quietly (logLine ("engine pass failed: " <> displayException e))
-          Right _ -> pure ()
+          Right results ->
+            -- A database failure is logged with its diagnosis; refusals are the engine's own record.
+            traverse_ (\(what, failure) -> quietly (logLine ("engine pass: " <> T.unpack what <> ": " <> T.unpack (reasonDiagnosis failure)))) [(what, r) | (what, Left (PassDatabase r)) <- results]
         threadDelay (interval * 1000)
         loop
     -- A log that fails is not a reason to stop working; a stop still is.

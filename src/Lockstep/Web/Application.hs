@@ -29,7 +29,7 @@ import Lockstep.Web.Components.Page404 (page404)
 import Lockstep.Web.Operator (guardRefusalResponse, handleOperator, matchOperatorRoute)
 import Lockstep.Web.RequestGuard (RouteClass (..), guardRequest)
 import Lockstep.Web.Routes (dispatch, routes)
-import Lockstep.Web.SecureResponse (errorJson)
+import Lockstep.Web.SecureResponse (errorJson, respondWith)
 import Lockstep.Web.Static (StaticAsset (..), lookupAsset, staticRootPath)
 import Lockstep.Web.Types (AppContext (..), Lockstep, getConfig, getDatabase, log, runLockstep)
 
@@ -82,12 +82,12 @@ handleRequest request respond = do
         -- configured; without one, /app… stays 404 as C-P1.1 requires.
         _
           | Just _ <- db
-          , Just route <- matchAppRoute (Wai.requestMethod request) (Wai.pathInfo request) ->
+          , Just route <- matchAppRoute method (Wai.pathInfo request) ->
               case guardRequest port (appRouteClass route) request of
                 Left _ -> liftIO . respond $ errorJson HTTP.status403 [Interpolate.i|refused|]
                 Right () -> logExceptions (liftIO (handleApp db route request >>= respond))
         _ ->
-          case matchOperatorRoute (Wai.requestMethod request) (Wai.pathInfo request) of
+          case matchOperatorRoute method (Wai.pathInfo request) of
             Just route ->
               guarded OperatorRoute (liftIO (handleOperator db route request >>= respond))
             Nothing ->
@@ -107,16 +107,17 @@ logExceptions action = do
     Right res ->
       pure res
 
+-- | An allowlisted asset, with the security headers every other response carries.
 staticResponse :: StaticAsset -> Wai.Response
 staticResponse asset =
-  Wai.responseLBS
+  respondWith
     HTTP.status200
     [(HTTP.hContentType, assetContentType asset)]
     (LBS.fromStrict (assetBody asset))
 
 notFound :: Wai.Response
 notFound =
-  Wai.responseLBS
+  respondWith
     HTTP.status404
     [(HTTP.hContentType, htmlContentType)]
     (renderLazyHTML page404)

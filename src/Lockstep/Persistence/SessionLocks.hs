@@ -2,6 +2,11 @@
 named by a namespace (a fixed number per kind of work) and a text key, hashed
 by the server. The caller keeps one connection pinned for the lock's whole
 life; these statements must all run on that connection.
+
+Orville does not model advisory locks or session settings. The lock and unlock
+are typed function calls; @SET lock_timeout@ (a @SET@ takes no parameters) and
+the @pg_locks@ probe stay as SQL, with every value either a parameter or an
+integer.
 -}
 module Lockstep.Persistence.SessionLocks
   ( acquire
@@ -12,25 +17,28 @@ module Lockstep.Persistence.SessionLocks
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
+import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
 import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
 import Text.Show (show)
 
-sql :: String -> RawSql.RawSql
-sql =
-  RawSql.fromString
+import Lockstep.Persistence.Fields (selectValue)
 
-text :: T.Text -> RawSql.RawSql
-text =
-  RawSql.parameter . SqlValue.fromText
+-- | The lock's two keys: the namespace and @hashtext(key)@.
+lockKeys :: Int32 -> T.Text -> [Expr.ValueExpression]
+lockKeys namespace key =
+  [ Expr.valueExpression (SqlValue.fromInt32 namespace)
+  , Expr.functionCall (Expr.functionName "hashtext") [Expr.cast (Expr.valueExpression (SqlValue.fromText key)) Expr.text]
+  ]
 
 {- | Waits at most the given number of seconds for the lock. A lock not granted
 in time raises PostgreSQL's @lock_not_available@ (SQLSTATE 55P03).
 -}
 acquire :: O.MonadOrville m => Int32 -> Int -> T.Text -> m ()
 acquire namespace seconds key = do
-  O.executeVoid O.OtherQuery (sql ("SET lock_timeout = '" <> show seconds <> "s'"))
-  O.executeVoid O.OtherQuery (sql ("SELECT pg_advisory_lock(" <> show namespace <> ", hashtext(") <> text key <> sql "))")
+  O.executeVoid O.OtherQuery (RawSql.fromString ("SET lock_timeout = '" <> show seconds <> "s'"))
+  -- pg_advisory_lock returns void, read as its (empty) text.
+  void (selectValue (Expr.functionCall (Expr.functionName "pg_advisory_lock") (lockKeys namespace key)) (O.unboundedTextField "v"))
 
 -- | Whether this connection's session holds the lock now.
 held :: O.MonadOrville m => Int32 -> T.Text -> m Bool
@@ -38,13 +46,13 @@ held namespace key = do
   rows <-
     O.executeAndDecode
       O.SelectQuery
-      ( sql
+      ( RawSql.fromString
           ( "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND granted AND pid = pg_backend_pid() AND objsubid = 2 AND classid = "
               <> show namespace
               <> " AND objid = CAST(hashtext("
           )
-          <> text key
-          <> sql ") AS oid)) AS v"
+          <> RawSql.parameter (SqlValue.fromText key)
+          <> RawSql.fromString ") AS oid)) AS v"
       )
       (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.booleanField "v")))
   pure (rows == [True])
@@ -52,9 +60,5 @@ held namespace key = do
 -- | Releases the lock; True when this session held it.
 release :: O.MonadOrville m => Int32 -> T.Text -> m Bool
 release namespace key = do
-  rows <-
-    O.executeAndDecode
-      O.SelectQuery
-      (sql ("SELECT pg_advisory_unlock(" <> show namespace <> ", hashtext(") <> text key <> sql ")) AS v")
-      (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.booleanField "v")))
+  rows <- selectValue (Expr.functionCall (Expr.functionName "pg_advisory_unlock") (lockKeys namespace key)) (O.booleanField "v")
   pure (rows == [True])

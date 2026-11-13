@@ -1127,6 +1127,8 @@ runner_image=""
 runner_name_prefix=lockstep-run-${instance:-main}-
 active_pid=""
 active_run=""
+active_id=""
+active_op=""
 
 # Live role runs (C-P4.L L2-L4; DG-17): run-live-readonly and run-live-write run the
 # provider image with no network but the run's own internal one, whose only other member
@@ -1224,8 +1226,18 @@ init_runner() {
     docker network rm "$n" >/dev/null 2>&1 || true
   done
   init_provider
+  rm -f "$runner/capsule" "$runner/capsule-status"
+  if declare -F init_capsule >/dev/null; then init_capsule; fi
   export LOCKSTEP_SERVICE_RUNNER=$runner
 }
+
+# Phase 5: the runner channel's capsule mode (off unless DIR/capsule/config; scripts/capsule/helper-capsule.sh).
+# A copy of this script without the file beside it (as some checks make) simply has no capsule mode.
+capsule_mode=0
+if [ -f "$root/scripts/capsule/helper-capsule.sh" ]; then
+  # shellcheck source=scripts/capsule/helper-capsule.sh
+  . "$root/scripts/capsule/helper-capsule.sh"
+fi
 
 # C-P4.L.N: the CLI's identity inside the role container (C-P4.L.R3), which owns the auth volume.
 provider_cli_uid=2000000000
@@ -1866,6 +1878,8 @@ handle_runner() { # NAME
     if [ -n "$active_pid" ] && [ "$active_run" = "$run" ]; then
       : > "$runner_work/$run/.cancelled"
       docker kill "$runner_name_prefix$run" >/dev/null 2>&1 || true
+      # A capsule run: the runtime watches for this and ends the guest program.
+      [ -d "$runner_work/$run/.capsule-out" ] && : > "$runner_work/$run/.capsule-out/.cancel"
       now=$(date +%s)
       write_result "$id" "$op" ok - "$now" "$now" "" "run $run" || true
     else
@@ -1878,8 +1892,14 @@ handle_runner() { # NAME
   local refusal
   refusal=$(run_refusal "$op" "$run" "$sha")
   if [ -n "$refusal" ]; then refuse "$id" "$op" "$refusal"; return; fi
-  case $op in
-    run-live-*)
+  case "$capsule_mode $op" in
+    "2 "*) refuse "$id" "$op" capsule-mode-unavailable; return ;;
+    "1 run-live-"*)
+      [ "$live_ready" = 1 ] || { refuse "$id" "$op" provider-not-configured; return; }
+      execute_capsule_live_run "$id" "$op" "$run" < /dev/null > /dev/null 2>&1 &
+      ;;
+    "1 "*) execute_capsule_run "$id" "$op" "$run" < /dev/null > /dev/null 2>&1 & ;;
+    *" run-live-"*)
       [ "$live_ready" = 1 ] || { refuse "$id" "$op" provider-not-configured; return; }
       execute_live_run "$id" "$op" "$run" < /dev/null > /dev/null 2>&1 &
       ;;
@@ -1887,13 +1907,30 @@ handle_runner() { # NAME
   esac
   active_pid=$!
   active_run=$run
+  active_id=$id
+  active_op=$op
 }
 
 runner_tick() {
   if [ -n "$active_pid" ] && ! kill -0 "$active_pid" 2>/dev/null; then
     wait "$active_pid" 2>/dev/null
+    # A run process that died without answering (a bug in the helper, a killed subshell) is answered at
+    # once, interrupted (never replayed), instead of leaving the engine to wait out the run's whole limit.
+    if ! grep -qx "[0-9]* end $active_id .*" "$helper/runner-journal" 2>/dev/null; then
+      # Its guest program, if any, is ended (the runtime watches this file) and its tree never taken.
+      [ -d "$runner_work/$active_run/.capsule-out" ] && : > "$runner_work/$active_run/.capsule-out/.cancel"
+      [ "$capsule_mode" = 1 ] || docker rm -f "$runner_name_prefix$active_run" > /dev/null 2>&1 || true
+      now=$(date +%s)
+      ipad=$ripad opad=$ropad results=$runner_results write_result "$active_id" "$active_op" interrupted - "$now" "$now" "the run's process ended without an answer" || true
+      journal_file=$helper/runner-journal journal "end $active_id interrupted"
+      log "$active_op $active_id: interrupted (its process ended without an answer)"
+      [ "$capsule_mode" = 1 ] && capsule_status_write - - "$active_op interrupted" "$active_op: its process ended without an answer"
+      rm -f "$runner_work/$active_run/.capsule-pid"
+    fi
     active_pid=""
     active_run=""
+    active_id=""
+    active_op=""
   fi
   private_dir "$runner_requests" || return 0
   while IFS= read -r name; do
@@ -1956,6 +1993,8 @@ EOF
 done
 if [ -n "$active_pid" ]; then
   docker rm -f "$runner_name_prefix$active_run" >/dev/null 2>&1 || true
+  # A capsule run is ended too (the runtime stops the guest program and the run's tree is not taken).
+  [ -d "$runner_work/$active_run/.capsule-out" ] && : > "$runner_work/$active_run/.capsule-out/.cancel"
   wait "$active_pid" 2>/dev/null
 fi
 log "stopped"

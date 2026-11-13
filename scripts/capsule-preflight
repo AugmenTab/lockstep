@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+# Dev Capsule preflight (Phase 5, handoff §14; contract C-P5.10): before any model usage, check every
+# prerequisite of a capsule-backed transaction and name the exact one that fails. Read-only toward the
+# project; it starts a stopped capsule, runs a fixed probe in the guest, and nothing else.
+#
+#   scripts/capsule-preflight --helper-state DIR [--repo PATH] [--toolchain-probe FILE]
+#
+#   --helper-state   the helper's state directory (holds capsule/config, runner/, provider/)
+#   --repo           the Supervisor's canonical repository (its Git authority is checked)
+#   --toolchain-probe  a trusted script run in the capsule; exit 0 = the project's tools are usable
+#
+# Host listeners beyond loopback fail the preflight unless DIR/capsule/lan-exception, the owner's scoped
+# and expiring exception for this project and these capsules, names each one (update 2 §3;
+# scripts/capsule/lan-exposure). There is no global or permanent allowance.
+#
+# Prints one line per check, "PASS name" or "FAIL name: reason", and exits 0 only if all pass.
+set -u
+export LC_ALL=C
+here=$(cd "$(dirname "$0")" && pwd -P)
+root=$(dirname "$here")
+rt=$root/scripts/capsule-runtime
+
+hstate="" repo="" probe=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    --helper-state) hstate=$2; shift 2 ;;
+    --repo) repo=$2; shift 2 ;;
+    --toolchain-probe) probe=$2; shift 2 ;;
+    *) echo "usage: scripts/capsule-preflight --helper-state DIR [--repo PATH] [--toolchain-probe FILE]" >&2; exit 64 ;;
+  esac
+done
+[ -n "$hstate" ] || { echo "capsule-preflight: --helper-state is required" >&2; exit 64; }
+
+failures=0
+pass() { printf 'PASS %s\n' "$1"; }
+fail() { printf 'FAIL %s: %s\n' "$1" "$2"; failures=$((failures + 1)); }
+
+# ---- configuration
+cfg=$hstate/capsule/config
+if [ ! -f "$cfg" ]; then
+  fail capsule-config "missing $cfg (capsule mode is off)"
+  echo "capsule-preflight: $failures failure(s)"
+  exit 1
+fi
+cstate=$(sed -n 's/^runtime-state //p' "$cfg")
+cap=$(sed -n 's/^capsule //p' "$cfg")
+proj=$(sed -n 's/^project //p' "$cfg")
+vcap=$(sed -n 's/^verify-capsule //p' "$cfg")
+lproj=$(sed -n 's/^lockstep-project //p' "$cfg")
+case $(stat -f %Lp "$cfg" 2>/dev/null || stat -c %a "$cfg") in 600) pass capsule-config ;; *) fail capsule-config "$cfg must be mode 0600" ;; esac
+
+# ---- the capsule: exists, belongs to the project, audited, healthy
+"$rt" --state "$cstate" start "$cap" "$proj" > /dev/null 2>&1
+out=$("$rt" --state "$cstate" inspect "$cap" "$proj" 2>&1)
+case $out in
+  *"inspect ok"*"status=Running"*"audit=ok"*) pass capsule-healthy ;;
+  *"capsule-owned-by-another-project"*) fail capsule-ownership "the capsule belongs to another project" ;;
+  *) fail capsule-healthy "$out" ;;
+esac
+case $out in *"project=$proj"*) pass capsule-ownership ;; esac
+case $out in
+  *"template=current"*) pass capsule-template-current ;;
+  *) fail capsule-template-current "the capsule was made from an older template (base image or settings changed); run: scripts/capsule-runtime --state $cstate reconfigure $cap $proj" ;;
+esac
+# D4 (update 1): the capsule's effective configuration keeps the gateway off the host's loopback.
+ecfg=$cstate/capsules/lima/lockstep-$cap/lima.yaml
+if [ "$(grep -c hostLoopback "$ecfg" 2>/dev/null)" = 1 ] && grep -qx '  hostLoopback: false' "$ecfg"; then pass host-loopback-isolation
+else fail host-loopback-isolation "the capsule's effective Lima configuration does not set networkOpts.hostLoopback: false"
+fi
+
+# ---- inside the guest: workspace, disk, Docker, no credentials, no host mounts
+probe_script=$(mktemp "${TMPDIR:-/tmp}/lockstep-preflight.XXXXXX")
+trap 'rm -f "$probe_script"' EXIT
+cat > "$probe_script" <<'EOF'
+mkdir -p /work/tree && touch /work/tree/.lockstep-preflight && rm -f /work/tree/.lockstep-preflight && echo workspace-writable
+echo "disk-free-mib=$(df --output=avail -m /work | tail -n 1 | tr -d ' ')"
+docker run --rm busybox:1.36 true >/dev/null 2>&1 && echo docker-ok || { docker info >/dev/null 2>&1 && echo docker-daemon-ok-no-pull; }
+[ -e /auth ] || [ -e "$HOME/.claude/.credentials.json" ] || [ -n "${ANTHROPIC_API_KEY:-}${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && echo credential-present || echo credential-absent
+[ -z "$(findmnt -rn -t virtiofs,9p,fuse.sshfs,nfs,cifs -o TARGET)" ] && echo no-host-mounts
+test -x /opt/lockstep/guest-exec && echo guest-exec-present
+EOF
+gout=$cstate/capsules/records/$cap.run.out
+rm -f "$gout"
+# Fresh output only, from a probe that ran to its end: a stale or failed probe proves nothing.
+if ! "$rt" --state "$cstate" run "$cap" "$proj" "$probe_script" 300 > /dev/null 2>&1; then
+  fail guest-probe "the in-guest probe did not complete; the checks below have no evidence"
+  : > "$gout"
+fi
+grep -q workspace-writable "$gout" 2>/dev/null && pass workspace-writable || fail workspace-writable "cannot write /work/tree in the capsule"
+free=$(sed -n 's/^disk-free-mib=//p' "$gout" 2>/dev/null)
+if [ -n "$free" ] && [ "$free" -ge 4096 ]; then pass disk-space; else fail disk-space "only ${free:-unknown} MiB free in the capsule (4096 needed)"; fi
+if grep -q docker-ok "$gout" 2>/dev/null; then pass guest-docker
+elif grep -q docker-daemon-ok-no-pull "$gout" 2>/dev/null; then fail guest-docker "the daemon runs but cannot pull (network policy?)"
+else fail guest-docker "the guest's Docker daemon does not answer"
+fi
+grep -q credential-absent "$gout" 2>/dev/null && pass credential-not-in-guest || fail credential-not-in-guest "a provider credential is visible in the capsule"
+grep -q no-host-mounts "$gout" 2>/dev/null && pass no-host-mounts || fail no-host-mounts "a host directory is mounted in the capsule"
+grep -q guest-exec-present "$gout" 2>/dev/null && pass bridge-executor || fail bridge-executor "/opt/lockstep/guest-exec is missing in the capsule"
+
+# ---- the project's toolchain (a trusted, project-declared probe)
+if [ -n "$probe" ]; then
+  rm -f "$gout"
+  if "$rt" --state "$cstate" run "$cap" "$proj" "$probe" 3600 > /dev/null 2>&1; then pass toolchain
+  else fail toolchain "the project's toolchain probe failed: $(tail -n 3 "$gout" 2>/dev/null | tr '\n' ' ' | cut -c 1-200)"
+  fi
+fi
+
+# ---- tool routing: the helper runs roles with the bridge only
+[ -x "$root/scripts/runner/provider/capsule-bridge" ] && pass bridge-present || fail bridge-present "scripts/runner/provider/capsule-bridge is missing"
+if grep -q "^lockstep-capsule 1 $cap\$" "$hstate/runner/capsule" 2>/dev/null; then pass tool-routing
+else fail tool-routing "the helper has not announced capsule mode for $cap (start it with --runner)"
+fi
+
+# ---- verification environment
+if [ -z "$vcap" ]; then
+  fail verification-environment "no verify-capsule in $cfg"
+elif [ -f "$cstate/capsules/snapshots/$vcap/verify.disk" ] && "$rt" --state "$cstate" inspect "$vcap" "$proj" 2>&1 | grep -q 'audit=ok'; then
+  pass verification-environment
+else
+  fail verification-environment "the verification capsule $vcap or its 'verify' snapshot is missing or not audited"
+fi
+
+# ---- Supervisor Git authority
+if [ -n "$repo" ]; then
+  if [ -d "$repo/.git" ] && [ -z "$(git -C "$repo" -c core.fsmonitor=false status --porcelain 2>/dev/null)" ]; then pass git-authority
+  else fail git-authority "$repo is missing or has uncommitted changes"
+  fi
+fi
+
+# ---- Host services a capsule could reach (update 1 §4). The guest cannot reach the host's loopback
+# (networkOpts.hostLoopback: false, checked above), but it can reach every service bound to another of the
+# Mac's addresses (all interfaces, the LAN address) through its ordinary outbound path, as any device on
+# the LAN could. Measured: check-capsule-vm "LAN exposure" notes. Each such listener fails the preflight
+# unless the owner's scoped exception (DIR/capsule/lan-exception) names it. netstat lists every socket
+# on the host, whatever user owns it (lsof without root sees only this user's; P5.5 review 3, H1).
+exc=$hstate/capsule/lan-exception
+excarg=()
+private=yes
+if [ -e "$exc" ] || [ -L "$exc" ]; then
+  if [ -L "$exc" ] || [ ! -f "$exc" ]; then private=no
+  else
+    case $(stat -f %Lp "$exc" 2>/dev/null || stat -c %a "$exc") in 600) ;; *) private=no ;; esac
+  fi
+  if [ "$private" = yes ]; then excarg=(--exception "$exc")
+  else excarg=(--exception /nonexistent/lan-exception-not-private)
+  fi
+fi
+# Update 3: each inventory is collected on its own and counts only if its netstat exited 0; an incomplete
+# inventory is never handed on as if it were the whole truth. lan-exposure then checks the structure.
+inv=$(mktemp -d "${TMPDIR:-/tmp}/lockstep-preflight-inv.XXXXXX")
+trap 'rm -f "$probe_script"; rm -rf "$inv"' EXIT
+collected=yes
+for p in tcp udp; do
+  netstat -anv -p "$p" > "$inv/$p" 2> "$inv/$p.err"
+  rc=$?
+  if [ "$rc" != 0 ]; then
+    collected=no
+    fail host-network-exposure "could not list the host's $(printf '%s' "$p" | tr a-z A-Z) listeners (netstat -anv -p $p exited $rc: $(head -c 200 "$inv/$p.err" | tr '\n' ' ')); the exposure is unknown, so nothing is accepted. Fix netstat on this Mac and rerun"
+  fi
+done
+lan=""
+lan_ok=1
+if [ "$collected" = yes ]; then
+  lan=$("$here/capsule/lan-exposure" --project "$proj" --capsule "$cap" --verify-capsule "$vcap" \
+    --lockstep-project "$lproj" --now "$(date +%s)" --tcp "$inv/tcp" --udp "$inv/udp" ${excarg[@]+"${excarg[@]}"})
+  lan_ok=$?
+fi
+printf '%s\n' "$lan" | sed -n 's/^approved /NOTE lan-exception accepts /p'
+if [ "$private" = no ]; then
+  fail lan-exception "$exc must be a regular file of mode 0600; it is ignored and nothing is accepted"
+elif printf '%s\n' "$lan" | grep -q '^exception refused: '; then
+  fail lan-exception "$(printf '%s\n' "$lan" | sed -n 's/^exception refused: //p'); nothing is accepted"
+elif [ ${#excarg[@]} -gt 0 ] && [ "$collected" = yes ] && ! printf '%s\n' "$lan" | grep -q '^inventory refused: '; then
+  pass lan-exception
+fi
+if [ "$collected" = no ]; then :
+elif printf '%s\n' "$lan" | grep -q '^inventory refused: '; then
+  fail host-network-exposure "the host's listener inventory is not in the expected macOS netstat format ($(printf '%s\n' "$lan" | sed -n 's/^inventory refused: //p')); the exposure is unknown, so nothing is accepted. Check that /usr/sbin/netstat is the system's and rerun"
+elif [ "$lan_ok" = 0 ]; then pass host-network-exposure
+else
+  fail host-network-exposure "host services reachable from the guest through the Mac's other addresses:$(printf '%s\n' "$lan" | sed -n 's/^exposure refused://p'); bind them to 127.0.0.1, stop them, or have the owner name them in $exc"
+fi
+
+echo "capsule-preflight: $failures failure(s)"
+[ "$failures" = 0 ]

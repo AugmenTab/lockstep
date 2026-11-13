@@ -1,0 +1,9 @@
+lockstep-control-result 1
+id d1e2d1c4172d7351f47c32265ed65de0
+op run-write
+outcome interrupted
+reason -
+started 1794354619
+finished 1794354619
+detail the run's process ended without an answer
+mac 385b6d2f2d8d2fc027d440a2d24f54c5dac97c2c10b74c35083e4b773ebf8845

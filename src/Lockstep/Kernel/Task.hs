@@ -20,10 +20,14 @@ module Lockstep.Kernel.Task
   , DependencyFact (..)
   , TaskFacts (..)
   , TaskReadiness (..)
+  , TaskState (..)
+  , taskStateName
+  , parseTaskState
   , taskReadiness
   , readinessWords
   , mostImportantReady
   , createsCycle
+  , createsCycleOf
   , taskRefusalCodes
   , taskRefusalWords
   , taskRequestText
@@ -36,6 +40,8 @@ import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (Show)
+
+import Lockstep.Kernel.Enum (parseEnumText)
 
 newtype TaskTitle
   = TaskTitle T.Text
@@ -121,8 +127,8 @@ priorityCode p =
       Low -> "low"
 
 parsePriority :: T.Text -> Maybe Priority
-parsePriority code =
-  L.find ((== code) . priorityCode) [minBound .. maxBound]
+parsePriority =
+  parseEnumText priorityCode
 
 priorityWords :: Priority -> T.Text
 priorityWords p =
@@ -157,27 +163,75 @@ data TaskReadiness
   | Finished
   | TaskCanceled
   | BeingWorkedOn
+  | -- | Its facts name a state no Ticket has (its own, or a dependency's): it is not taken for any other.
+    StateUnrecognised T.Text
   deriving (Eq, Show)
 
--- | Where a task stands, in the order of contract K4.
+{- | The state a task's facts name: its Ticket's state, by the name C-P2.2
+gives it ('Lockstep.Kernel.Ticket.ticketStateName').
+-}
+data TaskState
+  = TaskProposed
+  | TaskReady
+  | TaskInProgress
+  | TaskCodeComplete
+  | TaskAwaitingReview
+  | TaskReadyForSignoff
+  | TaskDone
+  | TaskCanceledState
+  | TaskBlocked
+  deriving (Eq, Show, Enum, Bounded)
+
+taskStateName :: TaskState -> T.Text
+taskStateName state =
+  T.pack $
+    case state of
+      TaskProposed -> "proposed"
+      TaskReady -> "ready"
+      TaskInProgress -> "in-progress"
+      TaskCodeComplete -> "code-complete"
+      TaskAwaitingReview -> "awaiting-review"
+      TaskReadyForSignoff -> "ready-for-signoff"
+      TaskDone -> "done"
+      TaskCanceledState -> "canceled"
+      TaskBlocked -> "blocked"
+
+-- | The state of its name; derived from 'taskStateName'.
+parseTaskState :: T.Text -> Maybe TaskState
+parseTaskState =
+  parseEnumText taskStateName
+
+{- | Where a task stands, in the order of contract K4. The state names are read
+once; a name no state has is 'StateUnrecognised', never another state.
+-}
 taskReadiness :: TaskFacts -> TaskReadiness
 taskReadiness facts =
-  let
-    state = T.unpack (factState facts)
-    titlesWhere p = [dependencyTitle d | d <- factDependencies facts, p (T.unpack (dependencyState d))]
-    canceledDeps = titlesWhere (== "canceled")
-    unfinished = titlesWhere (`L.notElem` ["done", "canceled"])
-  in
-    case state of
-      "canceled" -> TaskCanceled
-      "done" -> Finished
-      "blocked" -> BlockedBecause (fromMaybe T.empty (factBlockReason facts))
-      _
-        | not (L.null canceledDeps) -> CannotStart canceledDeps
-        | state == "proposed" -> NotYetReady
-        | not (L.null unfinished) -> WaitingFor unfinished
-        | state == "ready" -> ReadyToWork
-        | otherwise -> BeingWorkedOn
+  case (parseTaskState (factState facts), traverse dependencyOf (factDependencies facts)) of
+    (Nothing, _) -> StateUnrecognised (factState facts)
+    (_, Left unknown) -> StateUnrecognised unknown
+    (Just state, Right dependencies) -> readinessOf state dependencies
+ where
+  dependencyOf d = maybe (Left (dependencyState d)) (\s -> Right (dependencyTitle d, s)) (parseTaskState (dependencyState d))
+  readinessOf state dependencies =
+    let
+      titlesWhere p = [title | (title, s) <- dependencies, p s]
+      canceledDeps = titlesWhere (== TaskCanceledState)
+      unfinished = titlesWhere (`L.notElem` [TaskDone, TaskCanceledState])
+    in
+      -- An alternative whose guard fails falls through to the next.
+      case state of
+        TaskCanceledState -> TaskCanceled
+        TaskDone -> Finished
+        TaskBlocked -> BlockedBecause (fromMaybe T.empty (factBlockReason facts))
+        _ | not (L.null canceledDeps) -> CannotStart canceledDeps
+        TaskProposed -> NotYetReady
+        _ | not (L.null unfinished) -> WaitingFor unfinished
+        TaskReady -> ReadyToWork
+        -- The states between ready and done: the work is under way.
+        TaskInProgress -> BeingWorkedOn
+        TaskCodeComplete -> BeingWorkedOn
+        TaskAwaitingReview -> BeingWorkedOn
+        TaskReadyForSignoff -> BeingWorkedOn
 
 readinessWords :: TaskReadiness -> T.Text
 readinessWords readiness =
@@ -190,6 +244,7 @@ readinessWords readiness =
     Finished -> T.pack "Finished."
     TaskCanceled -> T.pack "Canceled."
     BeingWorkedOn -> T.pack "Being worked on."
+    StateUnrecognised name -> T.pack "Lockstep cannot tell where this task stands: it recorded a state it does not recognise (" <> name <> T.pack ")."
 
 {- | The highest-priority task that is ready to work on, then the oldest (the
 lowest creation order); a blocked or waiting task is never chosen, whatever its
@@ -205,7 +260,12 @@ mostImportantReady tasks =
 the other edges (task, depends on); the task's own current edges are replaced.
 -}
 createsCycle :: [(T.Text, T.Text)] -> T.Text -> [T.Text] -> Bool
-createsCycle edges task deps =
+createsCycle =
+  createsCycleOf
+
+-- | 'createsCycle' over any task identity (the application passes its typed task identities).
+createsCycleOf :: Eq task => [(task, task)] -> task -> [task] -> Bool
+createsCycleOf edges task deps =
   let
     others = [e | e@(from, _) <- edges, from /= task]
     reaches seen from =
@@ -270,6 +330,9 @@ quotedText text =
       '\n' -> T.pack "\\n"
       _ -> T.singleton c
 
+{- | Words for a task refusal code, as the frozen @Either Text@ task boundary
+returns it; a code without its own words gets the one general sentence.
+-}
 taskRefusalWords :: T.Text -> T.Text
 taskRefusalWords code =
   fromMaybe (T.pack "Something went wrong. The exact reason is under Technical details.") (L.lookup code refusals)

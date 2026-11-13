@@ -1,0 +1,26 @@
+time="2026-11-10T17:58:40-06:00" level=info msg="Using the existing instance `lockstep-vmq1`"
+time="2026-11-10T17:58:40-06:00" level=info msg="Starting the instance `lockstep-vmq1` with internal VM driver `vz`"
+time="2026-11-10T17:58:40-06:00" level=info msg="[hostagent] TCP (except for SSH) and UDP port forwarding is disabled"
+time="2026-11-10T17:58:40-06:00" level=info msg="[hostagent] TCP (except for SSH) and UDP port forwarding is disabled"
+time="2026-11-10T17:58:40-06:00" level=info msg="[hostagent] hostagent socket created at /Users/tab/personal/lockstep/.local/cvm/capsules/lima/lockstep-vmq1/ha.sock"
+time="2026-11-10T17:58:40-06:00" level=info msg="[hostagent] Starting VZ (hint: to watch the boot progress, see `/Users/tab/personal/lockstep/.local/cvm/capsules/lima/lockstep-vmq1/serial*.log`)"
+time="2026-11-10T17:58:40-06:00" level=info msg="[hostagent] [VZ] - vm state change: running"
+time="2026-11-10T17:58:41-06:00" level=info msg="[hostagent] gvproxy API request" component=services-api endpoint=/services/dhcp/leases method=GET outcome=success source=
+time="2026-11-10T17:58:47-06:00" level=info msg="[hostagent] SSH server does not seem to be running on vsock port, using usernet forwarder"
+time="2026-11-10T17:58:47-06:00" level=info msg="[hostagent] gvproxy API request" component=services-api endpoint=/services/dhcp/leases method=GET outcome=success source=
+time="2026-11-10T17:58:47-06:00" level=info msg="[hostagent] gvproxy API request" component=services-api endpoint=/services/forwarder/expose local="127.0.0.1:60717" method=POST outcome=success protocol=tcp remote="192.168.5.15:22" source=
+time="2026-11-10T17:58:47-06:00" level=info msg="[hostagent] gvproxy API request" component=services-api endpoint=/services/dns/add method=POST outcome=success source= zone=internal.
+time="2026-11-10T17:58:47-06:00" level=info msg="SSH Local Port: 60717"
+time="2026-11-10T17:58:47-06:00" level=info msg="( 1/5) 🕐 SSH connection (essential)"
+time="2026-11-10T17:58:48-06:00" level=info msg="( 1/5) ✅ SSH connection"
+time="2026-11-10T17:58:48-06:00" level=info msg="( 2/5) 🕐 User session to be ready for SSH (essential)"
+time="2026-11-10T17:58:48-06:00" level=info msg="( 2/5) ✅ User session to be ready for SSH"
+time="2026-11-10T17:58:48-06:00" level=info msg="( 3/5) 🕐 Persistent SSH ControlMaster (essential)"
+time="2026-11-10T17:58:48-06:00" level=info msg="( 3/5) ✅ Persistent SSH ControlMaster"
+time="2026-11-10T17:58:48-06:00" level=info msg="( 4/5) 🕐 Guest agent to be running"
+time="2026-11-10T17:58:48-06:00" level=info msg="[hostagent] Guest agent is running"
+time="2026-11-10T17:58:48-06:00" level=info msg="[hostagent] Time sync: guest agent is alive, starting time synchronization"
+time="2026-11-10T17:58:48-06:00" level=info msg="( 4/5) ✅ Guest agent to be running"
+time="2026-11-10T17:58:48-06:00" level=info msg="( 5/5) 🕐 Boot scripts to be finished"
+time="2026-11-10T17:58:48-06:00" level=info msg="( 5/5) ✅ Boot scripts to be finished"
+time="2026-11-10T17:58:48-06:00" level=info msg="READY. Run `limactl shell lockstep-vmq1` to open the shell."

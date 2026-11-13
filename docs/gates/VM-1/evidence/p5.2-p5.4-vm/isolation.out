@@ -1,0 +1,14 @@
+hostname=lima-lockstep-vmq1
+mounts=[]
+users-dir=absent
+ssh-agent=[]
+docker-name=lima-lockstep-vmq1
+docker-os=Ubuntu 24.04.5 LTS
+tcp host.lima.internal:18765 open
+tcp 192.168.5.2:18765 open
+tcp 192.168.5.2:2375 closed
+tcp 192.168.5.2:5432 closed
+tcp 192.168.5.2:8000 closed
+tcp 192.168.5.2:22 closed
+listening=[127.0.0.53%lo:53 0.0.0.0:22 127.0.0.54:53 127.0.0.1:41697 [::]:22 ]
+isolation-done

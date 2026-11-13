@@ -1,0 +1,6 @@
+PASS the helper is in capsule mode with the verification capsule
+PASS the transaction went from hand-over to Done through the real service (All 1 tests passed (261.59s))
+PASS runs were executed in the Engineer's capsule (6)
+PASS verification ran in the verification capsule (4)
+PASS no verification ran in the Engineer's capsule
+PASS no run fell back to a container

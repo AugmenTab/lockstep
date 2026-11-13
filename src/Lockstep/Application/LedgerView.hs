@@ -111,7 +111,7 @@ project facts =
     { projectionTime = factTime facts
     , projectionTickets = [TicketLine t title state revision | (t, title, state, revision) <- factTickets facts]
     , projectionOrders = fmap order (factOrders facts)
-    , projectionRefusals = [RefusalLine s e p c code | (s, e, p, c, code) <- factRefusals facts]
+    , projectionRefusals = [RefusalLine (uuidText s) e p c code | (s, e, p, c, code) <- factRefusals facts]
     , projectionSchedule = factSchedule facts
     }
  where
@@ -133,7 +133,7 @@ project facts =
         }
   effect active i =
     let
-      statusFacts = StatusFacts (factTime facts) active (L.any attestedApplied (factResolutions i))
+      statusFacts = StatusFacts (factTime facts) active (factAttestedApplied i)
       intent = factIntent i
     in
       EffectLine
@@ -144,11 +144,6 @@ project facts =
         , effectLineRecoveries = factRecoveries i
         , effectLineResolutions = factResolutions i
         }
-
--- | An attested application: the only resolution that settles an intent as applied without a destination's answer.
-attestedApplied :: StoredResolution -> Bool
-attestedApplied r =
-  resolutionBasis r == T.pack "human-attested" && T.pack "attested-applied" `T.isPrefixOf` resolutionDecision r
 
 -- | The projection's database time, ISO 8601 (for @ledger show@'s first line).
 projectionTimeText :: LedgerProjection -> T.Text

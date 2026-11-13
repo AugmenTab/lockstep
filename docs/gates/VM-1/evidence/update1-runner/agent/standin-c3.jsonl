@@ -1,0 +1,5 @@
+{"messages": 2, "results": [], "issued": ["toolu_01BnkLjVXgwfPOtFYD8LBerp"]}
+{"messages": 5, "results": ["<tool_use_error>Error: No such tool available: mcp__capsule__write</tool_use_error>"], "issued": ["toolu_016QRuSDDHYmpFt8mY9MsWWn"]}
+{"messages": 5, "results": ["<tool_use_error>Error: No such tool available: mcp__capsule__write</tool_use_error>", "<tool_use_error>Error: No such tool available: mcp__capsule__exec</tool_use_error>"], "issued": ["toolu_01cpYnJifxkfV73VHmB1Q6Iu"]}
+{"messages": 5, "results": ["<tool_use_error>Error: No such tool available: mcp__capsule__write</tool_use_error>", "<tool_use_error>Error: No such tool available: mcp__capsule__exec</tool_use_error>", "stdout:\n     1\tint add(int a, int b) { return a + b; }\n"], "issued": ["toolu_01FRPim4BMBrmWKCHOyhqpdX"]}
+{"messages": 5, "results": ["<tool_use_error>Error: No such tool available: mcp__capsule__write</tool_use_error>", "<tool_use_error>Error: No such tool available: mcp__capsule__exec</tool_use_error>", "stdout:\n     1\tint add(int a, int b) { return a + b; }\n", "answer saved (59 bytes)"], "issued": []}

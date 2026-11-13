@@ -1,0 +1,12 @@
+== test start 2026-11-13T04:20:38Z at 73b02033046ec8e858e9aaf2e95cda487de3f6df
+tree-fresh
+brigid           >   HXML scrollToInputOffset
+brigid           >     text: scroll-to-input-offset name:         OK
+brigid           >     bytes: scroll-to-input-offset name:        OK
+brigid           >     text: both attributes coexist:             OK
+brigid           >     bytes: both attributes coexist:            OK
+brigid           > All 474 tests passed (0.01s)
+brigid           > Test suite brigid-test passed
+brigid-generation> All 266 tests passed (99.31s)
+brigid-generation> Test suite brigid-generation-test passed
+== test end 2026-11-13T04:24:36Z exit=0

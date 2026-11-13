@@ -1,0 +1,13 @@
+unapproved tcp * 5000 ControlCenter
+approved tcp * 60683 rapportd (allow tcp * dynamic rapportd)
+approved tcp * 7000 ControlCenter (allow tcp * 7000 ControlCenter)
+approved tcp * 8780 OrbStack Helper (allow tcp * 8780 OrbStack Helper)
+approved tcp * 8781 OrbStack Helper (allow tcp * 8781 OrbStack Helper)
+approved udp * 137 netbiosd (allow udp * 137 netbiosd)
+approved udp * 138 netbiosd (allow udp * 138 netbiosd)
+approved udp * 5353 Brave Browser He (allow udp * 5353 Brave Browser He)
+approved udp * 5353 mDNSResponder (allow udp * 5353 mDNSResponder)
+approved udp * 547 dhcp6d (allow udp * 547 dhcp6d)
+approved udp * 57224 syslogd (allow udp * dynamic syslogd)
+approved udp * 61173 sharingd (allow udp * dynamic sharingd)
+exposure refused: tcp/5000(ControlCenter)

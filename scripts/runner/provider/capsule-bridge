@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+# The capsule tool bridge (Phase 5, docs/architecture/dev-capsules.md §6; contract C-P5.1 T1-T8).
+#
+# A stdio MCP server that the provider CLI starts as its only tool source (the CLI runs with
+# `--tools ""` and `--strict-mcp-config`, so it has no built-in tool that could run anything in
+# its own, credential-bearing container). Every tool call becomes one request file in the
+# invocation's channel directory; the trusted host executor (scripts/capsule-runtime) runs it in
+# the invocation's Dev Capsule and writes the result back. This program never runs a command, never
+# opens a project file and never learns which capsule it serves: the executor binds capsule,
+# project, transaction, role and deadline from its own record of the invocation, not from anything
+# a request says.
+#
+#   capsule-bridge --channel DIR [--role readonly|write] [--wait-limit SECONDS]
+#
+# DIR holds requests/ (written here) and results/ (written by the executor). A request is
+# <seq>.json: {"v":1,"seq":N,"op":OP,"args":{...}}; a result is <seq>.json:
+# {"v":1,"seq":N,"status":"ok"|"refused"|"failed","exit":N|null,"outcome":...,"stdout":...,
+#  "stderr":...,"truncated":bool,"detail":...}.
+import json
+import os
+import sys
+import threading
+import time
+
+PROTOCOL = "2025-06-18"
+# Read-only roles inspect files only: a command in the Engineer's own VM could use guest sudo or Docker
+# to change the working state, so no command tool is offered until a separate review capsule exists.
+OPS_READONLY = ("read", "list", "search", "answer")
+OPS_WRITE = ("read", "list", "search", "write", "edit", "exec", "answer")
+# The channel: requests/ is written here; results/ is mounted read-only into this container and
+# written only by the host executor.
+
+TOOLS = {
+    "answer": {
+        "description": "Write your role's answer: the whole JSON document, saved as /output/result.json "
+        "(the only file this tool writes; call it once, at the end).",
+        "inputSchema": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]},
+    },
+    "read": {
+        "description": "Read a text file in the project workspace of your Dev Capsule (a Linux VM). "
+        "Paths are relative to the workspace root or absolute inside the VM.",
+        "inputSchema": {"type": "object", "properties": {
+            "path": {"type": "string"},
+            "offset": {"type": "integer", "description": "first line, 1-based"},
+            "limit": {"type": "integer", "description": "number of lines"}},
+            "required": ["path"]},
+    },
+    "list": {
+        "description": "List a directory in the Dev Capsule.",
+        "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+    },
+    "search": {
+        "description": "Search file contents in the Dev Capsule with a regular expression (grep -rnE).",
+        "inputSchema": {"type": "object", "properties": {
+            "pattern": {"type": "string"}, "path": {"type": "string"}}, "required": ["pattern"]},
+    },
+    "write": {
+        "description": "Create or replace a file in the Dev Capsule.",
+        "inputSchema": {"type": "object", "properties": {
+            "path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]},
+    },
+    "edit": {
+        "description": "Replace exactly one occurrence of old_string with new_string in a file in the Dev Capsule.",
+        "inputSchema": {"type": "object", "properties": {
+            "path": {"type": "string"}, "old_string": {"type": "string"}, "new_string": {"type": "string"}},
+            "required": ["path", "old_string", "new_string"]},
+    },
+    "exec": {
+        "description": "Run a bash command in the Dev Capsule's workspace (a Linux VM you own: package "
+        "managers, compilers, Docker and Compose all work; there is no approval step). Returns the "
+        "exit status, stdout and stderr. timeout_seconds bounds the command (the capsule's limit applies).",
+        "inputSchema": {"type": "object", "properties": {
+            "command": {"type": "string"}, "timeout_seconds": {"type": "integer"}}, "required": ["command"]},
+    },
+}
+
+MAX_REQUEST = 4 * 1024 * 1024
+
+
+SEND_LOCK = threading.Lock()
+
+
+def send(msg):
+    with SEND_LOCK:
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+
+def error_result(text):
+    return {"content": [{"type": "text", "text": text}], "isError": True}
+
+
+MAX_ANSWER = 262144
+
+
+class Bridge:
+    def __init__(self, channel, role, wait_limit, input_dir=None, answer_dir=None):
+        self.requests = os.path.join(channel, "requests")
+        self.results = os.path.join(channel, "results")
+        # The run's own input (read-only) and output, mounted from the host: the role's instructions
+        # and its answer never pass through a guest, so no guest process can change or forge them
+        # (P5.5 review finding 1).
+        self.input_dir = input_dir
+        self.answer_dir = answer_dir
+        self.ops = OPS_WRITE if role == "write" else OPS_READONLY
+        self.wait_limit = wait_limit
+        # Never reuse a sequence number of an earlier bridge on this channel (a restarted CLI).
+        self.seq = 0
+        for d in (self.requests, self.results):
+            for name in os.listdir(d):
+                stem = name.split(".")[0] if not name.startswith(".") else name.split(".")[1]
+                if stem.isdigit():
+                    self.seq = max(self.seq, int(stem))
+        self.inflight = {}
+
+    def tools(self):
+        return [dict(name=n, **TOOLS[n]) for n in self.ops]
+
+    def local_call(self, name, args):
+        """The answer, and reads of /input/..., served here from the host's copies; None otherwise."""
+        if name == "answer" and self.answer_dir is not None:
+            content = args.get("content")
+            if not isinstance(content, str) or content == "" or len(content.encode()) > MAX_ANSWER:
+                return error_result("lockstep: the answer must be 1 to %d bytes of text" % MAX_ANSWER)
+            path = os.path.join(self.answer_dir, "result.json")
+            tmp = os.path.join(self.answer_dir, ".result.json.tmp")
+            try:
+                if os.path.lexists(tmp):
+                    os.unlink(tmp)
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(content)
+                os.replace(tmp, path)
+            except OSError as e:
+                return error_result("lockstep: the answer could not be saved (%s)" % e.strerror)
+            return {"content": [{"type": "text", "text": "answer saved (%d bytes)" % len(content.encode())}], "isError": False}
+        if name == "read" and self.input_dir is not None:
+            p = args.get("path")
+            if isinstance(p, str) and (p == "/input" or p.startswith("/input/")):
+                rel = os.path.normpath(p[len("/input"):].lstrip("/"))
+                if rel.startswith("..") or os.path.isabs(rel) or rel == ".":
+                    return error_result("lockstep: not a file in /input")
+                full = os.path.join(self.input_dir, rel)
+                try:
+                    fd = os.open(full, os.O_RDONLY | os.O_NOFOLLOW)
+                    with os.fdopen(fd, "rb") as f:
+                        data = f.read(1048576)
+                except OSError as e:
+                    return error_result("lockstep: cannot read %s (%s)" % (p, e.strerror))
+                lines = data.decode("utf-8", "replace").splitlines(keepends=True)
+                start = max(int(args.get("offset") or 1), 1)
+                count = int(args.get("limit") or 2000)
+                text = "".join("%6d\t%s" % (start + i, ln) for i, ln in enumerate(lines[start - 1:start - 1 + count]))
+                return {"content": [{"type": "text", "text": "stdout:\n" + text}], "isError": False}
+        return None
+
+    def call(self, name, args, rpc_id):
+        if name not in self.ops:
+            return error_result("lockstep: the tool %s is not available to this role" % name)
+        if not isinstance(args, dict):
+            return error_result("lockstep: malformed arguments")
+        local = self.local_call(name, args)
+        if local is not None:
+            return local
+        with SEND_LOCK:
+            self.seq += 1
+            seq = self.seq
+        body = json.dumps({"v": 1, "seq": seq, "op": name, "args": args})
+        if len(body) > MAX_REQUEST:
+            return error_result("lockstep: request too large")
+        if os.path.exists(os.path.join(self.results, "%d.json" % seq)):
+            return error_result("lockstep: sequence %d already answered (outcome unknown)" % seq)
+        tmp = os.path.join(self.requests, ".%d.tmp" % seq)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(body)
+        os.rename(tmp, os.path.join(self.requests, "%d.json" % seq))
+        self.inflight[rpc_id] = seq
+        path = os.path.join(self.results, "%d.json" % seq)
+        deadline = time.monotonic() + self.wait_limit
+        while not os.path.exists(path):
+            if time.monotonic() > deadline:
+                self.inflight.pop(rpc_id, None)
+                # Fail closed: no answer means no effect is claimed, and nothing runs here instead.
+                return error_result("lockstep: the capsule did not answer in time (outcome unknown)")
+            time.sleep(0.05)
+        self.inflight.pop(rpc_id, None)
+        # Line 1: the host executor's own envelope (trusted). The rest: the guest's answer (untrusted
+        # data, shown to the model as tool output only).
+        try:
+            with open(path, "rb") as f:
+                first = f.readline()
+                rest = f.read()
+            host = json.loads(first)
+        except (OSError, ValueError):
+            return error_result("lockstep: unreadable result (outcome unknown)")
+        if host.get("seq") != seq:
+            return error_result("lockstep: mismatched result (outcome unknown)")
+        if host.get("host_outcome") != "completed":
+            text = "lockstep: %s (%s)" % (host.get("host_outcome"), host.get("host_detail", ""))
+            if rest:
+                text += "\npartial capsule output:\n" + rest.decode("utf-8", "replace")
+            return error_result(text)
+        try:
+            r = json.loads(rest)
+        except ValueError:
+            return error_result("lockstep: the capsule's answer was not readable:\n" + rest[:65536].decode("utf-8", "replace"))
+        if not isinstance(r, dict) or r.get("seq") != seq:
+            return error_result("lockstep: the capsule answered another request (outcome unknown)")
+        text = render(r)
+        return {"content": [{"type": "text", "text": text}], "isError": r.get("status") != "ok"}
+
+    def cancel(self, rpc_id):
+        seq = self.inflight.get(rpc_id)
+        if seq is not None:
+            with open(os.path.join(self.requests, "%d.cancel" % seq), "w", encoding="utf-8") as f:
+                f.write("cancel\n")
+
+
+def render(r):
+    parts = []
+    status = r.get("status")
+    if status != "ok":
+        parts.append("status: %s (%s)" % (status, r.get("detail", "")))
+    if r.get("outcome") is not None:
+        parts.append("outcome: %s" % r["outcome"])
+    if r.get("exit") is not None:
+        parts.append("exit: %s" % r["exit"])
+    if r.get("stdout"):
+        parts.append("stdout:\n" + r["stdout"])
+    if r.get("stderr"):
+        parts.append("stderr:\n" + r["stderr"])
+    if r.get("truncated"):
+        parts.append("(output truncated at the capsule's limit)")
+    return "\n".join(parts) if parts else "(no output)"
+
+
+def main():
+    channel = None
+    role = "readonly"
+    wait_limit = 7200
+    input_dir = None
+    answer_dir = None
+    argv = sys.argv[1:]
+    while argv:
+        a = argv.pop(0)
+        if a == "--channel" and argv:
+            channel = argv.pop(0)
+        elif a == "--role" and argv:
+            role = argv.pop(0)
+        elif a == "--wait-limit" and argv:
+            wait_limit = int(argv.pop(0))
+        elif a == "--input-dir" and argv:
+            input_dir = argv.pop(0)
+        elif a == "--answer-dir" and argv:
+            answer_dir = argv.pop(0)
+        else:
+            sys.stderr.write("capsule-bridge: unknown argument %s\n" % a)
+            return 64
+    if channel is None or role not in ("readonly", "write"):
+        sys.stderr.write("usage: capsule-bridge --channel DIR [--role readonly|write]\n")
+        return 64
+    bridge = Bridge(channel, role, wait_limit, input_dir, answer_dir)
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        method = msg.get("method")
+        rpc_id = msg.get("id")
+        params = msg.get("params") or {}
+        if method == "initialize":
+            send({"jsonrpc": "2.0", "id": rpc_id, "result": {
+                "protocolVersion": params.get("protocolVersion", PROTOCOL),
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "lockstep-capsule", "version": "1"}}})
+        elif method == "tools/list":
+            send({"jsonrpc": "2.0", "id": rpc_id, "result": {"tools": bridge.tools()}})
+        elif method == "tools/call":
+            def run(name=params.get("name"), args=params.get("arguments") or {}, rid=rpc_id):
+                send({"jsonrpc": "2.0", "id": rid, "result": bridge.call(name, args, rid)})
+            threading.Thread(target=run, daemon=True).start()
+        elif method == "notifications/cancelled":
+            bridge.cancel(params.get("requestId"))
+        elif method == "ping":
+            send({"jsonrpc": "2.0", "id": rpc_id, "result": {}})
+        elif rpc_id is not None:
+            send({"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32601, "message": "method not found"}})
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

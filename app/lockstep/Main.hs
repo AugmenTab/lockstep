@@ -36,16 +36,18 @@ import Lockstep.Application.Command
 import Lockstep.Application.Database
   ( DatabaseRuntime
   , MigrateError (..)
+  , MigrateReport (..)
   , NotReadyReason
   , Readiness (..)
   , SchemaStatus (..)
   , checkReadiness
   , closeDatabase
-  , migrateWithPolicy
+  , migrateWithPolicyReporting
   , openDatabase
   , readinessCode
+  , reasonDiagnosis
   , recordServiceStart
-  , renderMigrateError
+  , renderMigrateReport
   , revisionNumber
   , schemaStatus
   )
@@ -74,6 +76,7 @@ import Lockstep.Application.Ledger
   , showWorkOrder
   )
 import Lockstep.Application.Ledger qualified as Ledger
+import Lockstep.Application.LedgerRefusal (LedgerRefusal (InvalidKind, WorkOrderNotClaimed), refusalFailure)
 import Lockstep.Application.LedgerView (projectLedger, projectionTimeText, renderProjection)
 import Lockstep.Application.OperatorTrust (issueSignIn, revokeAllSessions, signInUrl)
 import Lockstep.Application.Profiles
@@ -96,12 +99,14 @@ import Lockstep.Application.Repositories
   , RepositoryRecord (..)
   , addEngineer
   , listRepositories
+  , refusedCode
+  , refusedMessage
   , registerRepository
   )
 import Lockstep.Application.Sandbox (sandboxAdapters, sandboxApplications, sandboxReconcilers, sandboxRequest)
 import Lockstep.Effects.HelperRunner (openRunnerChannel)
-import Lockstep.Effects.Provider.Claude (ProviderConfig (..), readProviderFile)
-import Lockstep.Effects.Provider.Live (liveRoles)
+import Lockstep.Effects.Provider.Claude (ProviderConfig (..), readCapsuleFile, readProviderFile)
+import Lockstep.Effects.Provider.Live (liveCapsuleRoles, liveRoles)
 import Lockstep.Effects.Roles (helperRunner)
 import Lockstep.Foundation.Cli
   ( BackupPolicy
@@ -124,8 +129,10 @@ import Lockstep.Foundation.SystemConfig
   , loadSystemConfig
   , renderConfigError
   )
+import Lockstep.Kernel.Capsule (capsuleNameText)
 import Lockstep.Kernel.Effect (Intent (..), IntentRequest (..), OperationId (..), effectKeyText, intentStateName)
-import Lockstep.Kernel.Identity (EngineerId (..), TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..), parseUuid, uuidText)
+import Lockstep.Kernel.Identity (EngineerId (..), JobId (..), ReceiptId (..), RepositoryId (..), TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..), identityText, jobIdNumber, parseUuid, uuidText)
+import Lockstep.Kernel.Profile (profileIdText)
 import Lockstep.Kernel.Reconciliation (Resolution (..))
 import Lockstep.Kernel.Ticket qualified as Ticket
 import Lockstep.Kernel.Transition qualified as K
@@ -308,22 +315,34 @@ engineWorker runtime logLine = do
               logLine ("Engine worker: off (" <> T.unpack code <> ")")
               pure Nothing
             Just (Right config) -> do
-              let
-                (runner, adapter) = liveRoles c config
-              logLine ("Engine worker: on (live provider claude-code, model " <> T.unpack (providerModel config) <> ", effort " <> T.unpack (providerEffort config) <> ")")
-              Just <$> startEngineWorker runtime (Engine runner adapter) 2000 logLine
+              -- Phase 5: the helper's capsule mode, if on, decides where the role's tools run.
+              capsule <- readCapsuleFile (d <> "/capsule")
+              case capsule of
+                Just (Left code) -> do
+                  logLine ("Engine worker: off (" <> T.unpack code <> ")")
+                  pure Nothing
+                Just (Right name) -> do
+                  let
+                    (runner, adapter) = liveCapsuleRoles c config
+                  logLine ("Engine worker: on (live provider claude-code, model " <> T.unpack (providerModel config) <> ", effort " <> T.unpack (providerEffort config) <> ", tools in Dev Capsule " <> T.unpack (capsuleNameText name) <> ")")
+                  Just <$> startEngineWorker runtime (Engine runner adapter) 2000 logLine
+                Nothing -> do
+                  let
+                    (runner, adapter) = liveRoles c config
+                  logLine ("Engine worker: on (live provider claude-code, model " <> T.unpack (providerModel config) <> ", effort " <> T.unpack (providerEffort config) <> ")")
+                  Just <$> startEngineWorker runtime (Engine runner adapter) 2000 logLine
 
 dbMigrate :: BackupPolicy -> DatabaseRuntime -> IO ()
 dbMigrate policy runtime = do
-  result <- migrateWithPolicy policy migrations runtime
+  result <- migrateWithPolicyReporting policy migrations runtime
   case result of
     Right [] ->
       putStrLn "nothing to apply: the database is at this binary's schema revision"
     Right applied ->
       putStrLn ("applied migrations: " <> L.intercalate ", " (fmap (show . revisionNumber) applied))
-    Left err -> do
-      hPutStrLn stderr ("lockstep: " <> renderMigrateError err)
-      exitWith (ExitFailure (migrateExitCode err))
+    Left report -> do
+      hPutStrLn stderr ("lockstep: " <> renderMigrateReport report)
+      exitWith (ExitFailure (migrateExitCode (reportError report)))
 
 -- | sysexits-style codes for the db migrate refusals.
 migrateExitCode :: MigrateError -> Int
@@ -406,14 +425,16 @@ jobQueue args runtime = do
 
 jobShow :: Integer -> DatabaseRuntime -> IO ()
 jobShow ident runtime = do
-  found <- findJob runtime (fromInteger ident)
+  found <- findJob runtime (JobId (fromInteger ident))
   case found of
-    Nothing ->
+    Left reason ->
+      refuse ("job " <> show ident <> " could not be read: " <> T.unpack (reasonDiagnosis reason))
+    Right Nothing ->
       refuse ("no job " <> show ident)
-    Just job -> do
+    Right (Just job) -> do
       putStrLn
         ( "job "
-            <> show (jobId job)
+            <> show (jobIdNumber (jobId job))
             <> " "
             <> T.unpack (jobStateCode (jobState job))
             <> " steps "
@@ -433,7 +454,8 @@ submitAndReport runtime envelope expected = do
     Right receipt -> do
       suffix <-
         case receiptOutcome receipt of
-          Queued -> maybe "" (\job -> " job " <> show (jobId job)) <$> findJobForReceipt runtime (receiptId receipt)
+          -- The receipt carries its id as a number (a frozen-test boundary); it is a receipt's id.
+          Queued -> jobSuffix <$> findJobForReceipt runtime (ReceiptId (receiptId receipt))
           _ -> pure ""
       putStrLn (receiptLine receipt suffix)
       case receiptOutcome receipt of
@@ -453,6 +475,14 @@ submitAndReport runtime envelope expected = do
       refuse ("invalid command: " <> renderInvalidReason reason)
     Left (CommandNotReady reason) ->
       notReady reason
+
+-- | The queued job's id after a receipt; a job that could not be read says why.
+jobSuffix :: Either NotReadyReason (Maybe Job) -> String
+jobSuffix found =
+  case found of
+    Right (Just job) -> " job " <> show (jobIdNumber (jobId job))
+    Right Nothing -> ""
+    Left reason -> " (its job could not be read: " <> T.unpack (reasonDiagnosis reason) <> ")"
 
 receiptLine :: Receipt -> String -> String
 receiptLine receipt suffix =
@@ -511,7 +541,7 @@ repositoryList runtime = do
 repositoryLine :: RepositoryRecord -> String
 repositoryLine repository =
   "repository "
-    <> T.unpack (repositoryRecordId repository)
+    <> T.unpack (identityText (repositoryRecordId repository))
     <> " owner "
     <> T.unpack (repositoryRecordOwner repository)
     <> " authoritative "
@@ -538,7 +568,7 @@ profileFailure failure =
 
 storedLine :: StoredProfile -> String
 storedLine stored =
-  "profile " <> T.unpack (storedId stored) <> " version " <> show (storedVersion stored) <> " digest " <> T.unpack (storedDigest stored)
+  "profile " <> T.unpack (profileIdText (storedId stored)) <> " version " <> show (storedVersion stored) <> " digest " <> T.unpack (storedDigest stored)
 
 profileAdd :: String -> DatabaseRuntime -> IO ()
 profileAdd file runtime = do
@@ -582,7 +612,7 @@ repositorySetProfile engineer profileId runtime = do
   case result of
     Left reason -> notReady reason
     Right (Left failure) -> profileFailure failure
-    Right (Right repositoryId) -> putStrLn ("repository " <> T.unpack repositoryId <> " default-profile " <> profileId)
+    Right (Right repositoryId) -> putStrLn ("repository " <> T.unpack (identityText repositoryId) <> " default-profile " <> profileId)
 
 profileResolve :: ResolveArgs -> DatabaseRuntime -> IO ()
 profileResolve args runtime = do
@@ -650,7 +680,7 @@ ledgerCommand command runtime =
     WorkOrderCreate args -> do
       u <- uuidArgument (orderTicket args)
       case parseWorkOrderKind (T.pack (orderKind args)) of
-        Nothing -> ledgerOutcome (Left (LedgerRefused (T.pack "invalid-kind") (T.pack ("no work order kind " <> orderKind args))))
+        Nothing -> ledgerOutcome (Left (refusalFailure (InvalidKind (T.pack (orderKind args)))))
         Just kind -> do
           created <-
             createWorkOrder
@@ -707,7 +737,7 @@ ledgerCommand command runtime =
                         : L.zipWith (\(OperationId o) request -> "intent " <> uuidString o <> " effect " <> T.unpack (effectKeyText (requestKey request))) (Ledger.receiptOperations r) requests
                   )
                   receipt
-            Right _ -> ledgerOutcome (Left (LedgerRefused (T.pack "work-order-not-claimed") (T.pack "only a claimed work order can be started")))
+            Right _ -> ledgerOutcome (Left (refusalFailure WorkOrderNotClaimed))
     SupervisorExecuteOnce args -> do
       adapters <- sandboxAdapters runtime
       let

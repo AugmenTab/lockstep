@@ -9,6 +9,7 @@ module Lockstep.Web.ActivityPage
   ( activityPage
   ) where
 
+import Brigid.HTML.Attributes qualified as A
 import Brigid.HTML.Elements qualified as E
 import Control.Applicative ((<|>))
 import Data.ByteString.Lazy qualified as LBS
@@ -25,7 +26,9 @@ import Lockstep.Kernel.Effect (Intent (..), OperationId (..), effectSpecName)
 import Lockstep.Kernel.EffectView (EffectStatus (..), effectStatusClass, effectStatusLabel)
 import Lockstep.Kernel.Identity (TicketId (..), WorkOrderId (..), uuidText)
 import Lockstep.Kernel.WorkOrder (WorkOrderState (..))
-import Lockstep.Web.Fragment (attr, cls, fragment, href)
+import Lockstep.Web.Fragment (attr, cls, fragment)
+import Lockstep.Web.Routes.App (decisionLink)
+import Lockstep.Web.Routes.Params (stoppedWorkKey, unknownOutcomeKey)
 
 orderText :: WorkOrderId -> T.Text
 orderText (WorkOrderId u) =
@@ -74,7 +77,7 @@ body view =
               <> [ E.text " "
                  | effectLineStatus e == StatusUnknown
                  ]
-              <> [ E.a [href ("/app/decisions/" <> opText (intentOperation i))] [E.text "Decide"]
+              <> [ E.a [A.href (decisionLink (unknownOutcomeKey (intentOperation i)))] [E.text "Decide"]
                  | effectLineStatus e == StatusUnknown
                  ]
           )
@@ -87,7 +90,7 @@ body view =
         <> [ E.li
                []
                [ E.text (titleOf o <> " \8212 the work: " <> orderStateWords (orderLineState o) <> " ")
-               , E.a [href ("/app/decisions/" <> orderText (orderLineId o))] [E.text "Decide"]
+               , E.a [A.href (decisionLink (stoppedWorkKey (orderLineId o)))] [E.text "Decide"]
                ]
            | o <- orders
            , Halted _ <- [orderLineState o]

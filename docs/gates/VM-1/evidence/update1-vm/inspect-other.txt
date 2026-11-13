@@ -1,0 +1,1 @@
+capsule-runtime 1 inspect refused reason=capsule-owned-by-another-project

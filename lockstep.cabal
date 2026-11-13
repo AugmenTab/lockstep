@@ -31,6 +31,7 @@ source-repository head
 library
   exposed-modules:
       Lockstep.Application.Activity
+      Lockstep.Application.CapsuleStatus
       Lockstep.Application.Command
       Lockstep.Application.CommandCenter
       Lockstep.Application.ControlPane
@@ -41,11 +42,13 @@ library
       Lockstep.Application.Engine
       Lockstep.Application.EngineCandidate
       Lockstep.Application.EngineEvidence
+      Lockstep.Application.EngineRecords
       Lockstep.Application.EngineWorker
       Lockstep.Application.Execution
       Lockstep.Application.Executor
       Lockstep.Application.Identity
       Lockstep.Application.Ledger
+      Lockstep.Application.LedgerRefusal
       Lockstep.Application.LedgerView
       Lockstep.Application.OperatorTrust
       Lockstep.Application.ProfileDocument
@@ -70,7 +73,10 @@ library
       Lockstep.Foundation.Cli
       Lockstep.Foundation.Config
       Lockstep.Foundation.ControlProtocol
+      Lockstep.Foundation.Digest
       Lockstep.Foundation.EvidenceModel
+      Lockstep.Foundation.Filesystem
+      Lockstep.Foundation.Fleece
       Lockstep.Foundation.FolderProtocol
       Lockstep.Foundation.InstallProtocol
       Lockstep.Foundation.Json
@@ -82,11 +88,13 @@ library
       Lockstep.Kernel.Activation
       Lockstep.Kernel.Activity
       Lockstep.Kernel.Candidate
+      Lockstep.Kernel.Capsule
       Lockstep.Kernel.Conversation
       Lockstep.Kernel.Decision
       Lockstep.Kernel.Delivery
       Lockstep.Kernel.Effect
       Lockstep.Kernel.EffectView
+      Lockstep.Kernel.Enum
       Lockstep.Kernel.EventCodec
       Lockstep.Kernel.Evidence
       Lockstep.Kernel.Execution
@@ -114,7 +122,10 @@ library
       Lockstep.Persistence.Connection
       Lockstep.Persistence.Conversation
       Lockstep.Persistence.DecisionReceipts
+      Lockstep.Persistence.Entity
       Lockstep.Persistence.Execution
+      Lockstep.Persistence.Fields
+      Lockstep.Persistence.Integrity
       Lockstep.Persistence.Jobs
       Lockstep.Persistence.Ledger
       Lockstep.Persistence.Migrate
@@ -137,24 +148,33 @@ library
       Lockstep.Web.Common
       Lockstep.Web.Components.Page
       Lockstep.Web.Components.Page404
+      Lockstep.Web.Components.Shell
       Lockstep.Web.Control
       Lockstep.Web.DecisionPages
       Lockstep.Web.ExecutionPages
+      Lockstep.Web.Fields
+      Lockstep.Web.Form
       Lockstep.Web.Fragment
       Lockstep.Web.Handler.NoPermissionError
       Lockstep.Web.Handler.NoUser
       Lockstep.Web.Health
+      Lockstep.Web.Json
       Lockstep.Web.LedgerPage
       Lockstep.Web.Liveness
       Lockstep.Web.Operator
       Lockstep.Web.Readiness
       Lockstep.Web.RequestGuard
       Lockstep.Web.Routes
+      Lockstep.Web.Routes.App
+      Lockstep.Web.Routes.Control
+      Lockstep.Web.Routes.Operator
+      Lockstep.Web.Routes.Params
       Lockstep.Web.SecureResponse
       Lockstep.Web.Server
       Lockstep.Web.Static
       Lockstep.Web.TaskPages
       Lockstep.Web.Types
+      Lockstep.Web.Validation
   other-modules:
       Paths_lockstep
   autogen-modules:
@@ -182,6 +202,7 @@ library
     , json-fleece-core
     , memory
     , mtl
+    , non-empty-text
     , ogma
     , orb
     , orville-postgresql
@@ -194,6 +215,8 @@ library
     , time
     , unix
     , unliftio
+    , uuid
+    , uuid-types
     , wai
     , warp
   default-language: GHC2021
@@ -214,6 +237,104 @@ executable lockstep
     , safe-exceptions
     , text
     , warp
+  default-language: GHC2021
+
+test-suite lockstep-capsule
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Lockstep.CapsuleGitTest
+      Lockstep.CapsuleStatusTest
+  hs-source-dirs:
+      test/capsule
+  default-extensions:
+      NoImplicitPrelude
+  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T -fplugin-opt=Henforcer:--config=henforcer-tests.toml
+  build-depends:
+      base
+    , bytestring
+    , directory
+    , flipstone-prelude
+    , henforcer
+    , lockstep
+    , process
+    , tasty
+    , tasty-hunit
+    , temporary
+    , text
+    , unix
+  default-language: GHC2021
+
+test-suite lockstep-capsule-e2e
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Lockstep.Support.Postgres
+      Lockstep.Support.Process
+  hs-source-dirs:
+      test/capsule-e2e
+      test/integration
+  default-extensions:
+      NoImplicitPrelude
+  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T -fplugin-opt=Henforcer:--config=henforcer-tests.toml
+  build-tool-depends:
+      lockstep:lockstep
+  build-depends:
+      base
+    , bytestring
+    , directory
+    , flipstone-prelude
+    , henforcer
+    , http-client
+    , http-types
+    , lockstep
+    , network
+    , orville-postgresql
+    , process
+    , tasty
+    , tasty-hunit
+    , temporary
+    , text
+    , time
+    , unix
+  default-language: GHC2021
+
+test-suite lockstep-compliance
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Lockstep.Compliance.DefectsTest
+      Lockstep.Compliance.FailureTest
+      Lockstep.Compliance.IdentityTest
+      Lockstep.Compliance.JsonTest
+      Lockstep.Compliance.NegativeTypesTest
+      Lockstep.Compliance.PersistenceTest
+      Lockstep.Compliance.StateTest
+      Lockstep.Compliance.Support
+      Lockstep.Compliance.WebTest
+  hs-source-dirs:
+      test/compliance
+  default-extensions:
+      NoImplicitPrelude
+  ghc-options: -j -Weverything -Werror -Wno-missing-import-lists -Wno-missing-local-signatures -Wno-monomorphism-restriction -Wno-missing-kind-signatures -Wno-prepositive-qualified-module -Wno-implicit-prelude -Wno-safe -Wno-unsafe -Wno-missing-safe-haskell-mode -Wno-missing-deriving-strategies -Wno-all-missed-specialisations -Wno-missed-specialisations -Wno-unticked-promoted-constructors -fplugin Henforcer -threaded -rtsopts -with-rtsopts=-T -fplugin-opt=Henforcer:--config=henforcer-tests.toml
+  build-depends:
+      base
+    , brigid
+    , bytestring
+    , containers
+    , crypton
+    , flipstone-prelude
+    , henforcer
+    , http-types
+    , json-fleece-aeson
+    , lockstep
+    , memory
+    , orville-postgresql
+    , should-not-typecheck
+    , tasty
+    , tasty-hunit
+    , text
+    , time
   default-language: GHC2021
 
 test-suite lockstep-integration

@@ -1,0 +1,3 @@
+{"messages": 2, "results": [], "issued": ["toolu_01grLzST90kHNjXTnwOKJra3"]}
+{"messages": 5, "results": ["<tool_use_error>Error: No such tool available: mcp__capsule__write</tool_use_error>"], "issued": ["toolu_0159VUeFiGjD3QJwe5hqlVKF"]}
+{"messages": 5, "results": ["<tool_use_error>Error: No such tool available: mcp__capsule__write</tool_use_error>", "stdout:\n     1\tone\n     2\tTWO-EDITED\n     3\tthree\n"], "issued": []}

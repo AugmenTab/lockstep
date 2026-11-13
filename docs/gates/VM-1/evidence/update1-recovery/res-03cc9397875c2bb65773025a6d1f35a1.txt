@@ -1,0 +1,9 @@
+lockstep-control-result 1
+id 03cc9397875c2bb65773025a6d1f35a1
+op run-write
+outcome interrupted
+reason -
+started 1794354480
+finished 1794354480
+detail the helper stopped while this ran
+mac fb5c3d7b8b9aec5a6571dbe77a3f3388834cc890a9828c7d151869f284025129

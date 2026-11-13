@@ -1,0 +1,4 @@
+[
+ {"name":"mcp__capsule__write","input":{"path":"src/reviewer.txt","content":"x"}},
+ {"name":"mcp__capsule__read","input":{"path":"src/made.txt"}}
+]

@@ -1,0 +1,4 @@
+C-P5.11 the full transaction through the real service, with every run in real Dev Capsules (scripted roles, no provider)
+  make a project, allow, write and hand over a bug; stop on an uncommitted change; retry; committed after checks, challenge and review run in the capsules; Done: OK (261.59s)
+
+All 1 tests passed (261.59s)

@@ -1,0 +1,1 @@
+capsule-runtime 1 provision ok capsule=vmq1 already=yes status=Running

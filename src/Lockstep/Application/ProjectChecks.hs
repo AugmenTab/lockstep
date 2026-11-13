@@ -16,9 +16,12 @@ module Lockstep.Application.ProjectChecks
   , ProjectChecks (..)
   , ChecksOutcome (..)
   , ExpectedChecks (..)
+  , ChecksRefusal (..)
+  , checksRefusalCode
   , projectChecks
   , chooseChecks
   , chooseChecksExpecting
+  , chooseChecksTyped
   ) where
 
 import Data.ByteString.Lazy qualified as LBS
@@ -33,24 +36,27 @@ import Text.Show (Show)
 
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, withDatabase)
 import Lockstep.Application.Ledger (SchedulePreview (..), ledgerFailureCode, previewSchedule)
-import Lockstep.Application.ProfileDocument (decodeProfileDocument)
+import Lockstep.Application.ProfileDocument (decodeProfileDocument, encodeProfileDocument)
 import Lockstep.Application.Profiles (loadStoredDefinition, sha256Hasher)
 import Lockstep.Application.Projects (ProjectView (..), findProject)
-import Lockstep.Kernel.Identity (WorkOrderId (..), uuidText)
+import Lockstep.Kernel.Identity (RepositoryId, WorkOrderId (..), identityText)
 import Lockstep.Kernel.Policy (checksLost)
 import Lockstep.Kernel.Profile
   ( Behaviour (..)
   , Gate
-  , LayerLevel (..)
   , ProfileDefinition
+  , ProfileId
   , ProfileRef (..)
   , ResolutionInput (..)
   , contentDigestText
+  , definitionId
   , effectiveDigest
   , effectiveGates
   , effectiveSources
   , gateApplies
+  , layerName
   , mkProfileDefinition
+  , mkProfileId
   , mkWorkFacts
   , profileIdText
   , profileRef
@@ -71,9 +77,10 @@ basicChecksDocument :: LBS.ByteString
 basicChecksDocument =
   LBS.fromStrict (TE.encodeUtf8 basicChecksText)
 
+-- | The built-in basic checks document (no gates), through the Profile document schema.
 basicChecksText :: T.Text
 basicChecksText =
-  T.pack "{\"id\":\"lockstep-basic\",\"version\":1,\"gates\":[]}"
+  encodeProfileDocument basicChecksId 1 []
 
 basicDefinition :: Maybe ProfileDefinition
 basicDefinition =
@@ -145,17 +152,17 @@ data ExpectedChecks
   deriving (Eq, Show)
 
 -- | Whether the page's choice is the current one; nothing chosen is never a set of checks.
-expectationMet :: Maybe T.Text -> ExpectedChecks -> Bool
+expectationMet :: Maybe ProfileId -> ExpectedChecks -> Bool
 expectationMet current expected =
   case (current, expected) of
     (Nothing, ExpectNothing) -> True
-    (Just c, ExpectProfile e) -> c == e
+    (Just c, ExpectProfile e) -> profileIdText c == e
     _ -> False
 
 choiceOf :: Store.ProfileRow -> ChecksChoice
 choiceOf row =
   ChecksChoice
-    { choiceId = Store.profileRowId row
+    { choiceId = profileIdText (Store.profileRowId row)
     , choiceVersion = fromIntegral (Store.profileRowVersion row)
     , choiceDigest = Store.profileRowDigest row
     , choiceDefinition = either (const Nothing) Just (loadStoredDefinition row)
@@ -174,22 +181,13 @@ builtInChoice =
     basicDefinition
 
 -- | The project's repository, through its Engineer (C-P3.5): only a project with a folder has one.
-repositoryOf :: ProjectView -> O.Orville (Maybe T.Text)
+repositoryOf :: ProjectView -> O.Orville (Maybe RepositoryId)
 repositoryOf view =
   case projectEngineer view of
     Nothing -> pure Nothing
     Just engineer -> do
       owner <- Store.engineerRepository engineer
       pure (owner >>= Store.engineerRowRepository)
-
-levelText :: LayerLevel -> T.Text
-levelText level =
-  T.pack $
-    case level of
-      LayerBaseline -> "baseline"
-      LayerRepositoryDefault -> "repository-default"
-      LayerSpecialization -> "specialization"
-      LayerOverride -> "override"
 
 -- | L3: the effective Profile per kind, resolved as C-P2.5 @createWorkOrder@ does (no classes or path classes, behaviour-changing).
 rulesFor :: ProfileDefinition -> [Store.ProfileRow] -> WorkOrderKind -> KindRules
@@ -208,14 +206,14 @@ rulesFor current catalogRows kind =
                   EffectiveRules
                     { rulesDigest = contentDigestText (effectiveDigest effective)
                     , rulesSources =
-                        [ (levelText level, profileIdText (refId ref), refVersion ref, contentDigestText (refDigest ref))
+                        [ (layerName level, profileIdText (refId ref), refVersion ref, contentDigestText (refDigest ref))
                         | (level, ref) <- effectiveSources effective
                         ]
                     , rulesChecks = L.filter (gateApplies facts) (effectiveGates effective)
                     }
 
 -- | L6: the project's queued orders, those that can start first in line order, then the others by priority and id.
-queueOf :: T.Text -> SchedulePreview -> [QueueEntry]
+queueOf :: RepositoryId -> SchedulePreview -> [QueueEntry]
 queueOf repository preview =
   let
     decision = previewDecision preview
@@ -230,8 +228,8 @@ queueOf repository preview =
     first <> L.sortOn (\e -> (Down (entryPriority e), entryOrder e)) rest
 
 orderText :: WorkOrderId -> T.Text
-orderText (WorkOrderId u) =
-  uuidText u
+orderText =
+  identityText
 
 projectChecks :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe ProjectChecks))
 projectChecks runtime pid = do
@@ -275,6 +273,30 @@ projectChecks runtime pid = do
               , checksQueue = queue
               }
 
+{- | Why a choice of checks was refused. 'chooseChecks' answers with the code
+(its frozen shape, @Either Text@; integration @GateCRemediationTest.hs:438@);
+a caller that branches on one compares it with 'checksRefusalCode'.
+-}
+data ChecksRefusal
+  = ChecksProjectUnknown
+  | ChecksChanged
+  | ProfileUnknown
+  | ProfileFailsIntegrity
+  | FewerChecksUnconfirmed
+  | ProjectHasNoFolder
+  deriving (Eq, Show, Enum, Bounded)
+
+checksRefusalCode :: ChecksRefusal -> T.Text
+checksRefusalCode refusal =
+  T.pack $
+    case refusal of
+      ChecksProjectUnknown -> "unknown-project"
+      ChecksChanged -> "checks-changed"
+      ProfileUnknown -> "profile-unknown"
+      ProfileFailsIntegrity -> "profile-integrity"
+      FewerChecksUnconfirmed -> "fewer-checks-unconfirmed"
+      ProjectHasNoFolder -> "project-has-no-folder"
+
 {- | L4 with the C-P3.7 text for what the page showed: @none@ is "nothing
 chosen" and only that (C-C.R1 R10), so when a set of checks called @none@ is
 the current one the request cannot be told apart and is refused
@@ -284,13 +306,18 @@ chooseChecks :: DatabaseRuntime -> T.Text -> T.Text -> T.Text -> Bool -> IO (Eit
 chooseChecks runtime pid expected =
   chooseChecksExpecting runtime pid (if expected == T.pack "none" then ExpectNothing else ExpectProfile expected)
 
--- | L4, in its order; every refusal from @checks-changed@ on leaves a decision row.
+-- | L4 with the refusal as its code: the frozen shape over 'chooseChecksTyped'.
 chooseChecksExpecting :: DatabaseRuntime -> T.Text -> ExpectedChecks -> T.Text -> Bool -> IO (Either NotReadyReason (Either T.Text ChecksOutcome))
-chooseChecksExpecting runtime pid expected choice confirmed = do
+chooseChecksExpecting runtime pid expected choice confirmed =
+  fmap (either (Left . checksRefusalCode) Right) <$> chooseChecksTyped runtime pid expected choice confirmed
+
+-- | L4, in its order, with the typed refusal; every refusal from @checks-changed@ on leaves a decision row.
+chooseChecksTyped :: DatabaseRuntime -> T.Text -> ExpectedChecks -> T.Text -> Bool -> IO (Either NotReadyReason (Either ChecksRefusal ChecksOutcome))
+chooseChecksTyped runtime pid expected choice confirmed = do
   found <- findProject runtime pid
   case found of
     Left reason -> pure (Left reason)
-    Right Nothing -> pure (Right (Left (T.pack "unknown-project")))
+    Right Nothing -> pure (Right (Left ChecksProjectUnknown))
     Right (Just view) ->
       withDatabase runtime . O.withTransaction $ do
         repository <- repositoryOf view
@@ -310,24 +337,25 @@ chooseChecksExpecting runtime pid expected choice confirmed = do
                   , Store.profileDecisionOutcome = T.pack "accepted"
                   , Store.profileDecisionRefusal = Nothing
                   }
-              refuse d code = do
-                _ <- Store.insertProfileDecision d {Store.profileDecisionOutcome = T.pack "refused", Store.profileDecisionRefusal = Just code}
-                pure (Left code)
+              refuse d refusal = do
+                _ <- Store.insertProfileDecision d {Store.profileDecisionOutcome = T.pack "refused", Store.profileDecisionRefusal = Just (checksRefusalCode refusal)}
+                pure (Left refusal)
             if not (expectationMet currentId expected)
-              then refuse decision (T.pack "checks-changed")
+              then refuse decision ChecksChanged
               else do
                 when (choice == basicChecksId) registerBasic
-                row <- Store.findProfile choice Nothing
+                -- A choice that is no Profile id names no registered Profile.
+                row <- maybe (pure Nothing) (`Store.findProfile` Nothing) (mkProfileId choice)
                 case row of
-                  Nothing -> refuse decision (T.pack "profile-unknown")
+                  Nothing -> refuse decision ProfileUnknown
                   Just r ->
                     let
                       known = decision {Store.profileDecisionVersion = Just (Store.profileRowVersion r), Store.profileDecisionDigest = Just (Store.profileRowDigest r)}
                     in
                       case loadStoredDefinition r of
-                        Left _ -> refuse known (T.pack "profile-integrity")
+                        Left _ -> refuse known ProfileFailsIntegrity
                         Right chosen
-                          | currentId == Just choice -> do
+                          | currentId == Just (Store.profileRowId r) -> do
                               _ <- Store.insertProfileDecision known {Store.profileDecisionOutcome = T.pack "unchanged"}
                               pure (Right ChecksUnchanged)
                           | otherwise -> do
@@ -340,22 +368,23 @@ chooseChecksExpecting runtime pid expected choice confirmed = do
                                     Just (Left _) -> True
                                     Just (Right currentDefinition) -> not (L.null (checksLost (Just currentDefinition) chosen))
                               if losing && not confirmed
-                                then refuse known (T.pack "fewer-checks-unconfirmed")
+                                then refuse known FewerChecksUnconfirmed
                                 else do
-                                  Store.insertRepositoryProfile repositoryId choice
+                                  Store.insertRepositoryProfile repositoryId (Store.profileRowId r)
                                   _ <- Store.insertProfileDecision known
                                   pure (Right ChecksChosen)
-          _ -> pure (Left (T.pack "project-has-no-folder"))
+          _ -> pure (Left ProjectHasNoFolder)
 
 -- | Registers the built-in document as version 1 when no @lockstep-basic@ exists, with its C-P2.3 decision row.
 registerBasic :: O.Orville ()
 registerBasic = do
-  existing <- Store.findProfile basicChecksId Nothing
+  -- The built-in document's own id is @lockstep-basic@ ('basicChecksId').
+  existing <- traverse (\d -> Store.findProfile (definitionId d) Nothing) basicDefinition
   case (existing, basicDefinition) of
-    (Nothing, Just d) -> do
+    (Just Nothing, Just d) -> do
       let
         digest = contentDigestText (refDigest (profileRef sha256Hasher d))
-      Store.insertProfile (Store.ProfileRow basicChecksId 1 digest basicChecksText)
+      Store.insertProfile (Store.ProfileRow (definitionId d) 1 digest basicChecksText)
       _ <-
         Store.insertProfileDecision
           Store.NewProfileDecision

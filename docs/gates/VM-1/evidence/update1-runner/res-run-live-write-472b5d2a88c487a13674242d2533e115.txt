@@ -1,0 +1,9 @@
+lockstep-control-result 1
+id 3daf1fd7362ebda40c8e98692f186609
+op run-live-write
+outcome refused
+reason built-in-tools-not-disabled
+started 1794354712
+finished 1794354712
+detail 
+mac dc6ab05e69937eb33df301015f4b4e9fef2a0d63032160fd7c38553802433d7c

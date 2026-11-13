@@ -7,6 +7,7 @@ checks and digests are under Technical details.
 -}
 module Lockstep.Web.ExecutionPages
   ( projectExecutionSection
+  , capsuleSection
   , taskFixingSection
   ) where
 
@@ -20,26 +21,33 @@ import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (show)
 
+import Lockstep.Application.CapsuleStatus (CapsuleStatus (..))
 import Lockstep.Application.Conversation (StoredRequest (..))
 import Lockstep.Application.Engine (InvocationView (..), TransactionView (..))
-import Lockstep.Application.EngineEvidence (CheckRun (..), Evidence (..), FindingView (..), ReviewView (..), transactionEvidence)
+import Lockstep.Application.EngineEvidence (CheckRun (..), Evidence (..), FindingTime (..), FindingView (..), ReviewView (..), transactionEvidence)
 import Lockstep.Application.Execution (Admission (..), Enablement (..), ExecutionStatus (..))
 import Lockstep.Application.ProjectChecks (Standing (..))
 import Lockstep.Application.Projects (ProjectView (..))
 import Lockstep.Application.Tasks (TaskView (..))
 import Lockstep.Kernel.Execution (executionRefusalWords)
+import Lockstep.Kernel.Identity (InvocationId (..), ProjectId, RepositoryId (..), identityText)
 import Lockstep.Kernel.Policy (ineligibilityWords)
-import Lockstep.Kernel.Roles (CandidateTest (..), Criterion (..))
+import Lockstep.Kernel.Profile (profileIdText)
+import Lockstep.Kernel.Roles (CandidateTest (..), Criterion (..), Verdict (..))
+import Lockstep.Kernel.Runner (OutcomeKind (..))
 import Lockstep.Kernel.Task (TaskReadiness (..))
-import Lockstep.Web.Fragment (attr, cls)
+import Lockstep.Kernel.Transaction (Disposition (..), FixedHalt (..), HaltCode (..), Stage (..), StateName (..), haltCodeFromText, noCodingAgent, parseStage, parseStateName)
+import Lockstep.Web.Fields (choiceField, expectedField, expectedSetField, keyField, requestField, revisionField, runField, ticketRevisionField)
+import Lockstep.Web.Fragment (attr, cls, elementId)
+import Lockstep.Web.Routes.App (admitBugAction, completionAction, enableExecutionAction, haltDecisionAction, stopCapsuleRunAction)
 
 heading :: T.Text -> T.Text -> E.ChildHTML E.Division E.Body
 heading sectionId title =
   E.h2 [attr "id" sectionId] [E.text title]
 
-hidden :: T.Text -> T.Text -> E.ChildHTML E.Form E.Division
+hidden :: B.Name -> T.Text -> E.ChildHTML E.Form E.Division
 hidden name value =
-  E.input [A.type_ HTML.InputHidden, attr "name" name, attr "value" value]
+  E.input [A.type_ HTML.InputHidden, A.name name, attr "value" value]
 
 fact :: T.Text -> T.Text -> [E.ChildHTML E.DescriptionList E.Details]
 fact name value =
@@ -65,11 +73,11 @@ projectExecutionSection project status started key =
       , E.p [] [E.text "You can let Lockstep work on bugs you hand it in this project. Before it changes anything, each fix must reproduce the bug and have its tests agreed and frozen; then it must pass the automatic checks and an independent review, and only you decide when it is finished."]
       , E.p [cls "ls-muted"] [E.text "Allowing it changes nothing in the folder. The steps that do the work arrive in a later update of Lockstep."]
       , E.form
-          [attr "id" "enable-form", A.method B.FormPOST, A.action (B.mkRawURL ("/app/api/projects/" <> projectId project <> "/execution"))]
-          [ hidden "key" key
-          , hidden "expected" (fromMaybe "none" current)
-          , hidden "expected_set" (maybe "no" (const "yes") current)
-          , E.button [attr "id" "enable-execution", attr "type" "submit", cls "ls-primary"] [E.text "Let Lockstep fix bugs here"]
+          [A.id (elementId 'e' "nable-form"), A.method B.FormPOST, A.action (enableExecutionAction (projectKey project))]
+          [ hidden keyField key
+          , hidden expectedField (maybe "none" profileIdText current)
+          , hidden expectedSetField (maybe "no" (const "yes") current)
+          , E.button [A.id (elementId 'e' "nable-execution"), attr "type" "submit", cls "ls-primary"] [E.text "Let Lockstep fix bugs here"]
           ]
       ]
     Just (Enabled e) ->
@@ -84,12 +92,73 @@ projectExecutionSection project status started key =
           , E.dl
               [cls "ls-facts"]
               ( fact "Engineer" (enablementEngineer e)
-                  <> fact "Repository" (enablementRepository e)
+                  <> fact "Repository" (identityText (enablementRepository e))
                   <> fact "Checks in force" (enablementChecks e <> " version " <> T.pack (show (enablementChecksVersion e)) <> " " <> enablementChecksDigest e)
                   <> fact "Allowed" (enablementAt e <> " by " <> enablementActor e)
               )
           ]
       ]
+
+{- | Phase 5 (P5.10): where Lockstep works, when the helper runs it in a Dev
+Capsule: the capsule's readiness, the step under way with a way to stop it,
+the last step's outcome and the last failure, from the helper's own status.
+Shown only in capsule mode; nothing here starts anything.
+-}
+capsuleSection :: ProjectId -> CapsuleStatus -> [E.ChildHTML E.Division E.Body]
+capsuleSection project status =
+  [ heading "capsule" "Where Lockstep works"
+  , E.p [] [E.text ("In its own Linux virtual machine (Dev Capsule " <> statusCapsule status <> "): " <> readiness <> ".")]
+  , E.p
+      []
+      [ E.text $
+          case statusVerify status of
+            Just v -> "Its work is checked in a separate machine (" <> v <> ") that is reset to a known-good state before every check."
+            Nothing -> "No separate checking machine is set up, so Lockstep will refuse to check work until there is one."
+      ]
+  ]
+    <> running
+    <> [E.p [cls "ls-muted"] [E.text ("Last step: " <> lastWords)] | Just lastWords <- [statusLastRun status]]
+    <> [E.p [cls "ls-notice", attr "role" "alert"] [E.text ("Last problem: " <> failure)] | Just failure <- [statusLastFailure status]]
+    <> [ E.details
+           []
+           [ E.summary [] [E.text "Technical details"]
+           , E.dl
+               [cls "ls-facts"]
+               ( fact "Capsule" (statusCapsule status)
+                   <> fact "Machine" (statusVm status)
+                   <> fact "Configuration check" (statusAudit status)
+                   <> fact "Template" (statusTemplate status)
+                   <> fact "Updated" (statusUpdated status)
+               )
+           ]
+       ]
+ where
+  readiness
+    | statusAudit status /= "ok" = "not ready: its configuration is refused (" <> statusAudit status <> ")"
+    | statusTemplate status /= "current" = "not ready: it was made from an older template and must be reconfigured"
+    | statusVm status == "Running" = "ready"
+    | statusVm status == "Stopped" = "stopped; it starts when the next step needs it"
+    | otherwise = "not available (" <> statusVm status <> ")"
+  running =
+    case statusActiveRun status of
+      Nothing -> [E.p [cls "ls-muted"] [E.text "Nothing is running in it now."]]
+      Just run ->
+        [ E.p [] [E.text ("Running now: " <> maybe "a step" stepName (statusActiveOp status) <> ".")]
+        , E.form
+            [A.id (elementId 's' "top-capsule-form"), A.method B.FormPOST, A.action (stopCapsuleRunAction project)]
+            [ hidden runField run
+            , E.button [A.id (elementId 's' "top-capsule-run"), attr "type" "submit"] [E.text "Stop the running step"]
+            ]
+        , E.p [cls "ls-muted"] [E.text "Stopping ends the step at once. Lockstep does not run it again by itself; the bug then waits for you."]
+        ]
+  stepName op =
+    case op of
+      "run-live-write" -> "the Implementer's coding step"
+      "run-live-readonly" -> "a reading step (planning, challenge or review)"
+      "run-verify" -> "an independent check"
+      "run-write" -> "a writing step"
+      "run-readonly" -> "a reading step"
+      other -> other
 
 standingWords :: Maybe Standing -> T.Text
 standingWords standing =
@@ -124,10 +193,10 @@ taskFixingSection task status admission standing work key =
           [ heading "fixing" "Fixing it"
           , E.p [] [E.text "Lockstep may work on bugs in this project. Hand this task to it as a bug: before changing anything it must reproduce the bug and have its tests agreed."]
           , E.form
-              [attr "id" "admit-form", A.method B.FormPOST, A.action (B.mkRawURL ("/app/api/tasks/" <> taskId task <> "/bug"))]
-              [ hidden "key" key
-              , hidden "ticket_revision" (T.pack (show (taskTicketRevision task)))
-              , E.button [attr "id" "admit-bug", attr "type" "submit", cls "ls-primary"] [E.text "Ask Lockstep to fix this bug"]
+              [A.id (elementId 'a' "dmit-form"), A.method B.FormPOST, A.action (admitBugAction (taskKey task))]
+              [ hidden keyField key
+              , hidden ticketRevisionField (T.pack (show (taskTicketRevision task)))
+              , E.button [A.id (elementId 'a' "dmit-bug"), attr "type" "submit", cls "ls-primary"] [E.text "Ask Lockstep to fix this bug"]
               ]
           ]
       | otherwise ->
@@ -161,34 +230,40 @@ transactionSection a tx request key =
     <> [technical]
  where
   ev = transactionEvidence tx
-  state = T.unpack (viewState tx)
+  -- The view carries the stored names as text; they are read into the Kernel's types once, here.
+  -- A name this page does not know is shown as such, never taken for another.
+  state = parseStateName (viewState tx)
+  stage = parseStage (viewStage tx)
+  -- A halted or stopped transaction always has its code (the stored state does not read without
+  -- it); a view without one says so rather than show another code's words.
+  haltLine words' = maybe "Lockstep did not record why." (words' . haltCodeFromText) (viewHalt tx)
   standingNow =
     case state of
-      "running" -> [E.p [] [E.text ("Lockstep is working on this bug: " <> stepWords (viewStage tx) <> ".")]]
-      "halted" ->
-        [ E.p [cls "ls-notice", attr "id" "fix-halted"] [E.text ("Lockstep stopped while " <> stepWords (viewStage tx) <> " and needs your decision.")]
-        , E.p [] [E.text (haltWords (fromMaybe "" (viewHalt tx)))]
+      Just StateRunning -> [E.p [] [E.text ("Lockstep is working on this bug: " <> stepWords stage <> ".")]]
+      Just StateHalted ->
+        [ E.p [cls "ls-notice", attr "id" "fix-halted"] [E.text ("Lockstep stopped while " <> stepWords stage <> " and needs your decision.")]
+        , E.p [] [E.text (haltLine haltWords)]
         ]
           <> decisionForm
-      "accepted" ->
+      Just StateAccepted ->
         [ E.p [cls "ls-good-text", attr "id" "fix-committed"] [E.text "The fix passed its checks and an independent review, and Lockstep committed it on its own branch in the project's folder. Nothing was sent anywhere."]
         , E.p [] [E.text "Only you decide whether this bug is fixed. Look at what was checked below first."]
         , completionForm
         ]
-      "done" -> [E.p [cls "ls-good-text", attr "id" "fix-done"] [E.text "You marked this bug fixed."]]
-      "stopped" -> [E.p [cls "ls-muted", attr "id" "fix-stopped"] [E.text ("Lockstep stopped fixing this bug: " <> stoppedWords (fromMaybe "" (viewHalt tx)))]]
-      _ -> [E.p [cls "ls-notice"] [E.text "Lockstep cannot show where this fix stands right now."]]
+      Just StateDone -> [E.p [cls "ls-good-text", attr "id" "fix-done"] [E.text "You marked this bug fixed."]]
+      Just StateStopped -> [E.p [cls "ls-muted", attr "id" "fix-stopped"] [E.text ("Lockstep stopped fixing this bug: " <> haltLine stoppedWords)]]
+      Nothing -> [E.p [cls "ls-notice", attr "id" "fix-state-unrecognised"] [E.text ("Lockstep cannot show where this fix stands: it recorded a state this page does not recognise (" <> viewState tx <> ").")]]
   decisionForm =
     case request of
       Just r
         | storedState r == "open" ->
             [ E.form
-                [attr "id" "halt-form", A.method B.FormPOST, A.action (B.mkRawURL ("/app/api/transactions/" <> viewId tx <> "/decision"))]
-                [ hidden "key" key
-                , hidden "request" (storedRequestId r)
-                , hidden "revision" (T.pack (show (storedRevision r)))
+                [A.id (elementId 'h' "alt-form"), A.method B.FormPOST, A.action (haltDecisionAction (viewKey tx))]
+                [ hidden keyField key
+                , hidden requestField (storedRequestId r)
+                , hidden revisionField (T.pack (show (storedRevision r)))
                 , E.fieldset [] (E.legend [] [E.text "What should happen next?"] : fmap choice (storedChoices r))
-                , E.button [attr "id" "answer-halt", attr "type" "submit", cls "ls-primary"] [E.text "Record my decision"]
+                , E.button [A.id (elementId 'a' "nswer-halt"), attr "type" "submit", cls "ls-primary"] [E.text "Record my decision"]
                 ]
             ]
         | otherwise -> [E.p [cls "ls-muted"] [E.text "Your decision is recorded; Lockstep acts on it shortly."]]
@@ -196,27 +271,30 @@ transactionSection a tx request key =
   choice name =
     E.div
       [cls "ls-choice"]
-      [ E.input [A.type_ HTML.InputRadio, attr "id" ("halt-" <> name), attr "name" "choice", attr "value" name]
+      [ -- The choices are the stored request's text: their ids stay escaped attributes.
+        E.input [A.type_ HTML.InputRadio, attr "id" ("halt-" <> name), A.name choiceField, attr "value" name]
       , E.label [attr "for" ("halt-" <> name)] [E.text (choiceWords name)]
       ]
+  doneId = elementId 'c' "ompletion-done"
+  notDoneId = elementId 'c' "ompletion-not-done"
   completionForm =
     E.form
-      [attr "id" "completion-form", A.method B.FormPOST, A.action (B.mkRawURL ("/app/api/transactions/" <> viewId tx <> "/completion"))]
+      [A.id (elementId 'c' "ompletion-form"), A.method B.FormPOST, A.action (completionAction (viewKey tx))]
       [ E.fieldset
           []
           [ E.legend [] [E.text "Is this bug fixed?"]
           , E.div
               [cls "ls-choice"]
-              [ E.input [A.type_ HTML.InputRadio, attr "id" "completion-done", attr "name" "choice", attr "value" "done"]
-              , E.label [attr "for" "completion-done"] [E.text "Yes, it is fixed: mark it done"]
+              [ E.input [A.type_ HTML.InputRadio, A.id doneId, A.name choiceField, attr "value" "done"]
+              , E.label [A.for doneId] [E.text "Yes, it is fixed: mark it done"]
               ]
           , E.div
               [cls "ls-choice"]
-              [ E.input [A.type_ HTML.InputRadio, attr "id" "completion-not-done", attr "name" "choice", attr "value" "not-done"]
-              , E.label [attr "for" "completion-not-done"] [E.text "No, it is not fixed: stop here"]
+              [ E.input [A.type_ HTML.InputRadio, A.id notDoneId, A.name choiceField, attr "value" "not-done"]
+              , E.label [A.for notDoneId] [E.text "No, it is not fixed: stop here"]
               ]
           ]
-      , E.button [attr "id" "decide-completion", attr "type" "submit", cls "ls-primary"] [E.text "Record my decision"]
+      , E.button [A.id (elementId 'd' "ecide-completion"), attr "type" "submit", cls "ls-primary"] [E.text "Record my decision"]
       ]
   criteria =
     case evidenceCriteria ev of
@@ -262,18 +340,18 @@ transactionSection a tx request key =
         ]
   resultWords passed
     | not passed = "Not every check passed on the latest change."
-    | state `L.elem` ["accepted", "done"] = "Every check passed on the committed change."
+    | state `L.elem` [Just StateAccepted, Just StateDone] = "Every check passed on the committed change."
     | otherwise = "Every check passed on the latest change."
   findings =
     case evidenceFindings ev of
       []
-        | L.elem (viewStage tx) ["basis", "discovery", "reproduction", "candidate", "challenge-pre"] && L.elem state ["running", "halted"] ->
+        | L.elem stage (fmap Just [StageBasis, StageDiscovery, StageReproduction, StageCandidate, StageChallengePre]) && L.elem state [Just StateRunning, Just StateHalted] ->
             [E.p [cls "ls-muted"] [E.text "Not challenged yet."]]
         | otherwise -> [E.p [] [E.text "Nothing was found."]]
       fs ->
         [ E.ul
             [attr "id" "fix-findings"]
-            [E.li [] [E.text ((if findingWhen f == "before" then "Before the change: " else "After the change: ") <> findingClaimText f <> " \8212 " <> dispositionWords (findingDisposition f))] | f <- fs]
+            [E.li [] [E.text (findingTimeWords (findingWhen f) <> findingClaimText f <> " \8212 " <> dispositionWords (findingDisposition f))] | f <- fs]
         ]
   review =
     case evidenceReview ev of
@@ -306,49 +384,74 @@ transactionSection a tx request key =
               <> fact "Verified commit" (maybe "none" fst (evidencePassed ev))
               <> fact "Reviewed commit" (maybe "none" reviewCommit (evidenceReview ev))
               <> fact "Unreadable records" (if L.null (evidenceUnreadable ev) then "none" else T.unwords (fmap (T.pack . show) (evidenceUnreadable ev)))
-              <> L.concat [fact ("Run " <> invocationWhat i) (invocationStage i <> " " <> fromMaybe "unfinished" (invocationOutcome i) <> " " <> invocationId i) | i <- viewInvocations tx]
+              <> L.concat [fact ("Run " <> invocationWhat i) (invocationStage i <> " " <> fromMaybe "unfinished" (invocationOutcome i) <> " " <> identityText (invocationId i)) | i <- viewInvocations tx]
           )
       ]
 
-stepWords :: T.Text -> T.Text
+-- | What a step is doing, in plain words; a stage this page could not read is said to be unknown.
+stepWords :: Maybe Stage -> T.Text
 stepWords stage =
-  case T.unpack stage of
-    "basis" -> "looking at the project's files"
-    "discovery" -> "finding the cause"
-    "reproduction" -> "reproducing the bug"
-    "candidate" -> "writing tests that show the bug"
-    "challenge-pre" -> "checking those tests"
-    "freeze" -> "fixing the tests in place"
-    "implement" -> "changing the code"
-    "verify" -> "running the checks"
-    "challenge-post" -> "challenging the change"
-    "review" -> "having the change reviewed"
-    "accept" -> "committing the fix"
-    _ -> "at a step this page does not know"
+  case stage of
+    Just StageBasis -> "looking at the project's files"
+    Just StageDiscovery -> "finding the cause"
+    Just StageReproduction -> "reproducing the bug"
+    Just StageCandidate -> "writing tests that show the bug"
+    Just StageChallengePre -> "checking those tests"
+    Just StageFreeze -> "fixing the tests in place"
+    Just StageImplement -> "changing the code"
+    Just StageVerify -> "running the checks"
+    Just StageChallengePost -> "challenging the change"
+    Just StageReview -> "having the change reviewed"
+    Just StageAccept -> "committing the fix"
+    Nothing -> "at a step this page does not know"
 
-haltWords :: T.Text -> T.Text
+haltWords :: HaltCode -> T.Text
 haltWords code =
-  case T.unpack code of
-    "repository-dirty" -> "The project's folder has changes that are not committed. Commit or remove them, then try again."
-    "repository-missing" -> "The project's folder is not there any more."
-    "not-a-repository" -> "The project's folder is not a Git folder."
-    "reproduction-missing" -> "Lockstep could not make the bug happen. You can go on without reproducing it, try again, or stop."
-    "verification-environment-missing" -> "A program the checks need is not installed where the checks run."
-    "verification-run-failed" -> "The checks did not finish normally."
-    "protected-test-changed" -> "A test that was fixed in place was changed."
-    c
-      | "role-failed no-coding-agent" `L.isPrefixOf` c -> "No coding helper is set up for Lockstep."
-      | "role-failed" `L.isPrefixOf` c -> "One of Lockstep's helpers failed."
-      | "uncertain-invocation" `L.isPrefixOf` c -> "Lockstep could not tell whether one of its helpers finished. It will not run it again by itself."
-      | otherwise -> "Lockstep could not finish this step. The exact reason is under Technical details."
+  case code of
+    HaltRoleFailed c
+      | c == noCodingAgent -> "No coding helper is set up for Lockstep."
+      | otherwise -> "One of Lockstep's helpers failed."
+    HaltUncertainInvocation _ -> "Lockstep could not tell whether one of its helpers finished. It will not run it again by itself."
+    HaltSupervisorFailed _ -> couldNotFinish
+    HaltFixed fixed ->
+      case fixed of
+        FixedRepositoryDirty -> "The project's folder has changes that are not committed. Commit or remove them, then try again."
+        FixedRepositoryMissing -> "The project's folder is not there any more."
+        FixedNotARepository -> "The project's folder is not a Git folder."
+        FixedReproductionMissing -> "Lockstep could not make the bug happen. You can go on without reproducing it, try again, or stop."
+        FixedVerificationEnvironmentMissing -> "A program the checks need is not installed where the checks run."
+        FixedVerificationRunFailed -> "The checks did not finish normally."
+        FixedProtectedTestChanged -> "A test that was fixed in place was changed."
+        FixedBaselineRunFailed -> couldNotFinish
+        FixedCandidatesExhausted -> couldNotFinish
+        FixedGreenRegressionFailed -> couldNotFinish
+        FixedFindingNeedsHuman -> couldNotFinish
+        FixedAttemptsExhausted -> couldNotFinish
+        FixedReviewNeedsHuman -> couldNotFinish
+        FixedStoppedByPerson -> couldNotFinish
+        FixedNotAcceptedByPerson -> couldNotFinish
+    -- Any other refusal: its exact code is under Technical details.
+    HaltRefused _ -> couldNotFinish
+ where
+  couldNotFinish = "Lockstep could not finish this step. The exact reason is under Technical details."
 
-stoppedWords :: T.Text -> T.Text
+stoppedWords :: HaltCode -> T.Text
 stoppedWords code =
-  case T.unpack code of
-    "not accepted by a person" -> "you said it is not fixed."
-    "stopped by a person" -> "you stopped it."
+  case code of
+    HaltFixed FixedNotAcceptedByPerson -> "you said it is not fixed."
+    HaltFixed FixedStoppedByPerson -> "you stopped it."
+    -- A stop from a halt keeps the halt's code (the Kernel's 'Stopped' after 'Halted').
     _ -> "you stopped it when it could not go on. " <> haltWords code
 
+findingTimeWords :: FindingTime -> T.Text
+findingTimeWords time =
+  case time of
+    BeforeChange -> "Before the change: "
+    AfterChange -> "After the change: "
+
+{- | A halt request's choice, as stored with the request (text). A name without
+its own words is shown as it is: it is one of the request's own choices.
+-}
 choiceWords :: T.Text -> T.Text
 choiceWords name =
   case T.unpack name of
@@ -357,26 +460,32 @@ choiceWords name =
     "accept-non-reproduction" -> "Go on without reproducing it"
     _ -> name
 
-outcomeWords :: T.Text -> Maybe Integer -> T.Text
+outcomeWords :: OutcomeKind -> Maybe Integer -> T.Text
 outcomeWords outcome exit =
-  case (T.unpack outcome, exit) of
-    ("exited", Just 0) -> "passed"
-    ("exited", Just n) -> "failed (exit status " <> T.pack (show n) <> ")"
-    ("exited", Nothing) -> "finished; whether it passed was not recorded"
-    ("timed-out", _) -> "did not finish in time"
-    _ -> "did not finish normally"
+  case (outcome, exit) of
+    (KindExited, Just 0) -> "passed"
+    (KindExited, Just n) -> "failed (exit status " <> T.pack (show n) <> ")"
+    (KindExited, Nothing) -> "finished; whether it passed was not recorded"
+    (KindTimedOut, _) -> "did not finish in time"
+    (KindOutputLimit, _) -> notNormally
+    (KindOutputHeld, _) -> notNormally
+    (KindCancelled, _) -> notNormally
+    (KindLaunchFailed, _) -> notNormally
+    (KindProviderStopped, _) -> notNormally
+ where
+  notNormally = "did not finish normally"
 
-dispositionWords :: T.Text -> T.Text
+dispositionWords :: Disposition -> T.Text
 dispositionWords disposition =
-  case T.unpack disposition of
-    "CONFIRMED" -> "confirmed; it had to be dealt with"
-    "DISPROVED" -> "shown not to hold"
-    "NEEDS_HUMAN" -> "needs a person to look at it"
-    _ -> "not confirmed"
+  case disposition of
+    Confirmed -> "confirmed; it had to be dealt with"
+    Disproved -> "shown not to hold"
+    NeedsHumanFinding -> "needs a person to look at it"
+    Inconclusive -> "not confirmed"
 
-verdictWords :: T.Text -> T.Text
+verdictWords :: Verdict -> T.Text
 verdictWords verdict =
-  case T.unpack verdict of
-    "approve" -> "The reviewer approved the change."
-    "reject" -> "The reviewer rejected the change."
-    _ -> "The reviewer asked for a person to look at the change."
+  case verdict of
+    Approve -> "The reviewer approved the change."
+    Reject -> "The reviewer rejected the change."
+    NeedsHuman -> "The reviewer asked for a person to look at the change."

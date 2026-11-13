@@ -40,7 +40,9 @@ import Lockstep.Kernel.Profile (definitionGates, gateId, gateIdText)
 import Lockstep.Kernel.Scheduler (ineligibilityCode)
 import Lockstep.Kernel.Task (priorityOf, priorityWords)
 import Lockstep.Kernel.WorkOrder (workOrderKindName)
-import Lockstep.Web.Fragment (attr, cls, fragment, href)
+import Lockstep.Web.Fields (choiceField, confirmFewerField, expectedField, expectedSetField)
+import Lockstep.Web.Fragment (attr, cls, elementId, fragment)
+import Lockstep.Web.Routes.App (checksLink, chooseChecksAction, projectLink)
 
 -- | The name a person sees for a set of checks.
 choiceName :: ChecksChoice -> T.Text
@@ -132,7 +134,7 @@ projectChecksSection pc =
             (True, Nothing) -> "No checks are chosen yet, so work in this project cannot start."
             (True, Just c) -> "Chosen: " <> choiceName c <> "."
       ]
-  , E.p [] [E.a [href ("/app/projects/" <> projectId (checksProject pc) <> "/checks"), attr "id" "project-checks"] [E.text "See or change how work is checked"]]
+  , E.p [] [E.a [A.href (checksLink (projectKey (checksProject pc))), A.id (elementId 'p' "roject-checks")] [E.text "See or change how work is checked"]]
   ]
     <> case checksQueue pc of
       Right [] -> []
@@ -148,8 +150,9 @@ choiceForm pc =
         [cls "ls-choice"]
         [ E.input
             ( [ A.type_ HTML.InputRadio
-              , attr "id" ("choice-" <> choiceId c)
-              , attr "name" "choice"
+              , -- A Profile id is stored text: it stays an escaped attribute.
+                attr "id" ("choice-" <> choiceId c)
+              , A.name choiceField
               , attr "value" (choiceId c)
               ]
                 <> [attr "checked" "checked" | choiceId c == selected]
@@ -158,18 +161,19 @@ choiceForm pc =
             [attr "for" ("choice-" <> choiceId c)]
             [E.text (choiceName c <> (if choiceBuiltIn c then " (recommended to start)" else "") <> " \8212 " <> summaryOf c)]
         ]
+    confirmId = elementId 'c' "onfirm-fewer"
   in
     E.form
-      [attr "id" "checks-form", A.method B.FormPOST, A.action (B.mkRawURL ("/app/api/projects/" <> projectId (checksProject pc) <> "/checks"))]
-      [ E.input [A.type_ HTML.InputHidden, attr "name" "expected", attr "value" expected]
-      , E.input [A.type_ HTML.InputHidden, attr "name" "expected_set", attr "value" (if isJust (checksCurrent pc) then "yes" else "no")]
+      [A.id (elementId 'c' "hecks-form"), A.method B.FormPOST, A.action (chooseChecksAction (projectKey (checksProject pc)))]
+      [ E.input [A.type_ HTML.InputHidden, A.name expectedField, attr "value" expected]
+      , E.input [A.type_ HTML.InputHidden, A.name expectedSetField, attr "value" (if isJust (checksCurrent pc) then "yes" else "no")]
       , E.fieldset [] (E.legend [] [E.text "Which checks should apply?"] : fmap option (checksChoices pc))
       , E.div
           [cls "ls-choice"]
-          [ E.input [A.type_ HTML.InputCheckbox, attr "id" "confirm-fewer", attr "name" "confirm_fewer", attr "value" "yes"]
-          , E.label [attr "for" "confirm-fewer"] [E.text "I understand that this choice may stop requiring some checks."]
+          [ E.input [A.type_ HTML.InputCheckbox, A.id confirmId, A.name confirmFewerField, attr "value" "yes"]
+          , E.label [A.for confirmId] [E.text "I understand that this choice may stop requiring some checks."]
           ]
-      , E.button [attr "id" "save-checks", attr "type" "submit", cls "ls-primary"] [E.text "Save"]
+      , E.button [A.id (elementId 's' "ave-checks"), attr "type" "submit", cls "ls-primary"] [E.text "Save"]
       ]
 
 technical :: ProjectChecks -> E.ChildHTML E.Division E.Body
@@ -255,5 +259,5 @@ checksPage pc notice =
            )
         <> queueSection (checksQueue pc)
         <> [ technical pc
-           , E.p [] [E.a [href ("/app/projects/" <> projectId project), attr "id" "back-to-project"] [E.text ("Back to " <> projectName project)]]
+           , E.p [] [E.a [A.href (projectLink (projectKey project)), A.id (elementId 'b' "ack-to-project")] [E.text ("Back to " <> projectName project)]]
            ]

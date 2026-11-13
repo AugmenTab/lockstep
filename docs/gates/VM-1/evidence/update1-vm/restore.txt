@@ -1,0 +1,1 @@
+capsule-runtime 1 restore ok capsule=vmq1 snapshot=work-0000beef status=Running

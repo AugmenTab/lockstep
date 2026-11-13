@@ -16,12 +16,13 @@ module Lockstep.Application.Tasks
   , listTasks
   , listAllTasks
   , findTask
+  , findTaskById
   , findTaskIn
+  , findTaskWithProjectIn
   , mostImportantReadyTask
   ) where
 
 import Data.List qualified as L
-import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
@@ -30,17 +31,19 @@ import Text.Show (Show)
 import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), checkReadiness, withDatabase)
 import Lockstep.Application.Identity (newUuid)
-import Lockstep.Application.Ledger (LedgerFailure (..), createTicketIn, decideTicketIn, ledgerFailureCode, reviseTicketIn, ticketFactsIn)
+import Lockstep.Application.Ledger (createTicketIn, decideTicketIn, reviseTicketIn, ticketFactsIn)
+import Lockstep.Application.LedgerRefusal (LedgerError (..), LedgerRefusal (StaleRevision), ledgerRefusalCode)
 import Lockstep.Application.Profiles (sha256Hasher)
 import Lockstep.Kernel.Evidence (mkHumanSignoff)
-import Lockstep.Kernel.Identity (TicketId (..), parseUuid, uuidText)
+import Lockstep.Kernel.Identity (ProjectId (..), TaskId (..), TicketId (..), identityText, parseIdentity)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
 import Lockstep.Kernel.Task
   ( DependencyFact (..)
   , Priority
   , TaskFacts (..)
   , TaskReadiness
-  , createsCycle
+  , TaskTitle
+  , createsCycleOf
   , mkAcceptance
   , mkTaskTitle
   , mostImportantReady
@@ -52,6 +55,7 @@ import Lockstep.Kernel.Task
   )
 import Lockstep.Kernel.Ticket (TicketInput (..))
 import Lockstep.Kernel.Transition (Command (..), Principal (Human))
+import Lockstep.Persistence.Integrity (integrityViolation)
 import Lockstep.Persistence.Projects qualified as Projects
 import Lockstep.Persistence.Tasks qualified as Store
 
@@ -93,6 +97,9 @@ data TaskView
   , taskReadinessOf :: TaskReadiness
   , taskRevision :: Int64
   , taskTicketRevision :: Int
+  , taskKey :: TaskId
+  -- ^ The typed identities 'taskId' and 'taskProject' are the text of (frozen-test boundaries).
+  , taskProjectKey :: ProjectId
   }
   deriving (Eq, Show)
 
@@ -107,44 +114,65 @@ whenReady runtime action = do
     NotReady reason -> pure (Left reason)
     Ready _ -> action
 
-canonicalId :: T.Text -> Maybe T.Text
-canonicalId =
-  either (const Nothing) (Just . uuidText) . parseUuid
-
 refuse :: String -> Either T.Text a
 refuse =
   Left . T.pack
 
+{- | A Ledger step inside a task transaction: its refusal is the task's
+refusal code; stored state that does not reproduce aborts the transaction
+(an integrity violation, never a refusal the caller could act on).
+-}
+ledgerStep :: Either LedgerError a -> O.Orville (Either T.Text a)
+ledgerStep result =
+  case result of
+    Right value -> pure (Right value)
+    Left (LedgerRefusedBy refusal) -> pure (Left (ledgerRefusalCode refusal))
+    Left (LedgerCorrupt message) -> integrityViolation (T.unpack message)
+
+{- | A task's Ticket: the two are made together with one UUID (C-P3.6 K2), so
+the Ticket of a task is the identity of the same UUID, as a Ticket.
+-}
+taskTicket :: TaskId -> TicketId
+taskTicket (TaskId u) =
+  TicketId u
+
 -- | The view of a stored task: its row, its Ticket's facts and its dependencies' facts.
 loadView :: Store.TaskRow -> O.Orville (Either T.Text TaskView)
 loadView row = do
-  facts <- ticketFactsIn (Store.rowTaskId row)
+  facts <- ticketFactsIn (taskTicket (Store.rowTaskId row))
   deps <- Store.dependenciesOf (Store.rowTaskId row)
-  depFacts <- traverse ticketFactsIn deps
+  depFacts <- traverse (ticketFactsIn . taskTicket) deps
+  own <- ledgerStep facts
+  dependencies <- traverse ledgerStep depFacts
   pure $ do
-    (state, reason, revision, _) <- either (Left . ledgerFailureCode) Right facts
-    dependencyFacts <- traverse (either (Left . ledgerFailureCode) (\(s, _, _, title) -> Right (DependencyFact title s))) depFacts
+    (state, reason, revision, _) <- own
+    dependencyFacts <- traverse (fmap (\(s, _, _, title) -> DependencyFact title s)) dependencies
     pure
       TaskView
-        { taskId = Store.rowTaskId row
-        , taskProject = Store.rowProjectId row
+        { taskKey = Store.rowTaskId row
+        , taskProjectKey = Store.rowProjectId row
+        , taskId = identityText (Store.rowTaskId row)
+        , taskProject = identityText (Store.rowProjectId row)
         , taskTitle = Store.rowTitle row
         , taskAcceptance = Store.rowAcceptance row
         , taskPriority = fromIntegral (Store.rowPriority row)
         , taskState = state
         , taskBlockReason = reason
-        , taskDependencies = deps
+        , taskDependencies = fmap identityText deps
         , taskReadinessOf = taskReadiness (TaskFacts state reason dependencyFacts)
         , taskRevision = Store.rowRevision row
         , taskTicketRevision = revision
         }
 
--- | Each dependency must be another task of the project, at most 20, no repeats.
-checkDependencies :: T.Text -> Maybe T.Text -> [T.Text] -> O.Orville (Either T.Text [T.Text])
+{- | Each dependency must be another task of the project, at most 20, no
+repeats. The given texts are parsed here, once; one that is not a task
+identity is @unknown-dependency@.
+-}
+checkDependencies :: ProjectId -> Maybe TaskId -> [T.Text] -> O.Orville (Either T.Text [TaskId])
 checkDependencies projectId self raw
   | L.length raw > maxDependencies = pure (refuse "too-many-dependencies")
   | otherwise =
-      case traverse canonicalId raw of
+      case traverse parseIdentity raw of
         Nothing -> pure (refuse "unknown-dependency")
         Just ids
           | Just s <- self, s `L.elem` ids -> pure (refuse "dependency-self")
@@ -155,10 +183,15 @@ checkDependencies projectId self raw
                   then Right (L.nub ids)
                   else refuse "unknown-dependency"
 
+-- | The creation digest's canonical request (C-C.R1 R9), the identities in their canonical text.
+requestDigest :: ProjectId -> TaskTitle -> T.Text -> Priority -> [TaskId] -> T.Text
+requestDigest projectId title acceptance priority dependencies =
+  sha256Text (taskRequestText (identityText projectId) title acceptance priority (fmap identityText dependencies))
+
 createTask :: DatabaseRuntime -> NewTask -> IO (Either NotReadyReason (Either T.Text TaskView))
 createTask runtime request =
   whenReady runtime $
-    case (mkTaskTitle (newTaskTitle request), mkAcceptance (newTaskAcceptance request), canonicalId (newTaskProject request)) of
+    case (mkTaskTitle (newTaskTitle request), mkAcceptance (newTaskAcceptance request), parseIdentity (newTaskProject request)) of
       (Left e, _, _) -> pure (Right (Left (taskRuleCode e)))
       (_, Left e, _) -> pure (Right (Left (taskRuleCode e)))
       (_, _, Nothing) -> pure (Right (Left (T.pack "unknown-project")))
@@ -166,8 +199,9 @@ createTask runtime request =
         u <- newUuid
         let
           priority = newTaskPriority request
-          dependencies = L.sort (L.nub (fmap (\d -> fromMaybe d (canonicalId d)) (newTaskDependencies request)))
-          digest = sha256Text (taskRequestText projectId title acceptance priority dependencies)
+          -- A request naming a dependency that is not a task identity matches no stored request.
+          dependencies = L.sort . L.nub <$> traverse parseIdentity (newTaskDependencies request)
+          digest = requestDigest projectId title acceptance priority <$> dependencies
         withDatabase runtime . O.withTransaction $ do
           Store.lockTasks
           existing <- Store.findTaskByKey (idempotencyKeyText (newTaskKey request))
@@ -177,7 +211,7 @@ createTask runtime request =
               | otherwise ->
                   case Store.rowCreationDigest row of
                     Just stored
-                      | stored == digest -> loadView row
+                      | Just stored == digest -> loadView row
                       | otherwise -> pure (refuse "key-conflict")
                     Nothing -> do
                       -- C-C.R1 R9: a row made before migration 17 replays only when the
@@ -187,7 +221,7 @@ createTask runtime request =
                         && Store.rowTitle row == taskTitleText title
                         && Store.rowAcceptance row == acceptance
                         && fromIntegral (Store.rowPriority row) == priorityValue priority
-                        && stored == dependencies
+                        && Just stored == dependencies
                         then loadView row
                         else pure (refuse "key-conflict")
             Nothing -> do
@@ -199,20 +233,20 @@ createTask runtime request =
                   case deps of
                     Left code -> pure (Left code)
                     Right ids -> do
-                      made <- createTicketIn u (taskTitleText title)
+                      made <- createTicketIn u (taskTitleText title) >>= ledgerStep
                       case made of
-                        Left failure -> pure (Left (ledgerFailureCode failure))
+                        Left code -> pure (Left code)
                         Right _ -> do
                           let
-                            newId = uuidText u
-                          Store.insertTask newId projectId (idempotencyKeyText (newTaskKey request)) acceptance (priorityValue priority) digest
+                            newId = TaskId u
+                          Store.insertTask newId projectId (idempotencyKeyText (newTaskKey request)) acceptance (priorityValue priority) (requestDigest projectId title acceptance priority ids)
                           Store.replaceDependencies newId ids
                           Store.findTaskRow newId >>= maybe (pure (refuse "unknown-task")) loadView
 
 editTask :: DatabaseRuntime -> T.Text -> Int64 -> TaskEdit -> IO (Either NotReadyReason (Either T.Text TaskView))
 editTask runtime rawId expected edit =
   whenReady runtime $
-    case (canonicalId rawId, mkTaskTitle (editTitle edit), mkAcceptance (editAcceptance edit)) of
+    case (parseIdentity rawId, mkTaskTitle (editTitle edit), mkAcceptance (editAcceptance edit)) of
       (Nothing, _, _) -> pure (Right (refuse "unknown-task"))
       (_, Left e, _) -> pure (Right (Left (taskRuleCode e)))
       (_, _, Left e) -> pure (Right (Left (taskRuleCode e)))
@@ -230,14 +264,14 @@ editTask runtime rawId expected edit =
                   case deps of
                     Left code -> pure (Left code)
                     Right ids
-                      | createsCycle edges tid ids -> pure (refuse "dependency-cycle")
+                      | createsCycleOf edges tid ids -> pure (refuse "dependency-cycle")
                       | otherwise -> do
                           revised <-
                             if taskTitleText title /= Store.rowTitle row
-                              then fmap (const ()) <$> reviseTicketIn tid (taskTitleText title)
+                              then fmap (const ()) <$> (reviseTicketIn (taskTicket tid) (taskTitleText title) >>= ledgerStep)
                               else pure (Right ())
                           case revised of
-                            Left failure -> pure (Left (ledgerFailureCode failure))
+                            Left code -> pure (Left code)
                             Right () -> do
                               updated <- Store.updateTask tid expected acceptance (priorityValue (editPriority edit))
                               if not updated
@@ -253,8 +287,8 @@ range is refused before anything is read or recorded (C-C.R1 R3).
 decideTask :: DatabaseRuntime -> T.Text -> T.Text -> Int -> TaskDecision -> IO (Either NotReadyReason (Either T.Text TaskView))
 decideTask runtime session rawId expected decision =
   whenReady runtime $
-    case (canonicalId rawId, parseUuid rawId) of
-      (Just tid, Right u)
+    case parseIdentity rawId of
+      Just tid
         | expected < 0 || expected > 2147483647 -> pure (Right (refuse "revision-out-of-range"))
         | otherwise ->
             withDatabase runtime . O.withTransaction $ do
@@ -264,12 +298,11 @@ decideTask runtime session rawId expected decision =
                 (Nothing, _) -> pure (refuse "unknown-task")
                 (Just _, Left code) -> pure (Left code)
                 (Just row, Right ticketInput) -> do
-                  decided <- decideTicketIn (TicketId u) expected (Command Human ticketInput)
+                  decided <- decideTicketIn (taskTicket tid) expected (Command Human ticketInput)
                   case decided of
-                    Left (LedgerRefused code _)
-                      | code == T.pack "stale-revision" -> pure (refuse "stale-revision")
-                      | otherwise -> pure (refuse "not-allowed-now")
-                    Left failure -> pure (Left (ledgerFailureCode failure))
+                    Left (LedgerRefusedBy (StaleRevision _)) -> pure (refuse "stale-revision")
+                    Left (LedgerRefusedBy _) -> pure (refuse "not-allowed-now")
+                    Left (LedgerCorrupt message) -> integrityViolation (T.unpack message)
                     Right _ -> loadView row
       _ -> pure (Right (refuse "unknown-task"))
  where
@@ -286,7 +319,7 @@ decideTask runtime session rawId expected decision =
 listTasks :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason [TaskView])
 listTasks runtime rawProject =
   whenReady runtime $
-    case canonicalId rawProject of
+    case parseIdentity rawProject of
       Nothing -> pure (Right [])
       Just projectId -> withDatabase runtime (Store.projectTaskRows projectId >>= views)
 
@@ -294,26 +327,41 @@ listAllTasks :: DatabaseRuntime -> IO (Either NotReadyReason [TaskView])
 listAllTasks runtime =
   whenReady runtime (withDatabase runtime (Store.allTaskRows >>= views))
 
--- | Views of rows; a row whose Ticket cannot be replayed is left out rather than shown wrongly.
+{- | Views of rows. A row whose Ticket cannot be replayed is an integrity
+violation (reported as corrupt data with its code), never shown wrongly and
+never silently left out.
+-}
 views :: [Store.TaskRow] -> O.Orville [TaskView]
-views rows =
-  L.concatMap (either (const []) pure) <$> traverse loadView rows
+views =
+  traverse replayed
+
+-- | One row's view; a Ticket that does not replay aborts the read.
+replayed :: Store.TaskRow -> O.Orville TaskView
+replayed row =
+  loadView row >>= either (\code -> integrityViolation ("task " <> T.unpack (identityText (Store.rowTaskId row)) <> " does not replay: " <> T.unpack code)) pure
 
 findTask :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe TaskView))
 findTask runtime rawId =
-  case canonicalId rawId of
-    Nothing -> pure (Right Nothing)
-    Just tid ->
-      whenReady runtime . withDatabase runtime $ do
-        found <- Store.findTaskRow tid
-        case found of
-          Nothing -> pure Nothing
-          Just row -> either (const Nothing) Just <$> loadView row
+  maybe (pure (Right Nothing)) (findTaskById runtime) (parseIdentity rawId)
+
+-- | 'findTask' for a task identity.
+findTaskById :: DatabaseRuntime -> TaskId -> IO (Either NotReadyReason (Maybe TaskView))
+findTaskById runtime tid =
+  whenReady runtime . withDatabase runtime $ do
+    found <- Store.findTaskRow tid
+    case found of
+      Nothing -> pure Nothing
+      Just row -> Just <$> replayed row
 
 -- | A task as it stands, inside the caller's transaction (C-P4.1 X6); a Ticket that does not replay is its code.
-findTaskIn :: T.Text -> O.Orville (Maybe (Either T.Text TaskView))
+findTaskIn :: TaskId -> O.Orville (Maybe (Either T.Text TaskView))
 findTaskIn tid =
-  Store.findTaskRow tid >>= traverse loadView
+  fmap (fmap snd) <$> findTaskWithProjectIn tid
+
+-- | 'findTaskIn' with the task's project identity, typed (the view carries it as text).
+findTaskWithProjectIn :: TaskId -> O.Orville (Maybe (Either T.Text (ProjectId, TaskView)))
+findTaskWithProjectIn tid =
+  Store.findTaskRow tid >>= traverse (\row -> fmap ((,) (Store.rowProjectId row)) <$> loadView row)
 
 -- | The SHA-256 of a canonical request text, as 64 lowercase hex.
 sha256Text :: T.Text -> T.Text

@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# P5.9 recovery qualification on real VMs (contract C-P5.9; Phase 5 update 1 §5). Model-free. Reuses
+# check-capsule-vm's capsule (state .local/cvm, vmq1, project vmq-project).
+#
+#   R1  the helper stops in the middle of a capsule run: the run is answered "interrupted" by the next
+#       helper, never run again by itself; the guest program is ended; nothing of its tree comes back;
+#       the capsule is usable after
+#   R2  the VM is killed under a running program: the run is not reported as the program's exit
+#       (launch-failed: what it did is unknown), its tree does not come back, the capsule recovers
+#   R3  the capsule's base template changed after it was made: inspect says template=stale, preflight
+#       refuses (capsule-template-current), reconfigure brings it current without losing its disk
+#   (A bridged call in flight when its executor dies is check-capsule-vm R2.)
+#
+# Results: .local/evidence/capsule-recovery-<stamp>/results.txt
+set -uo pipefail
+cd "$(dirname "$0")/../.."
+root=$PWD
+stamp=$(date -u +%Y%m%dt%H%M%Sz)
+work=$root/.local/evidence/capsule-recovery-$stamp
+state=$root/.local/ccv-$stamp
+cstate=$root/.local/cvm
+mkdir -p "$work"
+results=$work/results.txt
+: > "$results"
+failures=0
+instance=p5rc
+cap=vmq1
+proj=vmq-project
+rt=$root/scripts/capsule-runtime
+helper_pid=""
+
+record() { printf '%s %s\n' "$1" "$2" | tee -a "$results"; [ "$1" = PASS ] || failures=$((failures + 1)); }
+expect() { local d=$1; shift; if "$@"; then record PASS "$d"; else record FAIL "$d"; fi; }
+if command -v sha256sum >/dev/null 2>&1; then sha256() { sha256sum | cut -d ' ' -f 1; }; else sha256() { shasum -a 256 | cut -d ' ' -f 1; }; fi
+new_id() { head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+stop_helper() { if [ -n "$helper_pid" ]; then kill "$helper_pid" 2>/dev/null; wait "$helper_pid" 2>/dev/null; helper_pid=""; fi; }
+cleanup() {
+  stop_helper
+  [ -f "$state/helper/helper.log" ] && cp "$state/helper/helper.log" "$work/helper.log"
+  rm -rf "$state"
+}
+trap cleanup EXIT
+[ -f "$cstate/capsules/records/$cap" ] || { echo "NOT_RUN: run scripts/lib/check-capsule-vm --keep first" >&2; exit 2; }
+
+umask 077
+mkdir -p "$state/helper" "$state/pane" "$state/capsule"
+chmod 700 "$state" "$state/helper" "$state/pane" "$state/capsule"
+head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$state/helper/channel.key"
+printf 'lockstep-capsule 1\nruntime-state %s\ncapsule %s\nproject %s\n' "$cstate" "$cap" "$proj" > "$state/capsule/config"
+chmod 600 "$state/capsule/config"
+start_helper() {
+  "$root/scripts/control-helper" --state "$state" --instance "$instance" --runner < /dev/null >> "$work/helper.out" 2>&1 &
+  helper_pid=$!
+  for _ in $(seq 1 1200); do grep -q "started (pid $helper_pid" "$state/helper/helper.log" 2>/dev/null && break; sleep 0.1; done
+  local key i=0 b
+  key=$(head -c 64 "$state/runner/channel.key")
+  ipad=""; opad=""
+  while [ $i -lt 64 ]; do
+    if [ $i -lt 32 ]; then b=$((16#${key:$((i * 2)):2})); else b=0; fi
+    ipad="$ipad$(printf '\\x%02x' $((b ^ 0x36)))"; opad="$opad$(printf '\\x%02x' $((b ^ 0x5c)))"; i=$((i + 1))
+  done
+}
+hex_escapes() { local h=$1 o="" j=0; while [ $j -lt ${#h} ]; do o="$o\\x${h:$j:2}"; j=$((j + 2)); done; printf '%s' "$o"; }
+hmac() { local inner; inner=$({ printf "$ipad"; cat; } | sha256); { printf "$opad"; printf "$(hex_escapes "$inner")"; } | sha256; }
+new_run() {
+  run=$(new_id)
+  dir=$state/runner/work/$run
+  mkdir -p "$dir/tree/src" "$dir/input" "$dir/output"
+  printf 'int add(int a, int b) { return a - b; }\n' > "$dir/tree/src/calc.c"
+  printf 'build/\n' > "$dir/tree/.gitignore"
+}
+send() { # OP RUN ARGV... -> sets id, res (does not wait)
+  local op=$1 r=$2 body tmp
+  shift 2
+  : > "$state/runner/work/$r/argv"
+  for a in "$@"; do printf '%s\0' "$a" >> "$state/runner/work/$r/argv"; done
+  id=$(new_id)
+  body=$(printf 'lockstep-runner-request 1\nid %s\nissued %s\nop %s\nexpect run-%s\nargv %s\n' "$id" "$(date +%s)" "$op" "$r" "$(sha256 < "$state/runner/work/$r/argv")")
+  tmp=$state/runner/requests/.$id
+  printf '%s\nmac %s\n' "$body" "$(printf '%s\n' "$body" | hmac)" > "$tmp"
+  mv "$tmp" "$state/runner/requests/$id.rreq"
+  res=$state/runner/results/$id.res
+}
+await() {
+  local n=0
+  while [ ! -f "$res" ] && [ $n -lt 6000 ]; do sleep 0.2; n=$((n + 1)); done
+  cp "$res" "$work/res-$id.txt" 2>/dev/null
+  cp "$state/runner/work/$run/.capsule.log" "$work/capsule-log-$id.txt" 2>/dev/null
+}
+field() { sed -n "s/^$1 //p" "$res" | head -n 1; }
+fieldline() { sed -n "s/^field $1 //p" "$res" | head -n 1; }
+guest() { # SCRIPT-TEXT [LABEL] -> output in $work/guest.out (and $work/guest-LABEL.out)
+  printf '%s\n' "$1" > "$work/guest.sh"
+  rm -f "$cstate/capsules/records/$cap.run.out"
+  # A cancelled run leaves the VM stopped (the runtime stops it): the probe starts it to look inside.
+  "$rt" --state "$cstate" start "$cap" "$proj" > /dev/null 2>&1
+  "$rt" --state "$cstate" run "$cap" "$proj" "$work/guest.sh" 120 > /dev/null 2>&1
+  cp "$cstate/capsules/records/$cap.run.out" "$work/guest.out" 2>/dev/null || : > "$work/guest.out"
+  [ -n "${2:-}" ] && cp "$work/guest.out" "$work/guest-$2.out"
+  return 0
+}
+
+# ---- R1 the helper stops mid-run.
+guest "rm -f /work/r1-starts.txt /work/r1b-starts.txt" clean
+start_helper
+expect "R1 capsule mode is on" grep -q "capsule mode on: capsule $cap" "$state/helper/helper.log"
+new_run
+send run-write "$run" bash -c "echo started >> /work/r1-starts.txt; echo early > src/early.txt; sync; sleep 120; echo late > src/late.txt; echo finished >> /work/r1-starts.txt"
+sleep 20
+stop_helper
+start_helper
+await
+expect "R1 the run the stopping helper had under way is answered interrupted or cancelled, never as an exit ($(field outcome))" \
+  bash -c "case '$(field outcome)' in interrupted | cancelled) exit 0 ;; *) exit 1 ;; esac"
+sleep 5
+guest "cat /work/r1-starts.txt; pgrep -x sleep > /dev/null && echo SLEEPER || echo no-sleeper" r1
+expect "R1 it ran once and was never run again by itself (started $(grep -c '^started' "$work/guest.out") time(s))" test "$(grep -c '^started' "$work/guest.out")" = 1
+expect "R1 the guest program was ended (it never finished)" bash -c "! grep -q finished '$work/guest.out'"
+expect "R1 no process of it is left" grep -q no-sleeper "$work/guest.out"
+expect "R1 nothing of its tree came back (a file it wrote before the stop is not in the Supervisor's tree)" test ! -e "$dir/tree/src/early.txt"
+new_run
+send run-readonly "$run" cat src/calc.c
+await
+expect "R1 the capsule is usable after the restart" test "$(field outcome) $(fieldline exit)" = "exited 0"
+guest "rm -f /work/r1-starts.txt"
+
+# ---- R1b the helper crashes (kill -9) mid-run: the orphaned run must not bring its tree back or answer.
+new_run
+send run-write "$run" bash -c "echo started >> /work/r1b-starts.txt; echo early > src/crash-early.txt; sync; sleep 40; echo late > src/crash-late.txt"
+sleep 20
+kill -9 "$helper_pid" 2>/dev/null
+wait "$helper_pid" 2>/dev/null
+helper_pid=""
+start_helper
+await
+expect "R1b after a helper crash the run is answered interrupted or cancelled, never as an exit ($(field outcome))" \
+  bash -c "case '$(field outcome)' in interrupted | cancelled) exit 0 ;; *) exit 1 ;; esac"
+sleep 45
+expect "R1b the orphaned run did not bring its tree back, even after its program's time" test ! -e "$dir/tree/src/crash-early.txt" -a ! -e "$dir/tree/src/crash-late.txt"
+guest "cat /work/r1b-starts.txt; pgrep -x sleep > /dev/null && echo SLEEPER || echo no-sleeper" r1b
+expect "R1b it ran once" test "$(grep -c '^started' "$work/guest.out")" = 1
+expect "R1b no process of it is left" grep -q no-sleeper "$work/guest.out"
+guest "rm -f /work/r1b-starts.txt"
+
+# ---- R2 the VM is killed under a running program.
+new_run
+send run-write "$run" bash -c "echo early > src/vm-early.txt; sync; echo running; sleep 120; echo late > src/vm-late.txt"
+# The VM is killed under the program itself (not while the helper is still starting the capsule).
+n=0
+while [ ! -f "$state/runner/work/$run/.capsule-out/stdout" ] && [ $n -lt 900 ]; do sleep 0.2; n=$((n + 1)); done
+sleep 5
+env LIMA_HOME="$cstate/capsules/lima" limactl stop --force "lockstep-$cap" > "$work/force-stop.txt" 2>&1
+await
+expect "R2 a run whose VM died is not reported as the program's exit ($(field outcome) $(fieldline exit))" test "$(field outcome)" = launch-failed
+expect "R2 nothing of its tree came back (a file it wrote before the VM died is not in the Supervisor's tree)" test ! -e "$dir/tree/src/vm-early.txt"
+new_run
+send run-readonly "$run" cat src/calc.c
+await
+expect "R2 the capsule recovers (started again by the helper) for the next run" test "$(field outcome) $(fieldline exit)" = "exited 0"
+stop_helper
+
+# ---- R3 the base template changed after the capsule was made.
+icfg=$cstate/capsules/lima/lockstep-$cap/lima.yaml
+rcfg=$cstate/capsules/records/$cap.yaml
+guest "echo kept > /work/r3-marker.txt && sync"
+"$rt" --state "$cstate" stop "$cap" "$proj" > /dev/null 2>&1
+cp "$icfg" "$work/lima.yaml.current"
+# A capsule made from an older template: its configuration and record agree with each other, not with today's template.
+{ cat "$work/lima.yaml.current"; printf '# made from an older template\n'; } > "$icfg"
+cp "$icfg" "$rcfg"
+"$rt" --state "$cstate" inspect "$cap" "$proj" > "$work/inspect-stale.txt" 2>&1
+expect "R3 inspect reports the stale template" grep -q 'template=stale' "$work/inspect-stale.txt"
+mkdir -p "$work/pf/capsule"
+chmod 700 "$work/pf" "$work/pf/capsule"
+cp "$state/capsule/config" "$work/pf/capsule/config"
+"$root/scripts/capsule-preflight" --helper-state "$work/pf" > "$work/preflight-stale.txt" 2>&1
+expect "R3 preflight refuses a capsule from an older template" grep -q '^FAIL capsule-template-current' "$work/preflight-stale.txt"
+"$rt" --state "$cstate" reconfigure "$cap" "$proj" > "$work/reconfigure.txt" 2>&1
+expect "R3 reconfigure brings it current" grep -q 'reconfigure ok' "$work/reconfigure.txt"
+"$rt" --state "$cstate" inspect "$cap" "$proj" > "$work/inspect-current.txt" 2>&1
+expect "R3 inspect then reports the current template" grep -q 'template=current' "$work/inspect-current.txt"
+"$rt" --state "$cstate" start "$cap" "$proj" > /dev/null 2>&1
+guest "cat /work/r3-marker.txt; rm -f /work/r3-marker.txt"
+expect "R3 the capsule's data survived the reconfiguration" grep -qx kept "$work/guest.out"
+"$rt" --state "$cstate" stop "$cap" "$proj" > /dev/null 2>&1
+
+echo "check-capsule-recovery: $failures failure(s); results in $results"
+[ "$failures" = 0 ]

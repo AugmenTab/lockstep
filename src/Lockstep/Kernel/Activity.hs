@@ -69,6 +69,11 @@ orderStateWords state =
     Superseded _ -> T.pack "Replaced by other work."
     Canceled -> T.pack "Canceled."
 
+{- | The meaning of a stored refusal code (a ledger refusal row). The input is
+text read back from the database, which may hold a code another version wrote,
+so a code without its own words gets the one general sentence (unit
+@ActivityTest.hs:95-97@ pins it).
+-}
 refusalMeaning :: T.Text -> T.Text
 refusalMeaning code =
   T.pack $

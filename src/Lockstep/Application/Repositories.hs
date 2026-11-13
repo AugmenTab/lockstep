@@ -6,6 +6,9 @@ attempt that reaches the database leaves exactly one decision row.
 -}
 module Lockstep.Application.Repositories
   ( Refused (..)
+  , RepositoryRefusal (..)
+  , refusedCode
+  , refusedMessage
   , EngineerRecord (..)
   , RepositoryRecord (..)
   , RegisterRequest (..)
@@ -20,7 +23,6 @@ module Lockstep.Application.Repositories
   , ownershipHolds
   ) where
 
-import Control.Exception (throwIO)
 import Crypto.Hash (SHA256 (SHA256), hashWith)
 import Data.ByteArray qualified as BA
 import Data.ByteString qualified as BS
@@ -32,9 +34,8 @@ import Data.Text.Encoding qualified as TE
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
 import System.IO (FilePath)
-import System.IO.Error (userError)
 import Text.Read (readMaybe)
-import Text.Show (show)
+import Text.Show (Show, show)
 
 import Lockstep.Application.Database
   ( DatabaseRuntime
@@ -46,7 +47,7 @@ import Lockstep.Application.Database
 import Lockstep.Application.Identity (newEngineerId, newRepositoryId)
 import Lockstep.Effects.Git (observeRepository)
 import Lockstep.Effects.ProjectFolders (gitIdentity)
-import Lockstep.Kernel.Identity (EngineerId (..), RepositoryId (..), parseUuid, uuidText)
+import Lockstep.Kernel.Identity (EngineerId, RepositoryId)
 import Lockstep.Kernel.Repository
   ( AuthoritativeRemote (..)
   , OwnedRepository (..)
@@ -62,15 +63,44 @@ import Lockstep.Kernel.Repository
   , renderObservation
   , renderRefusal
   )
+import Lockstep.Persistence.Integrity (integrityViolation)
 import Lockstep.Persistence.Repositories qualified as Store
 
--- | A refusal with its stable code, a message and the decision row that records it.
+-- | Why an Engineer or a registration was refused: Lockstep's own checks, or the Kernel's decision.
+data RepositoryRefusal
+  = EngineerNameInvalid
+  | EngineerNameTaken
+  | EngineerUnknown
+  | RegistrationRefused RegistrationRefusal
+  deriving (Eq, Show)
+
+-- | A refusal and the decision row that records it.
 data Refused
   = Refused
-  { refusedCode :: T.Text
-  , refusedMessage :: T.Text
+  { refusedReason :: RepositoryRefusal
   , refusedDecision :: Int64
   }
+
+-- | The refusal's stable code, as the decision row stores it.
+refusedCode :: Refused -> T.Text
+refusedCode =
+  repositoryRefusalCode . refusedReason
+
+refusedMessage :: Refused -> T.Text
+refusedMessage refused =
+  case refusedReason refused of
+    EngineerNameInvalid -> T.pack "an Engineer name is a-z followed by up to 39 of a-z, 0-9 and -"
+    EngineerNameTaken -> T.pack "an Engineer with this name exists"
+    EngineerUnknown -> T.pack "there is no Engineer with this name"
+    RegistrationRefused r -> renderRefusal r
+
+repositoryRefusalCode :: RepositoryRefusal -> T.Text
+repositoryRefusalCode refusal =
+  case refusal of
+    EngineerNameInvalid -> T.pack "engineer-name-invalid"
+    EngineerNameTaken -> T.pack "engineer-name-taken"
+    EngineerUnknown -> T.pack "unknown-engineer"
+    RegistrationRefused r -> refusalCode r
 
 data EngineerRecord
   = EngineerRecord
@@ -80,7 +110,7 @@ data EngineerRecord
 
 data RepositoryRecord
   = RepositoryRecord
-  { repositoryRecordId :: T.Text
+  { repositoryRecordId :: RepositoryId
   , repositoryRecordOwner :: T.Text
   , repositoryRecordAuthoritative :: Maybe (T.Text, T.Text)
   , repositoryRecordCommonDir :: T.Text
@@ -113,12 +143,12 @@ validEngineerName name =
 record :: Store.NewDecision -> O.Orville Int64
 record decision = do
   inserted <- Store.insertDecision decision
-  maybe (liftIO (throwIO (userError "lockstep: the decision insert returned no row"))) pure inserted
+  maybe (integrityViolation "the decision insert returned no row") pure inserted
 
-refusedWith :: Store.NewDecision -> T.Text -> T.Text -> O.Orville (Either Refused a)
-refusedWith decision code message = do
-  n <- record decision {Store.decisionRefusal = Just code}
-  pure (Left (Refused code message n))
+refusedWith :: Store.NewDecision -> RepositoryRefusal -> O.Orville (Either Refused a)
+refusedWith decision refusal = do
+  n <- record decision {Store.decisionRefusal = Just (repositoryRefusalCode refusal)}
+  pure (Left (Refused refusal n))
 
 addEngineer :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Either Refused EngineerRecord))
 addEngineer runtime name = do
@@ -130,7 +160,7 @@ addEngineer runtime name = do
 The caller checks readiness.
 -}
 addEngineerIn :: EngineerId -> T.Text -> O.Orville (Either Refused EngineerRecord)
-addEngineerIn engineerId@(EngineerId uuid) name = do
+addEngineerIn engineerId name = do
   let
     decision =
       Store.NewDecision
@@ -145,16 +175,13 @@ addEngineerIn engineerId@(EngineerId uuid) name = do
         }
   if not (validEngineerName name)
     then
-      refusedWith
-        decision
-        (T.pack "engineer-name-invalid")
-        (T.pack "an Engineer name is a-z followed by up to 39 of a-z, 0-9 and -")
+      refusedWith decision EngineerNameInvalid
     else do
-      inserted <- Store.insertEngineer (uuidText uuid) name
+      inserted <- Store.insertEngineer engineerId name
       if not inserted
-        then refusedWith decision (T.pack "engineer-name-taken") (T.pack "an Engineer with this name exists")
+        then refusedWith decision EngineerNameTaken
         else do
-          _ <- record decision {Store.decisionEngineerId = Just (uuidText uuid)}
+          _ <- record decision {Store.decisionEngineerId = Just engineerId}
           pure (Right (EngineerRecord engineerId name))
 
 -- | A folder as Git showed it, read-only, before any registration transaction.
@@ -189,7 +216,7 @@ project's attempt alike (C-C.R1 R6-3); an attempt reaches it holding the
 projects lock (projects → repositories).
 -}
 registerObservedIn :: T.Text -> Observed -> O.Orville (Either Refused RepositoryRecord)
-registerObservedIn engineerName (Observed path remote repositoryId@(RepositoryId repositoryUuid) observed) = do
+registerObservedIn engineerName (Observed path remote repositoryId observed) = do
   let
     request = RegisterRequest engineerName path remote
   Store.lockRepositories
@@ -206,26 +233,26 @@ registerObservedIn engineerName (Observed path remote repositoryId@(RepositoryId
         , Store.decisionRepositoryId = Nothing
         , Store.decisionObservation = either (const Nothing) (Just . renderObservation) observed
         }
-    refuse refusal = refusedWith decision (refusalCode refusal) (renderRefusal refusal)
-  case (engineer >>= fmap EngineerId . either (const Nothing) Just . parseUuid, observed) of
+    refuse = refusedWith decision . RegistrationRefused
+  case (engineer, observed) of
     (Nothing, _) ->
-      refusedWith decision (T.pack "unknown-engineer") (T.pack "there is no Engineer with this name")
+      refusedWith decision EngineerUnknown
     (Just _, Left refusal) ->
       refuse refusal
-    (Just engineerId@(EngineerId engineerUuid), Right observation) -> do
+    (Just engineerId, Right observation) -> do
       rows <- Store.activeRepositories
       let
         owned = mapMaybe ownedFromRow rows
       if L.length owned /= L.length rows
-        then liftIO (throwIO (userError "lockstep: a stored repository row is malformed"))
+        then integrityViolation "a stored repository row is malformed"
         else case decideRegistration owned (RegistrationRequest repositoryId engineerId observation) of
           Left refusal ->
             refuse refusal
           Right _ -> do
             let
-              row = rowFor (uuidText repositoryUuid) (uuidText engineerUuid) observation (registrationEngineer request)
+              row = rowFor repositoryId engineerId observation (registrationEngineer request)
             Store.insertRepository row (observationDigest observation)
-            _ <- record decision {Store.decisionRepositoryId = Just (uuidText repositoryUuid)}
+            _ <- record decision {Store.decisionRepositoryId = Just repositoryId}
             pure (Right (recordFromRow row))
 
 listRepositories :: DatabaseRuntime -> IO (Either NotReadyReason [RepositoryRecord])
@@ -237,7 +264,7 @@ exactly one active repository, it is this one, and the physical identity of
 @<folder>/.git@ read now is the registered one. @ownership-invalid@ or
 @repository-changed@ otherwise.
 -}
-ownershipHolds :: T.Text -> T.Text -> FilePath -> O.Orville (Either T.Text ())
+ownershipHolds :: RepositoryId -> T.Text -> FilePath -> O.Orville (Either T.Text ())
 ownershipHolds repositoryId engineer folder = do
   rows <- Store.activeRepositories
   current <- liftIO (gitIdentity folder)
@@ -251,7 +278,7 @@ ownershipHolds repositoryId engineer folder = do
         | otherwise -> Right ()
       _ -> Left (T.pack "ownership-invalid")
 
-rowFor :: T.Text -> T.Text -> RepositoryObservation -> T.Text -> Store.RepositoryRow
+rowFor :: RepositoryId -> EngineerId -> RepositoryObservation -> T.Text -> Store.RepositoryRow
 rowFor repositoryId ownerId observation ownerName =
   Store.RepositoryRow
     { Store.rowRepositoryId = repositoryId
@@ -281,8 +308,6 @@ parsePhysical key =
 -- | Rebuilds the Kernel's view of a stored repository; Nothing for a malformed row.
 ownedFromRow :: Store.RepositoryRow -> Maybe OwnedRepository
 ownedFromRow row = do
-  repositoryUuid <- either (const Nothing) Just (parseUuid (Store.rowRepositoryId row))
-  ownerUuid <- either (const Nothing) Just (parseUuid (Store.rowOwnerId row))
   physical <- parsePhysical (Store.rowPhysicalId row)
   authoritative <-
     case (Store.rowRemoteName row, Store.rowRemoteIdentity row) of
@@ -291,7 +316,7 @@ ownedFromRow row = do
       _ -> Nothing
   pure
     OwnedRepository
-      { ownedOwnership = Ownership (RepositoryId repositoryUuid) (EngineerId ownerUuid)
+      { ownedOwnership = Ownership (Store.rowRepositoryId row) (Store.rowOwnerId row)
       , ownedObservation =
           RepositoryObservation
             { observedCommonDir = Store.rowCommonDir row

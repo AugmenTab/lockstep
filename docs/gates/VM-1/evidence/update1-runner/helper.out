@@ -1,0 +1,1 @@
+/Users/tab/personal/lockstep/scripts/control-helper: line 1993: 61252 Killed: 9               execute_capsule_run "$id" "$op" "$run" < /dev/null > /dev/null 2>&1

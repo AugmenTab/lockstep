@@ -1,0 +1,24 @@
+unapproved tcp * 5000 ControlCenter
+approved tcp * 62417 rapportd (allow tcp * dynamic rapportd)
+unapproved tcp * 7000 ControlCenter
+unapproved tcp * 8780 OrbStack Helper
+unapproved tcp * 8781 OrbStack Helper
+approved udp * 137 netbiosd (allow udp * 137 netbiosd)
+approved udp * 138 netbiosd (allow udp * 138 netbiosd)
+approved udp * 5353 Brave Browser He (allow udp * 5353 Brave Browser He)
+approved udp * 5353 mDNSResponder (allow udp * 5353 mDNSResponder)
+approved udp * 547 dhcp6d (allow udp * 547 dhcp6d)
+approved udp * 59756 replicatord (allow udp * dynamic replicatord)
+approved udp address 50283 Brave Browser He (allow udp address dynamic Brave Browser He)
+approved udp address 50696 Brave Browser He (allow udp address dynamic Brave Browser He)
+approved udp address 52086 Brave Browser He (allow udp address dynamic Brave Browser He)
+approved udp address 53804 Brave Browser He (allow udp address dynamic Brave Browser He)
+approved udp address 58003 Brave Browser He (allow udp address dynamic Brave Browser He)
+approved udp address 58122 Brave Browser He (allow udp address dynamic Brave Browser He)
+approved udp address 58485 Brave Browser He (allow udp address dynamic Brave Browser He)
+approved udp address 59432 Brave Browser He (allow udp address dynamic Brave Browser He)
+approved udp address 59775 Brave Browser He (allow udp address dynamic Brave Browser He)
+approved udp address 61495 Brave Browser He (allow udp address dynamic Brave Browser He)
+approved udp address 61950 Brave Browser He (allow udp address dynamic Brave Browser He)
+approved udp address 65351 Brave Browser He (allow udp address dynamic Brave Browser He)
+exposure refused: tcp/5000(ControlCenter) tcp/7000(ControlCenter) tcp/8780(OrbStack Helper) tcp/8781(OrbStack Helper)

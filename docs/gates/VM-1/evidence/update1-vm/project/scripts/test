@@ -1,0 +1,10 @@
+#!/bin/bash
+# The project's own check: native build and test, then the same in a container, then a Compose service.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+make test
+docker build -q -t capsule-test-app . >/dev/null
+echo docker-build-ok
+docker compose run --rm check
+docker compose down -v
+echo project-test-ok

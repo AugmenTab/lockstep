@@ -162,6 +162,7 @@ reasonSentence reason =
     SchemaBehind n -> T.pack (show n) <> " migration(s) pending; run lockstep db migrate"
     SchemaInvalid _ -> "the schema does not match this binary's migrations; nothing will be applied"
     DatabaseError -> "the database returned an unexpected error"
+    DatabaseCorrupt _ -> "stored data failed its integrity check; see the service log"
 
 startsFacts :: Readiness -> Maybe ServiceStarts -> [E.ChildHTML E.DescriptionList grandparent]
 startsFacts readiness starts =

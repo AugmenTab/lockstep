@@ -1,0 +1,2 @@
+capsule-runtime 1 push ok capsule=vmq1
+capsule-runtime 1 pull ok capsule=vmq1 what=output into=/Users/tab/personal/lockstep/.local/ccv-20261110t234656z/runner/work/b56f99e24a541607b9d7a8f344380f11/.pulled-output

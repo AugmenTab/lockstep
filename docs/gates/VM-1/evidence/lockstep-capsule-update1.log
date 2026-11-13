@@ -1,0 +1,59 @@
+
+Warning: There were multiple candidates for the Cabal entry Main.hs 
+         * /work/test/capsule-e2e/Main.hs
+         * /work/test/integration/Main.hs 
+         picking: /work/test/capsule-e2e/Main.hs
+lockstep> test (suite: lockstep-capsule)
+
+lockstep-capsule
+  V1 one text each, parsed back
+    operations:                                                                                                         OK
+    profiles:                                                                                                           OK
+    VM status:                                                                                                          OK
+    host outcomes:                                                                                                      OK
+    refusals:                                                                                                           OK
+    an unknown word parses to nothing:                                                                                  OK
+  V2 names
+    a valid name:                                                                                                       OK
+    the VM name is derived:                                                                                             OK
+    path-like, shell-like, upper-case, short, long and dash-ended names are refused:                                    OK
+  V3 role authority
+    only the Implementer may mutate:                                                                                    OK
+    the read-only roles run no command (review finding 1):                                                              OK
+    the runtime's binding grants each role exactly these operations:                                                    OK
+  V4 the runtime's own words
+    every refusal is one the runtime gives:                                                                             OK (0.02s)
+    every host outcome is one the runtime writes:                                                                       OK
+    every lifecycle operation is in the runtime's dispatch:                                                             OK
+    the profiles have the runtime's numbers:                                                                            OK
+    a reply is read:                                                                                                    OK
+    a reply of another version, or with a malformed field, is not:                                                      OK
+  C-P5.5 the service in capsule mode
+    the helper's capsule line is read:                                                                                  OK
+    a malformed capsule line is refused:                                                                                OK
+    the capsule argv turns every built-in tool off:                                                                     OK
+    and names no built-in tool and no MCP configuration of its own (the helper adds the bridge):                        OK
+    only the Implementer is told it may run commands:                                                                   OK
+    every role still gets its answer documents:                                                                         OK
+  C-P5.8 the Supervisor's Git against a capsule's returned tree
+    control: the same hostile configuration does run its programs under ordinary Git:                                   OK (0.04s)
+    G1-G5 a hostile tree is committed as bytes: no filter, converter, monitor or hook runs; only the work branch moves: OK (0.15s)
+    G2 a .git anywhere in the returned tree, in any letter case, is refused before any commit:                          OK (0.06s)
+    G2 a symbolic link in the returned tree is refused:                                                                 OK (0.06s)
+    G3 change paths that escape or name .git are refused by the Kernel's rule:                                          OK
+    G6 a stale basis cannot move the work branch (compare-and-swap):                                                    OK (0.22s)
+  C-P5.10 the operator's view of the Dev Capsule
+    U1 the helper's status is read exactly:                                                                             OK
+    U1 the status names the project it belongs to (the page shows it, and accepts a stop, for that project only):       OK
+    U1 an idle status has no run under way:                                                                             OK
+    U2 a malformed status reads as unavailable, never partly:                                                           OK
+    U3 with a step under way the page offers to stop exactly that run:                                                  OK
+    U3 with nothing under way there is no stop control:                                                                 OK
+    U4 a refused configuration or an old template is shown as not ready, with its reason:                               OK
+    U4 no verification machine is said plainly:                                                                         OK
+
+All 38 tests passed (0.55s)
+
+
+
+lockstep> Test suite lockstep-capsule passed

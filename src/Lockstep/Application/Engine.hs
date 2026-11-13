@@ -18,7 +18,9 @@ module Lockstep.Application.Engine
   , RecordView (..)
   , InvocationView (..)
   , startTransaction
+  , startTransactionFor
   , advance
+  , advanceTransaction
   , transactionView
   , transactionForWorkOrder
   , decideCompletion
@@ -42,26 +44,64 @@ import Data.Text.Encoding qualified as TE
 import Data.Text.Encoding.Error (lenientDecode)
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, pathIsSymbolicLink)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist)
 import System.IO (FilePath)
 import Text.Show (Show, show)
 
 import Lockstep.Application.Command (IdempotencyKey, mkIdempotencyKey)
-import Lockstep.Application.Conversation (NewHumanRequest (..), Sender (..), StoredRequest (..), openRequest, requestByKey, senderChannel, senderEvidence)
-import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason, Readiness (..), SessionLock (..), checkReadiness, withDatabase, withSessionLock)
+import Lockstep.Application.Conversation (RequestDetails (..), Sender (..), StoredRequest (..), openRequestAbout, requestByKey, senderChannel, senderEvidence)
+import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason (DatabaseCorrupt), Readiness (..), SessionLock (..), checkReadiness, withDatabase, withSessionLock)
 import Lockstep.Application.EngineCandidate (baselineJson, candidateJson, findingJson, frozenContract, recordedCandidate, testFiles, unchangedAtBasis)
-import Lockstep.Application.Identity (newUuid)
+import Lockstep.Application.EngineRecords
+  ( AcceptanceRecord (AcceptanceRecord)
+  , BasisRecord (BasisRecord)
+  , Completion (Completion)
+  , FreezeRecord (FreezeRecord)
+  , Halt (Halt)
+  , ImplementationRecord (ImplementationRecord)
+  , InputRecord (InputRecord)
+  , Refusal (Refusal)
+  , Reproduction (..)
+  , Resume (Resume)
+  , ReviewRecord (ReviewRecord)
+  , Started (Started)
+  , Unfinished (Unfinished)
+  , VerificationRun (VerificationRun)
+  , VerificationSummary (..)
+  , acceptanceSchema
+  , argvText
+  , basisSchema
+  , completionSchema
+  , freezeSchema
+  , haltSchema
+  , implementationRefusedSchema
+  , implementationSchema
+  , inputSchema
+  , record
+  , refusalSchema
+  , reproductionSchema
+  , resumeSchema
+  , reviewSchema
+  , startedSchema
+  , unfinishedSchema
+  , verificationSchema
+  , verificationSummarySchema
+  )
+import Lockstep.Application.EngineRecords qualified as Records
+import Lockstep.Application.Identity (newIdentity)
 import Lockstep.Application.Repositories (ownershipHolds)
 import Lockstep.Application.Tasks (TaskView (..), findTaskIn)
 import Lockstep.Effects.GitSupervisor (Basis (..), CommitMeta (..), advanceBranch, branchHead, commitChanges, commitTime, createWorkBranch, observeBasis, snapshotChanges, writeSnapshot)
 import Lockstep.Effects.Process (RunResult (..))
 import Lockstep.Effects.Roles (Adapter (..), Runner (..), RunnerFailure (..), Workspace (..), decodeAnswer, prepareRole, readAnswer, runPrepared)
 import Lockstep.Effects.Roles qualified as Roles
+import Lockstep.Foundation.Filesystem (linkedOrUnreadable)
+import Lockstep.Foundation.Fleece (decodeText)
 import Lockstep.Foundation.Json (Json (..), renderJson, string, strings)
 import Lockstep.Foundation.RunnerProtocol (RunProfile (..))
 import Lockstep.Kernel.Candidate (MutantRun (..), classifyTest, disposeFinding, quoteGrounded)
 import Lockstep.Kernel.GitBasis (Change (..), TreeEntry (..), TreeMode (..), protectedPathValid, treePathValid, workBranch)
-import Lockstep.Kernel.Identity (parseUuid, uuidText)
+import Lockstep.Kernel.Identity (InvocationId (..), ProjectId (..), TaskId (..), TransactionId (..), WorkOrderId (..), identityText, parseIdentity)
 import Lockstep.Kernel.Roles
   ( Candidate (..)
   , CandidateTest (..)
@@ -79,26 +119,42 @@ import Lockstep.Kernel.Roles
   , Verdict (..)
   , checkAnswer
   , roleName
-  , verdictName
   )
-import Lockstep.Kernel.Runner (RoleKind (..), RunOutcome (..), outcomeName, roleLimits)
+import Lockstep.Kernel.Runner
+  ( CommandEnding (..)
+  , RoleEnding (..)
+  , RoleKind (..)
+  , RunOutcome (..)
+  , commandEndingText
+  , outcomeKind
+  , roleEndingFromText
+  , roleEndingText
+  , roleLimits
+  )
 import Lockstep.Kernel.Transaction
   ( BaselineClass (..)
   , Counters (..)
+  , FixedHalt (..)
+  , HaltCode (..)
+  , RecordKind (..)
   , Stage (..)
   , Transaction (..)
   , TxInput (..)
   , TxState (..)
   , haltChoices
-  , parseStage
+  , haltCodeText
+  , noCodingAgent
+  , recordKindText
   , reproduces
   , stageName
   , stateColumns
-  , stateFromColumns
+  , stateNameOf
+  , stateStage
   , stepTransaction
   , txInputName
+  , txStateName
   )
-import Lockstep.Kernel.Transition (Principal (..))
+import Lockstep.Kernel.Transition (Principal (..), principalLabel)
 import Lockstep.Persistence.Transactions qualified as Store
 
 -- | What the engine runs roles with: the runner, and the adapter for a role's nth invocation.
@@ -127,7 +183,7 @@ data RecordView
 
 data InvocationView
   = InvocationView
-  { invocationId :: T.Text
+  { invocationId :: InvocationId
   , invocationStage :: T.Text
   , invocationWhat :: T.Text
   , invocationRunner :: T.Text
@@ -142,7 +198,7 @@ data TransactionView
   = TransactionView
   { viewId :: T.Text
   , viewWorkOrder :: T.Text
-  , viewTask :: T.Text
+  , viewTask :: TaskId
   , viewEngineer :: T.Text
   , viewFolder :: T.Text
   , viewState :: T.Text
@@ -154,6 +210,8 @@ data TransactionView
   , viewAttempts :: Int
   , viewRecords :: [RecordView]
   , viewInvocations :: [InvocationView]
+  , viewKey :: TransactionId
+  -- ^ The typed identity 'viewId' is the text of (the text field is a frozen-test boundary).
   }
   deriving (Eq, Show)
 
@@ -166,14 +224,17 @@ whenReady runtime action = do
     NotReady reason -> pure (Left reason)
     Ready _ -> action
 
--- | A database step inside a stage: unavailability becomes a refusal code.
+{- | A database step inside a stage: unavailability becomes a refusal code;
+stored data that does not read is @database-corrupt@, never "unavailable".
+-}
 db :: DatabaseRuntime -> O.Orville (Either T.Text a) -> IO (Either T.Text a)
-db runtime action =
-  fromRight (Left (T.pack "database-unavailable")) <$> withDatabase runtime action
-
-canonicalId :: T.Text -> Maybe T.Text
-canonicalId =
-  either (const Nothing) (Just . uuidText) . parseUuid
+db runtime action = do
+  result <- withDatabase runtime action
+  pure $
+    case result of
+      Right answer -> answer
+      Left (DatabaseCorrupt _) -> Left (T.pack "database-corrupt")
+      Left _ -> Left (T.pack "database-unavailable")
 
 sha256Hex :: BS.ByteString -> T.Text
 sha256Hex bytes =
@@ -188,39 +249,42 @@ tailOf :: BS.ByteString -> T.Text
 tailOf bytes =
   T.takeEnd 2000 (decodeLenient bytes)
 
-kernelOf :: Store.TransactionRow -> Maybe Transaction
-kernelOf row = do
-  state <- stateFromColumns (Store.txRowState row) (Store.txRowStage row) (Store.txRowHaltCode row)
-  pure (Transaction state (Counters (fromIntegral (Store.txRowCandidates row)) (fromIntegral (Store.txRowAttempts row))))
+{- | The Kernel's transaction of a row. Total: the row's state is typed, and a
+stored combination no state has never reads ('Store.TransactionRow').
+-}
+kernelOf :: Store.TransactionRow -> Transaction
+kernelOf row =
+  Transaction (Store.txRowState row) (Counters (fromIntegral (Store.txRowCandidates row)) (fromIntegral (Store.txRowAttempts row)))
 
--- | The stage the row was last at (a stored stage always reads back; basis otherwise).
+-- | The stage the row was last at; the column is typed, so an unknown stored stage never reads.
 lastStage :: Store.TransactionRow -> Stage
-lastStage row =
-  fromMaybe StageBasis (parseStage (Store.txRowStage row))
+lastStage =
+  Store.storedStage
 
 viewOf :: Store.TransactionRow -> [Store.RecordRow] -> [Store.InvocationRow] -> TransactionView
 viewOf row records invocations =
   TransactionView
-    { viewId = Store.txRowId row
-    , viewWorkOrder = Store.txRowWorkOrder row
+    { viewKey = Store.txRowId row
+    , viewId = identityText (Store.txRowId row)
+    , viewWorkOrder = identityText (Store.txRowWorkOrder row)
     , viewTask = Store.txRowTask row
     , viewEngineer = Store.txRowEngineer row
     , viewFolder = Store.txRowFolder row
-    , viewState = Store.txRowState row
-    , viewStage = Store.txRowStage row
-    , viewHalt = Store.txRowHaltCode row
+    , viewState = txStateName (Store.txRowState row)
+    , viewStage = stageName (Store.storedStage row)
+    , viewHalt = snd (stateColumns (Store.txRowState row))
     , viewBasis = Store.txRowBasis row
     , viewBranch = Store.txRowBranch row
     , viewCandidates = fromIntegral (Store.txRowCandidates row)
     , viewAttempts = fromIntegral (Store.txRowAttempts row)
     , viewRecords =
-        [ RecordView (fromIntegral (Store.recordRowSequence r)) (Store.recordRowKind r) (Store.recordRowPrincipal r) (Store.recordRowStage r) (Store.recordRowBody r)
+        [ RecordView (fromIntegral (Store.recordRowSequence r)) (recordKindText (Store.recordRowKind r)) (Store.recordRowPrincipal r) (stageName (Store.recordRowStage r)) (Store.recordRowBody r)
         | r <- records
         ]
     , viewInvocations =
         [ InvocationView
             (Store.invocationRowId i)
-            (Store.invocationRowStage i)
+            (stageName (Store.invocationRowStage i))
             (Store.invocationRowWhat i)
             (Store.invocationRowRunner i)
             (Store.invocationRowAdapter i)
@@ -231,7 +295,7 @@ viewOf row records invocations =
         ]
     }
 
-loadView :: T.Text -> O.Orville (Maybe TransactionView)
+loadView :: TransactionId -> O.Orville (Maybe TransactionView)
 loadView txId = do
   row <- Store.findTransaction txId
   case row of
@@ -246,14 +310,14 @@ loadView txId = do
 transactionView :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe TransactionView))
 transactionView runtime raw =
   whenReady runtime $
-    case canonicalId raw of
+    case parseIdentity raw of
       Nothing -> pure (Right Nothing)
       Just txId -> withDatabase runtime (loadView txId)
 
 transactionForWorkOrder :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe TransactionView))
 transactionForWorkOrder runtime raw =
   whenReady runtime $
-    case canonicalId raw of
+    case parseIdentity raw of
       Nothing -> pure (Right Nothing)
       Just workOrder ->
         withDatabase runtime $ do
@@ -261,20 +325,17 @@ transactionForWorkOrder runtime raw =
           maybe (pure Nothing) (loadView . Store.txRowId) row
 
 -- | C-P4.15 W1: the running or halted transactions, in start order.
-activeTransactionIds :: DatabaseRuntime -> IO (Either NotReadyReason [T.Text])
+activeTransactionIds :: DatabaseRuntime -> IO (Either NotReadyReason [TransactionId])
 activeTransactionIds runtime =
-  whenReady runtime (withDatabase runtime (fmap Store.txRowId <$> Store.activeTransactions))
+  whenReady runtime (withDatabase runtime Store.activeTransactions)
 
 -- | C-P4.16: whether Lockstep has started on any bug of the project.
-projectStarted :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason Bool)
-projectStarted runtime raw =
-  whenReady runtime $
-    case canonicalId raw of
-      Nothing -> pure (Right False)
-      Just project -> withDatabase runtime (Store.projectStarted project)
+projectStarted :: DatabaseRuntime -> ProjectId -> IO (Either NotReadyReason Bool)
+projectStarted runtime project =
+  whenReady runtime (withDatabase runtime (Store.projectStarted project))
 
 -- | C-P4.15 W1: the handed-over bug Work Orders with no transaction yet, in hand-over order.
-pendingWorkOrders :: DatabaseRuntime -> IO (Either NotReadyReason [T.Text])
+pendingWorkOrders :: DatabaseRuntime -> IO (Either NotReadyReason [WorkOrderId])
 pendingWorkOrders runtime =
   whenReady runtime (withDatabase runtime Store.pendingAdmissions)
 
@@ -283,58 +344,58 @@ pendingWorkOrders runtime =
 {- | E1: the transaction for an admitted bug Work Order (C-P4.1), at the basis
 stage. Again for the same Work Order: the same transaction. Refused:
 @unknown-work-order@, @not-admitted@, @engineer-busy@ (the Engineer's one
-writer holds another running or halted transaction).
+writer holds another running or halted transaction). The text is parsed here;
+'startTransactionFor' is the same for a Work Order identity.
 -}
 startTransaction :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Either T.Text TransactionView))
 startTransaction runtime raw =
-  whenReady runtime $
-    case canonicalId raw of
-      Nothing -> pure (Right (Left (T.pack "unknown-work-order")))
-      Just workOrder -> do
-        u <- newUuid
-        withDatabase runtime . O.withTransaction $ do
-          existing <- Store.findTransactionByWorkOrder workOrder
-          case existing of
-            Just row -> maybe (Left (T.pack "transaction-unreadable")) Right <$> loadView (Store.txRowId row)
-            Nothing -> do
-              facts <- Store.admissionFacts workOrder
-              case facts of
-                Nothing -> pure (Left (T.pack "not-admitted"))
-                Just f -> do
-                  -- C-P4.R1 R-O1: starts for one Engineer check and insert one after the other.
-                  Store.lockEngineer (Store.factEngineer f)
-                  busy <- Store.busyTransactions (Store.factEngineer f)
-                  if not (L.null busy)
-                    then pure (Left (T.pack "engineer-busy"))
-                    else do
-                      let
-                        txId = uuidText u
-                        row =
-                          Store.TransactionRow
-                            { Store.txRowId = txId
-                            , Store.txRowWorkOrder = workOrder
-                            , Store.txRowTask = Store.factTask f
-                            , Store.txRowEngineer = Store.factEngineer f
-                            , Store.txRowFolder = Store.factFolder f
-                            , Store.txRowState = T.pack "running"
-                            , Store.txRowStage = stageName StageBasis
-                            , Store.txRowHaltCode = Nothing
-                            , Store.txRowCandidates = 0
-                            , Store.txRowAttempts = 0
-                            , Store.txRowBasis = Nothing
-                            , Store.txRowBranch = Nothing
-                            , Store.txRowFreeze = Nothing
-                            , Store.txRowCandidate = Nothing
-                            , Store.txRowAccepted = Nothing
-                            , Store.txRowContract = Nothing
-                            , Store.txRowRevision = 1
-                            }
-                      Store.insertTransaction row
-                      appendRecord txId 1 (T.pack "started") Supervisor StageBasis $
-                        JObject [(T.pack "work_order", string workOrder), (T.pack "engineer", string (Store.factEngineer f)), (T.pack "folder", string (Store.factFolder f))]
-                      maybe (Left (T.pack "transaction-unreadable")) Right <$> loadView txId
+  maybe (whenReady runtime (pure (Right (Left (T.pack "unknown-work-order"))))) (startTransactionFor runtime) (parseIdentity raw)
 
-appendRecord :: T.Text -> Int32 -> T.Text -> Principal -> Stage -> Json -> O.Orville ()
+startTransactionFor :: DatabaseRuntime -> WorkOrderId -> IO (Either NotReadyReason (Either T.Text TransactionView))
+startTransactionFor runtime workOrder =
+  whenReady runtime $ do
+    txId <- newIdentity
+    withDatabase runtime . O.withTransaction $ do
+      existing <- Store.findTransactionByWorkOrder workOrder
+      case existing of
+        Just row -> maybe (Left (T.pack "transaction-unreadable")) Right <$> loadView (Store.txRowId row)
+        Nothing -> do
+          facts <- Store.admissionFacts workOrder
+          case facts of
+            Nothing -> pure (Left (T.pack "not-admitted"))
+            Just f -> do
+              -- C-P4.R1 R-O1: starts for one Engineer check and insert one after the other.
+              Store.lockEngineer (Store.factEngineer f)
+              busy <- Store.busyTransactions (Store.factEngineer f)
+              if not (L.null busy)
+                then pure (Left (T.pack "engineer-busy"))
+                else do
+                  let
+                    row =
+                      Store.TransactionRow
+                        { Store.txRowId = txId
+                        , Store.txRowWorkOrder = workOrder
+                        , Store.txRowTask = Store.factTask f
+                        , Store.txRowEngineer = Store.factEngineer f
+                        , Store.txRowFolder = Store.factFolder f
+                        , Store.txRowState = Running StageBasis
+                        , Store.txRowStage = StageBasis
+                        , Store.txRowCandidates = 0
+                        , Store.txRowAttempts = 0
+                        , Store.txRowBasis = Nothing
+                        , Store.txRowBranch = Nothing
+                        , Store.txRowFreeze = Nothing
+                        , Store.txRowCandidate = Nothing
+                        , Store.txRowAccepted = Nothing
+                        , Store.txRowContract = Nothing
+                        , Store.txRowRevision = 1
+                        }
+                  Store.insertTransaction row
+                  appendRecord txId 1 RecordStarted Supervisor StageBasis $
+                    record startedSchema (Started (identityText workOrder) (Store.factEngineer f) (Store.factFolder f))
+                  maybe (Left (T.pack "transaction-unreadable")) Right <$> loadView txId
+
+appendRecord :: TransactionId -> Int32 -> RecordKind -> Principal -> Stage -> Json -> O.Orville ()
 appendRecord txId sequence kind principal stage body =
   let
     rendered = renderJson body
@@ -344,8 +405,10 @@ appendRecord txId sequence kind principal stage body =
         { Store.recordRowTransaction = txId
         , Store.recordRowSequence = sequence
         , Store.recordRowKind = kind
-        , Store.recordRowPrincipal = T.toLower (T.pack (show principal))
-        , Store.recordRowStage = stageName stage
+        , -- A record's principal is the constructor name in lower case ("deliveryadapter"), as
+          -- stored since C-P4.7; the Ledger's event principal is 'principalName' ("delivery-adapter").
+          Store.recordRowPrincipal = T.toLower (principalLabel principal)
+        , Store.recordRowStage = stage
         , Store.recordRowBody = rendered
         , Store.recordRowDigest = sha256Hex (TE.encodeUtf8 rendered)
         }
@@ -354,7 +417,7 @@ appendRecord txId sequence kind principal stage body =
 started from (@stale-step@ otherwise), with its records; a halt adds a
 @halt@ record. Returns the new row.
 -}
-applyInput :: DatabaseRuntime -> T.Text -> Int32 -> Principal -> TxInput -> [(T.Text, Json)] -> (Store.TransactionRow -> Store.TransactionRow) -> IO (Either T.Text Store.TransactionRow)
+applyInput :: DatabaseRuntime -> TransactionId -> Int32 -> Principal -> TxInput -> [(RecordKind, Json)] -> (Store.TransactionRow -> Store.TransactionRow) -> IO (Either T.Text Store.TransactionRow)
 applyInput runtime txId revision principal input records change =
   db runtime . O.withTransaction $ do
     locked <- Store.lockTransaction txId
@@ -367,38 +430,33 @@ applyInput runtime txId revision principal input records change =
 {- | 'applyInput' on a row already locked at the right revision, inside the
 caller's database transaction. A refusal ('Left') writes nothing.
 -}
-applyLocked :: Store.TransactionRow -> Principal -> TxInput -> [(T.Text, Json)] -> (Store.TransactionRow -> Store.TransactionRow) -> O.Orville (Either T.Text Store.TransactionRow)
+applyLocked :: Store.TransactionRow -> Principal -> TxInput -> [(RecordKind, Json)] -> (Store.TransactionRow -> Store.TransactionRow) -> O.Orville (Either T.Text Store.TransactionRow)
 applyLocked row principal input records change =
-  case kernelOf row of
-    Nothing -> pure (Left (T.pack "transaction-unreadable"))
-    Just tx ->
-      case stepTransaction principal input tx of
-        Left code -> pure (Left code)
-        Right next -> do
-          let
-            txId = Store.txRowId row
-          existing <- Store.transactionRecords txId
-          let
-            stage = lastStage row
-            (stateName, stageText, code) = stateColumns stage (txState next)
-            updated =
-              (change row)
-                { Store.txRowState = stateName
-                , Store.txRowStage = stageText
-                , Store.txRowHaltCode = code
-                , Store.txRowCandidates = fromIntegral (candidatesMade (txCounters next))
-                , Store.txRowAttempts = fromIntegral (attemptsMade (txCounters next))
-                , Store.txRowRevision = Store.txRowRevision row + 1
-                }
-            halted =
-              case txState next of
-                Halted s c -> [(T.pack "halt", JObject [(T.pack "stage", string (stageName s)), (T.pack "code", string c)])]
-                _ -> []
-            inputRecord = (T.pack "input", JObject [(T.pack "input", string (txInputName input)), (T.pack "state", string stateName)])
-            numbered = L.zip [fromIntegral (L.length existing) + 1 ..] (records <> [inputRecord] <> halted)
-          Store.updateTransaction updated
-          traverse_ (\(n, (kind, body)) -> appendRecord txId n kind principal stage body) numbered
-          pure (Right updated)
+  case stepTransaction principal input (kernelOf row) of
+    Left code -> pure (Left code)
+    Right next -> do
+      let
+        txId = Store.txRowId row
+      existing <- Store.transactionRecords txId
+      let
+        stage = lastStage row
+        updated =
+          (change row)
+            { Store.txRowState = txState next
+            , Store.txRowStage = stateStage stage (txState next)
+            , Store.txRowCandidates = fromIntegral (candidatesMade (txCounters next))
+            , Store.txRowAttempts = fromIntegral (attemptsMade (txCounters next))
+            , Store.txRowRevision = Store.txRowRevision row + 1
+            }
+        halted =
+          case txState next of
+            Halted s c -> [(RecordHalt, record haltSchema (Halt s c))]
+            _ -> []
+        inputRecord = (RecordInput, record inputSchema (InputRecord (txInputName input) (stateNameOf (txState next))))
+        numbered = L.zip [fromIntegral (L.length existing) + 1 ..] (records <> [inputRecord] <> halted)
+      Store.updateTransaction updated
+      traverse_ (\(n, (kind, body)) -> appendRecord txId n kind principal stage body) numbered
+      pure (Right updated)
 
 -- Advancing ----------------------------------------------------------------------------
 
@@ -415,78 +473,79 @@ the run it left is then settled as before (E4).
 -}
 advance :: DatabaseRuntime -> Engine -> T.Text -> IO (Either NotReadyReason (Either T.Text StepReport))
 advance runtime engine raw =
-  whenReady runtime $
-    case canonicalId raw of
-      Nothing -> pure (Right (Left (T.pack "unknown-transaction")))
-      Just txId -> do
-        -- The step is relative to the row read here: if another engine moves it while this one
-        -- waits for the lock, the step is stale (settleUnfinished checks the revision).
-        loaded <- withDatabase runtime (Store.findTransaction txId)
-        case loaded of
-          Left reason -> pure (Left reason)
-          Right Nothing -> pure (Right (Left (T.pack "unknown-transaction")))
-          Right (Just row) -> do
-            owned <- withSessionLock runtime TransactionStepLock txId (const (advanceRow runtime engine row))
-            pure $ case owned of
-              Right stepped -> Right stepped
-              Left LockBusy -> Right (Left (T.pack "busy"))
-              Left (LockUnavailable reason) -> Left reason
+  maybe (whenReady runtime (pure (Right (Left (T.pack "unknown-transaction"))))) (advanceTransaction runtime engine) (parseIdentity raw)
+
+-- | 'advance' for a transaction identity.
+advanceTransaction :: DatabaseRuntime -> Engine -> TransactionId -> IO (Either NotReadyReason (Either T.Text StepReport))
+advanceTransaction runtime engine txId =
+  whenReady runtime $ do
+    -- The step is relative to the row read here: if another engine moves it while this one
+    -- waits for the lock, the step is stale (settleUnfinished checks the revision).
+    loaded <- withDatabase runtime (Store.findTransaction txId)
+    case loaded of
+      Left reason -> pure (Left reason)
+      Right Nothing -> pure (Right (Left (T.pack "unknown-transaction")))
+      Right (Just row) -> do
+        owned <- withSessionLock runtime TransactionStepLock (identityText txId) (const (advanceRow runtime engine row))
+        pure $ case owned of
+          Right stepped -> Right stepped
+          Left LockBusy -> Right (Left (T.pack "busy"))
+          Left (LockUnavailable reason) -> Left reason
 
 advanceRow :: DatabaseRuntime -> Engine -> Store.TransactionRow -> IO (Either T.Text StepReport)
 advanceRow runtime engine row =
-  case kernelOf row of
-    Nothing -> pure (Left (T.pack "transaction-unreadable"))
-    Just tx ->
-      case txState tx of
-        Running stage -> do
-          settled <- settleUnfinished runtime row stage
-          case settled of
+  case Store.txRowState row of
+    Running stage -> do
+      settled <- settleUnfinished runtime row stage
+      case settled of
+        Left code -> pure (Left code)
+        Right (Just input) -> report input
+        Right Nothing -> do
+          -- C-P4.R1 R-K1: every workspace made for the stage, removed once it has ended
+          -- (a stage cut short by an exception keeps them: they may still be in use).
+          -- C-P4.R2 R2-K: so does a stage in which any run's outcome is not known.
+          made <- newIORef []
+          unknown <- newIORef False
+          let
+            runner = engineRunner engine
+            tracked =
+              engine
+                { engineRunner =
+                    runner
+                      { runnerPrepare = do
+                          prepared <- runnerPrepare runner
+                          traverse_ (\w -> modifyIORef' made (w :)) prepared
+                          pure prepared
+                      , runnerRun = \w p l a pr -> do
+                          ran <- runnerRun runner w p l a pr `onException` writeIORef unknown True
+                          case ran of
+                            Left (RunnerUncertain _) -> writeIORef unknown True
+                            _ -> pure ()
+                          pure ran
+                      }
+                }
+          result <- runStage runtime tracked row stage
+          keep <- readIORef unknown
+          unless keep (readIORef made >>= traverse_ (runnerRelease runner))
+          case result of
             Left code -> pure (Left code)
-            Right (Just input) -> report input
-            Right Nothing -> do
-              -- C-P4.R1 R-K1: every workspace made for the stage, removed once it has ended
-              -- (a stage cut short by an exception keeps them: they may still be in use).
-              -- C-P4.R2 R2-K: so does a stage in which any run's outcome is not known.
-              made <- newIORef []
-              unknown <- newIORef False
-              let
-                runner = engineRunner engine
-                tracked =
-                  engine
-                    { engineRunner =
-                        runner
-                          { runnerPrepare = do
-                              prepared <- runnerPrepare runner
-                              traverse_ (\w -> modifyIORef' made (w :)) prepared
-                              pure prepared
-                          , runnerRun = \w p l a pr -> do
-                              ran <- runnerRun runner w p l a pr `onException` writeIORef unknown True
-                              case ran of
-                                Left (RunnerUncertain _) -> writeIORef unknown True
-                                _ -> pure ()
-                              pure ran
-                          }
-                    }
-              result <- runStage runtime tracked row stage
-              keep <- readIORef unknown
-              unless keep (readIORef made >>= traverse_ (runnerRelease runner))
-              case result of
-                Left code -> pure (Left code)
-                Right input -> report input
-        Halted stage code -> do
-          opened <- ensureRequest runtime row stage code
-          case either (const Nothing) resumeOf opened of
-            Nothing -> idle (T.pack "halted")
-            Just (request, choice, input) -> do
-              let
-                body = JObject [(T.pack "request", string (storedRequestId request)), (T.pack "choice", string choice), (T.pack "revision", JNumber (fromIntegral (storedRevision request)))]
-              applied <- applyInput runtime (Store.txRowId row) (Store.txRowRevision row) Human input [(T.pack "resume", body)] id
-              case applied of
-                Left c -> pure (Left c)
-                Right _ -> report input
-        Accepted -> idle (T.pack "accepted")
-        Done -> idle (T.pack "done")
-        Stopped _ -> idle (T.pack "stopped")
+            Right input -> report input
+    Halted stage code -> do
+      opened <- ensureRequest runtime row stage code
+      case fmap resumeOf opened of
+        -- The halt's request could not be opened or read: its code, never "idle".
+        Left c -> pure (Left c)
+        Right Nothing -> idle (T.pack "halted")
+        Right (Just (request, choice, input)) -> do
+          let
+            body = record resumeSchema (Resume (storedRequestId request) choice (fromIntegral (storedRevision request)))
+          applied <- applyInput runtime (Store.txRowId row) (Store.txRowRevision row) Human input [(RecordResume, body)] id
+          case applied of
+            Left c -> pure (Left c)
+            Right _ -> report input
+    Accepted -> idle (T.pack "accepted")
+    Done -> idle (T.pack "done")
+    Stopped _ -> idle (T.pack "stopped")
  where
   current =
     db runtime (maybe (Left (T.pack "unknown-transaction")) Right <$> loadView (Store.txRowId row))
@@ -496,8 +555,11 @@ advanceRow runtime engine row =
     case after of
       Left code -> pure (Left code)
       Right r -> do
-        case kernelOf r >>= halt . txState of
-          Just (s, c) -> () <$ ensureRequest runtime r s c
+        case halt (Store.txRowState r) of
+          -- Kept: the step is committed and is what this advance reports. A request that
+          -- cannot be opened now is opened again by the halted transaction's next advance,
+          -- which answers with its failure code (the Halted case above).
+          Just (s, c) -> void (ensureRequest runtime r s c)
           Nothing -> pure ()
         fmap (Stepped (txInputName input)) <$> current
   halt state =
@@ -519,7 +581,7 @@ decideCompletion runtime raw sender choice =
       SenderSupervisor -> refuse "not-authorized"
       SenderPlanner _ -> refuse "not-authorized"
       SenderHuman _ ->
-        case (T.unpack choice, canonicalId raw) of
+        case (T.unpack choice, parseIdentity raw) of
           ("done", Just txId) -> decide txId HumanDone
           ("not-done", Just txId) -> decide txId HumanStop
           ("done", Nothing) -> refuse "unknown-transaction"
@@ -534,18 +596,18 @@ decideCompletion runtime raw sender choice =
       Left reason -> pure (Left reason)
       Right Nothing -> refuse "unknown-transaction"
       Right (Just row) ->
-        case txState <$> kernelOf row of
-          Nothing -> refuse "transaction-unreadable"
-          Just Done -> refuse "closed"
-          Just (Stopped _) -> refuse "closed"
-          Just Accepted -> do
+        case Store.txRowState row of
+          Done -> refuse "closed"
+          Stopped _ -> refuse "closed"
+          Accepted -> do
             let
-              body = JObject [(T.pack "choice", string choice), (T.pack "channel", string (senderChannel sender)), (T.pack "evidence", string (senderEvidence sender))]
-            applied <- applyInput runtime txId (Store.txRowRevision row) Human input [(T.pack "completion", body)] id
+              body = record completionSchema (Completion choice (senderChannel sender) (senderEvidence sender))
+            applied <- applyInput runtime txId (Store.txRowRevision row) Human input [(RecordCompletion, body)] id
             case applied of
               Left code -> pure (Right (Left code))
               Right _ -> Right <$> db runtime (maybe (Left (T.pack "unknown-transaction")) Right <$> loadView txId)
-          Just _ -> refuse "illegal-input"
+          Running _ -> refuse "illegal-input"
+          Halted _ _ -> refuse "illegal-input"
 
 {- | E4: invocations found started but not finished. A role's is finished as
 @uncertain@ and the transaction halts (never run again by itself); a
@@ -568,16 +630,16 @@ settleUnfinished runtime row _ =
               roles = L.filter isRole invocations
               finishAll =
                 traverse_
-                  (\i -> Store.finishInvocation (Store.invocationRowId i) (emptyFinish (T.pack (if isRole i then "uncertain" else "interrupted"))))
+                  (\i -> Store.finishInvocation (Store.invocationRowId i) (emptyFinish (if isRole i then roleEndingText RoleEndedUnsettled else commandEndingText CommandInterrupted)))
                   invocations
               input = RoleUncertain (T.pack "unfinished-invocation")
-              body = JObject [(T.pack "invocations", strings (fmap Store.invocationRowId roles))]
+              body = record unfinishedSchema (Unfinished (fmap (identityText . Store.invocationRowId) roles))
             case () of
               _
                 | L.null invocations -> pure (Right Nothing)
                 | L.null roles -> Right Nothing <$ finishAll
                 | otherwise -> do
-                    applied <- applyLocked current Supervisor input [(T.pack "uncertain", body)] id
+                    applied <- applyLocked current Supervisor input [(RecordUncertain, body)] id
                     case applied of
                       Left code -> pure (Left code)
                       Right _ -> Right (Just input) <$ finishAll
@@ -622,7 +684,7 @@ runStage runtime engine row stage =
     StageAccept -> acceptStage runtime row
 
 -- | Applies the input and returns it.
-settle :: DatabaseRuntime -> Store.TransactionRow -> TxInput -> [(T.Text, Json)] -> (Store.TransactionRow -> Store.TransactionRow) -> IO (Either T.Text TxInput)
+settle :: DatabaseRuntime -> Store.TransactionRow -> TxInput -> [(RecordKind, Json)] -> (Store.TransactionRow -> Store.TransactionRow) -> IO (Either T.Text TxInput)
 settle runtime row input records change =
   (input <$) <$> applyInput runtime (Store.txRowId row) (Store.txRowRevision row) Supervisor input records change
 
@@ -636,7 +698,7 @@ basisStage :: DatabaseRuntime -> Store.TransactionRow -> IO (Either T.Text TxInp
 basisStage runtime row = do
   let
     folder = T.unpack (Store.txRowFolder row)
-    refuse code = settle runtime row (BasisRefused code) [(T.pack "basis-refused", JObject [(T.pack "code", string code)])] id
+    refuse code = settle runtime row (BasisRefused code) [(RecordBasisRefused, record refusalSchema (Refusal code))] id
   owned <-
     db runtime $ do
       facts <- Store.admissionFacts (Store.txRowWorkOrder row)
@@ -652,7 +714,7 @@ basisStage runtime row = do
         Left code -> refuse code
         Right basis -> do
           let
-            branch = workBranch (Store.txRowWorkOrder row)
+            branch = workBranch (identityText (Store.txRowWorkOrder row))
           made <- createWorkBranch folder branch (basisCommit basis)
           case made of
             Left code -> refuse code
@@ -662,12 +724,8 @@ basisStage runtime row = do
                 row
                 BasisReady
                 [
-                  ( T.pack "basis"
-                  , JObject
-                      [ (T.pack "commit", string (basisCommit basis))
-                      , (T.pack "tree", string (basisTree basis))
-                      , (T.pack "branch", string branch)
-                      ]
+                  ( RecordBasis
+                  , record basisSchema (BasisRecord (basisCommit basis) (basisTree basis) branch)
                   )
                 ]
                 (\r -> r {Store.txRowBasis = Just (basisCommit basis), Store.txRowBranch = Just branch})
@@ -706,7 +764,7 @@ writeExtra tree (path, bytes)
         segments = T.splitOn (T.pack "/") path
         parents = L.drop 1 (L.scanl (\acc s -> acc <> "/" <> T.unpack s) tree (L.take (L.length segments - 1) segments))
         target = tree <> "/" <> T.unpack path
-      linked <- traverse (\p -> fromRight False <$> (try (pathIsSymbolicLink p) :: IO (Either IOException Bool))) (parents <> [target])
+      linked <- traverse linkedOrUnreadable (parents <> [target])
       if L.or linked
         then pure False
         else do
@@ -748,7 +806,7 @@ discoveryStage runtime engine row =
                   cited <- citationsHold (workspaceTree workspace) entries (discoveryCitations d)
                   if not cited
                     then settle runtime row (RoleFailed (T.pack "citation-outside-source")) [] id
-                    else settle runtime row DiscoveryAnswered [(T.pack "discovery", discoveryJson d)] id
+                    else settle runtime row DiscoveryAnswered [(RecordDiscovery, discoveryJson d)] id
                 _ -> settle runtime row (RoleFailed (T.pack "answer-invalid wrong-stage")) [] id
 
 -- | Every citation names a file of the snapshot and lines it has.
@@ -765,18 +823,12 @@ citationsHold tree entries citations =
           Left (_ :: IOException) -> False
           Right b -> citationLast c <= L.length (T.lines (decodeLenient b))
 
--- | The discovery in its answer form (the invocation it came from is in the invocations).
+{- | The discovery in its answer form, through the answer schema (the
+invocation it came from is in the invocations).
+-}
 discoveryJson :: Discovery -> Json
-discoveryJson d =
-  JObject
-    ( [ (T.pack "kind", string (T.pack "discovery"))
-      , (T.pack "summary", string (discoverySummary d))
-      , (T.pack "hypothesis", string (discoveryHypothesis d))
-      , (T.pack "citations", JArray [JObject [(T.pack "path", string (citationPath c)), (T.pack "first", JNumber (toInteger (citationFirst c))), (T.pack "last", JNumber (toInteger (citationLast c)))] | c <- discoveryCitations d])
-      , (T.pack "allowed_paths", strings (discoveryAllowedPaths d))
-      ]
-        <> [(T.pack "reproduction", JObject [(T.pack "argv", strings (checkArgv c)), (T.pack "signature", string (checkSignature c))]) | Just c <- [discoveryReproduction d]]
-    )
+discoveryJson =
+  JRaw . Roles.encodeDiscovery
 
 -- | The discovery a record holds, read back through the answer decoder.
 recordedDiscovery :: T.Text -> Maybe Discovery
@@ -797,21 +849,21 @@ Planner, the challenger or the Reviewer; any other ending decides the input
 from what was recorded, and the Implementer's answer (its change was a
 workspace, not an answer) halts @answer-not-recoverable@.
 -}
-invokeRecorded :: DatabaseRuntime -> Engine -> Store.TransactionRow -> Role -> Stage -> T.Text -> [ExtraFile] -> [T.Text] -> T.Text -> IO (Either T.Text (Either TxInput (RoleAnswer, [TreeEntry], Workspace, T.Text)))
+invokeRecorded :: DatabaseRuntime -> Engine -> Store.TransactionRow -> Role -> Stage -> T.Text -> [ExtraFile] -> [T.Text] -> T.Text -> IO (Either T.Text (Either TxInput (RoleAnswer, [TreeEntry], Workspace, InvocationId)))
 invokeRecorded runtime engine row role stage commit extras protected context = do
   earlier <- db runtime (Right . L.filter ((== roleName role) . Store.invocationRowWhat) <$> Store.transactionInvocations (Store.txRowId row))
   case earlier of
     Left code -> pure (Left code)
     Right invocations ->
-      case L.reverse [i | i <- invocations, Store.invocationRowStage i == stageName stage, Store.invocationRowRevision i == Just (Store.txRowRevision row)] of
+      case L.reverse [i | i <- invocations, Store.invocationRowStage i == stage, Store.invocationRowRevision i == Just (Store.txRowRevision row)] of
         i : _ -> recovered i
         [] -> fresh (L.length invocations)
  where
   uncertain code =
     pure (Right (Left (RoleUncertain (T.pack code))))
   recovered i =
-    case (T.unpack <$> Store.invocationRowOutcome i, Store.invocationRowAnswer i, Store.invocationRowAnswerDigest i) of
-      (Just "answered", Just answer, Just digest)
+    case (roleEndingFromText <$> Store.invocationRowOutcome i, Store.invocationRowAnswer i, Store.invocationRowAnswerDigest i) of
+      (Just RoleEndedAnswered, Just answer, Just digest)
         | role /= Implementer
         , sha256Hex (TE.encodeUtf8 answer) == digest
         , Right a <- decodeAnswer (TE.encodeUtf8 answer) >>= checkAnswer role -> do
@@ -819,15 +871,14 @@ invokeRecorded runtime engine row role stage commit extras protected context = d
             pure $ case ws of
               Left code -> Right (Left (SupervisorFailed code))
               Right (workspace, entries) -> Right (Right (a, entries, workspace, Store.invocationRowId i))
-      (Just "answered", _, _) -> uncertain "answer-not-recoverable"
-      (Just "uncertain", _, _) -> uncertain "unfinished-invocation"
-      (Just o, _, _)
-        | Just c <- T.stripPrefix (T.pack "uncertain ") (T.pack o) -> pure (Right (Left (RoleUncertain c)))
-        | otherwise -> pure (Right (Left (RoleFailed (T.pack o))))
+      (Just RoleEndedAnswered, _, _) -> uncertain "answer-not-recoverable"
+      (Just RoleEndedUnsettled, _, _) -> uncertain "unfinished-invocation"
+      (Just (RoleEndedUncertain c), _, _) -> pure (Right (Left (RoleUncertain c)))
+      (Just (RoleEndedFailed c), _, _) -> pure (Right (Left (RoleFailed c)))
       (Nothing, _, _) -> uncertain "unfinished-invocation"
   fresh n =
     case engineAdapter engine role n of
-      Nothing -> pure (Right (Left (RoleFailed (T.pack "no-coding-agent"))))
+      Nothing -> pure (Right (Left (RoleFailed noCodingAgent)))
       Just adapter -> do
         ws <- workspaceAt engine row commit extras
         case ws of
@@ -837,16 +888,14 @@ invokeRecorded runtime engine row role stage commit extras protected context = d
             case prepared of
               Left code -> pure (Right (Left (SupervisorFailed code)))
               Right argv -> do
-                u <- newUuid
-                let
-                  invocation = uuidText u
+                invocation <- newIdentity
                 started <-
                   db runtime . O.withTransaction $ do
                     locked <- Store.lockTransaction (Store.txRowId row)
                     -- C-P4.R2 R2-I: under the lock, this role has not run at this stage and revision.
                     already <- Store.transactionInvocations (Store.txRowId row)
                     let
-                      ranHere i = Store.invocationRowWhat i == roleName role && Store.invocationRowStage i == stageName stage && Store.invocationRowRevision i == Just (Store.txRowRevision row)
+                      ranHere i = Store.invocationRowWhat i == roleName role && Store.invocationRowStage i == stage && Store.invocationRowRevision i == Just (Store.txRowRevision row)
                     case locked of
                       Just current
                         | Store.txRowRevision current == Store.txRowRevision row && not (L.any ranHere already) -> do
@@ -859,10 +908,11 @@ invokeRecorded runtime engine row role stage commit extras protected context = d
                     outcome <- runPrepared (engineRunner engine) role workspace argv protected
                     ended <- keepAnswer workspace outcome
                     let
-                      (code, evidence, kept) =
+                      (ending, evidence, kept) =
                         case ended of
-                          Right (_, r, document) -> (T.pack "answered", Just r, Just document)
-                          Left (c, r, _) -> (c, r, Nothing)
+                          Right (_, r, document) -> (RoleEndedAnswered, Just r, Just document)
+                          Left (e, r, _) -> (e, r, Nothing)
+                      code = roleEndingText ending
                       finish =
                         (maybe (emptyFinish code) (finishOf code) evidence)
                           { Store.finishAnswer = kept
@@ -885,21 +935,21 @@ invokeRecorded runtime engine row role stage commit extras protected context = d
             | (decodeAnswer bytes >>= checkAnswer role) == Right a
             , Right document <- TE.decodeUtf8' bytes ->
                 Right (a, r, document)
-          _ -> Left (T.pack "uncertain answer-unstable", Just r, RoleUncertain (T.pack "answer-unstable"))
-      Roles.RoleFailed c r -> pure (Left (c, r, RoleFailed c))
-      Roles.RoleUncertain c -> pure (Left (T.pack "uncertain " <> c, Nothing, RoleUncertain c))
+          _ -> Left (RoleEndedUncertain (T.pack "answer-unstable"), Just r, RoleUncertain (T.pack "answer-unstable"))
+      Roles.RoleFailed c r -> pure (Left (RoleEndedFailed c, r, RoleFailed c))
+      Roles.RoleUncertain c -> pure (Left (RoleEndedUncertain c, Nothing, RoleUncertain c))
 
 -- | An invocation as recorded before it runs, at the transaction's revision.
-invocationRow :: Store.TransactionRow -> T.Text -> Stage -> T.Text -> T.Text -> T.Text -> [T.Text] -> Store.InvocationRow
+invocationRow :: Store.TransactionRow -> InvocationId -> Stage -> T.Text -> T.Text -> T.Text -> [T.Text] -> Store.InvocationRow
 invocationRow row invocation stage what runner adapter argv =
   Store.InvocationRow
     { Store.invocationRowId = invocation
     , Store.invocationRowTransaction = Store.txRowId row
-    , Store.invocationRowStage = stageName stage
+    , Store.invocationRowStage = stage
     , Store.invocationRowWhat = what
     , Store.invocationRowRunner = runner
     , Store.invocationRowAdapter = adapter
-    , Store.invocationRowArgv = renderJson (strings argv)
+    , Store.invocationRowArgv = argvText argv
     , Store.invocationRowOutcome = Nothing
     , Store.invocationRowExit = Nothing
     , Store.invocationRowMillis = Nothing
@@ -929,11 +979,11 @@ reproductionStage runtime engine row = do
     (Left code, _) -> pure (Left code)
     (_, Nothing) -> settle runtime row (SupervisorFailed (T.pack "basis-missing")) [] id
     (Right rs, Just basis) ->
-      case L.reverse [d | r <- rs, Store.recordRowKind r == T.pack "discovery", Just d <- [recordedDiscovery (Store.recordRowBody r)]] of
+      case L.reverse [d | r <- rs, Store.recordRowKind r == RecordDiscovery, Just d <- [recordedDiscovery (Store.recordRowBody r)]] of
         [] -> settle runtime row (SupervisorFailed (T.pack "discovery-missing")) [] id
         d : _ ->
           case discoveryReproduction d of
-            Nothing -> settle runtime row NotReproduced [(T.pack "reproduction", JObject [(T.pack "command", JNull), (T.pack "reproduced", JBool False)])] id
+            Nothing -> settle runtime row NotReproduced [(RecordReproduction, record reproductionSchema (Reproduction Nothing Nothing Nothing Nothing False Nothing Nothing Nothing))] id
             Just check -> runCheck basis check
  where
   runCheck basis check = do
@@ -941,9 +991,7 @@ reproductionStage runtime engine row = do
     case ws of
       Left code -> settle runtime row (SupervisorFailed code) [] id
       Right (workspace, _) -> do
-        u <- newUuid
-        let
-          invocation = uuidText u
+        invocation <- newIdentity
         started <-
           db runtime $ do
             Store.insertInvocation (invocationRow row invocation StageReproduction (T.pack "reproduction") (runnerName (engineRunner engine)) (T.pack "supervisor") (checkArgv check))
@@ -962,23 +1010,29 @@ reproductionStage runtime engine row = do
                   err = decodeLenient (resultStderr result)
                   reproduced = reproduces check (resultOutcome result) out err
                   body =
-                    JObject
-                      [ (T.pack "command", strings (checkArgv check))
-                      , (T.pack "signature", string (checkSignature check))
-                      , (T.pack "outcome", string (outcomeName (resultOutcome result)))
-                      , (T.pack "exit", maybe JNull (JNumber . toInteger) (exitOf (resultOutcome result)))
-                      , (T.pack "reproduced", JBool reproduced)
-                      , (T.pack "stdout_tail", string (tailOf (resultStdout result)))
-                      , (T.pack "stderr_tail", string (tailOf (resultStderr result)))
-                      , (T.pack "invocation", string invocation)
-                      ]
-                finished <- db runtime (Right <$> Store.finishInvocation invocation (finishOf (outcomeName (resultOutcome result)) result))
+                    record
+                      reproductionSchema
+                      Reproduction
+                        { reproductionCommand = Just (checkArgv check)
+                        , reproductionSignature = Just (checkSignature check)
+                        , reproductionOutcome = Just (outcomeKind (resultOutcome result))
+                        , reproductionExit = Just (toInteger <$> exitOf (resultOutcome result))
+                        , reproductionReproduced = reproduced
+                        , reproductionStdout = Just (tailOf (resultStdout result))
+                        , reproductionStderr = Just (tailOf (resultStderr result))
+                        , reproductionInvocation = Just (identityText invocation)
+                        }
+                finished <- db runtime (Right <$> Store.finishInvocation invocation (ranFinish result))
                 case finished of
                   Left code -> pure (Left code)
-                  Right () -> settle runtime row (if reproduced then Reproduced else NotReproduced) [(T.pack "reproduction", body)] id
+                  Right () -> settle runtime row (if reproduced then Reproduced else NotReproduced) [(RecordReproduction, body)] id
+  -- A finish that cannot be written answers with the database's code and the run's (both
+  -- kept), and the invocation stays unfinished: the next advance settles it ('settleUnfinished').
   finishAndHalt invocation code = do
-    _ <- db runtime (Right <$> Store.finishInvocation invocation (emptyFinish (T.pack "runner-failed")))
-    settle runtime row (SupervisorFailed code) [] id
+    finished <- db runtime (Right <$> Store.finishInvocation invocation (emptyFinish (commandEndingText CommandRunnerFailed)))
+    case finished of
+      Left c -> pure (Left (commandFailureCode (FinishNotRecorded c (CommandNotRun code))))
+      Right () -> settle runtime row (SupervisorFailed code) [] id
   exitOf outcome =
     case outcome of
       Exited n -> Just n
@@ -986,38 +1040,82 @@ reproductionStage runtime engine row = do
 
 -- Commands and records (C-P4.7-9) ---------------------------------------------------------
 
+-- | A command's finish once it ran: how it ended, and its evidence.
+ranFinish :: RunResult -> Store.Finish
+ranFinish result =
+  finishOf (commandEndingText (CommandRan (outcomeKind (resultOutcome result)))) result
+
+{- | Why a command the Supervisor ran has no result. A program the runner
+could not find is never a test result (DG-17 D-17.9); it is told apart here,
+once, from the direct runner's refusal @executable-missing@.
+-}
+data CommandFailure
+  = ProgramMissing
+  | -- | any other refusal, an unknown result, or a step before the run that failed: its code
+    CommandNotRun T.Text
+  | {- | the run failed, and its finish could not be written either: the
+    database's code, and the run's own failure, both kept. The invocation stays
+    unfinished, so the next advance settles it ('settleUnfinished').
+    -}
+    FinishNotRecorded T.Text CommandFailure
+
+-- | The failure's code; for an unrecorded finish, the database's code and then the run's.
+commandFailureCode :: CommandFailure -> T.Text
+commandFailureCode failure =
+  case failure of
+    ProgramMissing -> executableMissing
+    CommandNotRun code -> code
+    FinishNotRecorded code original -> code <> T.pack "-after-" <> commandFailureCode original
+
+executableMissing :: T.Text
+executableMissing =
+  T.pack "executable-missing"
+
+programMissing :: Either CommandFailure a -> Bool
+programMissing result =
+  case result of
+    Left ProgramMissing -> True
+    _ -> False
+
 {- | A command the Supervisor runs in a workspace (command limits, the
 verification profile), recorded as an invocation before it runs and finished
 after. Left: the runner refused it or its result is unknown (finished
 @runner-failed@).
 -}
-runCommand :: DatabaseRuntime -> Engine -> Store.TransactionRow -> Stage -> T.Text -> Workspace -> [T.Text] -> IO (Either T.Text RunResult)
+runCommand :: DatabaseRuntime -> Engine -> Store.TransactionRow -> Stage -> T.Text -> Workspace -> [T.Text] -> IO (Either CommandFailure RunResult)
 runCommand runtime engine row stage what workspace argv = do
-  u <- newUuid
-  let
-    invocation = uuidText u
+  invocation <- newIdentity
   started <-
     db runtime $ do
       Store.insertInvocation (invocationRow row invocation stage what (runnerName (engineRunner engine)) (T.pack "supervisor") argv)
       pure (Right ())
   case started of
-    Left code -> pure (Left code)
+    Left code -> pure (Left (CommandNotRun code))
     Right () -> do
       ran <- try (runnerRun (engineRunner engine) workspace ProfileVerify (roleLimits RoleCommand) argv [])
       let
-        failed code = do
-          _ <- db runtime (Right <$> Store.finishInvocation invocation (emptyFinish (T.pack "runner-failed")))
-          pure (Left code)
+        -- A finish that cannot be written is the failure (its code); the invocation stays
+        -- unfinished and the next advance settles it ('settleUnfinished').
+        failed failure = do
+          finished <- db runtime (Right <$> Store.finishInvocation invocation (emptyFinish (commandEndingText CommandRunnerFailed)))
+          pure (Left (either (`FinishNotRecorded` failure) (const failure) finished))
       case ran of
-        Left (_ :: IOException) -> failed (T.pack "runner-exception")
-        Right (Left (RunnerRefused code)) -> failed code
-        Right (Left (RunnerUncertain code)) -> failed code
+        Left (_ :: IOException) -> failed (CommandNotRun (T.pack "runner-exception"))
+        Right (Left (RunnerRefused code))
+          | code == executableMissing -> failed ProgramMissing
+          | otherwise -> failed (CommandNotRun code)
+        Right (Left (RunnerUncertain code)) -> failed (CommandNotRun code)
         Right (Right result) -> do
-          finished <- db runtime (Right <$> Store.finishInvocation invocation (finishOf (outcomeName (resultOutcome result)) result))
-          pure (result <$ finished)
+          finished <- db runtime (Right <$> Store.finishInvocation invocation (ranFinish result))
+          pure (either (Left . CommandNotRun) (const (Right result)) finished)
+
+-- | A command's run, with a failure as its code (where only the code is kept).
+runCommandCode :: DatabaseRuntime -> Engine -> Store.TransactionRow -> Stage -> T.Text -> Workspace -> [T.Text] -> IO (Either T.Text RunResult)
+runCommandCode runtime engine row stage what workspace argv =
+  either (Left . commandFailureCode) Right <$> runCommand runtime engine row stage what workspace argv
 
 -- | The body of the latest record of a kind.
-latestRecord :: T.Text -> [Store.RecordRow] -> Maybe T.Text
+latestRecord :: RecordKind -> [Store.RecordRow] -> Maybe T.Text
 latestRecord kind records =
   case L.reverse [Store.recordRowBody r | r <- records, Store.recordRowKind r == kind] of
     body : _ -> Just body
@@ -1037,16 +1135,11 @@ gathered runtime row = do
   pure $ do
     t <- ticket
     rs <- records
-    d <- maybe (Left (T.pack "discovery-missing")) Right (latestRecord (T.pack "discovery") rs >>= recordedDiscovery)
-    reproduction <- maybe (Left (T.pack "reproduction-missing")) Right (latestRecord (T.pack "reproduction") rs)
+    d <- maybe (Left (T.pack "discovery-missing")) Right (latestRecord RecordDiscovery rs >>= recordedDiscovery)
+    reproduction <- maybe (Left (T.pack "reproduction-missing")) Right (latestRecord RecordReproduction rs)
     let
-      feedback = [Store.recordRowBody r | r <- rs, Store.recordRowKind r `L.elem` fmap T.pack ["baseline", "finding", "candidate-rejected"]]
+      feedback = [Store.recordRowBody r | r <- rs, Store.recordRowKind r `L.elem` [RecordBaseline, RecordFinding, RecordCandidateRejected]]
     Right (t, discoveryJson d, reproduction, feedback, rs)
-
--- A program the runner could not find: never a test result (DG-17 D-17.9).
-environmentMissing :: T.Text -> Bool
-environmentMissing code =
-  T.pack "executable-missing" `T.isInfixOf` code
 
 -- Candidate (C-P4.7-9 S1) -----------------------------------------------------------------
 
@@ -1087,8 +1180,8 @@ candidateStage runtime engine row =
     cited <- citationsHold (workspaceTree workspace) entries (L.concatMap criterionCitations (candidateCriteria c))
     unusable <- traverse (unusablePath (workspaceTree workspace) entries . testPath) (candidateTests c)
     let
-      record = (T.pack "candidate", candidateJson c)
-      rejected code = settle runtime row (CandidateRejected code) [record, (T.pack "candidate-rejected", JObject [(T.pack "code", string code)])] id
+      candidateRecord = (RecordCandidate, candidateJson c)
+      rejected code = settle runtime row (CandidateRejected code) [candidateRecord, (RecordCandidateRejected, record refusalSchema (Refusal code))] id
       paths = fmap testPath (candidateTests c)
     case () of
       _
@@ -1096,22 +1189,22 @@ candidateStage runtime engine row =
         | not cited -> rejected (T.pack "citation-outside-source")
         | not (L.all protectedPathValid paths) -> rejected (T.pack "test-path-unsupported")
         | L.or unusable || L.any (foldsOnto entries paths) paths -> rejected (T.pack "test-path-unusable")
-        | otherwise -> baseline basis c entries [record]
+        | otherwise -> baseline basis c entries [candidateRecord]
   baseline basis c entries records = do
     runs <- traverse (baselineRun basis c) (candidateTests c)
     let
-      missing = L.any (either environmentMissing (const False)) runs
+      missing = L.any programMissing runs
       outcomes = rights runs
     case () of
       _
         | missing || L.any (\(_, r, _) -> resultOutcome r == Exited 127) outcomes ->
-            settle runtime row (VerificationInconclusive (T.pack "verification-environment-missing")) (records <> [(T.pack "baseline", b) | (_, _, b) <- outcomes]) id
+            settle runtime row (VerificationInconclusive (haltCodeText (HaltFixed FixedVerificationEnvironmentMissing))) (records <> [(RecordBaseline, b) | (_, _, b) <- outcomes]) id
         | otherwise ->
             case sequenceA runs of
-              Left code -> settle runtime row (SupervisorFailed code) records id
+              Left failure -> settle runtime row (SupervisorFailed (commandFailureCode failure)) records id
               Right classified -> do
                 let
-                  bodies = records <> [(T.pack "baseline", body) | (_, _, body) <- classified]
+                  bodies = records <> [(RecordBaseline, body) | (_, _, body) <- classified]
                   existingFailed =
                     L.or [cls == GreenCandidateFailed && unchangedAtBasis entries t | (t, (cls, _, _)) <- L.zip (candidateTests c) classified]
                 if existingFailed
@@ -1120,14 +1213,14 @@ candidateStage runtime engine row =
   baselineRun basis c t = do
     ws <- workspaceAt engine row basis (testFiles c)
     case ws of
-      Left code -> pure (Left code)
+      Left code -> pure (Left (CommandNotRun code))
       Right (workspace, _) -> do
         ran <- runCommand runtime engine row StageCandidate (T.pack "baseline") workspace (testArgv t)
         pure $ do
           r <- ran
           let
             cls = classifyTest (testExpectation t) (testPath t) (testSignature t) (resultOutcome r) (decodeLenient (resultStdout r)) (decodeLenient (resultStderr r))
-          Right (cls, r, baselineJson t cls (outcomeName (resultOutcome r)) (tailOf (resultStdout r)) (tailOf (resultStderr r)))
+          Right (cls, r, baselineJson t cls (outcomeKind (resultOutcome r)) (tailOf (resultStdout r)) (tailOf (resultStderr r)))
 
 {- | C-P4.R1 R-C2: a test path that, ignoring letter case, is (or passes
 through) another spelling of a path of the basis or of another test — on a
@@ -1168,7 +1261,7 @@ challengeStage runtime engine row =
       case g of
         Left code -> settle runtime row (SupervisorFailed code) [] id
         Right ((title, acceptance), discovery, reproduction, _, rs) ->
-          case latestRecord (T.pack "candidate") rs >>= recordedCandidate of
+          case latestRecord RecordCandidate rs >>= recordedCandidate of
             Nothing -> settle runtime row (SupervisorFailed (T.pack "candidate-missing")) [] id
             Just c -> do
               let
@@ -1196,7 +1289,7 @@ challengeStage runtime engine row =
     case sequenceA judged of
       Left code -> settle runtime row (SupervisorFailed code) [] id
       Right results ->
-        settle runtime row (ChallengeDisposed (fmap fst results)) [(T.pack "finding", body) | (_, body) <- results] id
+        settle runtime row (ChallengeDisposed (fmap fst results)) [(RecordFinding, body) | (_, body) <- results] id
   judge basis c f = do
     run <- mutantRun basis c f
     pure $ do
@@ -1215,7 +1308,7 @@ challengeStage runtime engine row =
         case ws of
           Left code -> pure (Left code)
           Right (workspace, _) -> do
-            runs <- traverse (runCommand runtime engine row StageChallengePre (T.pack "mutant") workspace . testArgv) (candidateTests c)
+            runs <- traverse (runCommandCode runtime engine row StageChallengePre (T.pack "mutant") workspace . testArgv) (candidateTests c)
             case sequenceA runs of
               Left code -> pure (Left code)
               Right results
@@ -1224,7 +1317,7 @@ challengeStage runtime engine row =
                     case findingDemonstration f of
                       Nothing -> pure (Right (MutantSurvived False))
                       Just demo -> do
-                        shown <- runCommand runtime engine row StageChallengePre (T.pack "demonstration") workspace (checkArgv demo)
+                        shown <- runCommandCode runtime engine row StageChallengePre (T.pack "demonstration") workspace (checkArgv demo)
                         pure $ do
                           r <- shown
                           Right (MutantSurvived (reproduces demo (resultOutcome r) (decodeLenient (resultStdout r)) (decodeLenient (resultStderr r))))
@@ -1244,7 +1337,7 @@ freezeStage runtime row = do
   records <- db runtime (Right <$> Store.transactionRecords (Store.txRowId row))
   let
     folder = T.unpack (Store.txRowFolder row)
-    candidate = either (const Nothing) (latestRecord (T.pack "candidate") >=> recordedCandidate) records
+    candidate = either (const Nothing) (latestRecord RecordCandidate >=> recordedCandidate) records
   case (Store.txRowBasis row, Store.txRowBranch row, candidate) of
     (Just basis, Just branch, Just c)
       | not (L.all (protectedPathValid . testPath) (candidateTests c)) -> settle runtime row (SupervisorFailed (T.pack "test-path-unsupported")) [] id
@@ -1260,9 +1353,9 @@ freezeStage runtime row = do
                 changes = [Change (testPath x) (Just (ModeFile, TE.encodeUtf8 (testContent x))) | x <- candidateTests c]
                 message =
                   T.pack "Lockstep: frozen tests\n\nLockstep-Work-Order: "
-                    <> Store.txRowWorkOrder row
+                    <> identityText (Store.txRowWorkOrder row)
                     <> T.pack "\nLockstep-Transaction: "
-                    <> Store.txRowId row
+                    <> identityText (Store.txRowId row)
                     <> T.pack "\n"
               committed <- commitChanges folder basis changes (CommitMeta message (t + 1))
               case committed of
@@ -1285,7 +1378,7 @@ freezeStage runtime row = do
       runtime
       row
       TestsFrozen
-      [(T.pack "contract", contract), (T.pack "freeze", JObject [(T.pack "commit", string freeze), (T.pack "branch", string branch), (T.pack "contract_digest", string digest)])]
+      [(RecordContract, contract), (RecordFreeze, record freezeSchema (FreezeRecord freeze branch digest))]
       (\r -> r {Store.txRowFreeze = Just freeze, Store.txRowContract = Just digest})
 
 -- The implementer (C-P4.10-14 I1) ---------------------------------------------------------
@@ -1308,19 +1401,19 @@ implementStage runtime engine row = do
     (_, Left code, _) -> settle runtime row (SupervisorFailed code) [] id
     (_, _, Nothing) -> settle runtime row (SupervisorFailed (T.pack "freeze-missing")) [] id
     (Right rs, Right (title, acceptance), Just freeze) ->
-      case latestRecord (T.pack "candidate") rs >>= recordedCandidate of
+      case latestRecord RecordCandidate rs >>= recordedCandidate of
         Nothing -> settle runtime row (SupervisorFailed (T.pack "candidate-missing")) [] id
         Just c -> do
           let
             protected = fmap testPath (candidateTests c)
-            feedback = [Store.recordRowBody r | r <- rs, Store.recordRowKind r `L.elem` fmap T.pack ["implementation-refused", "verification", "post-finding", "review"]]
+            feedback = [Store.recordRowBody r | r <- rs, Store.recordRowKind r `L.elem` [RecordImplementationRefused, RecordVerification, RecordPostFinding, RecordReview]]
             context =
               renderJson $
                 JObject
                   [ (T.pack "role", string (roleName Implementer))
                   , (T.pack "stage", string (stageName StageImplement))
                   , (T.pack "ticket", JObject [(T.pack "title", string title), (T.pack "what_done_looks_like", string acceptance)])
-                  , (T.pack "contract", JRaw (fromMaybe (T.pack "null") (latestRecord (T.pack "contract") rs)))
+                  , (T.pack "contract", JRaw (fromMaybe (T.pack "null") (latestRecord RecordContract rs)))
                   , (T.pack "allowed_paths", strings (candidateAllowedPaths c))
                   , (T.pack "protected_tests", strings protected)
                   , (T.pack "feedback", JArray (fmap JRaw feedback))
@@ -1333,12 +1426,12 @@ implementStage runtime engine row = do
             Right (Right (AnswerImplementation i, entries, workspace, invocation)) -> do
               found <- snapshotChanges entries (workspaceTree workspace)
               let
-                refused code paths = settle runtime row (ImplementationRefused code) [(T.pack "implementation-refused", JObject [(T.pack "code", string code), (T.pack "paths", strings paths), (T.pack "invocation", string invocation)])] id
+                refused code paths = settle runtime row (ImplementationRefused code) [(RecordImplementationRefused, record implementationRefusedSchema (Records.ImplementationRefused code paths (identityText invocation)))] id
               case found of
                 Left code -> refused code []
                 Right changes
                   | L.null changes -> refused (T.pack "no-change") []
-                  | L.any ((`L.elem` protected) . changePath) changes -> refused (T.pack "protected-test-changed") (L.filter (`L.elem` protected) (fmap changePath changes))
+                  | L.any ((`L.elem` protected) . changePath) changes -> refused (haltCodeText (HaltFixed FixedProtectedTestChanged)) (L.filter (`L.elem` protected) (fmap changePath changes))
                   | L.any ((`L.notElem` candidateAllowedPaths c) . changePath) changes -> refused (T.pack "change-outside-scope") (L.filter (`L.notElem` candidateAllowedPaths c) (fmap changePath changes))
                   | otherwise -> do
                       time <- commitTime (T.unpack (Store.txRowFolder row)) freeze
@@ -1351,7 +1444,7 @@ implementStage runtime engine row = do
                               T.pack "Fix: "
                                 <> title
                                 <> T.pack "\n\nLockstep-Work-Order: "
-                                <> Store.txRowWorkOrder row
+                                <> identityText (Store.txRowWorkOrder row)
                                 <> T.pack "\nLockstep-Contract: "
                                 <> fromMaybe T.empty (Store.txRowContract row)
                                 <> T.pack "\nLockstep-Attempt: "
@@ -1366,14 +1459,8 @@ implementStage runtime engine row = do
                                 row
                                 Implemented
                                 [
-                                  ( T.pack "implementation"
-                                  , JObject
-                                      [ (T.pack "summary", string (implementationSummary i))
-                                      , (T.pack "changed", strings (fmap changePath changes))
-                                      , (T.pack "candidate", string candidate)
-                                      , (T.pack "attempt", JNumber (toInteger attempt))
-                                      , (T.pack "invocation", string invocation)
-                                      ]
+                                  ( RecordImplementation
+                                  , record implementationSchema (ImplementationRecord (implementationSummary i) (fmap changePath changes) candidate (toInteger attempt) (identityText invocation))
                                   )
                                 ]
                                 (\r -> r {Store.txRowCandidate = Just candidate})
@@ -1395,7 +1482,7 @@ verifyStage runtime engine row = do
     (Left code, _) -> pure (Left code)
     (_, Nothing) -> settle runtime row (SupervisorFailed (T.pack "candidate-commit-missing")) [] id
     (Right rs, Just candidate) ->
-      case latestRecord (T.pack "candidate") rs >>= recordedCandidate of
+      case latestRecord RecordCandidate rs >>= recordedCandidate of
         Nothing -> settle runtime row (SupervisorFailed (T.pack "candidate-missing")) [] id
         Just c -> do
           ws <- workspaceAt engine row candidate []
@@ -1403,22 +1490,22 @@ verifyStage runtime engine row = do
             Left code -> settle runtime row (SupervisorFailed code) [] id
             Right (workspace, entries)
               | not (L.all (unchangedAtBasis entries) (candidateTests c)) ->
-                  settle runtime row (VerificationInconclusive (T.pack "protected-test-changed")) [] id
+                  settle runtime row (VerificationInconclusive (haltCodeText (HaltFixed FixedProtectedTestChanged))) [] id
               | otherwise -> do
                   let
                     commands = candidateVerification c <> fmap testArgv (candidateTests c)
                   runs <- traverse (\argv -> fmap ((,) argv) <$> runCommand runtime engine row StageVerify (T.pack "verification") workspace argv) commands
                   let
-                    missing = L.any (either environmentMissing (const False)) runs
+                    missing = L.any programMissing runs
                     results = rights runs
-                    bodies = [(T.pack "verification", JObject ([(T.pack "command", strings argv), (T.pack "outcome", string (outcomeName (resultOutcome r)))] <> exitField (resultOutcome r) <> [(T.pack "stdout_tail", string (tailOf (resultStdout r))), (T.pack "stderr_tail", string (tailOf (resultStderr r)))])) | (argv, r) <- results]
-                    summary passed = (T.pack "verification-summary", JObject [(T.pack "commit", string candidate), (T.pack "passed", JBool passed)])
+                    bodies = [(RecordVerification, record verificationSchema (VerificationRun argv (outcomeKind (resultOutcome r)) (exitOf (resultOutcome r)) (tailOf (resultStdout r)) (tailOf (resultStderr r)))) | (argv, r) <- results]
+                    summary passed = (RecordVerificationSummary, record verificationSummarySchema (VerificationSummary candidate passed))
                   case () of
                     _
                       | missing || L.any ((== Exited 127) . resultOutcome . snd) results ->
-                          settle runtime row (VerificationInconclusive (T.pack "verification-environment-missing")) (bodies <> [summary False]) id
+                          settle runtime row (VerificationInconclusive (haltCodeText (HaltFixed FixedVerificationEnvironmentMissing))) (bodies <> [summary False]) id
                       | L.any isLeft runs || not (L.all (exited . resultOutcome . snd) results) ->
-                          settle runtime row (VerificationInconclusive (T.pack "verification-run-failed")) (bodies <> [summary False]) id
+                          settle runtime row (VerificationInconclusive (haltCodeText (HaltFixed FixedVerificationRunFailed))) (bodies <> [summary False]) id
                       | L.all ((== Exited 0) . resultOutcome . snd) results ->
                           settle runtime row VerificationPassed (bodies <> [summary True]) id
                       | otherwise -> settle runtime row VerificationFailed (bodies <> [summary False]) id
@@ -1427,10 +1514,10 @@ verifyStage runtime engine row = do
     case outcome of
       Exited _ -> True
       _ -> False
-  exitField outcome =
+  exitOf outcome =
     case outcome of
-      Exited n -> [(T.pack "exit", JNumber (toInteger n))]
-      _ -> []
+      Exited n -> Just (toInteger n)
+      _ -> Nothing
 
 -- Challenge after the implementation (C-P4.10-14 C1) ----------------------------------------
 
@@ -1449,7 +1536,7 @@ challengePostStage runtime engine row = do
     (Left code, _, _, _) -> pure (Left code)
     (_, Left code, _, _) -> settle runtime row (SupervisorFailed code) [] id
     (Right rs, Right (title, acceptance), Just candidate, Just _) ->
-      case latestRecord (T.pack "candidate") rs >>= recordedCandidate of
+      case latestRecord RecordCandidate rs >>= recordedCandidate of
         Nothing -> settle runtime row (SupervisorFailed (T.pack "candidate-missing")) [] id
         Just c -> do
           let
@@ -1459,9 +1546,9 @@ challengePostStage runtime engine row = do
                   [ (T.pack "role", string (roleName Challenger))
                   , (T.pack "stage", string (stageName StageChallengePost))
                   , (T.pack "ticket", JObject [(T.pack "title", string title), (T.pack "what_done_looks_like", string acceptance)])
-                  , (T.pack "contract", JRaw (fromMaybe (T.pack "null") (latestRecord (T.pack "contract") rs)))
+                  , (T.pack "contract", JRaw (fromMaybe (T.pack "null") (latestRecord RecordContract rs)))
                   , (T.pack "candidate", string candidate)
-                  , (T.pack "verification", JArray (fmap JRaw [Store.recordRowBody r | r <- rs, Store.recordRowKind r == T.pack "verification"]))
+                  , (T.pack "verification", JArray (fmap JRaw [Store.recordRowBody r | r <- rs, Store.recordRowKind r == RecordVerification]))
                   , (T.pack "answer", JObject [(T.pack "file", string (T.pack "result.json")), (T.pack "kind", string (T.pack "challenge"))])
                   ]
           invoked <- invokeRecorded runtime engine row Challenger StageChallengePost candidate [] [] context
@@ -1472,7 +1559,7 @@ challengePostStage runtime engine row = do
               judged <- traverse (judge candidate c entries) (challengeFindings ch)
               case sequenceA judged of
                 Left code -> settle runtime row (SupervisorFailed code) [] id
-                Right results -> settle runtime row (ChallengeDisposed (fmap fst results)) [(T.pack "post-finding", body) | (_, body) <- results] id
+                Right results -> settle runtime row (ChallengeDisposed (fmap fst results)) [(RecordPostFinding, body) | (_, body) <- results] id
             Right (Right _) -> settle runtime row (RoleFailed (T.pack "answer-invalid wrong-stage")) [] id
     _ -> settle runtime row (SupervisorFailed (T.pack "candidate-commit-missing")) [] id
  where
@@ -1489,7 +1576,7 @@ challengePostStage runtime engine row = do
               case ws of
                 Left code -> pure (Left code)
                 Right (workspace, _) -> do
-                  ran <- runCommand runtime engine row StageChallengePost (T.pack "counterexample") workspace (checkArgv check)
+                  ran <- runCommandCode runtime engine row StageChallengePost (T.pack "counterexample") workspace (checkArgv check)
                   pure $ do
                     r <- ran
                     Right $
@@ -1521,17 +1608,17 @@ reviewStage runtime engine row = do
     (_, _, Nothing) -> settle runtime row (SupervisorFailed (T.pack "candidate-commit-missing")) [] id
     (Right rs, Right (title, acceptance), Just candidate) -> do
       let
-        kinds = fmap T.pack ["verification", "verification-summary", "finding", "post-finding"]
+        kinds = [RecordVerification, RecordVerificationSummary, RecordFinding, RecordPostFinding]
         context =
           renderJson $
             JObject
               [ (T.pack "role", string (roleName Reviewer))
               , (T.pack "stage", string (stageName StageReview))
               , (T.pack "ticket", JObject [(T.pack "title", string title), (T.pack "what_done_looks_like", string acceptance)])
-              , (T.pack "contract", JRaw (fromMaybe (T.pack "null") (latestRecord (T.pack "contract") rs)))
+              , (T.pack "contract", JRaw (fromMaybe (T.pack "null") (latestRecord RecordContract rs)))
               , (T.pack "candidate", string candidate)
               , (T.pack "freeze", string (fromMaybe T.empty (Store.txRowFreeze row)))
-              , (T.pack "evidence", JArray [JObject [(T.pack "kind", string (Store.recordRowKind r)), (T.pack "body", JRaw (Store.recordRowBody r))] | r <- rs, Store.recordRowKind r `L.elem` kinds])
+              , (T.pack "evidence", JArray [JObject [(T.pack "kind", string (recordKindText (Store.recordRowKind r))), (T.pack "body", JRaw (Store.recordRowBody r))] | r <- rs, Store.recordRowKind r `L.elem` kinds])
               , (T.pack "answer", JObject [(T.pack "file", string (T.pack "result.json")), (T.pack "kind", string (T.pack "review"))])
               ]
       invoked <- invokeRecorded runtime engine row Reviewer StageReview candidate [] [] context
@@ -1545,7 +1632,7 @@ reviewStage runtime engine row = do
                 Approve -> ReviewApproved
                 Reject -> ReviewRejected
                 NeedsHuman -> ReviewNeedsHuman
-          settle runtime row input [(T.pack "review", JObject [(T.pack "commit", string candidate), (T.pack "verdict", string (verdictName (reviewVerdict r))), (T.pack "reasons", strings (reviewReasons r)), (T.pack "invocation", string invocation)])] id
+          settle runtime row input [(RecordReview, record reviewSchema (ReviewRecord candidate (reviewVerdict r) (reviewReasons r) (Just (identityText invocation))))] id
         Right (Right _) -> settle runtime row (RoleFailed (T.pack "answer-invalid wrong-stage")) [] id
 
 -- Acceptance (C-P4.10-14 A1) ------------------------------------------------------------------------
@@ -1571,14 +1658,18 @@ acceptStage runtime row = do
     (_, Right (Left code), _, _, _) -> settle runtime row (SupervisorFailed code) [] id
     (Right rs, Right (Right ()), Just candidate, Just freeze, Just branch) -> do
       let
-        verified = latestRecord (T.pack "verification-summary") rs
-        reviewed = latestRecord (T.pack "review") rs
-        passed = maybe False (\b -> T.pack "\"passed\":true" `T.isInfixOf` b && candidate `T.isInfixOf` b) verified
-        approved = maybe False (\b -> T.pack "\"verdict\":\"approve\"" `T.isInfixOf` b && candidate `T.isInfixOf` b) reviewed
-      case () of
-        _
-          | not passed -> settle runtime row (SupervisorFailed (T.pack "verification-not-passed")) [] id
-          | not approved -> settle runtime row (SupervisorFailed (T.pack "review-not-approved")) [] id
+        verified = latestRecord RecordVerificationSummary rs
+        reviewed = latestRecord RecordReview rs
+        -- Read through the records' own schemas: the latest verification passed on this commit, and the latest review approved it.
+        -- A latest record that does not read back is its own halt, never taken for "not passed" or "not approved".
+        passedOn = L.any (\s -> summaryPassed s && summaryCommit s == candidate)
+        approvedOn = L.any (\r -> Records.reviewVerdict r == Approve && Records.reviewCommit r == candidate)
+      case (traverse (decodeText verificationSummarySchema) verified, traverse (decodeText reviewSchema) reviewed) of
+        (Left _, _) -> settle runtime row (SupervisorFailed (T.pack "verification-record-unreadable")) [] id
+        (_, Left _) -> settle runtime row (SupervisorFailed (T.pack "review-record-unreadable")) [] id
+        (Right summary, Right review)
+          | not (passedOn summary) -> settle runtime row (SupervisorFailed (T.pack "verification-not-passed")) [] id
+          | not (approvedOn review) -> settle runtime row (SupervisorFailed (T.pack "review-not-approved")) [] id
           | otherwise -> do
               moved <- advanceBranch (T.unpack (Store.txRowFolder row)) branch freeze candidate
               case moved of
@@ -1588,7 +1679,7 @@ acceptStage runtime row = do
                     runtime
                     row
                     CommitAccepted
-                    [(T.pack "acceptance", JObject [(T.pack "commit", string candidate), (T.pack "branch", string branch), (T.pack "from", string freeze)])]
+                    [(RecordAcceptance, record acceptanceSchema (AcceptanceRecord candidate branch freeze))]
                     (\r -> r {Store.txRowAccepted = Just candidate})
     _ -> settle runtime row (SupervisorFailed (T.pack "acceptance-inputs-missing")) [] id
 
@@ -1608,18 +1699,18 @@ ensureRequest runtime row stage code = do
         Left c -> pure (Left c)
         Right (key, h) -> do
           opened <-
-            openRequest
+            openRequestAbout
               runtime
               key
               SenderSupervisor
-              NewHumanRequest
-                { newRequestWorkOrder = Store.txRowWorkOrder row
-                , newRequestEngineer = Store.txRowEngineer row
-                , newRequestContract = Store.txRowContract row
-                , newRequestChoices = Just (haltChoices stage code)
-                , newRequestQuestion = haltQuestion stage code
-                , newRequestEvidence = T.pack "Transaction " <> Store.txRowId row <> T.pack ", record " <> T.pack (show (Store.recordRowSequence h)) <> T.pack ": " <> code
-                , newRequestAuthority = T.pack "Whether Lockstep tries this step again, accepts it as it is, or stops this bug fix."
+              (Store.txRowWorkOrder row)
+              RequestDetails
+                { detailsEngineer = Store.txRowEngineer row
+                , detailsContract = Store.txRowContract row
+                , detailsChoices = Just (haltChoices stage code)
+                , detailsQuestion = haltQuestion stage code
+                , detailsEvidence = T.pack "Transaction " <> identityText (Store.txRowId row) <> T.pack ", record " <> T.pack (show (Store.recordRowSequence h)) <> T.pack ": " <> code
+                , detailsAuthority = T.pack "Whether Lockstep tries this step again, accepts it as it is, or stops this bug fix."
                 }
           pure $ case opened of
             Left _ -> Left (T.pack "database-unavailable")
@@ -1629,35 +1720,32 @@ ensureRequest runtime row stage code = do
 -- | The key of the request for the latest halt record, and that record.
 haltKey :: Store.TransactionRow -> [Store.RecordRow] -> Either T.Text (IdempotencyKey, Store.RecordRow)
 haltKey row rs =
-  case L.reverse [r | r <- rs, Store.recordRowKind r == T.pack "halt"] of
+  case L.reverse [r | r <- rs, Store.recordRowKind r == RecordHalt] of
     [] -> Left (T.pack "halt-record-missing")
     h : _ ->
       either
         (const (Left (T.pack "halt-key-invalid")))
         (\key -> Right (key, h))
-        (mkIdempotencyKey (T.pack "halt-" <> T.filter (/= '-') (Store.txRowId row) <> T.pack "-" <> T.pack (show (Store.recordRowSequence h))))
+        (mkIdempotencyKey (T.pack "halt-" <> T.filter (/= '-') (identityText (Store.txRowId row)) <> T.pack "-" <> T.pack (show (Store.recordRowSequence h))))
 
 {- | C-P4.16: the request for a halted transaction's current halt, as it
 stands (open or answered); Nothing when the transaction is not halted or
 the request is not opened yet. Reads only.
 -}
-haltRequest :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe StoredRequest))
-haltRequest runtime raw =
-  whenReady runtime $
-    case canonicalId raw of
-      Nothing -> pure (Right Nothing)
-      Just txId -> do
-        found <- withDatabase runtime $ do
-          row <- Store.findTransaction txId
-          records <- Store.transactionRecords txId
-          pure ((,) records <$> row)
-        case found of
-          Left reason -> pure (Left reason)
-          Right (Just (rs, row))
-            | Store.txRowState row == T.pack "halted"
-            , Right (key, _) <- haltKey row rs ->
-                requestByKey runtime key
-          Right _ -> pure (Right Nothing)
+haltRequest :: DatabaseRuntime -> TransactionId -> IO (Either NotReadyReason (Maybe StoredRequest))
+haltRequest runtime txId =
+  whenReady runtime $ do
+    found <- withDatabase runtime $ do
+      row <- Store.findTransaction txId
+      records <- Store.transactionRecords txId
+      pure ((,) records <$> row)
+    case found of
+      Left reason -> pure (Left reason)
+      Right (Just (rs, row))
+        | Halted _ _ <- Store.txRowState row
+        , Right (key, _) <- haltKey row rs ->
+            requestByKey runtime key
+      Right _ -> pure (Right Nothing)
 
 {- | C-P4.15 H1: a person's binding answer to the current halt's own request
 and the input it gives. Only an answered request carries one; C-P4.3 lets

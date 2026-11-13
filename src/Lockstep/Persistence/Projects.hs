@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeFamilies #-}
+
 {- | Storage for projects (contract C-P3.5 J1, J2). Callers run these inside
 one transaction; 'lockProjects' serializes creations and connections.
 -}
@@ -11,21 +13,32 @@ module Lockstep.Persistence.Projects
   , updateProjectSetup
   , allProjects
   , connectedFolders
+  , projectTable
+  , projectIdField
+  , projectRepositoryField
   ) where
 
+import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Text qualified as T
+import Data.Time (UTCTime)
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
+import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
 import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
-import Text.Show (show)
+
+import Lockstep.Kernel.Identity (ProjectId (..), RepositoryId)
+import Lockstep.Kernel.Project (SetupState (..), parseSetupState, setupStateCode)
+import Lockstep.Persistence.Entity (EntityKey, Table, keyField, mkEntityTable, nullableForeignKeyTo)
+import Lockstep.Persistence.Fields (codeField, increment, selectJoined, setNow, tableReference)
+import Lockstep.Persistence.Repositories (repositoryIdField, repositoryTable)
 
 data ProjectRow
   = ProjectRow
-  { rowId :: T.Text
+  { rowId :: ProjectId
   , rowName :: T.Text
   , rowOutcome :: T.Text
-  , rowSetup :: T.Text
+  , rowSetup :: SetupState
   , rowRefusal :: Maybe T.Text
   , rowFolder :: Maybe T.Text
   , rowEngineerName :: Maybe T.Text
@@ -33,120 +46,145 @@ data ProjectRow
   , rowCreationDigest :: Maybe T.Text
   }
 
-sql :: String -> RawSql.RawSql
-sql =
-  RawSql.fromString
+type instance EntityKey ProjectRow = ProjectId
 
-text :: T.Text -> RawSql.RawSql
-text =
-  RawSql.parameter . SqlValue.fromText
+-- | What a new project is created with; everything else starts at its default.
+data NewProject
+  = NewProject
+  { newProjectId :: ProjectId
+  , newProjectKey :: T.Text
+  , newProjectName :: T.Text
+  , newProjectOutcome :: T.Text
+  , newProjectDigest :: T.Text
+  }
 
-maybeText :: Maybe T.Text -> RawSql.RawSql
-maybeText =
-  maybe (sql "NULL") text
+{- | A project is written with its creation facts and read back as a
+'ProjectRow'. The setup refusal, folder, Engineer and revision are read only:
+the connection steps change them with 'updateProjectSetup'.
+-}
+projectTable :: Table NewProject ProjectRow
+projectTable =
+  mkEntityTable "lockstep_projects" projectIdField $
+    (\projectId _key name outcome setup refusal folder engineer revision digest -> ProjectRow projectId name outcome setup refusal folder engineer revision digest)
+      <$> O.marshallField newProjectId projectIdField
+      <*> O.marshallField newProjectKey projectKeyField
+      <*> O.marshallField newProjectName projectNameField
+      <*> O.marshallField newProjectOutcome (O.unboundedTextField "outcome")
+      <*> O.marshallField (const Organized) projectSetupField
+      <*> O.marshallReadOnlyField projectRefusalField
+      <*> O.marshallReadOnlyField projectFolderField
+      <*> O.marshallReadOnlyField projectEngineerField
+      <*> O.marshallReadOnlyField projectRevisionField
+      <*> O.marshallField (Just . newProjectDigest) (O.nullableField (O.unboundedTextField "creation_digest"))
 
-uuid :: T.Text -> RawSql.RawSql
-uuid value =
-  sql "CAST(" <> text value <> sql " AS uuid)"
+projectIdField :: O.FieldDefinition O.NotNull ProjectId
+projectIdField =
+  keyField "id"
 
-maybeUuid :: Maybe T.Text -> RawSql.RawSql
-maybeUuid =
-  maybe (sql "NULL") uuid
+projectKeyField :: O.FieldDefinition O.NotNull T.Text
+projectKeyField =
+  O.unboundedTextField "creation_key"
 
-columns :: String
-columns =
-  "id::text AS id, name, outcome, setup, setup_refusal, folder, engineer_name, revision, creation_digest"
+projectNameField :: O.FieldDefinition O.NotNull T.Text
+projectNameField =
+  O.unboundedTextField "name"
 
-projectMarshaller :: O.AnnotatedSqlMarshaller ProjectRow ProjectRow
-projectMarshaller =
-  O.annotateSqlMarshallerEmptyAnnotation $
-    ProjectRow
-      <$> O.marshallField rowId (O.unboundedTextField "id")
-      <*> O.marshallField rowName (O.unboundedTextField "name")
-      <*> O.marshallField rowOutcome (O.unboundedTextField "outcome")
-      <*> O.marshallField rowSetup (O.unboundedTextField "setup")
-      <*> O.marshallField rowRefusal (O.nullableField (O.unboundedTextField "setup_refusal"))
-      <*> O.marshallField rowFolder (O.nullableField (O.unboundedTextField "folder"))
-      <*> O.marshallField rowEngineerName (O.nullableField (O.unboundedTextField "engineer_name"))
-      <*> O.marshallField rowRevision (O.bigIntegerField "revision")
-      <*> O.marshallField rowCreationDigest (O.nullableField (O.unboundedTextField "creation_digest"))
+-- | A stored code the Kernel does not know fails the read (C-P3.5 J1 states only).
+projectSetupField :: O.FieldDefinition O.NotNull SetupState
+projectSetupField =
+  codeField "project setup state" setupStateCode parseSetupState "setup"
 
-headMay :: [a] -> Maybe a
-headMay xs =
-  case xs of
-    [] -> Nothing
-    x : _ -> Just x
+projectRefusalField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+projectRefusalField =
+  O.nullableField (O.unboundedTextField "setup_refusal")
 
--- | Serializes project changes until the transaction ends; reads stay possible.
+projectFolderField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+projectFolderField =
+  O.nullableField (O.unboundedTextField "folder")
+
+projectEngineerField :: O.FieldDefinition O.Nullable (Maybe T.Text)
+projectEngineerField =
+  O.nullableField (O.unboundedTextField "engineer_name")
+
+projectRevisionField :: O.FieldDefinition O.NotNull Int64
+projectRevisionField =
+  O.bigIntegerField "revision"
+
+projectRepositoryField :: O.FieldDefinition O.Nullable (Maybe RepositoryId)
+projectRepositoryField =
+  nullableForeignKeyTo repositoryTable repositoryIdField "repository_id"
+
+projectCreatedAtField :: O.FieldDefinition O.NotNull UTCTime
+projectCreatedAtField =
+  O.utcTimestampField "created_at"
+
+projectUpdatedAtField :: O.FieldDefinition O.NotNull UTCTime
+projectUpdatedAtField =
+  O.utcTimestampField "updated_at"
+
+{- | Serializes project changes until the transaction ends; reads stay
+possible. Orville has no table-lock statement.
+-}
 lockProjects :: O.MonadOrville m => m ()
 lockProjects =
-  O.executeVoid O.OtherQuery (sql "LOCK TABLE lockstep_projects IN EXCLUSIVE MODE")
+  O.executeVoid O.OtherQuery (RawSql.fromString "LOCK TABLE lockstep_projects IN EXCLUSIVE MODE")
 
-selectWhere :: O.MonadOrville m => RawSql.RawSql -> m [ProjectRow]
-selectWhere condition =
-  O.executeAndDecode
-    O.SelectQuery
-    (sql ("SELECT " <> columns <> " FROM lockstep_projects WHERE ") <> condition <> sql " ORDER BY created_at, id")
-    projectMarshaller
+-- | Matching projects, by creation then id.
+projectsWhere :: O.MonadOrville m => Expr.BooleanExpr -> m [ProjectRow]
+projectsWhere condition =
+  O.findEntitiesBy projectTable (O.where_ condition <> creationOrder)
+
+creationOrder :: O.SelectOptions
+creationOrder =
+  O.orderBy (O.orderByField projectCreatedAtField O.ascendingOrder <> O.orderByField projectIdField O.ascendingOrder)
 
 findProjectByKey :: O.MonadOrville m => T.Text -> m (Maybe ProjectRow)
 findProjectByKey key =
-  headMay <$> selectWhere (sql "creation_key = " <> text key)
+  O.findFirstEntityBy projectTable (O.where_ (O.fieldEquals projectKeyField key) <> creationOrder)
 
-findProjectById :: O.MonadOrville m => T.Text -> m (Maybe ProjectRow)
+findProjectById :: O.MonadOrville m => ProjectId -> m (Maybe ProjectRow)
 findProjectById projectId =
-  headMay <$> selectWhere (sql "id = " <> uuid projectId)
+  O.findFirstEntityBy projectTable (O.where_ (O.fieldEquals projectIdField projectId) <> creationOrder)
 
+-- | Whether another project has this name, ignoring case (the unique index is on @lower(name)@).
 projectNameTaken :: O.MonadOrville m => T.Text -> m Bool
 projectNameTaken name =
-  not . null <$> selectWhere (sql "lower(name) = lower(" <> text name <> sql ")")
+  let
+    lower value = Expr.functionCall (Expr.functionName "lower") [value]
+  in
+    not . null
+      <$> projectsWhere (Expr.equals (lower (O.fieldColumnReference projectNameField)) (lower (Expr.valueExpression (SqlValue.fromText name))))
 
-insertProject :: O.MonadOrville m => T.Text -> T.Text -> T.Text -> T.Text -> T.Text -> m ()
+insertProject :: O.MonadOrville m => ProjectId -> T.Text -> T.Text -> T.Text -> T.Text -> m ()
 insertProject projectId key name outcome digest =
-  O.executeVoid O.InsertQuery $
-    sql "INSERT INTO lockstep_projects (id, creation_key, name, outcome, setup, creation_digest) VALUES ("
-      <> uuid projectId
-      <> sql ", "
-      <> text key
-      <> sql ", "
-      <> text name
-      <> sql ", "
-      <> text outcome
-      <> sql ", 'organized', "
-      <> text digest
-      <> sql ")"
+  O.insertEntity projectTable (NewProject projectId key name outcome digest)
 
 {- | Records one connection attempt if the project is still at the expected
 revision; True when it was. The revision goes up by one.
 -}
-updateProjectSetup :: O.MonadOrville m => T.Text -> Int64 -> T.Text -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> m Bool
+updateProjectSetup :: O.MonadOrville m => ProjectId -> Int64 -> SetupState -> Maybe T.Text -> Maybe T.Text -> Maybe T.Text -> Maybe RepositoryId -> m Bool
 updateProjectSetup projectId expected setup refusal folder engineerName repositoryId =
   not . null
-    <$> O.executeAndDecode
-      O.UpdateQuery
-      ( sql "UPDATE lockstep_projects SET setup = "
-          <> text setup
-          <> sql ", setup_refusal = "
-          <> maybeText refusal
-          <> sql ", folder = "
-          <> maybeText folder
-          <> sql ", engineer_name = "
-          <> maybeText engineerName
-          <> sql ", repository_id = "
-          <> maybeUuid repositoryId
-          <> sql ", revision = revision + 1, updated_at = now() WHERE id = "
-          <> uuid projectId
-          <> sql (" AND revision = " <> show expected <> " RETURNING id::text AS id")
+    <$> O.updateFieldsAndReturnEntities
+      projectTable
+      ( O.setField projectSetupField setup
+          :| [ O.setField projectRefusalField refusal
+             , O.setField projectFolderField folder
+             , O.setField projectEngineerField engineerName
+             , O.setField projectRepositoryField repositoryId
+             , increment projectRevisionField
+             , setNow projectUpdatedAtField
+             ]
       )
-      (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.unboundedTextField "id")))
+      (Just (O.fieldEquals projectIdField projectId `O.andExpr` O.fieldEquals projectRevisionField expected))
 
 allProjects :: O.MonadOrville m => m [ProjectRow]
 allProjects =
-  selectWhere (sql "TRUE")
+  O.findEntitiesBy projectTable creationOrder
 
 connectedFolders :: O.MonadOrville m => m [T.Text]
 connectedFolders =
-  O.executeAndDecode
-    O.SelectQuery
-    (sql "SELECT folder FROM lockstep_projects WHERE setup = 'connected' AND folder IS NOT NULL")
-    (O.annotateSqlMarshallerEmptyAnnotation (O.marshallField id (O.unboundedTextField "folder")))
+  selectJoined
+    (O.marshallReadOnlyField (O.unboundedTextField "folder"))
+    (tableReference projectTable)
+    (O.where_ (O.fieldEquals projectSetupField Connected `O.andExpr` O.fieldIsNotNull projectFolderField))

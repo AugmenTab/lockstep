@@ -1,0 +1,9 @@
+lockstep-control-result 1
+id 6a9531fe1c2e6a1fa7bfc7dc87405e31
+op run-readonly
+outcome refused
+reason capsule-mode-unavailable
+started 1794331091
+finished 1794331091
+detail 
+mac 6654b0f7680b7e1b7217302fc54cafce04f626c13fb3180ca7592d35222b0626

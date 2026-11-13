@@ -8,6 +8,7 @@ module Lockstep.Kernel.Decision
   ( DecisionRequest (..)
   , decisionPayload
   , decisionSubject
+  , decisionSubjectId
   , decisionChoiceName
   , decisionExpected
   , checkDecisionText
@@ -23,7 +24,7 @@ import Flipstone.Prelude
 import Text.Show (Show, show)
 
 import Lockstep.Kernel.Effect (OperationId (..))
-import Lockstep.Kernel.Identity (WorkOrderId (..), uuidText)
+import Lockstep.Kernel.Identity (Uuid, WorkOrderId (..), uuidText)
 
 data DecisionRequest
   = PutBackInLine WorkOrderId Int
@@ -35,14 +36,21 @@ data DecisionRequest
   deriving (Eq, Show)
 
 decisionSubject :: DecisionRequest -> T.Text
-decisionSubject request =
+decisionSubject =
+  uuidText . decisionSubjectId
+
+{- | The decision's subject: the stopped Work Order's identity or the unknown
+step's operation, as its choice says (so the 'Uuid', which the choice types).
+-}
+decisionSubjectId :: DecisionRequest -> Uuid
+decisionSubjectId request =
   case request of
-    PutBackInLine (WorkOrderId u) _ -> uuidText u
-    CancelWork (WorkOrderId u) _ -> uuidText u
-    ItHappened (OperationId u) _ _ -> uuidText u
-    ItDidNotHappen (OperationId u) _ _ -> uuidText u
-    TryAgain (OperationId u) _ _ -> uuidText u
-    GiveUp (OperationId u) _ _ _ -> uuidText u
+    PutBackInLine (WorkOrderId u) _ -> u
+    CancelWork (WorkOrderId u) _ -> u
+    ItHappened (OperationId u) _ _ -> u
+    ItDidNotHappen (OperationId u) _ _ -> u
+    TryAgain (OperationId u) _ _ -> u
+    GiveUp (OperationId u) _ _ _ -> u
 
 decisionChoiceName :: DecisionRequest -> T.Text
 decisionChoiceName request =
@@ -114,7 +122,10 @@ checkDecisionText request =
       | T.any Char.isControl t -> Left (T.pack "text-control")
       | otherwise -> Right ()
 
--- | A choice's label and what it will do.
+{- | A choice's label and what it will do. The name is text from a stored
+decision or receipt, so a name no choice has gets the one explicit "Unknown
+choice" pair.
+-}
 choiceWords :: T.Text -> (T.Text, T.Text)
 choiceWords name =
   case T.unpack name of
@@ -129,6 +140,10 @@ choiceWords name =
   pair a b =
     (T.pack a, T.pack b)
 
+{- | Words for a decision's refusal code: a stored receipt's code or a code the
+frozen @Either Text@ decision boundary returns. A code without its own words gets
+the one general sentence (unit @DecisionTest.hs:113-116@ pins it).
+-}
 decisionRefusalWords :: T.Text -> T.Text
 decisionRefusalWords code =
   T.pack $

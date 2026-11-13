@@ -1,0 +1,43 @@
+lockstep-0.2.0.0: unregistering (local file changes: test/capsule/Main.hs)
+lockstep> build (lib + test) with ghc-9.10.3
+Preprocessing library for lockstep-0.2.0.0...
+Building library for lockstep-0.2.0.0...
+Preprocessing test suite 'lockstep-capsule' for lockstep-0.2.0.0...
+Building test suite 'lockstep-capsule' for lockstep-0.2.0.0...
+[1 of 1] Compiling Main [Source file changed]
+[2 of 2] Linking .stack-work/dist/aarch64-linux/ghc-9.10.3/build/lockstep-capsule/lockstep-capsule [Objects changed]
+lockstep> copy/register
+Installing library in /work/.stack-work/install/aarch64-linux/5250d11ee4c4a95e8a282f34f9d295542681a668e7e0884ef17474181b74fd41/9.10.3/lib/aarch64-linux-ghc-9.10.3-23bd/lockstep-0.2.0.0-4Nn3MUPp6I6AAHWOAslCmY
+Registering library for lockstep-0.2.0.0...
+lockstep> test (suite: lockstep-capsule)
+
+lockstep-capsule
+  V1 one text each, parsed back
+    operations:                                                                      OK
+    profiles:                                                                        OK
+    VM status:                                                                       OK
+    host outcomes:                                                                   OK
+    refusals:                                                                        OK
+    an unknown word parses to nothing:                                               OK
+  V2 names
+    a valid name:                                                                    OK
+    the VM name is derived:                                                          OK
+    path-like, shell-like, upper-case, short, long and dash-ended names are refused: OK
+  V3 role authority
+    only the Implementer may mutate:                                                 OK
+    the read-only roles run no command (review finding 1):                           OK
+    the runtime's binding grants each role exactly these operations:                 OK
+  V4 the runtime's own words
+    every refusal is one the runtime gives:                                          OK
+    every host outcome is one the runtime writes:                                    OK
+
+
+
+lockstep> Test suite lockstep-capsule passed
+    every lifecycle operation is in the runtime's dispatch:                          OK
+    the profiles have the runtime's numbers:                                         OK
+    a reply is read:                                                                 OK
+    a reply of another version, or with a malformed field, is not:                   OK
+
+All 18 tests passed (0.01s)
+Completed 2 action(s).

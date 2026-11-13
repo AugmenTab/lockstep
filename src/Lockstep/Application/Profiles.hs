@@ -17,19 +17,17 @@ module Lockstep.Application.Profiles
   , setRepositoryProfile
   , resolveForEngineer
   , loadStoredDefinition
+  , storedDefinition
   ) where
 
-import Control.Exception (IOException, throwIO, try)
-import Crypto.Hash (SHA256 (SHA256), hashWith)
+import Control.Exception (IOException, try)
 import Data.ByteString.Lazy qualified as LBS
 import Data.List qualified as L
-import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
 import System.IO (FilePath)
-import System.IO.Error (userError)
 import Text.Show (show)
 
 import Lockstep.Application.Database
@@ -40,21 +38,24 @@ import Lockstep.Application.Database
   , withDatabase
   )
 import Lockstep.Application.ProfileDocument (decodeProfileDocument)
+import Lockstep.Foundation.Digest (sha256Sized, sha256Utf8)
+import Lockstep.Kernel.Identity (RepositoryId)
 import Lockstep.Kernel.Profile
   ( Behaviour (..)
-  , ContentDigest
   , Hasher (..)
   , ProfileDefinition
+  , ProfileId
   , ProfileRef (..)
   , ResolutionInput (..)
+  , contentDigestFromBytes
   , contentDigestText
   , definitionId
   , definitionVersion
   , effectiveDigest
   , mkClassTag
-  , mkContentDigest
   , mkNonBehaviouralBasis
   , mkProfileDefinition
+  , mkProfileId
   , mkWorkFacts
   , parsePathClass
   , profileIdText
@@ -67,17 +68,15 @@ import Lockstep.Kernel.Profile
   )
 import Lockstep.Kernel.Transition (Principal (Human))
 import Lockstep.Kernel.WorkOrder (parseWorkOrderKind)
+import Lockstep.Persistence.Integrity (integrityViolation)
 import Lockstep.Persistence.Profiles qualified as Store
 
--- | SHA-256 of the UTF-8 text, as 64 lowercase hex characters.
+{- | SHA-256 of the UTF-8 text, as 64 lowercase hex characters: the digest's
+32 bytes through the explicit hex encoding, with no fallback.
+-}
 sha256Hasher :: Hasher
 sha256Hasher =
-  Hasher (digestOf . T.pack . show . hashWith SHA256 . TE.encodeUtf8)
-
--- | The 'show' of a SHA-256 digest is always 64 lowercase hex characters.
-digestOf :: T.Text -> ContentDigest
-digestOf text =
-  fromMaybe (digestOf (T.replicate 64 (T.pack "0"))) (mkContentDigest text)
+  Hasher (contentDigestFromBytes . sha256Sized . sha256Utf8)
 
 data ProfileFailure
   = -- | A refusal: code, reason and the decision row when one was recorded (exit 65).
@@ -91,7 +90,7 @@ data AddOutcome
 
 data StoredProfile
   = StoredProfile
-  { storedId :: T.Text
+  { storedId :: ProfileId
   , storedVersion :: Int
   , storedDigest :: T.Text
   }
@@ -124,7 +123,7 @@ refused code message =
 record :: Store.NewProfileDecision -> O.Orville Int64
 record decision = do
   inserted <- Store.insertProfileDecision decision
-  maybe (liftIO (throwIO (userError "lockstep: the decision insert returned no row"))) pure inserted
+  maybe (integrityViolation "the decision insert returned no row") pure inserted
 
 recordRefusal :: Store.NewProfileDecision -> T.Text -> T.Text -> O.Orville (Either ProfileFailure a)
 recordRefusal decision code message = do
@@ -167,12 +166,12 @@ addProfile runtime bytes =
           Right definition -> do
             let
               ref = profileRef sha256Hasher definition
-              profileId = profileIdText (definitionId definition)
+              profileId = definitionId definition
               version = definitionVersion definition
               digest = contentDigestText (refDigest ref)
               decision =
                 addDecision
-                  { Store.profileDecisionProfile = Just profileId
+                  { Store.profileDecisionProfile = Just (profileIdText profileId)
                   , Store.profileDecisionVersion = Just (fromIntegral version)
                   , Store.profileDecisionDigest = Just digest
                   }
@@ -207,7 +206,7 @@ listProfiles runtime =
 loadStoredDefinition :: Store.ProfileRow -> Either ProfileFailure ProfileDefinition
 loadStoredDefinition row =
   let
-    failure = Left (ProfileIntegrity (T.pack "stored profile " <> Store.profileRowId row <> T.pack " version " <> T.pack (show (Store.profileRowVersion row)) <> T.pack " fails its integrity check"))
+    failure = Left (ProfileIntegrity (T.pack "stored profile " <> profileIdText (Store.profileRowId row) <> T.pack " version " <> T.pack (show (Store.profileRowVersion row)) <> T.pack " fails its integrity check"))
   in
     case decodeProfileDocument (LBS.fromStrict (TE.encodeUtf8 (Store.profileRowDocument row))) of
       Left _ -> failure
@@ -215,17 +214,30 @@ loadStoredDefinition row =
         case mkProfileDefinition raw of
           Left _ -> failure
           Right definition
-            | profileIdText (definitionId definition) /= Store.profileRowId row -> failure
+            | definitionId definition /= Store.profileRowId row -> failure
             | fromIntegral (definitionVersion definition) /= Store.profileRowVersion row -> failure
             | contentDigestText (refDigest (profileRef sha256Hasher definition)) /= Store.profileRowDigest row -> failure
             | otherwise -> Right definition
 
+{- | 'loadStoredDefinition' inside a transaction: a stored document whose
+digest does not reproduce is an integrity violation that aborts it, never a
+profile that is merely absent.
+-}
+storedDefinition :: Store.ProfileRow -> O.Orville ProfileDefinition
+storedDefinition row =
+  case loadStoredDefinition row of
+    Right definition -> pure definition
+    Left (ProfileIntegrity message) -> integrityViolation (T.unpack message)
+    Left (ProfileRefused code message _) -> integrityViolation (T.unpack (code <> T.pack ": " <> message))
+
 showProfile :: DatabaseRuntime -> T.Text -> Maybe Integer -> IO (Either NotReadyReason (Either ProfileFailure (T.Text, T.Text)))
-showProfile runtime profileId version =
+showProfile runtime rawId version =
   whenReady runtime . withDatabase runtime $
-    case version of
-      Just v | v < 1 || v > 2147483647 -> pure unknownProfile
-      _ -> do
+    case (version, mkProfileId rawId) of
+      (Just v, _) | v < 1 || v > 2147483647 -> pure unknownProfile
+      -- Text that is no Profile id names no stored Profile.
+      (_, Nothing) -> pure unknownProfile
+      (_, Just profileId) -> do
         found <- Store.findProfile profileId (fmap fromInteger version)
         pure $
           case found of
@@ -239,14 +251,14 @@ unknownProfile =
   refused (T.pack "profile-unknown") (T.pack "there is no such profile version")
 
 -- | Records a new default for the Engineer's repository.
-setRepositoryProfile :: DatabaseRuntime -> T.Text -> T.Text -> IO (Either NotReadyReason (Either ProfileFailure T.Text))
-setRepositoryProfile runtime engineer profileId =
+setRepositoryProfile :: DatabaseRuntime -> T.Text -> T.Text -> IO (Either NotReadyReason (Either ProfileFailure RepositoryId))
+setRepositoryProfile runtime engineer rawProfile =
   whenReady runtime . withDatabase runtime . O.withTransaction $ do
     let
       decision =
         Store.NewProfileDecision
           { Store.profileDecisionOperation = T.pack "repository-set-profile"
-          , Store.profileDecisionProfile = Just profileId
+          , Store.profileDecisionProfile = Just rawProfile
           , Store.profileDecisionVersion = Nothing
           , Store.profileDecisionDigest = Nothing
           , Store.profileDecisionEngineer = Just engineer
@@ -261,11 +273,12 @@ setRepositoryProfile runtime engineer profileId =
       Just (Store.EngineerRepository _ Nothing) ->
         recordRefusal decision (T.pack "engineer-has-no-repository") (T.pack "the Engineer owns no repository")
       Just (Store.EngineerRepository _ (Just repositoryId)) -> do
-        found <- Store.findProfile profileId Nothing
+        -- Text that is no Profile id names no registered Profile: the same refusal.
+        found <- maybe (pure Nothing) (\p -> fmap ((,) p) <$> Store.findProfile p Nothing) (mkProfileId rawProfile)
         case found of
           Nothing ->
             recordRefusal decision {Store.profileDecisionRepository = Just repositoryId} (T.pack "profile-unknown") (T.pack "there is no such profile")
-          Just _ -> do
+          Just (profileId, _) -> do
             Store.insertRepositoryProfile repositoryId profileId
             _ <- record decision {Store.profileDecisionRepository = Just repositoryId}
             pure (Right repositoryId)

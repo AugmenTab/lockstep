@@ -13,16 +13,15 @@ module Lockstep.Application.Sandbox
   ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (throwIO)
+import Control.Exception (Exception, throwIO)
 import Data.List qualified as L
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
-import System.IO.Error (userError)
-import Text.Show (show)
+import Text.Show (Show)
 
-import Lockstep.Application.Database (DatabaseRuntime, withDatabase)
-import Lockstep.Application.Ledger (LedgerFailure (..))
+import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason (DatabaseCorrupt), Readiness (..), readinessCode, withDatabase)
+import Lockstep.Application.LedgerRefusal (LedgerFailure (..), LedgerRefusal (UnknownSandboxEffect), refusalFailure)
 import Lockstep.Effects.Executor (DestinationAnswer (..), EffectAdapter (..))
 import Lockstep.Effects.Reconciler (EffectReconciler (..), LookupAnswer (..))
 import Lockstep.Kernel.Effect
@@ -32,13 +31,12 @@ import Lockstep.Kernel.Effect
   , IdempotencyTerms (..)
   , IntentRequest (..)
   , LookupTerms (..)
-  , OperationId (..)
+  , OperationId
   , effectSpecClass
   , effectSpecName
   , mkEffectKey
   , mkEffectSpec
   )
-import Lockstep.Kernel.Identity (parseUuid, uuidText)
 import Lockstep.Persistence.Sandbox qualified as Store
 
 -- | The catalogue: name, class terms, retry budget.
@@ -74,21 +72,28 @@ sandboxRequest text =
   in
     case (L.find ((== name) . effectSpecName) specs, L.lookup (T.unpack modeName) modes, mkEffectKey name) of
       (Just spec, Just _, Right key) -> Right (IntentRequest key spec (T.pack "mode=" <> modeName))
-      _ -> Left (LedgerRefused (T.pack "unknown-sandbox-effect") (T.pack ("no sandbox effect " <> T.unpack text <> "; known: " <> L.intercalate ", " [n | (n, _, _) <- catalogue] <> ", each with an optional :apply, :refuse, :hang or :apply-then-hang")))
+      _ -> Left (refusalFailure (UnknownSandboxEffect text [T.pack n | (n, _, _) <- catalogue]))
 
--- | One transaction on the destination; a failure is an exception, which the executor reports as @adapter-failed@.
+{- | Why a sandbox adapter gave no answer. It is thrown, and the executor
+reports any adapter exception as @adapter-failed@ (C-P2.6 X5).
+-}
+data SandboxFailure
+  = DestinationUnavailable NotReadyReason
+  | HangEnded
+  | UnreadableParameters T.Text
+  deriving (Show)
+
+instance Exception SandboxFailure
+
+-- | One transaction on the destination; a failure is a 'SandboxFailure'.
 destination :: DatabaseRuntime -> O.Orville a -> IO a
 destination runtime action = do
   result <- withDatabase runtime (O.withTransaction action)
-  either (\reason -> throwIO (userError ("sandbox destination unavailable: " <> show reason))) pure result
-
-operationText :: OperationId -> T.Text
-operationText (OperationId u) =
-  uuidText u
+  either (throwIO . DestinationUnavailable) pure result
 
 hang :: IO a
 hang =
-  threadDelay 3600000000 >> throwIO (userError "a sandbox hang ended")
+  threadDelay 3600000000 >> throwIO HangEnded
 
 applied :: DestinationAnswer
 applied =
@@ -102,10 +107,10 @@ adapter :: DatabaseRuntime -> EffectSpec -> EffectAdapter
 adapter runtime spec =
   EffectAdapter spec $ \operation parameters -> do
     mode <-
-      maybe (throwIO (userError "unreadable sandbox parameters")) pure $
+      maybe (throwIO (UnreadableParameters parameters)) pure $
         T.stripPrefix (T.pack "mode=") parameters >>= \m -> L.lookup (T.unpack m) modes
     let
-      op = operationText operation
+      op = operation
       name = effectSpecName spec
     case effectSpecClass spec of
       Idempotent -> do
@@ -159,7 +164,7 @@ sandboxReconcilers :: DatabaseRuntime -> IO [EffectReconciler]
 sandboxReconcilers runtime =
   pure
     [ EffectReconciler spec $ \operation _ -> do
-        (outcome, _) <- destination runtime (Store.settleQueryable (operationText operation) (T.pack "fenced"))
+        (outcome, _) <- destination runtime (Store.settleQueryable operation (T.pack "fenced"))
         pure (if outcome == T.pack "applied" then LookupApplied (T.pack "applied") else LookupAbsent)
     | spec <- specs
     , effectSpecClass spec == Queryable
@@ -170,10 +175,6 @@ sandboxApplications runtime = do
   result <- withDatabase runtime Store.applicationCounts
   pure $
     case result of
-      Left reason -> Left (LedgerUnavailable (T.pack (show reason)))
-      Right rows -> traverse row rows
- where
-  row (op, effect, n) =
-    case parseUuid op of
-      Right u -> Right (OperationId u, effect, fromIntegral n)
-      Left _ -> Left (LedgerIntegrity (T.pack "a sandbox application has an unreadable operation id"))
+      Left (DatabaseCorrupt detail) -> Left (LedgerIntegrity detail)
+      Left reason -> Left (LedgerUnavailable (readinessCode (NotReady reason)))
+      Right rows -> Right [(op, effect, fromIntegral n) | (op, effect, n) <- rows]

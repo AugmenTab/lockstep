@@ -1,0 +1,35 @@
+PASS T0 the runtime provisioned the fixture capsule
+PASS T1 exec ran in the capsule (its output came back)
+PASS T1 exec saw the capsule's own marker (the fixture, not the provider's container)
+PASS T1 exec returned its exit status (3) and stderr
+PASS T1 stderr is returned separately
+PASS T2 write created the file in the capsule
+PASS T2 edit changed it (read back)
+PASS T3 read returned numbered lines
+PASS T3 search found the edit
+PASS T3 list listed the directory
+PASS T4 multiline/pipes/subshells/redirects ran unrestricted
+PASS T5 a command over its time limit was reported timed out
+PASS T5 the timed-out command was ended (it wrote nothing afterwards)
+PASS T6 the built-in Bash tool does not exist for the CLI
+PASS T6 nothing ran in the provider's container (no fallback file)
+PASS T7 model-directed commands cannot see the provider's auth or channel paths
+PASS T7 nor the provider's environment (no ANTHROPIC variable in the capsule)
+PASS T8 the CLI finished the run (exit 0, JSON result)
+PASS T9 with no executor the call fails closed (no answer, outcome unknown)
+PASS T9 and nothing ran in the capsule
+PASS T9 and nothing ran in the provider's container
+PASS T10 a reviewer has no write tool
+PASS T10 nothing was written
+PASS T10 a reviewer can read
+PASS T10 the host refuses a forged write in a reviewer's channel
+PASS T10 and the forged write did not happen
+PASS T10 the host refuses a forged exec in a reviewer's channel
+PASS T13 a request smuggling a second op (duplicate key) is refused by the guest
+PASS T13 and nothing was written
+PASS T14 a symlinked request is refused as not a regular file
+PASS T14 and the host file it named was not sent anywhere
+PASS T15 a second server for the same invocation is refused
+PASS T11 a binding for another project is refused
+PASS T11 an invalid capsule id is refused
+PASS T12 a second live writer for the project is refused

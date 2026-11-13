@@ -130,6 +130,8 @@ admissionBlock readiness =
       CannotStart _ -> Just "task-cannot-start"
       Finished -> Just "task-closed"
       TaskCanceled -> Just "task-closed"
+      -- Where it stands is not known: it is not handed over.
+      StateUnrecognised _ -> Just "task-not-ready"
 
 -- | X7: the canonical text of a request to let Lockstep work in a project.
 enablementRequestText :: T.Text -> T.Text -> T.Text
@@ -179,6 +181,9 @@ executionRefusalCodes :: [T.Text]
 executionRefusalCodes =
   fmap fst refusals
 
+{- | Words for an execution refusal code, as the frozen @Either Text@ admission
+boundary returns it; a code without its own words gets the one general sentence.
+-}
 executionRefusalWords :: T.Text -> T.Text
 executionRefusalWords code =
   fromMaybe (T.pack "Something went wrong. The exact reason is under Technical details.") (L.lookup code refusals)

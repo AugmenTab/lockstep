@@ -1,0 +1,36 @@
+1794330899 start provision spike-capsule spike-project small
+1794330900 end provision spike-capsule ok
+1794330900 bind d09d673ebfd852e16a041ade55a844da spike-capsule spike-project 9ddbda95b7e8865d22c55c6c71b60daa implementer
+1794330900 serve d09d673ebfd852e16a041ade55a844da
+1794330903 start d09d673ebfd852e16a041ade55a844da 1 exec
+1794330903 end d09d673ebfd852e16a041ade55a844da 1 completed
+1794330903 start d09d673ebfd852e16a041ade55a844da 2 write
+1794330904 end d09d673ebfd852e16a041ade55a844da 2 completed
+1794330904 start d09d673ebfd852e16a041ade55a844da 3 edit
+1794330904 end d09d673ebfd852e16a041ade55a844da 3 completed
+1794330904 start d09d673ebfd852e16a041ade55a844da 4 read
+1794330904 end d09d673ebfd852e16a041ade55a844da 4 completed
+1794330904 start d09d673ebfd852e16a041ade55a844da 5 search
+1794330904 end d09d673ebfd852e16a041ade55a844da 5 completed
+1794330905 start d09d673ebfd852e16a041ade55a844da 6 list
+1794330905 end d09d673ebfd852e16a041ade55a844da 6 completed
+1794330905 start d09d673ebfd852e16a041ade55a844da 7 exec
+1794330905 end d09d673ebfd852e16a041ade55a844da 7 completed
+1794330905 start d09d673ebfd852e16a041ade55a844da 8 exec
+1794330908 end d09d673ebfd852e16a041ade55a844da 8 completed
+1794330909 start d09d673ebfd852e16a041ade55a844da 9 exec
+1794330909 end d09d673ebfd852e16a041ade55a844da 9 completed
+1794330940 bind 1c8095d8084e7b1a27771758fa09f7fb spike-capsule spike-project 9ddbda95b7e8865d22c55c6c71b60daa implementer
+1794330948 bind a3b97b2a03a747a6303d475980a2624a spike-capsule spike-project 9ddbda95b7e8865d22c55c6c71b60daa reviewer
+1794330948 serve a3b97b2a03a747a6303d475980a2624a
+1794330952 start a3b97b2a03a747a6303d475980a2624a 1 read
+1794330952 end a3b97b2a03a747a6303d475980a2624a 1 completed
+1794330952 refused a3b97b2a03a747a6303d475980a2624a op write role reviewer
+1794330954 refused a3b97b2a03a747a6303d475980a2624a op exec role reviewer
+1794330956 start a3b97b2a03a747a6303d475980a2624a 902 read
+1794330957 end a3b97b2a03a747a6303d475980a2624a 902 completed
+1794330960 refused serve already-serving
+1794330961 refused bind capsule-owned-by-another-project
+1794330961 refused bind invalid-capsule-id
+1794330961 bind 914bd5d6adf14bbdac79a9c4d951e238 spike-capsule spike-project 9ddbda95b7e8865d22c55c6c71b60daa implementer
+1794330961 refused bind writer-already-active

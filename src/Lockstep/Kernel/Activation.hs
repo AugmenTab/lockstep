@@ -12,6 +12,7 @@ module Lockstep.Kernel.Activation
   , carryChecked
   , CarryRefusal (..)
   , carryRefusalCode
+  , carryRefusalMessage
   ) where
 
 import Data.Text qualified as T
@@ -24,10 +25,13 @@ import Lockstep.Kernel.Effect
   , Intent (..)
   , IntentState (..)
   , Lease (..)
+  , Provenance (..)
+  , Reason (..)
   , effectSpecBudget
   , effectSpecClass
+  , reasonOf
   )
-import Lockstep.Kernel.Transition (Command (..), Principal (..))
+import Lockstep.Kernel.Transition (Command (..), Principal (..), principalLabel)
 
 -- | The time; the intent's activation; the order's current activation, if it is active; whether a class-B key still holds.
 data CarryInput
@@ -98,7 +102,7 @@ carryChecked intent (Command principal request)
   attested =
     requestAttested request
       || case intentState intent of
-        IntentNotApplied reason -> T.pack "human-attested: " `T.isPrefixOf` reason
+        IntentNotApplied reason -> reasonProvenance (reasonOf reason) == HumanAttested
         _ -> False
   stateCheck =
     case intentState intent of
@@ -150,3 +154,22 @@ carryRefusalCode refusal =
       CarryStale -> "stale-carry"
       CarryNotAcknowledged -> "duplication-risk-not-acknowledged"
       CarryConflict -> "carry-conflict"
+
+-- | The refusal in words (its code is 'carryRefusalCode').
+carryRefusalMessage :: CarryRefusal -> T.Text
+carryRefusalMessage refusal =
+  case refusal of
+    CarryAgentAssertion -> T.pack "an agent's assertion is never a command"
+    CarryNotAuthorized principal -> principalLabel principal <> T.pack " may not carry an effect intent; only a person does"
+    CarrySubjectNotActive -> T.pack "the work order is not active"
+    CarryNotNeeded -> T.pack "the intent already belongs to the current activation"
+    CarryAlreadySettled -> T.pack "the intent is already settled or abandoned"
+    CarryOutcomeUnknown -> T.pack "the intent's outcome is unknown; resolve it first"
+    CarryInFlight -> T.pack "the intent was dispatched and needs recovery first"
+    CarryClaimHeld -> T.pack "the intent's claim is still held"
+    CarryNotCarryable -> T.pack "an applied intent is not carried"
+    CarryRetriesExhausted -> T.pack "the intent's retries are spent"
+    CarryKeyExpired -> T.pack "the idempotency key's guarantee has ended"
+    CarryStale -> T.pack "the activations moved on since the carry was stated"
+    CarryNotAcknowledged -> T.pack "an attested intent is carried only with the duplication risk acknowledged"
+    CarryConflict -> T.pack "another live intent of the order holds the same effect key"

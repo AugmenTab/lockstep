@@ -1,0 +1,18 @@
+2026-11-12T05:54:38Z live runs on: claude-code claude-sonnet-5-5 medium, subscription, native (usage in tokens), at most 16000 output tokens a request (image sha256:4a050cb49536092f82261eff968873a5f505fb2f647ce4c9af925f1202f0daa1)
+2026-11-12T05:54:38Z started (pid 24032, protocol 1, timeout 90s, runner image sha256:827cb6e39fdf1198ac0a062282d2016ccaef4fdcdce8607f0de0a053f43c7ea0)
+2026-11-12T06:04:39Z stopped
+2026-11-12T06:05:00Z live runs on: claude-code claude-sonnet-5-5 medium, subscription, native (usage in tokens), at most 16000 output tokens a request (image sha256:4a050cb49536092f82261eff968873a5f505fb2f647ce4c9af925f1202f0daa1)
+2026-11-12T06:05:02Z capsule mode on: capsule brigid1, project brigid, verification brigidv, command limit 7200s
+2026-11-12T06:05:02Z started (pid 59836, protocol 1, timeout 90s, runner image sha256:827cb6e39fdf1198ac0a062282d2016ccaef4fdcdce8607f0de0a053f43c7ea0)
+2026-11-12T06:08:59Z run-live-readonly 08f9640ebb41bb3a4fd09cf05a34e68d: exited (exit 1, 0 tokens, capsule brigidv)
+2026-11-12T15:46:18Z run-live-readonly 98f4938add3e3b272d41e8623cd22fc0: exited (exit 0, 48470 tokens, capsule brigidv)
+2026-11-12T21:20:25Z run-live-readonly c5fe9678665111037708c608a9923130: exited (exit 0, 131425 tokens, capsule brigidv)
+2026-11-12T21:23:12Z run-verify b8a8f4ed404349eba0ac10400e610d1e: exited (exit 1, capsule brigidv)
+2026-11-12T21:24:16Z run-live-readonly 367410c51d96d06fc61bc07d343d3762: exited (exit 0, 101045 tokens, capsule brigidv)
+2026-11-12T21:27:06Z run-verify caf8d6d45f347ec54857242ceb742a65: exited (exit 1, capsule brigidv)
+2026-11-12T21:27:40Z run-live-readonly 57bc0b46d3125554aa8f309eb5e8784c: exited (exit 0, 57690 tokens, capsule brigidv)
+2026-11-12T21:37:58Z run-live-write f7cd00708a33dde1b2f6ddad7f83b954: exited (exit 0, 102828 tokens, capsule brigid1)
+2026-11-12T21:41:38Z run-verify b2ec0e729249289a4caa5384065e38aa: exited (exit 0, capsule brigidv)
+2026-11-12T21:44:30Z run-verify 9b7d1f3fd253a40404e955eb332f57b9: exited (exit 0, capsule brigidv)
+2026-11-12T21:45:01Z run-live-readonly 6460966017a8acfab4653446572ea36e: exited (exit 0, 61049 tokens, capsule brigidv)
+2026-11-12T21:45:32Z run-live-readonly 20672132c7e969c1e6aa2a82656bcb20: exited (exit 0, 39702 tokens, capsule brigidv)

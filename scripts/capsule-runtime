@@ -1,0 +1,783 @@
+#!/usr/bin/env bash
+# The Capsule Runtime (Phase 5; docs/architecture/dev-capsules.md; contracts C-P5.1, C-P5.2).
+#
+# Deterministic infrastructure beneath the Supervisor: it provisions, starts, stops, inspects,
+# snapshots, restores and destroys Dev Capsules (one Linux VM per Engineer and project), and serves
+# one invocation's tool channel by running each bridged call inside that invocation's capsule. It
+# makes no engineering, scheduling or acceptance decision.
+#
+#   scripts/capsule-runtime --state DIR provision CAPSULE PROJECT [PROFILE]
+#   scripts/capsule-runtime --state DIR start|stop|inspect|destroy CAPSULE PROJECT
+#   scripts/capsule-runtime --state DIR snapshot|restore CAPSULE PROJECT SNAPSHOT
+#   scripts/capsule-runtime --state DIR import CAPSULE PROJECT BUNDLE      (a git bundle file)
+#   scripts/capsule-runtime --state DIR run CAPSULE PROJECT SCRIPT LIMIT  (a trusted script file)
+#   scripts/capsule-runtime --state DIR bind INVOCATION CAPSULE PROJECT TRANSACTION ROLE LIMIT
+#   scripts/capsule-runtime --state DIR serve INVOCATION
+#
+# Authority (C-P5.2 L1-L6): every name is checked against a fixed pattern before use; the VM name
+# is derived (lockstep-CAPSULE), never taken from a caller; every lifecycle change first verifies
+# that the capsule's record names the requesting project; the VM configuration comes only from
+# scripts/capsule/lima-capsule.yaml with numeric resources substituted from a fixed profile; no
+# caller text reaches a host shell. Guest commands (serve, run) are arbitrary by design: their
+# target is the confined guest.
+#
+# Output: one line "capsule-runtime 1 OP RESULT key=value ...", exit 0 on success, 65 refused,
+# 69 unavailable, 70 failed. The journal DIR/capsules/journal records "<unix> start|end ...".
+set -u
+umask 077
+export LC_ALL=C
+
+here=$(cd "$(dirname "$0")" && pwd -P)
+root=$(dirname "$here")
+template=$root/scripts/capsule/lima-capsule.yaml
+guest_exec=$root/scripts/capsule/guest-exec
+
+re_capsule='^[a-z][a-z0-9-]{2,30}[a-z0-9]$'
+re_project='^[a-z][a-z0-9-]{1,62}$'
+re_hex32='^[0-9a-f]{32}$'
+re_snapshot='^(base|frozen-tests|candidate|verify|work)(-[0-9a-f]{8})?$'
+
+say() { # OP RESULT FIELDS...
+  local op=$1 res=$2
+  shift 2
+  printf 'capsule-runtime 1 %s %s%s\n' "$op" "$res" "${*:+ $*}"
+}
+refuse() { say "$1" refused "reason=$2"; journal "refused $1 $2"; exit 65; }
+unavailable() { say "$1" unavailable "reason=$2"; journal "unavailable $1 $2"; exit 69; }
+failed() { say "$1" failed "reason=$2"; journal "failed $1 $2"; exit 70; }
+
+state=""
+if [ "${1:-}" = --state ] && [ $# -ge 3 ]; then
+  state=$2
+  shift 2
+else
+  echo "usage: scripts/capsule-runtime --state DIR OP ARGS..." >&2
+  exit 64
+fi
+case $state in
+  /*) ;;
+  *) echo "capsule-runtime: --state must be an absolute path" >&2; exit 64 ;;
+esac
+op=$1
+shift
+
+caps=$state/capsules
+for d in "$state" "$caps" "$caps/records" "$caps/invocations" "$caps/snapshots"; do
+  [ -L "$d" ] && { echo "capsule-runtime: $d must not be a symlink" >&2; exit 66; }
+  [ -d "$d" ] || mkdir -m 700 "$d" || exit 66
+done
+journal() { printf '%s %s\n' "$(date +%s)" "$*" >> "$caps/journal"; }
+
+# Lima's own state lives under the runtime's state, not ~/.lima (the owner's other VMs are never
+# visible to, or touched by, Lockstep).
+export LIMA_HOME=$caps/lima
+[ -d "$LIMA_HOME" ] || mkdir -m 700 "$LIMA_HOME"
+
+# The backend: lima (the only production backend) or fixture (a Docker container standing in for
+# the guest, for the model-free bridge checks only; enabled solely by an owner-made marker file, and
+# every result it produces says backend=fixture).
+backend=lima
+if [ -f "$caps/fixture-backend" ] && [ ! -L "$caps/fixture-backend" ]; then backend=fixture; fi
+
+vm_of() { printf 'lockstep-%s' "$1"; }
+record_file() { printf '%s/records/%s' "$caps" "$1"; }
+record_get() { # CAPSULE KEY
+  local f
+  f=$(record_file "$1")
+  [ -f "$f" ] || return 1
+  sed -n "s/^$2 //p" "$f" | head -n 1
+}
+
+check_ids() { # OP CAPSULE PROJECT
+  [[ $2 =~ $re_capsule ]] || refuse "$1" invalid-capsule-id
+  [[ $3 =~ $re_project ]] || refuse "$1" invalid-project-id
+}
+# The capsule must exist and belong to PROJECT.
+owned() { # OP CAPSULE PROJECT
+  local owner
+  owner=$(record_get "$2" project) || refuse "$1" capsule-unknown
+  [ "$owner" = "$3" ] || refuse "$1" capsule-owned-by-another-project
+}
+
+# Resource profiles (C-P5.2 L5): finite, named; never "all of the host".
+profile_values() { # PROFILE -> "CPUS MEMORY-GIB DISK-GIB EXEC-LIMIT-SECONDS"
+  case $1 in
+    small) echo "2 4 30 1800" ;;
+    standard) echo "4 8 60 3600" ;;
+    large) echo "6 12 100 7200" ;;
+    *) return 1 ;;
+  esac
+}
+
+vm_status() { # CAPSULE -> Running | Stopped | absent | Broken | ...
+  local vm out
+  vm=$(vm_of "$1")
+  if [ "$backend" = fixture ]; then
+    out=$(docker container inspect --format '{{.State.Running}}' "$vm" 2>/dev/null) || { echo absent; return; }
+    [ "$out" = true ] && echo Running || echo Stopped
+    return
+  fi
+  out=$(limactl list --format '{{.Status}}' "$vm" 2>/dev/null) || { echo absent; return; }
+  [ -n "$out" ] && echo "$out" || echo absent
+}
+
+# Runs a fixed program inside the guest, stdin passed through. ARGV is Lockstep's own, never a caller's.
+guest() { # CAPSULE ARGV...
+  local vm
+  vm=$(vm_of "$1")
+  shift
+  if [ "$backend" = fixture ]; then
+    docker exec -i "$vm" "$@"
+  else
+    limactl shell --workdir / "$vm" "$@"
+  fi
+}
+
+# The effective configuration audit (C-P5.2 L4): no host mounts, no agent forwarding, no port
+# forwarding, no forwarded sockets, the backend we asked for.
+audit_vm() { # CAPSULE -> prints "ok" or a reason
+  local vm cfg
+  vm=$(vm_of "$1")
+  cfg=$LIMA_HOME/$vm/lima.yaml
+  [ -f "$cfg" ] || { echo config-missing; return; }
+  # Lima merges these into every instance; they could add mounts or forwards the file below lacks.
+  if [ -e "$LIMA_HOME/_config/override.yaml" ] || [ -e "$LIMA_HOME/_config/default.yaml" ]; then echo lima-overrides-present; return; fi
+  cmp -s "$cfg" "$caps/records/$1.yaml" || { echo config-changed; return; }
+  grep -q '^mounts: \[\]$' "$cfg" || { echo host-mounts-present; return; }
+  grep -q '^  forwardAgent: false$' "$cfg" || { echo agent-forwarding; return; }
+  grep -q '^vmType: vz$' "$cfg" || { echo not-vz; return; }
+  if grep -qE 'docker\.sock|hostSocket' "$cfg"; then echo socket-forwarding; return; fi
+  # D4 (Phase 5 update 1): the gateway must not reach the host's loopback. Exactly one hostLoopback
+  # setting, false, inside networkOpts; anything else (absent, true, repeated) is refused.
+  host_loopback_off "$cfg" || { echo host-loopback-not-disabled; return; }
+  lima_supports_host_loopback || { echo lima-too-old-for-host-loopback; return; }
+  echo ok
+}
+
+# Whether the capsule was made from today's template (its own resources substituted): current, or stale
+# after a template change (a new base image, a new setting). A stale capsule is reconfigured, never
+# silently used (P5.9; update 1 §5).
+template_state() { # CAPSULE
+  local want
+  want=$(sed -e "s/@CPUS@/$(record_get "$1" cpus)/" -e "s/@MEMORY@/$(record_get "$1" memory-gib)/" \
+    -e "s/@DISK@/$(record_get "$1" disk-gib)/" "$template")
+  if [ "$want" = "$(cat "$caps/records/$1.yaml" 2>/dev/null)" ]; then echo current; else echo stale; fi
+}
+
+# The images: block of a configuration (its lines up to the next top-level key).
+images_of() { # CONFIG-FILE
+  awk '/^images:/ { inside = 1; print; next } /^[^ #-]/ { inside = 0 } inside { print }' "$1" 2>/dev/null
+}
+
+# networkOpts.hostLoopback: false, and no other hostLoopback anywhere in the file.
+host_loopback_off() { # CONFIG-FILE
+  [ "$(grep -c 'hostLoopback' "$1")" = 1 ] || return 1
+  awk '/^networkOpts:[ ]*$/ { inside = 1; next } /^[^ #]/ { inside = 0 } inside && /^  hostLoopback: false[ ]*$/ { found = 1 } END { exit !found }' "$1"
+}
+
+# The setting exists from Lima 2.3.0; an older Lima would ignore it and leave the gateway open.
+lima_supports_host_loopback() {
+  [ "$backend" = fixture ] && return 0
+  local v major minor
+  v=$(limactl --version 2>/dev/null | sed -n 's/^limactl version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p')
+  read -r major minor <<< "$v"
+  [[ ${major:-} =~ ^[0-9]+$ ]] && [[ ${minor:-} =~ ^[0-9]+$ ]] || return 1
+  [ "$major" -gt 2 ] || { [ "$major" = 2 ] && [ "$minor" -ge 3 ]; }
+}
+
+# The guest side of bridged calls, Lockstep's current copy (it runs in the guest, as guest code).
+install_guest_exec() { # CAPSULE
+  local vm
+  vm=$(vm_of "$1")
+  if [ "$backend" = fixture ]; then
+    docker cp "$guest_exec" "$vm:/opt/lockstep/guest-exec" >/dev/null 2>&1
+    return
+  fi
+  limactl copy "$guest_exec" "$vm:/tmp/guest-exec" >/dev/null 2>&1 &&
+    guest "$1" sudo install -D -m 0755 /tmp/guest-exec /opt/lockstep/guest-exec
+}
+
+op_provision() { # CAPSULE PROJECT [PROFILE[,disposable]]
+  local cap=$1 proj=$2 profile=${3:-standard} owner vals cpus mem disk lim vm tmp st disposable=no
+  check_ids provision "$cap" "$proj"
+  case $profile in *,disposable) disposable=yes; profile=${profile%,disposable} ;; esac
+  vals=$(profile_values "$profile") || refuse provision invalid-profile
+  read -r cpus mem disk lim <<< "$vals"
+  vm=$(vm_of "$cap")
+  journal "start provision $cap $proj $profile"
+  if owner=$(record_get "$cap" project); then
+    [ "$owner" = "$proj" ] || refuse provision capsule-owned-by-another-project
+    st=$(vm_status "$cap")
+    if [ "$(record_get "$cap" phase)" = ready ] && [ "$st" != absent ]; then
+      [ "$st" = Running ] && install_guest_exec "$cap"
+      journal "end provision $cap already-provisioned"
+      say provision ok "capsule=$cap" "already=yes" "status=$st"
+      return 0
+    fi
+  else
+    tmp=$(mktemp "$caps/records/.$cap.XXXXXX")
+    printf 'capsule %s\nproject %s\nbackend %s\nvm %s\nprofile %s\ncpus %s\nmemory-gib %s\ndisk-gib %s\nexec-limit %s\ndisposable %s\ncreated %s\nphase creating\n' \
+      "$cap" "$proj" "$backend" "$vm" "$profile" "$cpus" "$mem" "$disk" "$lim" "$disposable" "$(date +%s)" > "$tmp"
+    mv "$tmp" "$(record_file "$cap")"
+  fi
+  if [ "$backend" = fixture ]; then
+    if [ "$(vm_status "$cap")" = absent ]; then
+      docker run -d --name "$vm" --network none --cap-drop ALL --security-opt no-new-privileges \
+        --memory "${mem}g" --cpus "$cpus" --pids-limit 512 --label lockstep.capsule="$cap" \
+        --label lockstep.project="$proj" lockstep-provider:claude-2.1.312 sleep infinity >/dev/null ||
+        failed provision fixture-start-failed
+    fi
+    docker exec "$vm" mkdir -p /tmp/work >/dev/null || failed provision fixture-start-failed
+    docker cp "$guest_exec" "$vm:/opt/lockstep/guest-exec" >/dev/null || failed provision guest-exec-install-failed
+  else
+    if [ ! -f "$caps/records/$cap.yaml" ]; then
+      sed -e "s/@CPUS@/$cpus/" -e "s/@MEMORY@/$mem/" -e "s/@DISK@/$disk/" "$template" > "$caps/records/$cap.yaml"
+    fi
+    lima_supports_host_loopback || failed provision lima-too-old-for-host-loopback
+    if [ "$(vm_status "$cap")" = absent ]; then
+      limactl create --tty=false --name="$vm" "$caps/records/$cap.yaml" > "$caps/records/$cap.create.log" 2>&1 ||
+        failed provision vm-create-failed
+    fi
+    # Lima only warns about a field it does not know; for the isolation setting that is a refusal.
+    if grep -qE 'unknown field.*(networkOpts|hostLoopback)' "$caps/records/$cap.create.log" 2>/dev/null; then
+      failed provision lima-ignores-host-loopback
+    fi
+    [ "$(audit_vm "$cap")" = ok ] || failed provision "audit-$(audit_vm "$cap")"
+    if [ "$(vm_status "$cap")" != Running ]; then
+      limactl start --tty=false "$vm" > "$caps/records/$cap.start.log" 2>&1 || failed provision vm-start-failed
+    fi
+    install_guest_exec "$cap" || failed provision guest-exec-install-failed
+    guest "$cap" sudo install -d -m 0755 -o "$(id -un)" /work || failed provision workspace-failed
+    guest "$cap" sudo usermod -aG docker "$(id -un)" || failed provision docker-group-failed
+    guest "$cap" sudo bash -c 'for i in $(seq 1 300); do docker info >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1' ||
+      failed provision guest-docker-not-ready
+  fi
+  sed -i.bak 's/^phase .*/phase ready/' "$(record_file "$cap")" && rm -f "$(record_file "$cap").bak"
+  journal "end provision $cap ok"
+  say provision ok "capsule=$cap" "project=$proj" "backend=$backend" "profile=$profile" "cpus=$cpus" "memory-gib=$mem" "disk-gib=$disk" "status=$(vm_status "$cap")"
+}
+
+op_lifecycle() { # OP CAPSULE PROJECT
+  local o=$1 cap=$2 proj=$3 vm st
+  check_ids "$o" "$cap" "$proj"
+  owned "$o" "$cap" "$proj"
+  vm=$(vm_of "$cap")
+  st=$(vm_status "$cap")
+  journal "start $o $cap"
+  case $o in
+    inspect)
+      say inspect ok "capsule=$cap" "project=$proj" "backend=$(record_get "$cap" backend)" "status=$st" \
+        "phase=$(record_get "$cap" phase)" "profile=$(record_get "$cap" profile)" \
+        "audit=$([ "$backend" = lima ] && audit_vm "$cap" || echo fixture)" \
+        "template=$([ "$backend" = lima ] && template_state "$cap" || echo fixture)"
+      ;;
+    start)
+      if [ "$st" = Running ]; then
+        # Running already: still audited (drift since it started is refused, never silently used).
+        [ "$backend" = fixture ] || [ "$(audit_vm "$cap")" = ok ] || failed start "audit-$(audit_vm "$cap")"
+        install_guest_exec "$cap" || failed start guest-exec-install-failed
+        say start ok "capsule=$cap" already=yes
+        return 0
+      fi
+      [ "$st" = absent ] && unavailable start vm-absent
+      if [ "$backend" = fixture ]; then docker start "$vm" >/dev/null || failed start start-failed
+      else
+        [ "$(audit_vm "$cap")" = ok ] || failed start "audit-$(audit_vm "$cap")"
+        limactl start --tty=false "$vm" >> "$caps/records/$cap.start.log" 2>&1 || failed start start-failed
+      fi
+      install_guest_exec "$cap" || failed start guest-exec-install-failed
+      say start ok "capsule=$cap" "status=$(vm_status "$cap")"
+      ;;
+    stop)
+      [ "$st" = Running ] || { say stop ok "capsule=$cap" already=yes; return 0; }
+      if [ "$backend" = fixture ]; then docker stop --time 5 "$vm" >/dev/null || failed stop stop-failed
+      else limactl stop "$vm" >> "$caps/records/$cap.start.log" 2>&1 || failed stop stop-failed
+      fi
+      say stop ok "capsule=$cap" "status=$(vm_status "$cap")"
+      ;;
+    destroy)
+      # Only a capsule its record marks disposable may be destroyed (C-P5.2 L6).
+      [ "$(record_get "$cap" disposable)" = yes ] || refuse destroy not-disposable
+      if [ "$backend" = fixture ]; then docker rm -f "$vm" >/dev/null 2>&1 || true
+      else [ "$st" = absent ] || limactl delete --force "$vm" >/dev/null 2>&1 || failed destroy delete-failed
+      fi
+      rm -f "$(record_file "$cap")" "$caps/records/$cap.yaml" "$caps/records/$cap".*.log
+      rm -rf "${caps:?}/snapshots/$cap"
+      say destroy ok "capsule=$cap"
+      ;;
+  esac
+  journal "end $o $cap ok"
+}
+
+# Brings an existing capsule's configuration to the current audited template (its own recorded
+# resources), without touching its disk, snapshots or caches: the VM is stopped, its lima.yaml replaced,
+# the record's copy updated, and the audit must then pass. For capsules made before a template change
+# (Phase 5 update 1: networkOpts.hostLoopback). Never reprovisions.
+op_reconfigure() { # CAPSULE PROJECT
+  local cap=$1 proj=$2 vm cfg was new
+  check_ids reconfigure "$cap" "$proj"
+  owned reconfigure "$cap" "$proj"
+  [ "$backend" = lima ] || refuse reconfigure not-supported-by-backend
+  lima_supports_host_loopback || failed reconfigure lima-too-old-for-host-loopback
+  vm=$(vm_of "$cap")
+  cfg=$LIMA_HOME/$vm/lima.yaml
+  [ -f "$cfg" ] && [ ! -L "$cfg" ] || failed reconfigure config-missing
+  new=$caps/records/.$cap.yaml.new
+  sed -e "s/@CPUS@/$(record_get "$cap" cpus)/" -e "s/@MEMORY@/$(record_get "$cap" memory-gib)/" \
+    -e "s/@DISK@/$(record_get "$cap" disk-gib)/" "$template" > "$new"
+  host_loopback_off "$new" || { rm -f "$new"; failed reconfigure template-without-isolation; }
+  # The base image is used only when a disk is made: a template with another image cannot be applied to an
+  # existing disk. That needs a new capsule (an operator's decision for a non-disposable one).
+  if [ "$(images_of "$new")" != "$(images_of "$caps/records/$cap.yaml")" ]; then
+    rm -f "$new"
+    refuse reconfigure base-image-changed-reprovision-required
+  fi
+  was=$(vm_status "$cap")
+  journal "start reconfigure $cap"
+  [ "$was" = Running ] && { limactl stop "$vm" >/dev/null 2>&1 || { rm -f "$new"; failed reconfigure stop-failed; }; }
+  cp "$cfg" "$caps/records/$cap.yaml.before-reconfigure"
+  cp "$new" "$cfg" && mv "$new" "$caps/records/$cap.yaml" || failed reconfigure write-failed
+  [ "$(audit_vm "$cap")" = ok ] || failed reconfigure "audit-$(audit_vm "$cap")"
+  if [ "$was" = Running ]; then
+    limactl start --tty=false "$vm" >> "$caps/records/$cap.start.log" 2>&1 || failed reconfigure start-failed
+    install_guest_exec "$cap" || failed reconfigure guest-exec-install-failed
+  fi
+  journal "end reconfigure $cap ok"
+  say reconfigure ok "capsule=$cap" "status=$(vm_status "$cap")" "audit=ok"
+}
+
+# Snapshots of the whole VM disk, taken while the VM is stopped, as APFS clones (cp -c): cheap,
+# and complete (workspace, caches, guest Docker state). Lima's own snapshot command is QEMU-only.
+op_snapshot() { # OP CAPSULE PROJECT NAME
+  local o=$1 cap=$2 proj=$3 name=$4 vm disk dir was
+  check_ids "$o" "$cap" "$proj"
+  owned "$o" "$cap" "$proj"
+  [[ $name =~ $re_snapshot ]] || refuse "$o" invalid-snapshot-name
+  [ "$backend" = lima ] || refuse "$o" not-supported-by-backend
+  vm=$(vm_of "$cap")
+  # Lima 2 names the VM's disk "disk"; earlier releases "diffdisk".
+  disk=$LIMA_HOME/$vm/disk
+  [ -f "$disk" ] || disk=$LIMA_HOME/$vm/diffdisk
+  [ -f "$disk" ] && [ ! -L "$disk" ] || failed "$o" vm-disk-missing
+  dir=$caps/snapshots/$cap
+  [ -d "$dir" ] || mkdir -m 700 "$dir"
+  if [ "$o" = snapshot ]; then
+    [ -e "$dir/$name.disk" ] && refuse snapshot snapshot-exists
+  else
+    [ -f "$dir/$name.disk" ] || refuse restore snapshot-unknown
+  fi
+  was=$(vm_status "$cap")
+  journal "start $o $cap $name"
+  [ "$was" = Running ] && { limactl stop "$vm" >/dev/null 2>&1 || failed "$o" stop-failed; }
+  # On a failed copy the disk is untouched; a VM that was running is started again before failing.
+  local copied=yes
+  if [ "$o" = snapshot ]; then
+    if cp -c "$disk" "$dir/.$name.partial"; then mv "$dir/.$name.partial" "$dir/$name.disk"
+    else rm -f "$dir/.$name.partial"; copied=no
+    fi
+  else
+    if cp -c "$dir/$name.disk" "$disk.restoring"; then mv "$disk.restoring" "$disk"
+    else rm -f "$disk.restoring"; copied=no
+    fi
+  fi
+  if [ "$was" = Running ]; then
+    # Every start is audited, here too (P5.5 review 3, M2).
+    [ "$(audit_vm "$cap")" = ok ] || failed "$o" "audit-$(audit_vm "$cap")"
+    limactl start --tty=false "$vm" >/dev/null 2>&1 || failed "$o" start-failed
+  fi
+  [ "$copied" = yes ] || failed "$o" copy-failed
+  journal "end $o $cap $name ok"
+  say "$o" ok "capsule=$cap" "snapshot=$name" "status=$(vm_status "$cap")"
+}
+
+# A trusted script (Lockstep's or a test's own file, not a model's) run in the guest workspace with
+# a deadline; prints its output and the exit status. Used for environment setup and checks.
+op_run() { # CAPSULE PROJECT SCRIPT LIMIT
+  local cap=$1 proj=$2 script=$3 lim=$4 rc out
+  check_ids run "$cap" "$proj"
+  owned run "$cap" "$proj"
+  [ -f "$script" ] && [ ! -L "$script" ] || refuse run script-missing
+  [[ $lim =~ ^[0-9]{1,6}$ ]] || refuse run invalid-limit
+  [ "$(vm_status "$cap")" = Running ] || unavailable run vm-not-running
+  journal "start run $cap $(shasum -a 256 "$script" | cut -c 1-16)"
+  out=$caps/records/$cap.run.out
+  # A fresh login of the guest user (sudo to itself) so its groups include docker.
+  if [ "$backend" = fixture ]; then
+    guest "$cap" timeout --kill-after=10 "$lim" bash -s < "$script" > "$out" 2>&1
+  else
+    guest "$cap" sudo -n -H -u "$(id -un)" -- timeout --kill-after=10 "$lim" bash -s < "$script" > "$out" 2>&1
+  fi
+  rc=$?
+  # The guest's output stays in its file (never on this reply stream, where it could imitate a reply).
+  journal "end run $cap exit=$rc"
+  say run "$([ $rc = 0 ] && echo ok || echo exited)" "capsule=$cap" "exit=$rc" "output=$out"
+  [ $rc = 0 ] || exit 70
+}
+
+op_import() { # CAPSULE PROJECT BUNDLE
+  local cap=$1 proj=$2 bundle=$3 vm
+  check_ids import "$cap" "$proj"
+  owned import "$cap" "$proj"
+  [ -f "$bundle" ] && [ ! -L "$bundle" ] || refuse import bundle-missing
+  git bundle verify "$bundle" >/dev/null 2>&1 || refuse import bundle-invalid
+  [ "$(vm_status "$cap")" = Running ] || unavailable import vm-not-running
+  vm=$(vm_of "$cap")
+  journal "start import $cap"
+  guest "$cap" bash -c 'cat > /tmp/import.bundle' < "$bundle" || failed import transfer-failed
+  guest "$cap" bash -c 'set -e; rm -rf /work/.import; git clone --quiet /tmp/import.bundle /work/.import; rm -rf /work/tree; mv /work/.import /work/tree; git -C /work/tree rev-parse HEAD' \
+    > "$caps/records/$cap.import.out" 2>&1 || failed import clone-failed
+  journal "end import $cap ok"
+  # head: what the host's bundle says (trusted); guest-head: what the guest reports (not trusted).
+  say import ok "capsule=$cap" "head=$(git bundle list-heads "$bundle" HEAD 2>/dev/null | cut -c 1-40)" \
+    "guest-head=$(tail -n 1 "$caps/records/$cap.import.out" | tr -cd '0-9a-f' | cut -c 1-40)"
+  : "$vm"
+}
+
+# ---------------------------------------------------------------- run exchange (the helper's capsule mode)
+#
+# The Supervisor's run directory (tree/, input/, output/, made by the service on the host) stays the
+# authoritative exchange point. push copies it into the guest (/work/tree, /input, an empty /output);
+# exec-argv runs the run's argument vector there; pull brings back /output, and for a writing run the
+# tree, as regular files and directories only, into a fresh directory beside the run's own.
+
+run_dir_ok() { # DIR
+  case $1 in /*) ;; *) return 1 ;; esac
+  case $1 in *[!A-Za-z0-9._/-]*) return 1 ;; esac
+  [ -d "$1" ] && [ ! -L "$1" ] && [ -d "$1/tree" ] && [ ! -L "$1/tree" ] && [ -d "$1/input" ] && [ ! -L "$1/input" ] &&
+    [ -d "$1/output" ] && [ ! -L "$1/output" ]
+}
+
+guest_user() { # the guest's development user (Lima: the host user's name)
+  if [ "$backend" = fixture ]; then echo root; else id -un; fi
+}
+
+op_push() { # CAPSULE PROJECT RUN-DIR exact|keep-ignored
+  local cap=$1 proj=$2 dir=$3 mode=$4 u
+  check_ids push "$cap" "$proj"
+  owned push "$cap" "$proj"
+  run_dir_ok "$dir" || refuse push run-dir-invalid
+  case $mode in exact | keep-ignored) ;; *) refuse push invalid-what ;; esac
+  [ "$(vm_status "$cap")" = Running ] || unavailable push vm-not-running
+  u=$(guest_user)
+  journal "start push $cap $mode"
+  # exact (verification, review): /work/tree becomes exactly the Supervisor's tree, nothing kept.
+  # keep-ignored (the Engineer's own work): the same, except what the project's .gitignore names
+  # (build output, caches) is kept from earlier runs; contents compared by checksum, not size and time.
+  if [ "$mode" = exact ]; then
+    COPYFILE_DISABLE=1 tar -C "$dir/tree" -cf - . 2>/dev/null |
+      guest "$cap" sudo -n -H -u "$u" -- bash -c 'set -e; rm -rf /work/tree; mkdir -p /work/tree; tar -C /work/tree -xf -' \
+      > "$caps/records/$cap.push.log" 2>&1 || failed push tree-transfer-failed
+  else
+    COPYFILE_DISABLE=1 tar -C "$dir/tree" -cf - . 2>/dev/null |
+      guest "$cap" sudo -n -H -u "$u" -- bash -c 'set -e; rm -rf /work/.incoming; mkdir -p /work/.incoming /work/tree; tar -C /work/.incoming -xf -; rsync -a --checksum --delete --filter=":- .gitignore" /work/.incoming/ /work/tree/; rm -rf /work/.incoming' \
+      > "$caps/records/$cap.push.log" 2>&1 || failed push tree-transfer-failed
+  fi
+  COPYFILE_DISABLE=1 tar -C "$dir/input" -cf - . 2>/dev/null |
+    guest "$cap" sudo -n -- bash -c "set -e; rm -rf /input /output; mkdir -p /input /output; tar -C /input -xf -; chown -R $u /input /output" \
+    >> "$caps/records/$cap.push.log" 2>&1 || failed push input-transfer-failed
+  journal "end push $cap ok"
+  say push ok "capsule=$cap"
+}
+
+op_exec_argv() { # CAPSULE PROJECT ARGV-FILE LIMIT OUT-DIR
+  local cap=$1 proj=$2 argv=$3 lim=$4 out=$5 rc u
+  check_ids exec-argv "$cap" "$proj"
+  owned exec-argv "$cap" "$proj"
+  [ -f "$argv" ] && [ ! -L "$argv" ] || refuse exec-argv argv-missing
+  [[ $lim =~ ^[0-9]{1,6}$ ]] && [ "$lim" -ge 1 ] && [ "$lim" -le "$(record_get "$cap" exec-limit)" ] || refuse exec-argv invalid-limit
+  case $out in /*) ;; *) refuse exec-argv out-dir-invalid ;; esac
+  [ -d "$out" ] && [ ! -L "$out" ] || refuse exec-argv out-dir-invalid
+  [ "$(vm_status "$cap")" = Running ] || unavailable exec-argv vm-not-running
+  u=$(guest_user)
+  journal "start exec-argv $cap"
+  # The argument vector (NUL-separated) arrives on standard input; the program gets /dev/null. A login
+  # shell, so the Engineer's own toolchains (installed in the guest) are on PATH. Each stream is capped
+  # on its way to the host (8 MiB + 1), so a guest cannot fill the host's disk.
+  local -a via
+  if [ "$backend" = fixture ]; then via=(docker exec -i "$(vm_of "$cap")"); else via=(limactl shell --workdir / "$(vm_of "$cap")" sudo -n -H -u "$u" --); fi
+  "${via[@]}" timeout --kill-after=10 "$lim" bash -lc 'cd /work/tree && mapfile -d "" -t a && exec "${a[@]}" < /dev/null' \
+    < "$argv" > >(head -c 8388609 > "$out/stdout") 2> >(head -c 8388609 > "$out/stderr") &
+  local pid=$! n=0 ended=exited
+  # The host's own deadline (the guest's timeout can be killed by the program it limits) and the
+  # helper's cancellation ("$out/.cancel"): the transport is killed and the guest's processes ended by
+  # stopping the VM. Its disk, so the Engineer's caches, is kept; a verification VM is restored anyway.
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 0.2
+    n=$((n + 1))
+    if [ -e "$out/.cancel" ]; then ended=cancelled; break; fi
+    if [ $n -gt $(((lim + 60) * 5)) ]; then ended=host-deadline; break; fi
+  done
+  if [ "$ended" != exited ]; then
+    kill "$pid" 2>/dev/null
+    [ "$backend" = lima ] && limactl stop --force "$(vm_of "$cap")" >/dev/null 2>&1
+  fi
+  wait "$pid" 2>/dev/null
+  rc=$?
+  sleep 0.2
+  journal "end exec-argv $cap exit=$rc ended=$ended"
+  if [ "$ended" = cancelled ]; then say exec-argv exited "capsule=$cap" "exit=$rc" "timed-out=no" "cancelled=yes"
+  elif [ "$ended" = host-deadline ] || [ $rc = 124 ] || [ $rc = 137 ]; then say exec-argv exited "capsule=$cap" "exit=$rc" "timed-out=yes"
+  elif [ "$(vm_status "$cap")" != Running ]; then
+    # The VM went away under the program: what it did is not known; never reported as its exit.
+    say exec-argv unavailable "capsule=$cap" "reason=vm-stopped-during-run"
+    exit 69
+  else say exec-argv exited "capsule=$cap" "exit=$rc" "timed-out=no"
+  fi
+}
+
+# A tar stream from the guest is checked before anything is extracted: regular files and directories
+# only (no symbolic or hard link, device or fifo), relative names without "..", at most 200000 entries,
+# no entry over 1 GiB and at most 4 GiB in all (sizes as the archive declares them, sparse ones too).
+tar_safe() { # FILE
+  local line n=0 name size total=0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    [ $n -le 200000 ] || return 1
+    case ${line:0:1} in - | d) ;; *) return 1 ;; esac
+    case $line in *" link to "* | *" -> "*) return 1 ;; esac
+    # The host's tar lists "MODE LINKS OWNER GROUP SIZE Mon DD HH:MM NAME": the size is the field just
+    # before the month's name.
+    size=$(printf '%s\n' "$line" | awk '{ for (i = 3; i <= NF; i++) if ($i ~ /^[A-Z][a-z][a-z]$/) { print $(i - 1); exit } }')
+    [[ $size =~ ^[0-9]{1,13}$ ]] || return 1
+    [ "$size" -le 1073741824 ] || return 1
+    total=$((total + size))
+    [ "$total" -le 4294967296 ] || return 1
+  done < <(tar -tvf "$1" 2>/dev/null)
+  while IFS= read -r name; do
+    case $name in /* | ../* | */../* | */.. | ..) return 1 ;; esac
+  done < <(tar -tf "$1" 2>/dev/null)
+  return 0
+}
+
+op_pull() { # CAPSULE PROJECT RUN-DIR output|tree
+  local cap=$1 proj=$2 dir=$3 what=$4 t u dest
+  check_ids pull "$cap" "$proj"
+  owned pull "$cap" "$proj"
+  run_dir_ok "$dir" || refuse pull run-dir-invalid
+  [ "$(vm_status "$cap")" = Running ] || unavailable pull vm-not-running
+  u=$(guest_user)
+  t=$dir/.pull.tar
+  rm -f "$t"
+  journal "start pull $cap $what"
+  case $what in
+    output)
+      guest "$cap" bash -c 'cd /output && tar -cf - .' 2>/dev/null | head -c 4294967297 > "$t" || { rm -f "$t"; failed pull transfer-failed; }
+      dest=$dir/.pulled-output ;;
+    tree)
+      # What the project's .gitignore names stays in the guest; the guest's .git never leaves it.
+      guest "$cap" sudo -n -H -u "$u" -- bash -c 'set -e; rm -rf /work/.outgoing; rsync -a --filter=":- .gitignore" --exclude=/.git /work/tree/ /work/.outgoing/; tar -C /work/.outgoing -cf - .; rm -rf /work/.outgoing' \
+        2>/dev/null | head -c 4294967297 > "$t" || { rm -f "$t"; failed pull transfer-failed; }
+      dest=$dir/.pulled-tree ;;
+    *) refuse pull invalid-what ;;
+  esac
+  # Capped on the way in (4 GiB + 1): a larger stream is refused, never stored in full.
+  [ "$(wc -c < "$t" | tr -d ' ')" -le 4294967296 ] || { rm -f "$t"; refuse pull too-large; }
+  tar_safe "$t" || { rm -f "$t"; refuse pull entry-not-allowed; }
+  rm -rf "$dest"
+  mkdir -m 700 "$dest"
+  tar -xof "$t" -C "$dest" 2>/dev/null || { rm -rf "$dest" "$t"; failed pull extract-failed; }
+  # Modes as the host needs them: readable and writable by this user, never writable by others.
+  chmod -R u+rwX,go-w "$dest" 2>/dev/null
+  rm -f "$t"
+  journal "end pull $cap $what ok"
+  say pull ok "capsule=$cap" "what=$what" "into=$dest"
+}
+
+# ---------------------------------------------------------------- invocation channels
+#
+# bind writes the invocation's binding (the Supervisor's own record of who may do what where);
+# serve then answers that invocation's channel and nothing else. The bridge in the provider's
+# container never names a capsule: the binding does.
+
+op_bind() { # INVOCATION CAPSULE PROJECT TRANSACTION ROLE LIMIT
+  local inv=$1 cap=$2 proj=$3 tx=$4 role=$5 lim=$6 dir ops
+  [[ $inv =~ $re_hex32 ]] || refuse bind invalid-invocation-id
+  check_ids bind "$cap" "$proj"
+  owned bind "$cap" "$proj"
+  [[ $tx =~ $re_hex32 ]] || refuse bind invalid-transaction-id
+  [[ $lim =~ ^[0-9]{1,6}$ ]] || refuse bind invalid-limit
+  # The per-command limit never exceeds the capsule's profile.
+  [ "$lim" -ge 1 ] && [ "$lim" -le "$(record_get "$cap" exec-limit)" ] || refuse bind invalid-limit
+  case $role in
+    implementer) ops="read list search write edit exec answer" ;;
+    planner | challenger | reviewer) ops="read list search answer" ;;
+    *) refuse bind invalid-role ;;
+  esac
+  dir=$caps/invocations/$inv
+  [ -e "$dir" ] && refuse bind invocation-exists
+  # Single writer (C-P5.6): at most one live implementer binding per project, checked and made under
+  # the project's lock so two binds cannot both pass the check.
+  [ -d "$caps/locks" ] || mkdir -m 700 "$caps/locks"
+  local lock=$caps/locks/bind-$proj other n=0 holder
+  until mkdir "$lock" 2>/dev/null; do
+    # A lock whose holder is gone (a runtime killed while binding) is stale.
+    holder=$(cat "$lock/pid" 2>/dev/null)
+    if [[ $holder =~ ^[0-9]+$ ]] && ! kill -0 "$holder" 2>/dev/null; then rm -rf "$lock"; continue; fi
+    n=$((n + 1))
+    [ $n -lt 100 ] || unavailable bind lock-busy
+    sleep 0.1
+  done
+  echo $$ > "$lock/pid"
+  if [ "$role" = implementer ]; then
+    for other in "$caps"/invocations/*/binding; do
+      [ -f "$other" ] || continue
+      if grep -qx "project $proj" "$other" && grep -qx "role implementer" "$other" && [ ! -e "$(dirname "$other")/closed" ]; then
+        rm -rf "$lock"
+        refuse bind writer-already-active
+      fi
+    done
+  fi
+  # requests/ is the only directory the provider's container may write (mounted read-write);
+  # results/ is mounted read-only there, so nothing but this runtime writes a result.
+  mkdir -m 700 "$dir" "$dir/channel" "$dir/private"
+  mkdir -m 777 "$dir/channel/requests"
+  mkdir -m 755 "$dir/channel/results"
+  chmod 711 "$dir/channel"
+  printf 'invocation %s\ncapsule %s\nproject %s\ntransaction %s\nrole %s\nops %s\nexec-limit %s\nbound %s\n' \
+    "$inv" "$cap" "$proj" "$tx" "$role" "$ops" "$lim" "$(date +%s)" > "$dir/binding"
+  rm -rf "$lock"
+  journal "bind $inv $cap $proj $tx $role"
+  say bind ok "invocation=$inv" "capsule=$cap" "role=$role" "requests=$dir/channel/requests" "results=$dir/channel/results"
+}
+
+# A result is made in the invocation's private directory and renamed into results/ (never written
+# through a name another process could have placed there).
+result_write() { # SEQ OUTCOME DETAIL [PAYLOAD-FILE]
+  local tmp=$inv_dir/private/result.$1
+  rm -f "$tmp"
+  printf '{"v": 1, "seq": %s, "host_outcome": "%s", "host_detail": "%s"}\n' "$1" "$2" "$3" > "$tmp"
+  [ -n "${4:-}" ] && [ -f "$4" ] && [ ! -L "$4" ] && cat "$4" >> "$tmp"
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$chan/results/$1.json"
+}
+
+serve_one() { # SEQ
+  local seq=$1 req=$inv_dir/private/req.$1 head reqop allowed=no o pid n=0 rc grace host_limit outlim=4194304
+  local raw=$inv_dir/private/raw.$1 outfile=$inv_dir/private/out.$1
+  local re_head='^\{"v": 1, "seq": ([0-9]{1,9}), "op": "([a-z_]{1,20})", "args": '
+  # First move the request out of the shared directory into the private one (rename moves a link
+  # itself, never its target), then check the moved copy: nothing can swap it after the check.
+  mv -f "$chan/requests/$seq.json" "$req" 2>/dev/null || return
+  if [ -L "$req" ] || [ ! -f "$req" ]; then rm -f "$req"; result_write "$seq" refused not-regular-file; return; fi
+  if [ "$(wc -c < "$req" | tr -d ' ')" -gt 8388608 ]; then rm -f "$req"; result_write "$seq" refused too-large; return; fi
+  head=$(head -c 120 "$req")
+  if [[ ! $head =~ $re_head ]] || [ "${BASH_REMATCH[1]}" != "$seq" ]; then
+    rm -f "$req"; result_write "$seq" refused malformed; return
+  fi
+  reqop=${BASH_REMATCH[2]}
+  for o in $b_ops; do [ "$o" = "$reqop" ] && allowed=yes; done
+  if [ "$allowed" != yes ]; then
+    rm -f "$req"; journal "refused $inv op $reqop role $b_role"
+    result_write "$seq" refused "op-not-authorized-for-role"
+    return
+  fi
+  if [ "$(vm_status "$b_cap")" != Running ]; then
+    rm -f "$req"; result_write "$seq" capsule-unavailable vm-not-running; return
+  fi
+  journal "start $inv $seq $reqop"
+  printf '%s start %s %s\n' "$(date +%s)" "$seq" "$reqop" >> "$inv_dir/ledger"
+  host_limit=$((b_lim + 30))
+  grace=0
+  # The guest learns the operation from the host (--op) and refuses a request that says otherwise.
+  # Started directly (not through a function), so $! is the transport itself and a kill ends it.
+  local -a via
+  if [ "$backend" = fixture ]; then via=(docker exec -i "$(vm_of "$b_cap")"); else via=(limactl shell --workdir / "$(vm_of "$b_cap")"); fi
+  "${via[@]}" /usr/bin/env python3 /opt/lockstep/guest-exec --workspace "$b_ws" --op "$reqop" \
+    --limit-seconds "$b_lim" --output-limit 1048576 < "$req" > >(head -c $((outlim + 1)) > "$raw") 2>/dev/null &
+  pid=$!
+  local outcome=completed detail=""
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 0.1
+    n=$((n + 1))
+    if [ -e "$chan/requests/$seq.cancel" ] && [ $grace = 0 ]; then
+      guest "$b_cap" /usr/bin/env python3 /opt/lockstep/guest-exec --cancel "$seq" >/dev/null 2>&1
+      outcome=cancelled; detail=cancelled-by-provider; grace=1
+    fi
+    if [ $n -gt $((host_limit * 10)) ]; then
+      guest "$b_cap" /usr/bin/env python3 /opt/lockstep/guest-exec --cancel "$seq" >/dev/null 2>&1
+      kill "$pid" 2>/dev/null
+      outcome=timed-out; detail=host-deadline
+      break
+    fi
+  done
+  wait "$pid" 2>/dev/null
+  rc=$?
+  rm -f "$chan/requests/$seq.cancel"
+  head -c $((outlim + 1)) "$raw" > "$outfile" 2>/dev/null
+  if [ "$outcome" = completed ]; then
+    if [ "$(wc -c < "$raw" | tr -d ' ')" -gt $outlim ]; then outcome=output-limit; detail=host-output-limit
+    elif [ "$(vm_status "$b_cap")" != Running ]; then outcome=effect-unknown; detail=vm-stopped-during-call
+    elif [ ! -s "$outfile" ]; then outcome=effect-unknown; detail="no-answer-exit-$rc"
+    fi
+  fi
+  [ "$outcome" = output-limit ] && head -c $outlim "$raw" > "$outfile"
+  result_write "$seq" "$outcome" "$detail" "$outfile"
+  printf '%s end %s %s %s\n' "$(date +%s)" "$seq" "$reqop" "$outcome" >> "$inv_dir/ledger"
+  journal "end $inv $seq $outcome"
+  rm -f "$outfile" "$raw" "$req"
+}
+
+op_serve() { # INVOCATION
+  inv=$1
+  [[ $inv =~ $re_hex32 ]] || refuse serve invalid-invocation-id
+  inv_dir=$caps/invocations/$inv
+  [ -f "$inv_dir/binding" ] || refuse serve invocation-unknown
+  [ -e "$inv_dir/closed" ] && refuse serve invocation-closed
+  chan=$inv_dir/channel
+  b_cap=$(sed -n 's/^capsule //p' "$inv_dir/binding")
+  b_role=$(sed -n 's/^role //p' "$inv_dir/binding")
+  b_ops=$(sed -n 's/^ops //p' "$inv_dir/binding")
+  b_lim=$(sed -n 's/^exec-limit //p' "$inv_dir/binding")
+  b_ws=/work/tree
+  [ "$backend" = fixture ] && b_ws=/tmp/work
+  local stopping=0 name seq holder
+  # One server per invocation: a lock holding the server's PID; a lock whose holder is gone is stale.
+  if ! mkdir "$inv_dir/serving" 2>/dev/null; then
+    holder=$(cat "$inv_dir/serving/pid" 2>/dev/null)
+    if [[ $holder =~ ^[0-9]+$ ]] && kill -0 "$holder" 2>/dev/null; then refuse serve already-serving; fi
+    rm -rf "$inv_dir/serving"
+    mkdir "$inv_dir/serving" || refuse serve already-serving
+  fi
+  echo $$ > "$inv_dir/serving/pid"
+  trap 'stopping=1' TERM INT
+  journal "serve $inv"
+  # An earlier server that stopped with a call in flight (only now, under the lock, can none be
+  # running): that call's effect is unknown and it is answered as such, never replayed (C-P5.9 R2).
+  for name in "$inv_dir"/private/req.*; do
+    [ -f "$name" ] || continue
+    seq=${name##*.}
+    [[ $seq =~ ^[0-9]{1,9}$ ]] || { rm -f "$name"; continue; }
+    result_write "$seq" effect-unknown executor-restarted
+    printf '%s end %s - effect-unknown\n' "$(date +%s)" "$seq" >> "$inv_dir/ledger"
+    rm -f "$name" "$inv_dir/private/raw.$seq" "$inv_dir/private/out.$seq"
+  done
+  while [ $stopping = 0 ] && [ ! -e "$inv_dir/closed" ]; do
+    for name in "$chan"/requests/*.json; do
+      [ -e "$name" ] || continue
+      name=${name##*/}
+      [[ $name =~ ^([0-9]{1,9})\.json$ ]] || { rm -f "$chan/requests/$name"; continue; }
+      seq=${BASH_REMATCH[1]}
+      if [ -e "$chan/results/$seq.json" ]; then rm -f "$chan/requests/$name"; continue; fi
+      serve_one "$seq"
+    done
+    sleep 0.05
+  done
+  rm -rf "$inv_dir/serving"
+  say serve ok "invocation=$inv"
+}
+
+case $op in
+  provision) [ $# -ge 2 ] && [ $# -le 3 ] || exit 64; op_provision "$@" ;;
+  start | stop | inspect | destroy) [ $# = 2 ] || exit 64; op_lifecycle "$op" "$@" ;;
+  snapshot | restore) [ $# = 3 ] || exit 64; op_snapshot "$op" "$@" ;;
+  reconfigure) [ $# = 2 ] || exit 64; op_reconfigure "$@" ;;
+  run) [ $# = 4 ] || exit 64; op_run "$@" ;;
+  import) [ $# = 3 ] || exit 64; op_import "$@" ;;
+  push) [ $# = 4 ] || exit 64; op_push "$@" ;;
+  exec-argv) [ $# = 5 ] || exit 64; op_exec_argv "$@" ;;
+  pull) [ $# = 4 ] || exit 64; op_pull "$@" ;;
+  bind) [ $# = 6 ] || exit 64; op_bind "$@" ;;
+  serve) [ $# = 1 ] || exit 64; op_serve "$@" ;;
+  close) [ $# = 1 ] && [[ $1 =~ $re_hex32 ]] && [ -d "$caps/invocations/$1" ] || exit 64; : > "$caps/invocations/$1/closed"; say close ok "invocation=$1" ;;
+  *) echo "capsule-runtime: unknown operation" >&2; exit 64 ;;
+esac

@@ -10,87 +10,115 @@ module Lockstep.Persistence.CommandCenter
   , recentJobs
   ) where
 
+import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Text qualified as T
 import Data.Time qualified as Time
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
-import Orville.PostgreSQL.Raw.RawSql qualified as RawSql
+import Orville.PostgreSQL.Expr qualified as Expr
+
+import Lockstep.Kernel.Identity (JobId, ReceiptId)
+import Lockstep.Persistence.Commands
+  ( receiptAcceptedAtField
+  , receiptActorField
+  , receiptIdField
+  , receiptKindField
+  , receiptOutcomeField
+  , receiptRevisionField
+  , receiptTable
+  )
+import Lockstep.Persistence.Fields (countOf, hexDigest, joinedOn, qualified, qualifiedOrder, qualifiedReference, selectJoined, tableReference)
+import Lockstep.Persistence.Jobs
+  ( JobState
+  , jobErrorField
+  , jobIdField
+  , jobOutcomeDigestField
+  , jobReceiptField
+  , jobStateField
+  , jobStepsDoneField
+  , jobStepsTotalField
+  , jobTable
+  )
 
 data ActivityRow
   = ActivityRow
-  { activityId :: Int64
+  { activityId :: ReceiptId
   , activityKind :: T.Text
   , activityOutcome :: T.Text
   , activityActor :: T.Text
   , activityAcceptedAt :: Time.UTCTime
   , activityRevision :: Int64
-  , activityJobState :: Maybe T.Text
+  , activityJobState :: Maybe JobState
   }
 
 data JobEvidenceRow
   = JobEvidenceRow
-  { evidenceJobId :: Int64
-  , evidenceReceiptId :: Int64
-  , evidenceState :: T.Text
+  { evidenceJobId :: JobId
+  , evidenceReceiptId :: ReceiptId
+  , evidenceState :: JobState
   , evidenceStepsDone :: Int32
   , evidenceStepsTotal :: Int32
   , evidenceError :: Maybe T.Text
   , evidenceDigestHex :: Maybe T.Text
   }
 
-counts :: O.MonadOrville m => String -> m [(T.Text, Int32)]
-counts query =
-  O.executeAndDecode
-    O.SelectQuery
-    (RawSql.fromString query)
-    ( O.annotateSqlMarshallerEmptyAnnotation $
-        (,)
-          <$> O.marshallField fst (O.unboundedTextField "k")
-          <*> O.marshallField snd (O.integerField "n")
-    )
+-- | Rows per value of one column of a table.
+countsBy :: O.MonadOrville m => O.TableDefinition key w r -> O.FieldDefinition O.NotNull a -> m [(a, Int32)]
+countsBy table field =
+  selectJoined
+    ((,) <$> O.marshallReadOnlyField field <*> countOf "n")
+    (tableReference table)
+    (O.groupBy (Expr.groupByColumnsExpr (Expr.unqualified (O.fieldColumnName field) :| [])))
 
-jobCounts :: O.MonadOrville m => m [(T.Text, Int32)]
+jobCounts :: O.MonadOrville m => m [(JobState, Int32)]
 jobCounts =
-  counts "SELECT state AS k, count(*)::integer AS n FROM lockstep_jobs GROUP BY state"
+  countsBy jobTable jobStateField
 
 receiptCounts :: O.MonadOrville m => m [(T.Text, Int32)]
 receiptCounts =
-  counts "SELECT outcome AS k, count(*)::integer AS n FROM lockstep_command_receipts GROUP BY outcome"
+  countsBy receiptTable receiptOutcomeField
 
 -- | The newest 20 receipts, with the state of their job if any.
 recentActivity :: O.MonadOrville m => m [ActivityRow]
 recentActivity =
-  O.executeAndDecode
-    O.SelectQuery
-    ( RawSql.fromString
-        "SELECT r.id, r.command_kind, r.outcome, r.actor, r.accepted_at, r.resulting_revision, j.state AS job_state FROM lockstep_command_receipts r LEFT JOIN lockstep_jobs j ON j.receipt_id = r.id ORDER BY r.id DESC LIMIT 20"
+  selectJoined
+    ( ActivityRow
+        <$> receiptColumn receiptIdField
+        <*> receiptColumn receiptKindField
+        <*> receiptColumn receiptOutcomeField
+        <*> receiptColumn receiptActorField
+        <*> receiptColumn receiptAcceptedAtField
+        <*> receiptColumn receiptRevisionField
+        <*> O.marshallQualifyFields (O.tableIdentifier jobTable) (O.marshallReadOnlyField (O.nullableField jobStateField))
     )
-    ( O.annotateSqlMarshallerEmptyAnnotation $
-        ActivityRow
-          <$> O.marshallField activityId (O.bigIntegerField "id")
-          <*> O.marshallField activityKind (O.unboundedTextField "command_kind")
-          <*> O.marshallField activityOutcome (O.unboundedTextField "outcome")
-          <*> O.marshallField activityActor (O.unboundedTextField "actor")
-          <*> O.marshallField activityAcceptedAt (O.utcTimestampField "accepted_at")
-          <*> O.marshallField activityRevision (O.bigIntegerField "resulting_revision")
-          <*> O.marshallField activityJobState (O.nullableField (O.unboundedTextField "job_state"))
+    ( joinedOn
+        receiptTable
+        [
+          ( Expr.leftJoinType
+          , tableReference jobTable
+          , Expr.equals (qualifiedReference (qualified jobTable jobReceiptField)) (qualifiedReference (qualified receiptTable receiptIdField))
+          )
+        ]
     )
+    (O.orderBy (qualifiedOrder (qualified receiptTable receiptIdField) O.descendingOrder) <> O.limit 20)
+
+-- | A column of @lockstep_command_receipts@, read from the join.
+receiptColumn :: O.FieldDefinition nullability a -> O.SqlMarshaller w a
+receiptColumn field =
+  O.marshallQualifyFields (O.tableIdentifier receiptTable) (O.marshallReadOnlyField field)
 
 -- | The newest 20 jobs with their stored outcome digest (hex), if any.
 recentJobs :: O.MonadOrville m => m [JobEvidenceRow]
 recentJobs =
-  O.executeAndDecode
-    O.SelectQuery
-    ( RawSql.fromString
-        "SELECT id, receipt_id, state, steps_done, steps_total, last_error, encode(outcome_digest, 'hex') AS digest_hex FROM lockstep_jobs ORDER BY id DESC LIMIT 20"
+  selectJoined
+    ( JobEvidenceRow
+        <$> O.marshallReadOnlyField jobIdField
+        <*> O.marshallReadOnlyField jobReceiptField
+        <*> O.marshallReadOnlyField jobStateField
+        <*> O.marshallReadOnlyField jobStepsDoneField
+        <*> O.marshallReadOnlyField jobStepsTotalField
+        <*> O.marshallReadOnlyField jobErrorField
+        <*> (fmap hexDigest <$> O.marshallReadOnlyField jobOutcomeDigestField)
     )
-    ( O.annotateSqlMarshallerEmptyAnnotation $
-        JobEvidenceRow
-          <$> O.marshallField evidenceJobId (O.bigIntegerField "id")
-          <*> O.marshallField evidenceReceiptId (O.bigIntegerField "receipt_id")
-          <*> O.marshallField evidenceState (O.unboundedTextField "state")
-          <*> O.marshallField evidenceStepsDone (O.integerField "steps_done")
-          <*> O.marshallField evidenceStepsTotal (O.integerField "steps_total")
-          <*> O.marshallField evidenceError (O.nullableField (O.unboundedTextField "last_error"))
-          <*> O.marshallField evidenceDigestHex (O.nullableField (O.unboundedTextField "digest_hex"))
-    )
+    (tableReference jobTable)
+    (O.orderBy (O.orderByField jobIdField O.descendingOrder) <> O.limit 20)

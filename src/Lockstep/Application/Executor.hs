@@ -32,6 +32,7 @@ import Lockstep.Application.Ledger
   , recoverableIntents
   , runnableIntents
   )
+import Lockstep.Application.LedgerRefusal (LedgerRefusal (AdapterMismatch, InvalidRecord, NoAdapter), RecordRule (ExecutorRule), refusalFailure)
 import Lockstep.Effects.Executor (EffectAdapter (..), invokeAdapter)
 import Lockstep.Kernel.Effect (EffectClass (..), Intent (..), IntentState (..), OperationId, Settlement (..), effectSpecClass, effectSpecName)
 
@@ -62,9 +63,9 @@ data RunOutcome
   | RanUnknown T.Text
   deriving (Eq, Show)
 
-refusal :: String -> String -> Either LedgerFailure a
-refusal code message =
-  Left (LedgerRefused (T.pack code) (T.pack message))
+refusal :: LedgerRefusal -> Either LedgerFailure a
+refusal =
+  Left . refusalFailure
 
 -- | X4.
 validExecutor :: Executor -> Bool
@@ -85,15 +86,15 @@ validExecutor executor =
 adapterFor :: Executor -> Intent -> Either LedgerFailure EffectAdapter
 adapterFor executor intent =
   case L.find ((== effectSpecName (intentSpec intent)) . effectSpecName . adapterSpec) (executorAdapters executor) of
-    Nothing -> refusal "no-adapter" "this executor has no adapter for the effect"
+    Nothing -> refusal NoAdapter
     Just adapter
-      | adapterSpec adapter /= intentSpec intent -> refusal "adapter-mismatch" "the adapter implements another spec than the intent declares"
+      | adapterSpec adapter /= intentSpec intent -> refusal AdapterMismatch
       | otherwise -> Right adapter
 
 -- | Loads the intent and finds its adapter, after the configuration check.
 prepared :: DatabaseRuntime -> Executor -> OperationId -> IO (Either LedgerFailure EffectAdapter)
 prepared runtime executor operation
-  | not (validExecutor executor) = pure (refusal "invalid-record" "an executor needs an owner, a lease of 1-3600 s, a timeout below the lease, and one adapter per spec")
+  | not (validExecutor executor) = pure (refusal (InvalidRecord ExecutorRule))
   | otherwise = fmap (>>= adapterFor executor) (loadIntent runtime operation)
 
 executeIntent :: DatabaseRuntime -> Executor -> ExecutorFaults -> OperationId -> IO (Either LedgerFailure RunOutcome)
@@ -155,31 +156,42 @@ executed; else nothing happens.
 -}
 executeOnce :: DatabaseRuntime -> Executor -> ExecutorFaults -> IO (Either LedgerFailure (Maybe (OperationId, RunOutcome)))
 executeOnce runtime executor faults
-  | not (validExecutor executor) = pure (refusal "invalid-record" "an executor needs an owner, a lease of 1-3600 s, a timeout below the lease, and one adapter per spec")
+  | not (validExecutor executor) = pure (refusal (InvalidRecord ExecutorRule))
   | otherwise = do
-      recoverable <- recoverableIntents runtime >>= traverse (findM recoverableHere)
+      recoverable <- recoverableIntents runtime >>= firstWhere recoverableHere
       case recoverable of
         Left failure -> pure (Left failure)
         Right (Just operation) -> fmap (fmap (Just . (,) operation)) (recoverAndExecute runtime executor faults operation)
         Right Nothing -> do
-          runnable <- runnableIntents runtime >>= firstHandled
+          runnable <- runnableIntents runtime >>= firstWhere handled
           case runnable of
             Left failure -> pure (Left failure)
             Right (Just operation) -> fmap (fmap (Just . (,) operation)) (executeIntent runtime executor faults operation)
             Right Nothing -> pure (Right Nothing)
  where
   names = fmap (effectSpecName . adapterSpec) (executorAdapters executor)
-  handled operation =
-    either (const False) (\intent -> effectSpecName (intentSpec intent) `L.elem` names) <$> loadIntent runtime operation
-  firstHandled = traverse (findM handled)
+  handled intent =
+    effectSpecName (intentSpec intent) `L.elem` names
   -- C-P2.9-R1 M6: a queryable effect is left to reconciliation, which may prove its outcome.
-  recoverableHere operation =
-    either (const False) (\intent -> effectSpecName (intentSpec intent) `L.elem` names && effectSpecClass (intentSpec intent) /= Queryable) <$> loadIntent runtime operation
+  recoverableHere intent =
+    handled intent && effectSpecClass (intentSpec intent) /= Queryable
+  firstWhere predicate listed =
+    case listed of
+      Left failure -> pure (Left failure)
+      Right operations -> firstIntent runtime predicate operations
 
-findM :: (a -> IO Bool) -> [a] -> IO (Maybe a)
-findM predicate xs =
-  case xs of
-    [] -> pure Nothing
-    x : rest -> do
-      yes <- predicate x
-      if yes then pure (Just x) else findM predicate rest
+{- | The first listed intent that passes the check. An intent that cannot be
+loaded (corrupt, or the database failed) is the pass's failure: it is never
+skipped as though nothing were there to do.
+-}
+firstIntent :: DatabaseRuntime -> (Intent -> Bool) -> [OperationId] -> IO (Either LedgerFailure (Maybe OperationId))
+firstIntent runtime predicate operations =
+  case operations of
+    [] -> pure (Right Nothing)
+    operation : rest -> do
+      loaded <- loadIntent runtime operation
+      case loaded of
+        Left failure -> pure (Left failure)
+        Right intent
+          | predicate intent -> pure (Right (Just operation))
+          | otherwise -> firstIntent runtime predicate rest

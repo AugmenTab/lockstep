@@ -1,0 +1,1 @@
+capsule-runtime 1 provision ok capsule=vmq1 project=vmq-project backend=lima profile=small cpus=2 memory-gib=4 disk-gib=30 status=Running

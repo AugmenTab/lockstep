@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE RoleAnnotations #-}
 
 {- | SDLC Profile policy (contract C-P2.3, DG-05): declarative, versioned
@@ -9,6 +10,7 @@ function is a value supplied by the boundary.
 module Lockstep.Kernel.Profile
   ( -- * Digests
     ContentDigest
+  , contentDigestFromBytes
   , mkContentDigest
   , contentDigestText
   , Hasher (..)
@@ -68,6 +70,7 @@ module Lockstep.Kernel.Profile
   , gateApplies
   , ResolutionInput (..)
   , LayerLevel (..)
+  , layerName
   , EffectiveProfile
   , resolveProfile
   , effectiveSources
@@ -112,18 +115,23 @@ module Lockstep.Kernel.Profile
   ) where
 
 import Control.Monad (foldM)
+import Data.ByteArray.Encoding (Base (Base16), convertToBase)
+import Data.ByteArray.Sized (SizedByteArray, unSizedByteArray)
+import Data.ByteString qualified as BS
 import Data.Char qualified as Char
 import Data.List qualified as L
 import Data.Maybe (mapMaybe)
 import Data.Ord (Down (..))
 import Data.Text qualified as T
+import Data.Text.Encoding qualified as TE
 import Data.Time (UTCTime)
 import Data.Time.Format.ISO8601 (iso8601Show)
 import Flipstone.Prelude
 import Text.Show (Show, show)
 
+import Lockstep.Kernel.Enum (parseEnumText)
 import Lockstep.Kernel.Identity (WorkOrderId (..), WorkUnitId (..), uuidText)
-import Lockstep.Kernel.Transition (Principal (..))
+import Lockstep.Kernel.Transition (Principal (..), principalLabel)
 import Lockstep.Kernel.WorkOrder (WorkOrderKind, parseWorkOrderKind, workOrderKindName)
 import Lockstep.Kernel.WorkUnit (AdmittedWorkUnit (..), WorkUnitRequest (..))
 
@@ -134,6 +142,15 @@ newtype ContentDigest
   = ContentDigest T.Text
   deriving (Eq, Ord, Show)
 
+{- | The digest a 'Hasher' computed, from its 32 bytes (the length is in the
+type): their lowercase hex encoding, always 64 characters. Total; the
+boundary's hash function is trusted to be SHA-256, as everywhere else.
+-}
+contentDigestFromBytes :: SizedByteArray 32 BS.ByteString -> ContentDigest
+contentDigestFromBytes =
+  ContentDigest . TE.decodeLatin1 . convertToBase Base16 . unSizedByteArray
+
+-- | Parses stored or supplied text: exactly 64 lowercase hex characters.
 mkContentDigest :: T.Text -> Maybe ContentDigest
 mkContentDigest text =
   if T.length text == 64 && T.all (\c -> Char.isDigit c || (c >= 'a' && c <= 'f')) text
@@ -345,8 +362,8 @@ parsePathClass =
   parseBy pathClassName
 
 parseBy :: (Enum a, Bounded a) => (a -> T.Text) -> T.Text -> Maybe a
-parseBy name text =
-  L.find ((== text) . name) [minBound .. maxBound]
+parseBy =
+  parseEnumText
 
 -- Raw documents ---------------------------------------------------------------
 
@@ -575,7 +592,8 @@ installationBaseline =
 
 -- Rendering (§3) --------------------------------------------------------------
 
-showText :: Show a => a -> T.Text
+-- | A number in the canonical texts: its decimal digits (base's 'show' for 'Int', a fixed format).
+showText :: Int -> T.Text
 showText =
   T.pack . show
 
@@ -1244,7 +1262,7 @@ renderProfileRefusal refusal =
     ProfileConflict subject -> T.pack "two sources at one level disagree on " <> subject
     WeakensNonBehaviouralPolicy -> T.pack "a later layer cannot permit non-behavioural work again"
     ProfileUnavailable p -> T.pack "the specialization profile " <> profileIdText p <> T.pack " is not registered"
-    UntrustedClassification p -> T.pack "only a human may classify work, not " <> showText p
+    UntrustedClassification p -> T.pack "only a human may classify work, not " <> principalLabel p
     NonBehaviouralRefused reason -> reason
     NonBehaviouralViolated paths -> T.pack "non-behavioural work changed " <> joined pathClassName paths
     ExceptionNotHuman -> T.pack "only a human may grant an exception"
@@ -1253,6 +1271,6 @@ renderProfileRefusal refusal =
     ExceptionNotPermitted g -> T.pack "gate " <> gateIdText g <> T.pack " has no exception path"
     ExceptionOutOfScope -> T.pack "the exception is for other work"
     ExceptionProfileMismatch -> T.pack "the exception was granted against another effective profile"
-    BindingNotAuthorized p -> T.pack "not authorized: " <> showText p
+    BindingNotAuthorized p -> T.pack "not authorized: " <> principalLabel p
     InvalidRecord reason -> reason
     InvalidFacts reason -> T.pack "invalid work facts: " <> reason

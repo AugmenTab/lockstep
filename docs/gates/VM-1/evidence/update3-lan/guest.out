@@ -1,0 +1,9 @@
+tcp 192.168.5.2:18765 closed
+tcp host.lima.internal:18765 closed
+tcp 192.168.1.197:18765 closed
+tcp 192.168.5.2:18766 closed
+tcp 192.168.1.197:18766 open
+dns-ok
+https=401
+docker-run-ok
+apt-download-ok

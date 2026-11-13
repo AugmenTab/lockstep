@@ -33,6 +33,8 @@ import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (Show, show)
 
+import Lockstep.Kernel.Enum (parseEnumText)
+
 newtype ProjectName
   = ProjectName T.Text
   deriving (Eq, Show)
@@ -167,8 +169,8 @@ setupStateCode s =
       SetupFailed -> "setup-failed"
 
 parseSetupState :: T.Text -> Maybe SetupState
-parseSetupState code =
-  L.find ((== code) . setupStateCode) [minBound .. maxBound]
+parseSetupState =
+  parseEnumText setupStateCode
 
 -- | The refusal codes of P3.5 itself (the C-P2.1 registration codes come from 'Lockstep.Kernel.Repository').
 projectRefusalCodes :: [T.Text]
@@ -253,7 +255,10 @@ quotedText text =
       '\n' -> T.pack "\\n"
       _ -> T.singleton c
 
--- | The plain words for a refusal code; a general sentence for a code without its own words.
+{- | The plain words for a refusal code; a general sentence for a code without
+its own words. The code is text: a stored setup refusal or a code the frozen
+@Either Text@ project boundary returns, which may come from another version.
+-}
 refusalWords :: T.Text -> T.Text
 refusalWords code =
   fromMaybe

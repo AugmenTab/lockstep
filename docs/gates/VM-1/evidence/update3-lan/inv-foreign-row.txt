@@ -1,0 +1,3 @@
+Active Internet connections (including servers)
+Proto Recv-Q Send-Q  Local Address                                 Foreign Address                               (state)          rxbytes      txbytes  rhiwat  shiwat          process:pid    state  options           gencnt    flags   flags1 usecnt rtncnt fltrs
+udp4       0      0  192.168.1.197.54851    185.125.190.56.123                          128           48  786896    9216          limactl:43684  00102 00000020 00000000012fb4bc 00000000 04200900      1      0 000002

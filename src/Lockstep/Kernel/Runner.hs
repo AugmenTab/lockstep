@@ -17,6 +17,14 @@ module Lockstep.Kernel.Runner
   , streamName
   , RunOutcome (..)
   , outcomeName
+  , OutcomeKind (..)
+  , outcomeKind
+  , outcomeKindName
+  , RoleEnding (..)
+  , roleEndingText
+  , roleEndingFromText
+  , CommandEnding (..)
+  , commandEndingText
   , outcomeSucceeded
   ) where
 
@@ -185,16 +193,105 @@ data RunOutcome
 kept a stream open past the grace period; what it printed is not trusted.
 -}
 outcomeName :: RunOutcome -> T.Text
-outcomeName outcome =
+outcomeName =
+  outcomeKindName . outcomeKind
+
+{- | Which way a run ended, without its detail (the exit status, the stream,
+the reason): what records and evidence keep as a run's @outcome@.
+-}
+data OutcomeKind
+  = KindExited
+  | KindTimedOut
+  | KindOutputLimit
+  | KindOutputHeld
+  | KindCancelled
+  | KindLaunchFailed
+  | KindProviderStopped
+  deriving (Eq, Show, Enum, Bounded)
+
+outcomeKind :: RunOutcome -> OutcomeKind
+outcomeKind outcome =
+  case outcome of
+    Exited _ -> KindExited
+    TimedOut -> KindTimedOut
+    OutputLimit _ -> KindOutputLimit
+    OutputHeld _ -> KindOutputHeld
+    Cancelled -> KindCancelled
+    LaunchFailed _ -> KindLaunchFailed
+    ProviderStopped _ -> KindProviderStopped
+
+{- | How a recorded role invocation ended (C-P4.6 E4, C-P4.R1 R-I1), as its
+@outcome@ column keeps it ('roleEndingText'). A role's and a command's
+endings share that column with different words, so each is read as the kind
+of invocation it belongs to.
+-}
+data RoleEnding
+  = -- | @answered@: it answered, and its answer is kept with it
+    RoleEndedAnswered
+  | -- | @uncertain@: found started and never finished, settled after a restart
+    RoleEndedUnsettled
+  | -- | @uncertain CODE@: it ran, but how it ended is not known
+    RoleEndedUncertain T.Text
+  | -- | any other word: the code of a failure that is known
+    RoleEndedFailed T.Text
+  deriving (Eq, Show)
+
+roleEndingText :: RoleEnding -> T.Text
+roleEndingText ending =
+  case ending of
+    RoleEndedAnswered -> answeredWord
+    RoleEndedUnsettled -> uncertainWord
+    RoleEndedUncertain code -> uncertainWord <> T.pack " " <> code
+    RoleEndedFailed code -> code
+
+{- | The one decoder of 'roleEndingText'. Total: a word that is neither
+@answered@ nor @uncertain@ (alone or with a code) is a known failure's code.
+No failure code Lockstep makes is one of those words.
+-}
+roleEndingFromText :: T.Text -> RoleEnding
+roleEndingFromText text
+  | text == answeredWord = RoleEndedAnswered
+  | text == uncertainWord = RoleEndedUnsettled
+  | Just code <- T.stripPrefix (uncertainWord <> T.pack " ") text = RoleEndedUncertain code
+  | otherwise = RoleEndedFailed text
+
+answeredWord :: T.Text
+answeredWord =
+  T.pack "answered"
+
+uncertainWord :: T.Text
+uncertainWord =
+  T.pack "uncertain"
+
+-- | How a recorded command invocation ended, as its @outcome@ column keeps it ('commandEndingText').
+data CommandEnding
+  = -- | @interrupted@: found started and never finished, settled after a restart (it runs again)
+    CommandInterrupted
+  | -- | @runner-failed@: the runner refused it, or its result is not known
+    CommandRunnerFailed
+  | -- | it ran, and ended this way ('outcomeKindName')
+    CommandRan OutcomeKind
+  deriving (Eq, Show)
+
+commandEndingText :: CommandEnding -> T.Text
+commandEndingText ending =
+  case ending of
+    CommandInterrupted -> T.pack "interrupted"
+    CommandRunnerFailed -> T.pack "runner-failed"
+    CommandRan kind -> outcomeKindName kind
+
+-- | The canonical name of an outcome kind ('outcomeName' is it for a run's outcome).
+outcomeKindName :: OutcomeKind -> T.Text
+outcomeKindName kind =
   T.pack $
-    case outcome of
-      Exited _ -> "exited"
-      TimedOut -> "timed-out"
-      OutputLimit _ -> "output-limit"
-      OutputHeld _ -> "output-held"
-      Cancelled -> "cancelled"
-      LaunchFailed _ -> "launch-failed"
-      ProviderStopped _ -> "provider-stopped"
+    case kind of
+      KindExited -> "exited"
+      KindTimedOut -> "timed-out"
+      KindOutputLimit -> "output-limit"
+      KindOutputHeld -> "output-held"
+      KindCancelled -> "cancelled"
+      KindLaunchFailed -> "launch-failed"
+      KindProviderStopped -> "provider-stopped"
 
 outcomeSucceeded :: RunOutcome -> Bool
 outcomeSucceeded outcome =

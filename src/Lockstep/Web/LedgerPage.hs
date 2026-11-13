@@ -12,7 +12,6 @@ module Lockstep.Web.LedgerPage
 import Brigid.HTML.Attributes qualified as A
 import Brigid.HTML.Elements qualified as E
 import Brigid.HTML.Types qualified as HTML
-import Brigid.Types qualified as B
 import Data.List qualified as L
 import Data.Text qualified as T
 import Data.Time qualified as Time
@@ -41,6 +40,7 @@ import Lockstep.Kernel.EffectView (effectStatusClass, effectStatusLabel)
 import Lockstep.Kernel.Identity (TicketId (..), WorkOrderId (..), uuidText)
 import Lockstep.Kernel.WorkOrder (WorkOrderState (..), workOrderStateName)
 import Lockstep.Web.Components.Page (page)
+import Lockstep.Web.Routes.Operator qualified as Operator
 
 txt :: String -> T.Text
 txt =
@@ -68,9 +68,9 @@ ledgerPage p =
           , E.p
               []
               [ E.text (txt ("Read from the database at " <> Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S UTC" (projectionTime p) <> ". Read-only. "))
-              , E.a [A.href (B.mkRawURL (txt "/operator/ledger"))] [E.text (txt "Refresh")]
+              , E.a [A.href Operator.ledgerLink] [E.text (txt "Refresh")]
               , E.text (txt " · ")
-              , E.a [A.href (B.mkRawURL (txt "/operator/center"))] [E.text (txt "Command center")]
+              , E.a [A.href Operator.centerLink] [E.text (txt "Command center")]
               ]
           , E.p
               [cls (txt "ls-muted")]

@@ -13,6 +13,7 @@ module Lockstep.Application.Database
   , Readiness (..)
   , classifyConnectionFailure
   , readinessCode
+  , reasonDiagnosis
   , revisionNumber
   , checkReadiness
   , withDatabase
@@ -20,8 +21,12 @@ module Lockstep.Application.Database
   , schemaStatus
   , MigrateError (..)
   , renderMigrateError
+  , MigrateReport (..)
+  , renderMigrateReport
   , runMigrations
+  , runMigrationsReporting
   , migrateWithPolicy
+  , migrateWithPolicyReporting
   , ServiceStarts (..)
   , recordServiceStart
   , readServiceStarts
@@ -31,7 +36,8 @@ module Lockstep.Application.Database
   , withSessionLock
   ) where
 
-import Control.Exception (SomeAsyncException, SomeException, finally, fromException, throwIO, try)
+import Control.Exception (SomeAsyncException, SomeException, displayException, finally, fromException, throwIO, try)
+import Data.Bifunctor (first)
 import Data.ByteString.Char8 qualified as BS8
 import Data.List qualified as L
 import Data.Maybe (isJust)
@@ -39,6 +45,7 @@ import Data.Text qualified as T
 import Data.Time qualified as Time
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
+import Orville.PostgreSQL.Marshall.MarshallError (MarshallError)
 import Orville.PostgreSQL.Raw.Connection qualified as Connection
 import System.Directory (doesFileExist, getFileSize, getModificationTime)
 import System.IO (FilePath)
@@ -47,6 +54,7 @@ import Text.Show (Show, show)
 import Lockstep.Foundation.Cli (BackupPolicy (..))
 import Lockstep.Foundation.SystemConfig (DatabaseConfig)
 import Lockstep.Persistence.Connection (connectionString, poolOptions)
+import Lockstep.Persistence.Integrity (IntegrityViolation (..))
 import Lockstep.Persistence.Migrate (MigrateFailure (..), applyPending)
 import Lockstep.Persistence.Migration
   ( Migration (..)
@@ -82,6 +90,10 @@ data NotReadyReason
   | SchemaBehind Int
   | SchemaInvalid MigrationRefusal
   | DatabaseError
+  | {- | Stored data the application's types or invariants reject (a row that
+    does not decode, an 'IntegrityViolation'); the diagnosis is kept.
+    -}
+    DatabaseCorrupt T.Text
   deriving (Eq, Show)
 
 data Readiness
@@ -127,6 +139,16 @@ reasonCode reason =
     SchemaBehind n -> "schema_behind " <> T.pack (show n)
     SchemaInvalid refusal -> "schema_invalid " <> refusalCode refusal
     DatabaseError -> "database_error"
+    DatabaseCorrupt _ -> "database_corrupt"
+
+{- | What is known about a reason, for a log or an operator: its code, then
+the diagnosis of corrupt data.
+-}
+reasonDiagnosis :: NotReadyReason -> T.Text
+reasonDiagnosis reason =
+  case reason of
+    DatabaseCorrupt detail -> reasonCode reason <> ": " <> detail
+    _ -> reasonCode reason
 
 refusalCode :: MigrationRefusal -> T.Text
 refusalCode refusal =
@@ -151,10 +173,11 @@ withDatabase runtime action = do
       | otherwise -> pure (Left (classifyException err))
 
 classifyException :: SomeException -> NotReadyReason
-classifyException err =
-  case fromException err of
-    Just connectionError -> classifyConnectionFailure (show (connectionError :: Connection.ConnectionError))
-    Nothing -> DatabaseError
+classifyException err
+  | Just connectionError <- fromException err = classifyConnectionFailure (show (connectionError :: Connection.ConnectionError))
+  | Just (IntegrityViolation detail) <- fromException err = DatabaseCorrupt detail
+  | Just marshallError <- fromException err = DatabaseCorrupt (T.pack (displayException (marshallError :: MarshallError)))
+  | otherwise = DatabaseError
 
 -- | Readiness against the binary's own migration list. Never throws.
 checkReadiness :: Maybe DatabaseRuntime -> IO Readiness
@@ -215,40 +238,66 @@ renderMigrateError err =
     MigrateNotReady reason ->
       "database not reachable for migration: " <> T.unpack (reasonCode reason)
 
+{- | A failed migration run: its classification and, when PostgreSQL refused a
+statement, PostgreSQL's own message (kept for the operator, never dropped).
+-}
+data MigrateReport
+  = MigrateReport
+  { reportError :: MigrateError
+  , reportCause :: Maybe String
+  }
+  deriving (Eq, Show)
+
+-- | 'renderMigrateError', then PostgreSQL's message when there is one.
+renderMigrateReport :: MigrateReport -> String
+renderMigrateReport report =
+  renderMigrateError (reportError report)
+    <> maybe "" ("; PostgreSQL: " <>) (reportCause report)
+
 -- | Applies whatever the list has pending. No backup check.
 runMigrations :: [Migration] -> DatabaseRuntime -> IO (Either MigrateError [MigrationId])
-runMigrations list runtime = do
+runMigrations list runtime =
+  first reportError <$> runMigrationsReporting list runtime
+
+-- | 'runMigrations', keeping PostgreSQL's message with a failure.
+runMigrationsReporting :: [Migration] -> DatabaseRuntime -> IO (Either MigrateReport [MigrationId])
+runMigrationsReporting list runtime = do
   result <- applyPending (runtimeConfig runtime) list
   pure $
     case result of
       Right applied -> Right applied
-      Left (MigrateConnectionFailed message) -> Left (MigrateNotReady (classifyConnectionFailure message))
-      Left (MigratePlanRefused refusal) -> Left (MigrateRefused refusal)
-      Left (MigrationSqlFailed failed applied) -> Left (MigrateFailed failed applied)
-      Left (MigrateLedgerUnreadable _) -> Left (MigrateNotReady DatabaseError)
+      Left (MigrateConnectionFailed message) -> Left (MigrateReport (MigrateNotReady (classifyConnectionFailure message)) (Just message))
+      Left (MigratePlanRefused refusal) -> Left (MigrateReport (MigrateRefused refusal) Nothing)
+      Left (MigrationSqlFailed failed applied message) -> Left (MigrateReport (MigrateFailed failed applied) (Just message))
+      Left (MigrateLedgerUnreadable message) -> Left (MigrateReport (MigrateNotReady DatabaseError) (Just message))
 
 {- | 'runMigrations' under the backup policy (contract C-P1.2 E6): nothing
 pending is a no-op; an empty ledger needs no backup; otherwise a backup file
 newer than the last applied migration, or an explicit 'NoBackup', is required.
 -}
 migrateWithPolicy :: BackupPolicy -> [Migration] -> DatabaseRuntime -> IO (Either MigrateError [MigrationId])
-migrateWithPolicy policy list runtime = do
+migrateWithPolicy policy list runtime =
+  first reportError <$> migrateWithPolicyReporting policy list runtime
+
+-- | 'migrateWithPolicy', keeping PostgreSQL's message with a failure.
+migrateWithPolicyReporting :: BackupPolicy -> [Migration] -> DatabaseRuntime -> IO (Either MigrateReport [MigrationId])
+migrateWithPolicyReporting policy list runtime = do
   stateOrErr <- withDatabase runtime ((,) <$> Queries.readLedger <*> Queries.lastAppliedAt)
   case stateOrErr of
     Left reason ->
-      pure (Left (MigrateNotReady reason))
+      pure (Left (MigrateReport (MigrateNotReady reason) Nothing))
     Right (ledger, mbLastApplied) ->
       case planMigrations list ledger of
-        Left refusal -> pure (Left (MigrateRefused refusal))
+        Left refusal -> pure (Left (MigrateReport (MigrateRefused refusal) Nothing))
         Right [] -> pure (Right [])
         Right _ ->
           case mbLastApplied of
-            Nothing -> runMigrations list runtime
+            Nothing -> runMigrationsReporting list runtime
             Just lastApplied -> do
               allowed <- backupAllows policy lastApplied
               case allowed of
-                Left err -> pure (Left err)
-                Right () -> runMigrations list runtime
+                Left err -> pure (Left (MigrateReport err Nothing))
+                Right () -> runMigrationsReporting list runtime
 
 backupAllows :: BackupPolicy -> Time.UTCTime -> IO (Either MigrateError ())
 backupAllows policy lastApplied =

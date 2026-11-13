@@ -9,10 +9,13 @@ module Lockstep.Kernel.EventCodec
   , parsePrincipal
   , WorkOrderEvent (..)
   , TicketEvent (..)
+  , workOrderCreatedText
   , encodeWorkOrderEvent
   , decodeWorkOrderEvent
   , encodeTicketEvent
   , decodeTicketEvent
+  , refusedTicketInputText
+  , refusedWorkOrderInputText
   ) where
 
 import Data.Char qualified as Char
@@ -23,9 +26,9 @@ import Text.Show (Show, show)
 
 import Lockstep.Kernel.Evidence (humanSignoffText, mkHumanSignoff)
 import Lockstep.Kernel.Identity (EngineerId (..), WorkOrderId (..), parseUuid, uuidText)
-import Lockstep.Kernel.Ticket (TicketInput (..))
+import Lockstep.Kernel.Ticket (TicketInput (..), ticketInputName)
 import Lockstep.Kernel.Transition (Principal (..))
-import Lockstep.Kernel.WorkOrder (Claim (..), WorkOrderInput (..))
+import Lockstep.Kernel.WorkOrder (Claim (..), WorkOrderInput (..), workOrderInputName)
 
 principalName :: Principal -> T.Text
 principalName principal =
@@ -59,10 +62,15 @@ notDurable what =
 
 -- Encoding -------------------------------------------------------------------
 
+-- | The creation event's text: the one encoding that cannot be refused.
+workOrderCreatedText :: T.Text
+workOrderCreatedText =
+  T.pack "create"
+
 encodeWorkOrderEvent :: WorkOrderEvent -> Either T.Text T.Text
 encodeWorkOrderEvent event =
   case event of
-    WorkOrderCreated -> Right (T.pack "create")
+    WorkOrderCreated -> Right workOrderCreatedText
     WorkOrderStep input ->
       case input of
         WoMarkEligible -> verb "mark-eligible" []
@@ -78,6 +86,19 @@ encodeWorkOrderEvent event =
         WoRequeue -> verb "requeue" []
         WoSupersede (WorkOrderId u) -> verb "supersede" [bare "by" (uuidText u)]
         WoCancel -> verb "cancel" []
+
+{- | The command text a refusal row records (C-P2.5 E11): the input's event
+text when it is durable, else its name. A refused input that is not durable
+(it carries another lifecycle's evidence) is still recorded, by what it was.
+-}
+refusedTicketInputText :: TicketInput -> T.Text
+refusedTicketInputText input =
+  fromRight (ticketInputName input) (encodeTicketEvent (TicketStep input))
+
+-- | 'refusedTicketInputText' for a Work Order input.
+refusedWorkOrderInputText :: WorkOrderInput -> T.Text
+refusedWorkOrderInputText input =
+  fromRight (workOrderInputName input) (encodeWorkOrderEvent (WorkOrderStep input))
 
 encodeTicketEvent :: TicketEvent -> Either T.Text T.Text
 encodeTicketEvent event =

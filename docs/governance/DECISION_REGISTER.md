@@ -230,6 +230,20 @@ Phase 4 live-provider integration, offline, 2026-10-29 (the owner's instruction 
 - Done under it (contracts `C-P4.R3`, `C-P4.L`, `C-P4.L.R1`): see `docs/gates/C-EXEC/decision-packet.md`. Installed:
   no. Real credentials: none. Live provider calls: none. Production engine enabled: no. Real coding transaction: none.
 
+**Gate VM-1 (Phase 5, Dev Capsules): ACCEPTED** 2026-11-13 by the owner. Recorded by the writing agent.
+- **Owner's words.** The verdict, in session: "approved. I don't care for the way the test was written, but
+  that isn't what we're testing, and it's partially my fault for not having examples already." Then, after the
+  packet: "Marked it done, and it's confirmed."
+- **What was accepted:**
+  - the live Brigid transaction, authorized by the owner on 2026-11-12 ("I authorize the live Brigid run");
+  - its result: fix `73b0203` on `lockstep/c7fd1644-d812-4368-9894-87faf8bc471b` in the separate project copy
+    `~/lockstep-projects/brigid`, with frozen tests `cd0c17f` and basis `9344bfb`;
+  - Human Done, recorded 2026-11-13 at 04:28:32Z (transaction `done`).
+- **Packet.** `docs/gates/VM-1/brigid-dogfood.md`, committed at `a164acd`. It was accepted with the limitations
+  listed in its §6, including that the desired "no avoidable operational intervention" result was not met.
+- **Not done by it.** Nothing was pushed or merged; Brigid's `main` and the owner's checkout are unchanged. The
+  LAN exception stays attended-only and expires 2026-11-13T23:00Z.
+
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.
 

@@ -6,7 +6,7 @@
 set -euo pipefail
 
 bad=$(git ls-files --cached --others --exclude-standard -- '*.hs' \
-  | grep -v -E '^(src/Lockstep/|app/lockstep/Main\.hs$|test/(unit|integration)/(Main\.hs$|Lockstep/)|test/stress/Main\.hs$|test/fixtures/)' || true)
+  | grep -v -E '^(src/Lockstep/|app/lockstep/Main\.hs$|test/(unit|integration|compliance|capsule|capsule-e2e)/(Main\.hs$|Lockstep/)|test/stress/Main\.hs$|test/fixtures/)' || true)
 
 if [ -n "$bad" ]; then
   echo "Haskell sources outside the expected case-exact paths:" >&2

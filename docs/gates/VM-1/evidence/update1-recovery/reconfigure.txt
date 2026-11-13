@@ -1,0 +1,1 @@
+capsule-runtime 1 reconfigure ok capsule=vmq1 status=Running audit=ok

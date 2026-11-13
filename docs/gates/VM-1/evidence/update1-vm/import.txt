@@ -1,0 +1,1 @@
+capsule-runtime 1 import ok capsule=vmq1 head=c45900dc38b561a5ab118b43f3830e92f8df2c54 guest-head=c45900dc38b561a5ab118b43f3830e92f8df2c54

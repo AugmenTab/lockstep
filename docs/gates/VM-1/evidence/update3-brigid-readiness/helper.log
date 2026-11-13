@@ -1,0 +1,4 @@
+2026-11-12T05:29:36Z capsule mode on: capsule brigid1, project brigid, verification brigidv, command limit 7200s
+2026-11-12T05:29:36Z started (pid 21556, protocol 1, timeout 90s, instance brigidready, runner image sha256:70e67b8f3332c13a5825b06c5165fd7cd081527d1734da8377420b93691e81d4)
+2026-11-12T05:29:36Z the request or result directory is missing, a symlink or not private; nothing is read
+2026-11-12T05:29:38Z stopped

@@ -1,15 +1,24 @@
 {- | Stable typed identities (contract C-P2.1 I1, DG-03 D-3.1a). Each kind is
-its own newtype over an abstract UUID, so one kind cannot be passed where
-another is expected. Identities are generated at the boundary and enter the
+its own newtype over 'Data.UUID.Types.UUID' (the @uuid-types@ library), so one
+kind cannot be passed where another is expected. Identities are generated at
+the boundary ('Lockstep.Application.Identity', @Data.UUID.V4@) and enter the
 Kernel as values; none is derived from a path, remote or commit.
+
+Text is a boundary representation only. 'parseUuid' is the library's parser
+with Lockstep's one extra rule, the canonical spelling (C-P2.1 I1: lowercase,
+hyphenated): a value is accepted only when the library renders it back
+exactly as given.
 -}
 module Lockstep.Kernel.Identity
-  ( Uuid
+  ( -- * UUIDs
+    Uuid
   , IdentityError (..)
   , parseUuid
   , uuidText
   , uuidFromBytes
   , uuidFromWords
+
+    -- * Identities of the Kernel's subjects
   , RepositoryId (..)
   , EngineerId (..)
   , TicketId (..)
@@ -17,19 +26,35 @@ module Lockstep.Kernel.Identity
   , WorkUnitId (..)
   , ContractId (..)
   , AttemptId (..)
+
+    -- * Identities of the application's records
+  , ProjectId (..)
+  , TaskId (..)
+  , TransactionId (..)
+  , InvocationId (..)
+  , HumanRequestId (..)
+
+    -- * Parsing and rendering any of them
+  , parseIdentity
+  , identityText
+
+    -- * Identities numbered by the database
+  , JobId (..)
+  , jobIdNumber
+  , ReceiptId (..)
+  , receiptIdNumber
   ) where
 
 import Data.ByteString qualified as BS
-import Data.Char qualified as Char
-import Data.List qualified as L
+import Data.ByteString.Lazy qualified as LBS
+import Data.Coerce (Coercible, coerce)
 import Data.Text qualified as T
+import Data.UUID.Types qualified as UUID
 import Flipstone.Prelude
-import Text.Show (Show)
+import Text.Show (Show (showsPrec))
 
--- | A 128-bit identifier, held as two big-endian 64-bit halves.
-data Uuid
-  = Uuid Word64 Word64
-  deriving (Eq, Ord, Show)
+-- | A 128-bit identifier: the library's type.
+type Uuid = UUID.UUID
 
 data IdentityError
   = UuidMalformed
@@ -64,57 +89,97 @@ newtype AttemptId
   = AttemptId Uuid
   deriving (Eq, Ord, Show)
 
+-- | A project (C-P3.5).
+newtype ProjectId
+  = ProjectId Uuid
+  deriving (Eq, Ord, Show)
+
+-- | A task (C-P3.6); its Ticket has the same UUID.
+newtype TaskId
+  = TaskId Uuid
+  deriving (Eq, Ord, Show)
+
+-- | A coding transaction (C-P4.6).
+newtype TransactionId
+  = TransactionId Uuid
+  deriving (Eq, Ord, Show)
+
+-- | One recorded role or check invocation of a transaction (C-P4.6 T5).
+newtype InvocationId
+  = InvocationId Uuid
+  deriving (Eq, Ord, Show)
+
+-- | A Human Request and its conversation (C-P3.9).
+newtype HumanRequestId
+  = HumanRequestId Uuid
+  deriving (Eq, Ord, Show)
+
+{- | A background job (C-P1.5): the number its row was given by the database
+(@lockstep_jobs.id@, a @bigserial@). Shown and rendered as that number alone
+('jobIdNumber'), never with its constructor.
+-}
+newtype JobId
+  = JobId Int64
+  deriving (Eq, Ord)
+
+-- | The number alone, as the job was always shown (log lines, pages, evidence rows).
+instance Show JobId where
+  showsPrec d =
+    showsPrec d . jobIdNumber
+
+jobIdNumber :: JobId -> Int64
+jobIdNumber (JobId n) =
+  n
+
+-- | A command receipt (C-P1.4 E7): @lockstep_command_receipts.id@, numbered by the database.
+newtype ReceiptId
+  = ReceiptId Int64
+  deriving (Eq, Ord)
+
+-- | The number alone, as the receipt was always shown.
+instance Show ReceiptId where
+  showsPrec d =
+    showsPrec d . receiptIdNumber
+
+receiptIdNumber :: ReceiptId -> Int64
+receiptIdNumber (ReceiptId n) =
+  n
+
+-- | The big-endian halves, as 'UUID.fromWords64'.
 uuidFromWords :: Word64 -> Word64 -> Uuid
 uuidFromWords =
-  Uuid
+  UUID.fromWords64
 
--- | Exactly 16 bytes, big-endian.
+-- | Exactly 16 bytes, big-endian ('UUID.fromByteString').
 uuidFromBytes :: BS.ByteString -> Either IdentityError Uuid
-uuidFromBytes bytes =
-  if BS.length bytes /= 16
-    then Left UuidWrongLength
-    else
-      let
-        word = BS.foldl' (\acc b -> acc * 256 + fromIntegral b) 0
-      in
-        Right (Uuid (word (BS.take 8 bytes)) (word (BS.drop 8 bytes)))
+uuidFromBytes =
+  maybe (Left UuidWrongLength) Right . UUID.fromByteString . LBS.fromStrict
 
-{- | The canonical form only: lowercase hex in 8-4-4-4-12 groups. Anything
-else, including uppercase, is 'UuidMalformed'.
+{- | The canonical form only: lowercase hex in 8-4-4-4-12 groups. The library
+parses ('UUID.fromText' also accepts uppercase); the value is kept only when
+'UUID.toText' gives back exactly the input.
 -}
 parseUuid :: T.Text -> Either IdentityError Uuid
 parseUuid text =
-  let
-    groups = T.splitOn (T.pack "-") text
-    hex = T.concat groups
-  in
-    if fmap T.length groups == [8, 4, 4, 4, 12] && T.all isLowerHex hex
-      then Right (Uuid (hexWord (T.take 16 hex)) (hexWord (T.drop 16 hex)))
-      else Left UuidMalformed
+  case UUID.fromText text of
+    Just uuid | UUID.toText uuid == text -> Right uuid
+    _ -> Left UuidMalformed
 
-isLowerHex :: Char -> Bool
-isLowerHex c =
-  Char.isDigit c || (c >= 'a' && c <= 'f')
-
-hexWord :: T.Text -> Word64
-hexWord =
-  T.foldl' (\acc c -> acc * 16 + fromIntegral (Char.digitToInt c)) 0
-
+-- | The canonical text: lowercase, hyphenated ('UUID.toText').
 uuidText :: Uuid -> T.Text
-uuidText (Uuid high low) =
-  let
-    digits = T.pack (hexDigits high <> hexDigits low)
-  in
-    T.intercalate
-      (T.pack "-")
-      [ T.take 8 digits
-      , T.take 4 (T.drop 8 digits)
-      , T.take 4 (T.drop 12 digits)
-      , T.take 4 (T.drop 16 digits)
-      , T.drop 20 digits
-      ]
+uuidText =
+  UUID.toText
 
--- | Sixteen lowercase hex digits.
-hexDigits :: Word64 -> String
-hexDigits word =
-  L.reverse (L.take 16 (L.unfoldr (\w -> Just (Char.intToDigit (fromIntegral (w `mod` 16)), w `div` 16)) word))
+{- | Any identity from its canonical text. Each kind is a newtype over 'Uuid'
+(the @Coercible Uuid@ constraint, as Launchpad's keys are @Coercible Int32@),
+so the text form, the Orville column, the Fleece schema and the route
+parameter of every kind are the same library code.
+-}
+parseIdentity :: Coercible Uuid identity => T.Text -> Maybe identity
+parseIdentity =
+  either (const Nothing) (Just . coerce) . parseUuid
+
+-- | Any identity's canonical text.
+identityText :: Coercible identity Uuid => identity -> T.Text
+identityText =
+  uuidText . coerce

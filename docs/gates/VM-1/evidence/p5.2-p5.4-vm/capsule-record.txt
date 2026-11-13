@@ -1,0 +1,12 @@
+capsule vmq1
+project vmq-project
+backend lima
+vm lockstep-vmq1
+profile small
+cpus 2
+memory-gib 4
+disk-gib 30
+exec-limit 1800
+disposable yes
+created 1794333438
+phase ready

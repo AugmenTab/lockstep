@@ -1,0 +1,5 @@
+fallocate: fallocate failed: No space left on device
+write-refused-enospc
+write-ok-after-free
+docker-ok-after-free
+/work: 12 MiB (12607488 bytes) trimmed

@@ -1,0 +1,1 @@
+capsule-runtime 1 start ok capsule=vmq1 status=Running
