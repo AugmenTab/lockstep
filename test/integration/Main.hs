@@ -67,6 +67,7 @@ import Lockstep.OperatorCommandTest qualified as OperatorCommandTest
 import Lockstep.OperatorLedgerTest qualified as OperatorLedgerTest
 import Lockstep.OperatorTrustTest qualified as OperatorTrustTest
 import Lockstep.PlanPageTest qualified as PlanPageTest
+import Lockstep.PlanReviewTest qualified as PlanReviewTest
 import Lockstep.PlanTest qualified as PlanTest
 import Lockstep.ProcessRunnerTest qualified as ProcessRunnerTest
 import Lockstep.ProcessTest qualified as ProcessTest
@@ -189,4 +190,5 @@ main =
       , InboxReviewTest.tests
       , PlanTest.tests
       , PlanPageTest.tests
+      , PlanReviewTest.tests
       ]

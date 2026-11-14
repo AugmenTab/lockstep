@@ -56,13 +56,31 @@ table <lockstep_private> const { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.
                                  ::1, fc00::/7, fe80::/10, ff00::/8 }
 table <lockstep_dns> persist { RESOLVERS }        # filled from the host's resolver list at install time
 pass  out quick proto { udp tcp } from any to <lockstep_dns> port 53 user _lockstep_capsule
-block return out quick proto { tcp udp icmp icmp6 } from any to self user _lockstep_capsule
-block return out quick from any to <lockstep_private> user _lockstep_capsule
+block return out quick proto { tcp udp } from any to self user _lockstep_capsule
+block return out quick proto { tcp udp } from any to <lockstep_private> user _lockstep_capsule
 ```
 
 `self` covers every address of every host interface (the LAN address included, whatever network the Mac joins) and is
 re-evaluated as interfaces change. `block return` makes a refused connection fail at once (no timeouts; fail fast).
 Loaded with `anchor "com.lockstep.capsule"` in `/etc/pf.conf` and `pfctl -E` from a launchd daemon at boot.
+
+**Correction (owner, update 1 §6; 2026-11-14).** The first draft also listed `icmp icmp6` under `user
+_lockstep_capsule`. That rule would not do what it says: pf evaluates `user`/`group` only for TCP and UDP sockets
+(`pf.conf(5)`: "user and group … only for TCP and UDP"); for any other protocol the predicate cannot match, so the ICMP
+part would silently never apply. The rules above are therefore TCP/UDP only, and ICMP is handled separately:
+
+- **What ICMP could do here.** The services in N1–N4 are TCP/UDP; ICMP cannot open a connection to them. What ICMP
+  could still give a guest is reachability/scanning of host and LAN addresses (echo), plus whatever an ICMP-based
+  covert channel carries to a cooperating LAN host.
+- **Whether a guest can emit ICMP to the host side at all is a measurement (M2b, below).** With Lima's user-mode
+  network the hostagent terminates guest traffic; whether it relays guest ICMP echo (and as which process and
+  socket type) is not known from the documents.
+- **If M2b shows no relay:** nothing more is needed (no ICMP leaves the guest's user network).
+- **If M2b shows a relay:** it is from an unprivileged host process, so it cannot be scoped by user in pf. The
+  options are (a) a host rule not keyed on user (`block out quick inet proto icmp from any to <lockstep_private>
+  icmp-type echoreq` and the ICMPv6 equivalent), which **also affects the owner's own pings** to LAN devices and so
+  needs the owner's explicit choice in D6-SEC; or (b) accept ICMP reachability as a recorded residual risk. Nothing
+  is assumed; D6-SEC will state the measured result and ask.
 
 ## 5. Measurements before choosing (nonprivileged unless marked)
 
@@ -70,6 +88,7 @@ Loaded with `anchor "com.lockstep.capsule"` in `/etc/pf.conf` and `pfctl -E` fro
 |---|---|---|---|
 | M1 | Which host process and uid owns the host socket of a guest → host-LAN connection | From the guest, `nc` to a host listener on the LAN address; on the host, `lsof -nP -iTCP@<lan>:<port>` while connected | Whether H1's `user` match sees the hostagent |
 | M2 | Same for guest → public internet (TCP and UDP) and guest DNS | as M1, to a public host; `dig` in the guest | That H1 allows public egress and DNS |
+| M2b | Whether guest ICMP echo to the host's LAN address and to a LAN device leaves the Mac, and from which process and socket type (see §4 correction) | `ping -c 1` from the guest; on the host, `lsof -nP` for the hostagent's sockets while it runs | Whether an ICMP rule is needed, and that it cannot be user-scoped |
 | M3 | Whether Lima runs correctly as another macOS user with its own `LIMA_HOME` | Create nothing on the host: read Lima docs/source for vz requirements (entitlements are per-binary, not per-user) | H1 feasibility |
 | M4 | That pf `user` rules apply to locally-destined traffic on lo0 and to IPv6 | **Privileged** — part of P6.10c | H1 effectiveness |
 | M5 | Two capsules: guest A → guest B (each VM's user network address, and B's forwarded SSH port on the host) | Two disposable capsules, `check-capsule-lan` extended | N5 |
