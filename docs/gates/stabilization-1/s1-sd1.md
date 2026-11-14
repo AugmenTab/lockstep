@@ -114,3 +114,61 @@ Proposed attended check, for when it is authorized:
   `TOKEN_URL` from the pinned binary and would fail first.
 - Carried over: the LAN exception expired at 2026-11-13T23:00Z and was not extended. Capsule preflight refuses until
   the owner writes a new one for an attended run.
+
+## 6. Installation of the accepted revision (2026-11-14, on the owner's instruction)
+
+"Install the accepted stabilization revision, verify the service and helper, and preserve all existing work."
+
+**Before.** Installed `0bd82b2`, schema revision 21, nothing pending. Both transactions were `done`: calculator
+`cf0f209`, and Brigid `73b0203`. There were no open human requests and no queued or running jobs, so nothing was in
+flight.
+
+**Steps.** The same steps as the helper's own upgrade (`apply_action`). It was run by hand, because the helper only
+acts on requests signed in the control pane.
+1. Backed up the database with `scripts/db backup`: `.local/backups/20261114T025724Z-r21-44416.dump`. Verified it as
+   the helper does: the digest matches (`5ffdb4a5…`) and `pg_restore --list` reads back 293 entries.
+2. Built the candidate into `.local/staging-install` with `scripts/service install` (commit `d00e26c`, clean tree,
+   sha256 `4009d6d2…`). It reports `ready 21, pending 0` against the live database.
+3. Moved the older rollback slot (`6c2851d`, 2026-10-19) to `.local/install.archive-6c2851d` rather than deleting
+   it.
+4. Stopped the service; its log is in `.local/install.previous/last-run.log`. Ran the candidate's `db migrate`
+   with the verified backup: "nothing to apply".
+5. Moved the old install (`0bd82b2`) to `.local/install.previous`, the helper's restore slot, and the candidate to
+   `.local/install`.
+6. Started the service with the helper's `LOCKSTEP_SERVICE_FOLDERS` and `LOCKSTEP_SERVICE_RUNNER`, as the helper
+   would.
+
+**Verified after.**
+
+The service:
+- It runs `d00e26c`.
+- The health check answers 204, and `db status` reports `ready 21, pending 0`.
+- Startup: "Engine worker: on (live provider claude-code, model claude-sonnet-5-5, effort medium, tools in Dev
+  Capsule brigid1)".
+- Its environment, mounts and user are identical to the previous container's: the project folders, and the runner
+  directory read-write.
+
+The new build is the one serving:
+- The served `/static/app.js` is byte-identical to the S4 tree.
+- The binary contains `reproduction-omitted`, `provider-auth-rejected` and "Retry runs the Planner".
+
+The data:
+- Row counts are identical before and after for transactions (2), transaction records (82), events (8),
+  invocations (27), work orders (2), tickets (3), projects (3), human requests (5), conversation messages (10) and
+  operator sessions (20).
+- Both accepted commits are unchanged.
+
+The helper:
+- pid 90993 is still running with `--runner`, and the runner channel is in place.
+- Capsule status: `brigid1` Running, audit ok, template current, nothing under way.
+
+`scripts/capsule-preflight` against the live state: every check passes, including the new
+`provider-renewal-path`, except `lan-exception` (expired) and `host-network-exposure` (which needs that exception).
+Those two are expected and were not touched.
+
+**Rollback.** By hand. The control pane offers *Restore previous* only after a failed upgrade, which this was not.
+1. Stop the service.
+2. Move `.local/install.previous` back to `.local/install`.
+3. Start the service with the same two variables.
+
+No schema changed, so the database needs no restore. The backup above is kept regardless.
