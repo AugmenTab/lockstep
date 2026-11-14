@@ -358,6 +358,23 @@ killed with its container, its run stays unfinished, and after the restart it is
 bug waits for you — Lockstep never runs it again by itself (C-P4.R1). A database failure in the middle of a
 step leaves nothing half-recorded; the step is taken again, or waits for you, after the database is back.
 
+### A project's Master Plan (C-P6.4)
+
+```sh
+lockstep plan draft --project PROJECT-ID --prd prd.md --architecture architecture.md   # the Planner drafts one
+lockstep plan propose --project PROJECT-ID plan.json                                   # or you propose one
+```
+
+A plan is a `lockstep-plan` document (format: `docs/gates/P6.4/contract.md` §1): units of work with stable keys,
+typed dependencies (*needs it working*, *needs your Done*, *needs something outside Lockstep*), acceptance
+criteria citing your documents, and the open questions the Planner found. `plan draft` stores your documents with
+their SHA-256; `lockstep serve` asks the Planner once (read-only, no repository), and the Supervisor refuses a draft
+whose sources are not exactly your documents or that breaks the plan's rules (a cycle is shown with its edges).
+Every proposal is a numbered, immutable **revision**; nothing runs from it. On the project's **Plan** page
+(`/app/projects/<id>/plan`) you approve or reject a revision by its digest; approving turns each unit into an
+ordinary ready task with the plan's dependencies (a unit keeps its task across revisions), and a later approved
+revision records what changed and which work built on it no longer counts. The open questions stay on the page.
+
 ### Questions about a stopped fix (C-P6.3)
 
 When a fix stops for your decision, **Decisions → Fixes waiting for your answer** lists it with its project, task,

@@ -60,14 +60,16 @@ module Lockstep.Kernel.Plan
   , validateElaboration
   ) where
 
+import Control.Applicative ((<|>))
 import Data.Char qualified as Char
+import Data.List qualified as L
 import Data.Text qualified as T
 import Flipstone.Prelude
-import Text.Show (Show)
+import Text.Show (Show, show)
 
 import Lockstep.Kernel.Enum (parseEnumText)
-import Lockstep.Kernel.Profile (Hasher)
-import Lockstep.Kernel.Task (Priority)
+import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
+import Lockstep.Kernel.Task (Priority, priorityCode)
 
 -- The document ----------------------------------------------------------------------
 
@@ -294,46 +296,257 @@ data PlanProblem
   deriving (Eq, Show)
 
 planProblemCode :: PlanProblem -> T.Text
-planProblemCode _ =
-  T.empty
+planProblemCode p =
+  T.pack $
+    case p of
+      EmptyPlan -> "empty-plan"
+      DuplicateUnit _ -> "duplicate-unit"
+      UnknownUnit _ -> "unknown-unit"
+      SelfEdge _ -> "self-edge"
+      DuplicateEdge _ _ -> "duplicate-edge"
+      Cycle _ -> "cycle"
+      NoAcceptance _ -> "no-acceptance"
+      UnknownCitation _ -> "unknown-citation"
+      NoSources -> "no-sources"
+      InvalidSourceDigest _ -> "invalid-source-digest"
+      DuplicateSource _ -> "duplicate-source"
+      ExternalEffectNotAuthorized _ -> "external-effect-not-authorized"
+      TooManyUnits _ _ -> "too-many-units"
+      InvalidEnvelope -> "invalid-envelope"
+      UnknownWorkKind _ _ -> "unknown-work-kind"
+      UnknownProfile _ _ -> "unknown-profile"
+      IncompatibleMode _ -> "incompatible-mode"
+      InvalidTitle _ -> "invalid-title"
 
 {- | The problem in words: its code, then what it concerns (a cycle as its
 edges in order, "a needs b").
 -}
 planProblemText :: PlanProblem -> T.Text
-planProblemText _ =
-  T.empty
+planProblemText p =
+  case detail of
+    Nothing -> planProblemCode p
+    Just d -> planProblemCode p <> T.pack ": " <> d
+ where
+  needs (a, b) = unitKeyText a <> T.pack " needs " <> unitKeyText b
+  detail =
+    case p of
+      EmptyPlan -> Nothing
+      DuplicateUnit u -> Just (unitKeyText u)
+      UnknownUnit u -> Just (unitKeyText u)
+      SelfEdge u -> Just (unitKeyText u)
+      DuplicateEdge a b -> Just (needs (a, b))
+      Cycle edges -> Just (T.intercalate (T.pack ", ") (fmap needs edges))
+      NoAcceptance u -> Just (unitKeyText u)
+      UnknownCitation name -> Just name
+      NoSources -> Nothing
+      InvalidSourceDigest name -> Just name
+      DuplicateSource name -> Just name
+      ExternalEffectNotAuthorized u -> fmap unitKeyText u
+      TooManyUnits n m -> Just (T.pack (show n) <> T.pack " units, at most " <> T.pack (show m))
+      InvalidEnvelope -> Nothing
+      UnknownWorkKind u kind -> Just (unitKeyText u <> T.pack " (" <> kind <> T.pack ")")
+      UnknownProfile u profile -> Just (unitKeyText u <> T.pack " (" <> profile <> T.pack ")")
+      IncompatibleMode u -> Just (unitKeyText u)
+      InvalidTitle u -> fmap unitKeyText u
 
 {- | Every problem of the document, or the document unchanged. Problems are
-listed in a fixed order (sources, envelope, units, edges, cycle).
+listed in a fixed order (title, sources, envelope, units, citations, edges,
+cycle).
 -}
 validatePlan :: PlanContext -> PlanDocument -> Either [PlanProblem] PlanDocument
-validatePlan _ =
-  Right
+validatePlan context document =
+  case problems of
+    [] -> Right document
+    _ -> Left problems
+ where
+  units = planUnits document
+  keys = fmap unitKey units
+  sourceNames = fmap sourceName (planSources document)
+  envelope = planEnvelope document
+  problems =
+    titleProblems
+      <> sourceProblems
+      <> envelopeProblems
+      <> unitProblems
+      <> citationProblems
+      <> edgeProblems
+      <> cycleProblems
+  titleProblems =
+    [InvalidTitle Nothing | not (titleValid (planTitle document))]
+  sourceProblems =
+    [NoSources | L.null (planSources document)]
+      <> [InvalidSourceDigest (sourceName s) | s <- planSources document, not (digestValid (sourceDigest s))]
+      <> fmap DuplicateSource (duplicates sourceNames)
+  envelopeProblems =
+    [ExternalEffectNotAuthorized Nothing | envelopeExternalEffects envelope]
+      <> [InvalidEnvelope | envelopeMaxUnits envelope < 1 || envelopeMaxUnits envelope > 200 || maybe False (< 1) (envelopeTokenBudget envelope)]
+  unitProblems =
+    [EmptyPlan | L.null units]
+      <> [TooManyUnits (L.length units) (envelopeMaxUnits envelope) | envelopeMaxUnits envelope >= 1, envelopeMaxUnits envelope <= 200, L.length units > envelopeMaxUnits envelope]
+      <> fmap DuplicateUnit (duplicates keys)
+      <> L.concatMap unitProblemsOf units
+  unitProblemsOf u =
+    [InvalidTitle (Just (unitKey u)) | not (titleValid (unitTitle u))]
+      <> case parseWorkKind (unitWorkKind u) of
+        Nothing -> [UnknownWorkKind (unitKey u) (unitWorkKind u)]
+        Just kind -> [IncompatibleMode (unitKey u) | not (compatible (planMode document) kind)]
+      <> [UnknownProfile (unitKey u) (unitProfile u) | unitProfile u `L.notElem` contextProfiles context]
+      <> [ExternalEffectNotAuthorized (Just (unitKey u)) | unitEffect u == ExternalEffect]
+      <> [NoAcceptance (unitKey u) | L.all (T.null . T.strip . planCriterionText) (unitAcceptance u)]
+  citations =
+    L.concatMap (L.concatMap planCriterionCites . unitAcceptance) units
+      <> L.concatMap uncertaintyCites (planUncertainties document)
+  citationProblems =
+    fmap UnknownCitation (L.nub [c | c <- citations, c `L.notElem` sourceNames])
+  pairs = [(edgeDependent e, edgePrerequisite e) | e <- planEdges document]
+  edgeProblems =
+    fmap UnknownUnit (L.nub [u | (a, b) <- pairs, u <- [a, b], u `L.notElem` keys])
+      <> fmap SelfEdge (L.nub [a | (a, b) <- pairs, a == b])
+      <> fmap (uncurry DuplicateEdge) (duplicates pairs)
+  cycleProblems =
+    case findCycle (L.nub [(a, b) | (a, b) <- pairs, a /= b, a `L.elem` keys, b `L.elem` keys]) of
+      Just edges -> [Cycle edges]
+      Nothing -> []
+
+-- | A Greenfield plan builds something new: it has no bug to fix. A Brownfield plan changes something that exists.
+compatible :: PlanMode -> WorkKind -> Bool
+compatible mode kind =
+  case (mode, kind) of
+    (Greenfield, BugFix) -> False
+    (Brownfield, GreenfieldBuild) -> False
+    _ -> True
+
+titleValid :: T.Text -> Bool
+titleValid raw =
+  let
+    t = T.strip raw
+  in
+    not (T.null t) && T.length t <= 200 && not (T.any Char.isControl t)
+
+digestValid :: T.Text -> Bool
+digestValid d =
+  T.length d == 64 && T.all (\c -> Char.isDigit c || (c >= 'a' && c <= 'f')) d
+
+-- | Each value that occurs more than once, once, in order of its second occurrence.
+duplicates :: Eq a => [a] -> [a]
+duplicates =
+  go [] []
+ where
+  go _ found [] = L.reverse found
+  go seen found (x : rest)
+    | x `L.elem` seen && x `L.notElem` found = go seen (x : found) rest
+    | otherwise = go (x : seen) found rest
 
 {- | One cycle of the edges, as the edges that close it in order (each edge is
 @(dependent, prerequisite)@ and the next edge starts at the previous one's
 prerequisite), starting from the smallest key on it; nothing when acyclic.
 -}
 findCycle :: [(UnitKey, UnitKey)] -> Maybe [(UnitKey, UnitKey)]
-findCycle _ =
-  Nothing
+findCycle edges =
+  L.foldr (\start found -> fromFirst start <|> found) Nothing nodes
+ where
+  nodes = L.sort (L.nub (L.concatMap (\(a, b) -> [a, b]) edges))
+  next u = L.sort (L.nub [b | (a, b) <- edges, a == u])
+  fromFirst start = fst (search start [] [start] start)
+  -- Depth first from @u@, the path so far reversed; a node already searched without success is not searched again.
+  search start path visited u =
+    L.foldl
+      ( \(found, seen) v ->
+          case found of
+            Just _ -> (found, seen)
+            Nothing
+              | v == start -> (Just (L.reverse ((u, v) : path)), seen)
+              | v `L.elem` seen -> (Nothing, seen)
+              | otherwise -> search start ((u, v) : path) (v : seen) v
+      )
+      (Nothing, visited)
+      (next u)
 
 -- Digests ---------------------------------------------------------------------------
 
+quoted :: T.Text -> T.Text
+quoted =
+  T.pack . show
+
+field :: String -> T.Text -> T.Text
+field name value =
+  T.pack name <> T.pack " " <> value <> T.pack "\n"
+
+listField :: String -> [T.Text] -> T.Text
+listField name values =
+  field name (T.pack (show (L.length values))) <> T.concat (fmap (field "-") values)
+
+criterionText' :: PlanCriterion -> T.Text
+criterionText' c =
+  quoted (planCriterionText c) <> T.pack " cites " <> T.unwords (fmap quoted (planCriterionCites c))
+
+unitText :: PlanUnit -> T.Text
+unitText u =
+  T.concat
+    [ field "unit" (quoted (unitKeyText (unitKey u)))
+    , field "title" (quoted (unitTitle u))
+    , field "phase" (quoted (unitPhase u))
+    , field "subphase" (quoted (unitSubphase u))
+    , field "work-kind" (quoted (unitWorkKind u))
+    , field "profile" (quoted (unitProfile u))
+    , field "priority" (priorityCode (unitPriority u))
+    , field "effect" (effectClassCode (unitEffect u))
+    , field "risk" (riskClassCode (unitRisk u))
+    , field "provisional" (if unitProvisional u then T.pack "yes" else T.pack "no")
+    , listField "outputs" (fmap quoted (unitOutputs u))
+    , listField "acceptance" (fmap criterionText' (unitAcceptance u))
+    , listField "negative" (fmap quoted (unitNegative u))
+    , listField "checks" (fmap quoted (unitChecks u))
+    , listField "prerequisites" (fmap quoted (unitPrerequisites u))
+    , listField "resources" (fmap quoted (unitResources u))
+    ]
+
+edgeText :: PlanEdge -> T.Text
+edgeText e =
+  quoted (unitKeyText (edgeDependent e)) <> T.pack " needs " <> quoted (unitKeyText (edgePrerequisite e)) <> T.pack " " <> edgeKindCode (edgeKind e)
+
 -- | The canonical text of a document: the same for the same plan whatever the order of its units and edges.
 canonicalPlanText :: PlanDocument -> T.Text
-canonicalPlanText _ =
-  T.empty
+canonicalPlanText d =
+  let
+    envelope = planEnvelope d
+  in
+    T.concat
+      [ field "lockstep-plan" (T.pack "1")
+      , field "title" (quoted (planTitle d))
+      , field "mode" (planModeCode (planMode d))
+      , listField "sources" [quoted (sourceName s) <> T.pack " " <> sourceDigest s | s <- L.sortOn sourceName (planSources d)]
+      , field "external-effects" (if envelopeExternalEffects envelope then T.pack "yes" else T.pack "no")
+      , field "max-units" (T.pack (show (envelopeMaxUnits envelope)))
+      , field "token-budget" (maybe (T.pack "none") (T.pack . show) (envelopeTokenBudget envelope))
+      , listField "units" (fmap unitText (L.sortOn unitKey (planUnits d)))
+      , listField "edges" (fmap edgeText (L.sortOn (\e -> (edgeDependent e, edgePrerequisite e, edgeKind e)) (planEdges d)))
+      , listField "uncertainties" [quoted (uncertaintyText u) <> T.pack " cites " <> T.unwords (fmap quoted (uncertaintyCites u)) | u <- planUncertainties d]
+      ]
+
+digestOf :: Hasher -> T.Text -> T.Text
+digestOf (Hasher f) =
+  contentDigestText . f
 
 planDigestText :: Hasher -> PlanDocument -> T.Text
-planDigestText _ _ =
-  T.empty
+planDigestText hasher =
+  digestOf hasher . canonicalPlanText
 
 -- | A unit's digest: its fields, its incoming edges and the digests of the sources it cites.
 unitDigestText :: Hasher -> PlanDocument -> UnitKey -> Maybe T.Text
-unitDigestText _ _ _ =
-  Nothing
+unitDigestText hasher d k =
+  case L.find ((== k) . unitKey) (planUnits d) of
+    Nothing -> Nothing
+    Just u ->
+      let
+        incoming = L.sortOn (\e -> (edgePrerequisite e, edgeKind e)) [e | e <- planEdges d, edgeDependent e == k]
+        cited = L.sort (L.nub (L.concatMap planCriterionCites (unitAcceptance u)))
+        sourceLine name = quoted name <> T.pack " " <> maybe (T.pack "unknown") sourceDigest (L.find ((== name) . sourceName) (planSources d))
+      in
+        Just . digestOf hasher $
+          unitText u
+            <> listField "needs" (fmap edgeText incoming)
+            <> listField "cited" (fmap sourceLine cited)
 
 -- Reconciliation --------------------------------------------------------------------
 
@@ -361,8 +574,32 @@ outcome, sorted by key. A unit that depends transitively over technical edges
 changed.
 -}
 reconcilePlan :: Hasher -> Maybe PlanDocument -> PlanDocument -> [(UnitKey, UnitOutcome)]
-reconcilePlan _ _ _ =
-  []
+reconcilePlan hasher previous new =
+  L.sortOn fst (fmap settle newKeys <> withdrawn)
+ where
+  newKeys = L.nub (fmap unitKey (planUnits new))
+  oldKeys = maybe [] (L.nub . fmap unitKey . planUnits) previous
+  direct u =
+    case previous of
+      Nothing -> UnitAdded
+      Just old
+        | u `L.notElem` oldKeys -> UnitAdded
+        | unitDigestText hasher old u == unitDigestText hasher new u -> UnitKept
+        | otherwise -> UnitChanged
+  changed = [u | u <- newKeys, direct u == UnitChanged]
+  technical = [(edgeDependent e, edgePrerequisite e) | e <- planEdges new, edgeKind e == Technical]
+  -- Every unit that reaches a changed unit over technical edges.
+  affected = grow changed
+  grow found =
+    let
+      more = L.nub [d | (d, p) <- technical, p `L.elem` found, d `L.notElem` found]
+    in
+      if L.null more then found else grow (found <> more)
+  settle u =
+    case direct u of
+      UnitKept | u `L.elem` affected -> (u, UnitInvalidated)
+      outcome -> (u, outcome)
+  withdrawn = [(u, UnitWithdrawn) | u <- oldKeys, u `L.notElem` newKeys]
 
 -- Elaboration -----------------------------------------------------------------------
 
@@ -395,12 +632,34 @@ data ElaborationProblem
   deriving (Eq, Show)
 
 elaborationProblemCode :: ElaborationProblem -> T.Text
-elaborationProblemCode _ =
-  T.empty
+elaborationProblemCode p =
+  T.pack $
+    case p of
+      WrongRevision -> "wrong-revision"
+      ElaborationUnknownUnit -> "unknown-unit"
+      WeakenedAcceptance _ -> "weakened-acceptance"
+      RemovedNegative _ -> "removed-negative"
+      RemovedCheck _ -> "removed-check"
+      ChangedEdges -> "changed-edges"
+      ChangedEffect -> "changed-effect"
+      ChangedWorkKind -> "changed-work-kind"
+      ChangedProfile -> "changed-profile"
 
 {- | The elaboration's problems against the effective revision (its digest and
 document); none means it stays inside the approved boundary.
 -}
 validateElaboration :: T.Text -> PlanDocument -> Elaboration -> [ElaborationProblem]
-validateElaboration _ _ _ =
-  []
+validateElaboration digest document e =
+  [WrongRevision | elaborationPlanDigest e /= digest]
+    <> case L.find ((== elaborationUnit e) . unitKey) (planUnits document) of
+      Nothing -> [ElaborationUnknownUnit]
+      Just u ->
+        [WeakenedAcceptance c | c <- fmap planCriterionText (unitAcceptance u), c `L.notElem` elaborationAcceptance e]
+          <> [RemovedNegative n | n <- unitNegative u, n `L.notElem` elaborationNegative e]
+          <> [RemovedCheck c | c <- unitChecks u, c `L.notElem` elaborationChecks e]
+          <> [ChangedEdges | L.sort approvedEdges /= L.sort (elaborationEdges e)]
+          <> [ChangedEffect | unitEffect u /= elaborationEffect e]
+          <> [ChangedWorkKind | unitWorkKind u /= elaborationWorkKind e]
+          <> [ChangedProfile | unitProfile u /= elaborationProfile e]
+ where
+  approvedEdges = [(edgePrerequisite x, edgeKind x) | x <- planEdges document, edgeDependent x == elaborationUnit e]
