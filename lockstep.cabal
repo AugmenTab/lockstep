@@ -121,6 +121,7 @@ library
       Lockstep.Kernel.WorkOrder
       Lockstep.Kernel.WorkUnit
       Lockstep.Kernel.WorkUnitLifecycle
+      Lockstep.Persistence.Backlog
       Lockstep.Persistence.CommandCenter
       Lockstep.Persistence.Commands
       Lockstep.Persistence.Connection

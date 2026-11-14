@@ -69,6 +69,9 @@ data Command
   | EffectsCarry String Integer Integer Bool
   | SandboxShow
   | ControlServe Port FilePath
+  | -- | C-P6.1 B14: a project, a document file, and the Jira locator when the file is a Jira search response.
+    BacklogImport String FilePath (Maybe String)
+  | BacklogExport String
   deriving (Eq, Show)
 
 -- | @work-order create@ options (contract C-P2.8 §5).
@@ -198,7 +201,32 @@ parseArgs args =
     "effects" : rest -> parseEffectsCommand rest
     "sandbox" : rest -> parseSandboxCommand rest
     "control" : rest -> parseControlCommand rest
+    "backlog" : rest -> parseBacklogCommand rest
     command : _ -> Left (UnknownCommand command)
+
+-- | Contract C-P6.1 B14: @backlog import --project ID [--jira LOCATOR] FILE@, @backlog export --project ID@.
+parseBacklogCommand :: [String] -> Either CliError Command
+parseBacklogCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "backlog")
+    "import" : options -> do
+      (acc, mbFile) <- parseOptionsAndArgument [projectOption, jiraOption] [] options
+      project <- required projectOption acc
+      file <- argument "FILE" mbFile
+      pure (BacklogImport project file (L.lookup jiraOption acc))
+    "export" : options -> do
+      (acc, mbArgument) <- parseOptionsAndArgument [projectOption] [] options
+      noArgument mbArgument
+      BacklogExport <$> required projectOption acc
+    command : _ -> Left (UnknownCommand ("backlog " <> command))
+
+projectOption :: String
+projectOption =
+  "--project"
+
+jiraOption :: String
+jiraOption =
+  "--jira"
 
 -- | Contract C-P3.1 L10: @control serve [--port N] --state DIR@.
 parseControlCommand :: [String] -> Either CliError Command
@@ -882,6 +910,8 @@ usage =
     , "       lockstep effects carry OPERATION --from-activation S --to-activation T [--acknowledge-duplication-risk]"
     , "       lockstep sandbox show"
     , "       lockstep control serve [--port N] --state DIR"
+    , "       lockstep backlog import --project PROJECT [--jira LOCATOR] FILE"
+    , "       lockstep backlog export --project PROJECT"
     , ""
     , "  serve        run the local service on 127.0.0.1 (default port 8000)"
     , "  --port N     listen on port N (1-65535)"
@@ -907,6 +937,10 @@ usage =
     , "  profile resolve       print the effective Profile the Engineer's repository would bind for this work"
     , "  ledger show           print the durable ledger: tickets, work orders, effects with their status, refusals"
     , "  ticket, work-order, work-unit, effects   the operator's (Human) decisions on the ledger"
+    , "  backlog import        import a lockstep-backlog document (or, with --jira, a Jira search"
+    , "                        response read from FILE) into a project as proposed tasks; prints"
+    , "                        the decision; nothing is scheduled or run"
+    , "  backlog export        print a project's tasks as a lockstep-backlog document"
     , "  schedule run-once     run the deterministic scheduler once"
     , "  supervisor            run Lockstep's own deterministic supervisor steps once: start a"
     , "                        claimed work order with sandbox effects, execute or recover one"

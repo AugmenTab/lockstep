@@ -358,6 +358,24 @@ killed with its container, its run stays unfinished, and after the restart it is
 bug waits for you — Lockstep never runs it again by itself (C-P4.R1). A database failure in the middle of a
 step leaves nothing half-recorded; the step is taken again, or waits for you, after the database is back.
 
+### Importing a backlog (C-P6.1)
+
+```sh
+lockstep backlog import --project PROJECT-ID backlog.json             # a lockstep-backlog document
+lockstep backlog import --project PROJECT-ID --jira https://acme.atlassian.net/projects/CAE search.json
+lockstep backlog export --project PROJECT-ID > backlog.json
+```
+
+Each imported item becomes an ordinary **proposed** task of the project (Normal priority), with its blockers as
+dependencies and its acceptance criteria, references and source revision kept as provenance. The command prints
+one line per item: `created`, `updated`, `unchanged` or `refused CODE`. Importing the same document again changes
+nothing. A newer item revision updates its task only while the task is still proposed and nobody has edited it in
+Lockstep; otherwise it is refused `locally-edited` / `locally-progressed` and the task is left alone. A blocker
+that is not in the document or an earlier import refuses its item (`dangling-blocker`); nothing is ever deleted.
+A source belongs to the project that first imported it. An import never schedules or runs anything: you still
+mark a task ready and hand it over as for any other task. The Jira path reads a search response you saved to a
+file (REST v2); Lockstep never connects to Jira. The format is in `docs/gates/P6.1/contract.md` §1.
+
 ## 7. Troubleshooting
 
 | Symptom | Cause / action |

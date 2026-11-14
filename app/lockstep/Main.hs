@@ -12,10 +12,11 @@ import Flipstone.Prelude
 import Network.Wai.Handler.Warp qualified as Warp
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (ExitCode (ExitFailure), exitWith)
-import System.IO (hPutStr, hPutStrLn, putStr, putStrLn, stderr)
+import System.IO (FilePath, hPutStr, hPutStrLn, putStr, putStrLn, stderr)
 import System.Log.FastLogger qualified as FL
 import Text.Show (show)
 
+import Lockstep.Application.Backlog (ImportReport (..), exportBacklog, importBacklogFile)
 import Lockstep.Application.Command
   ( Actor (ActorCli)
   , CommandEnvelope
@@ -188,6 +189,10 @@ main = do
     Right (ControlServe port state) ->
       -- C-P3.1: the control pane reads no database configuration.
       runControlPane port state
+    Right (BacklogImport project file jira) ->
+      withRequiredDatabase (backlogImport project file jira)
+    Right (BacklogExport project) ->
+      withRequiredDatabase (backlogExport project)
     Right command ->
       -- C-P2.8 §5: the ledger commands (every other command is matched above).
       withRequiredDatabase (ledgerCommand command)
@@ -501,6 +506,30 @@ refuse :: String -> IO ()
 refuse message = do
   hPutStrLn stderr ("lockstep: " <> message)
   exitWith (ExitFailure 65)
+
+{- | C-P6.1 B14: imports a document file into a project and prints the
+decision; a refusal prints @refused CODE@ and exits 65.
+-}
+backlogImport :: String -> FilePath -> Maybe String -> DatabaseRuntime -> IO ()
+backlogImport project file jira runtime = do
+  result <- importBacklogFile runtime (T.pack project) (fmap T.pack jira) file
+  case result of
+    Left reason -> notReady reason
+    Right (Left code) -> do
+      putStrLn ("refused " <> T.unpack code)
+      refuse ("backlog import refused (" <> T.unpack code <> ")")
+    Right (Right report) -> putStr (T.unpack (reportRendered report))
+
+-- | C-P6.1 B11, B14.
+backlogExport :: String -> DatabaseRuntime -> IO ()
+backlogExport project runtime = do
+  result <- exportBacklog runtime (T.pack project)
+  case result of
+    Left reason -> notReady reason
+    Right (Left code) -> do
+      putStrLn ("refused " <> T.unpack code)
+      refuse ("backlog export refused (" <> T.unpack code <> ")")
+    Right (Right document) -> putStrLn (T.unpack document)
 
 -- | C-P2.1 I10.
 engineerAdd :: String -> DatabaseRuntime -> IO ()
