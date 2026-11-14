@@ -33,6 +33,12 @@
 | — | The I2 check inside `InboxTest.inbox` compares with `choiceConsequence` itself (circular); A-P6.3-1 overstated what the other cases cover (only `questionAnswered` checks the answer's principal and evidence). | **Recorded.** The unit tests carry I2; the attribution check depends on A-P6.3-1. |
 | — | Capsule mode: whether an empty workspace keeps a capsule-bridged Planner from reading the project capsule. | **Open, recorded:** live/capsule clarification is NOT_RUN; to be checked before any live use. |
 
+## After remediation
+
+Full check of `2d65a1f`: format, lint, build, unit 950/950, guard PASSED; integration **621/622** — the only failure is
+A-P6.3-1 (pending owner authority); backup/restore NOT_RUN on this revision (it runs only after a passing
+integration step). `.local/evals/phase-06/p63r-full-check.log`.
+
 ## Remediation tests (frozen with this record)
 
 | File | sha256 |
