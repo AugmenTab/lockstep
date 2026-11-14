@@ -79,6 +79,7 @@ import Lockstep.Web.LedgerPageTest qualified as LedgerPageTest
 import Lockstep.Web.LivenessPageTest qualified as LivenessPageTest
 import Lockstep.Web.OperatorRoutesTest qualified as OperatorRoutesTest
 import Lockstep.Web.ProgressPageTest qualified as ProgressPageTest
+import Lockstep.Web.ProgressReviewTest qualified as ProgressReviewTest
 import Lockstep.Web.ReadinessRouteTest qualified as ReadinessRouteTest
 import Lockstep.Web.RequestGuardTest qualified as RequestGuardTest
 import Lockstep.Web.ServerTest qualified as ServerTest
@@ -165,4 +166,5 @@ main =
       , BacklogDocumentTest.tests
       , ProgressTest.tests
       , ProgressPageTest.tests
+      , ProgressReviewTest.tests
       ]

@@ -572,6 +572,7 @@ test-suite lockstep-unit
       Lockstep.Web.LivenessPageTest
       Lockstep.Web.OperatorRoutesTest
       Lockstep.Web.ProgressPageTest
+      Lockstep.Web.ProgressReviewTest
       Lockstep.Web.ReadinessRouteTest
       Lockstep.Web.RequestGuardTest
       Lockstep.Web.ServerTest

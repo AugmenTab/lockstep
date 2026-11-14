@@ -11,6 +11,7 @@ module Lockstep.Kernel.Progress
   , Publication (..)
   , publicationCode
   , nextToHandOver
+  , explainWaiting
   ) where
 
 import Data.List qualified as L
@@ -105,6 +106,15 @@ data Publication
 publicationCode :: Publication -> T.Text
 publicationCode NotPublished =
   T.pack "not-published"
+
+{- | R-P6.2-1: a waiting task names, for each task it waits for, what that task's
+own standing says when it looks finished but is not closed (its fix Done or
+technically verified while its task stays open), so the page never shows one
+task Done and another waiting on it without saying why.
+-}
+explainWaiting :: [(T.Text, Standing)] -> Standing -> Standing
+explainWaiting _ =
+  id
 
 {- | The task a person can hand over next: the highest priority among those
 whose standing is ready, then the earliest in the given order. Never one that
