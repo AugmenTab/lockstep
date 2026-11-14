@@ -139,14 +139,14 @@ inboxSection inbox =
       [ E.a [A.href (taskLink (entryTask e))] [E.text (entryTaskTitle e)]
       , E.text (" (" <> entryProjectName e <> ")")
       , E.p [] [E.text (entryQuestion e)]
-      , E.p [cls "ls-muted"] [E.text ("It stopped while " <> stepWords (entryStep e) <> ".")]
+      , E.p [cls "ls-muted"] [E.text (maybe "It stopped at a step this page does not know." (\s -> "It stopped while " <> stepWords (Just s) <> ".") (entryStep e))]
       , E.ul [] [E.li [] [E.text (inboxChoiceName c <> ": " <> inboxChoiceConsequence c)] | c <- entryChoices e]
       , E.p [cls "ls-muted"] [E.text (answersWords (entryAnswersLeft e))]
       ]
   answersWords n =
     if n <= 0
-      then "Lockstep has answered as many of your questions about it as it may; decide on its page."
-      else "You can ask about it on its page; Lockstep can answer " <> T.pack (show n) <> " more of your questions, as information only."
+      then "Lockstep has tried to answer as many of your questions about it as it may; decide on its page."
+      else "You can ask about it on its page; Lockstep can try to answer " <> T.pack (show n) <> " more of your questions, as information only."
 
 choicesFor :: OpenDecision -> [DecisionChoice]
 choicesFor decision =

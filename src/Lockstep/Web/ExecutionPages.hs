@@ -29,11 +29,13 @@ import Lockstep.Application.Conversation (StoredMessage (..), StoredRequest (..)
 import Lockstep.Application.Engine (InvocationView (..), TransactionView (..))
 import Lockstep.Application.EngineEvidence (CheckRun (..), Evidence (..), FindingTime (..), FindingView (..), ReviewView (..), transactionEvidence)
 import Lockstep.Application.Execution (Admission (..), Enablement (..), ExecutionStatus (..))
+import Lockstep.Application.Inbox (AttemptView (..))
 import Lockstep.Application.ProjectChecks (Standing (..))
 import Lockstep.Application.Projects (ProjectView (..))
 import Lockstep.Application.Tasks (TaskView (..))
 import Lockstep.Kernel.Execution (executionRefusalWords)
 import Lockstep.Kernel.Identity (HumanRequestId (..), InvocationId (..), ProjectId, RepositoryId (..), identityText, parseIdentity)
+import Lockstep.Kernel.Inbox (maxClarifications)
 import Lockstep.Kernel.Policy (ineligibilityWords)
 import Lockstep.Kernel.Profile (profileIdText)
 import Lockstep.Kernel.Roles (CandidateTest (..), Criterion (..), Verdict (..))
@@ -172,10 +174,10 @@ standingWords standing =
     Nothing -> "Its place in line is not known right now."
 
 -- | The task page's Fixing it section: only for a task of a project Lockstep may work in.
-taskFixingSection :: TaskView -> Maybe ExecutionStatus -> Maybe Admission -> Maybe Standing -> Maybe (TransactionView, Maybe StoredRequest, [StoredMessage]) -> T.Text -> [E.ChildHTML E.Division E.Body]
+taskFixingSection :: TaskView -> Maybe ExecutionStatus -> Maybe Admission -> Maybe Standing -> Maybe (TransactionView, Maybe StoredRequest, [StoredMessage], [AttemptView]) -> T.Text -> [E.ChildHTML E.Division E.Body]
 taskFixingSection task status admission standing work key =
   case (status, admission, work) of
-    (_, Just a, Just (tx, request, messages)) -> transactionSection a tx request messages key
+    (_, Just a, Just (tx, request, messages, attempts)) -> transactionSection a tx request messages attempts key
     (_, Just a, Nothing) ->
       [ heading "fixing" "Fixing it"
       , E.p [cls "ls-good-text"] [E.text "Lockstep has this bug in line to fix."]
@@ -214,8 +216,8 @@ taskFixingSection task status admission standing work key =
 checks showed, what was found and the review; what Lockstep could not tell;
 a person's decision when it stopped; Done or not when it is committed.
 -}
-transactionSection :: Admission -> TransactionView -> Maybe StoredRequest -> [StoredMessage] -> T.Text -> [E.ChildHTML E.Division E.Body]
-transactionSection a tx request messages key =
+transactionSection :: Admission -> TransactionView -> Maybe StoredRequest -> [StoredMessage] -> [AttemptView] -> T.Text -> [E.ChildHTML E.Division E.Body]
+transactionSection a tx request messages attempts key =
   [heading "fixing" "Fixing it"]
     <> standingNow
     <> earlier
@@ -272,16 +274,20 @@ transactionSection a tx request messages key =
               <> conversationPart r
         | otherwise -> [E.p [cls "ls-muted"] [E.text "Your decision is recorded; Lockstep acts on it shortly."]]
       Nothing -> [E.p [cls "ls-muted"] [E.text "Lockstep is preparing the question for you. Look again shortly."]]
-  -- C-P6.3 I3–I5: the questions asked about this request, the Planner's answers (information only), and a way to ask.
+  {- C-P6.3 I3–I6: the questions asked about this request, Lockstep's answers
+  (information only), what became of a question no answer came for, and a way
+  to ask until the limit (R-P6.3-6). Plain words only (C-P4.16). -}
+  tried = L.length [t | t <- attempts, attemptOutcome t /= Just "no-helper"]
   conversationPart r =
     [ E.h3 [] [E.text "Questions about this"]
     , case [m | m <- messages, messageKind m `L.elem` ["human", "planner"]] of
-        [] -> E.p [cls "ls-muted"] [E.text "You can ask what a choice would do before you decide. Lockstep's Planner answers with information only: it decides nothing, and only your decision above moves the fix."]
-        said -> E.ul [cls "ls-conversation"] (fmap saidItem said)
+        [] -> E.p [cls "ls-muted"] [E.text "You can ask what a choice would do before you decide. Lockstep answers with information only: its answer decides nothing, and only your decision above moves the fix."]
+        said -> E.ul [cls "ls-conversation"] (L.concatMap saidItems said)
     ]
-      <> case parseIdentity (storedRequestId r) of
-        Nothing -> []
-        Just rid ->
+      <> case (parseIdentity (storedRequestId r), tried >= maxClarifications) of
+        (_, True) -> [E.p [cls "ls-muted", attr "id" "questions-limit"] [E.text "Lockstep has tried to answer as many of your questions about this as it may. Decide above."]]
+        (Nothing, _) -> []
+        (Just rid, False) ->
           [ E.form
               [A.id (elementId 'a' "sk-form"), A.method B.FormPOST, A.action (askQuestionAction rid)]
               [ hidden keyField (key <> "-q")
@@ -291,15 +297,26 @@ transactionSection a tx request messages key =
               , E.button [A.id (elementId 'a' "sk-question"), attr "type" "submit"] [E.text "Ask"]
               ]
           ]
-  saidItem m =
+  saidItems m =
     E.li
       []
       [ E.text
           ( if messageKind m == "planner"
-              then "Lockstep's Planner answered (information only; it decides nothing): " <> messageBody m
+              then "Lockstep answered (information only; it decides nothing): " <> messageBody m
               else "You asked: " <> messageBody m
           )
       ]
+      : [ E.li [cls "ls-muted"] [E.text note]
+        | messageKind m == "human"
+        , Just note <- [L.find ((== messageSequence m) . attemptQuestion) attempts >>= noAnswerWords . attemptOutcome]
+        ]
+  noAnswerWords outcome =
+    case outcome of
+      Just "no-helper" -> Just "Lockstep could not answer this question: no coding helper is set up."
+      Just "failed" -> Just "Lockstep could not answer this question: its attempt failed. You can ask again."
+      Just "uncertain" -> Just "Lockstep could not answer this question: it was cut off. You can ask again."
+      Nothing -> Just "Lockstep is looking at this question."
+      _ -> Nothing
   choice name =
     E.div
       [cls "ls-choice"]

@@ -34,7 +34,7 @@ import Flipstone.Prelude
 import System.Timeout (timeout)
 import Text.Show (Show)
 
-import Lockstep.Application.Clarification (ClarificationOutcome (ClarifiedLimit), ClarificationReport (..), answerClarifications, clarificationOutcomeCode)
+import Lockstep.Application.Clarification (ClarificationOutcome (..), ClarificationReport (..), answerClarificationsUntil, clarificationOutcomeCode)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, reasonDiagnosis)
 import Lockstep.Application.Engine (Engine, StepReport (..), activeTransactionIds, advanceTransaction, pendingWorkOrders, startTransactionFor)
 import Lockstep.Kernel.Identity (TransactionId (..), WorkOrderId (..), identityText)
@@ -80,14 +80,20 @@ enginePass runtime engine stopping = do
   if stop
     then pure advanced
     else do
-      clarified <- answerClarifications runtime engine
+      clarified <- answerClarificationsUntil runtime engine stopping
       pure $
         advanced
           <> case clarified of
             Left reason -> [(T.pack "clarifications", Left (PassDatabase reason))]
             -- A question left at the limit stays so every pass; it is not reported again each time.
-            Right reports -> [(T.pack "clarify " <> reportRequest r, Right (clarificationOutcomeCode (reportOutcome r))) | r <- reports, reportOutcome r /= ClarifiedLimit]
+            Right reports -> [(T.pack "clarify " <> reportRequest r, clarificationResult (reportOutcome r)) | r <- reports, reportOutcome r /= ClarifiedLimit]
  where
+  -- R-P6.3: a question no answer came for is a refusal the worker logs; an answer, or no helper, is not.
+  clarificationResult outcome =
+    case outcome of
+      ClarifiedFailed _ -> Left (PassRefused (clarificationOutcomeCode outcome))
+      ClarifiedUncertain -> Left (PassRefused (clarificationOutcomeCode outcome))
+      _ -> Right (clarificationOutcomeCode outcome)
   -- A start that happened is seen as its transaction's advance; one that did not is reported
   -- (a refusal, such as an Engineer whose writer is busy, is tried again next pass).
   start workOrder = do
@@ -136,6 +142,8 @@ startEngineWorker runtime engine interval logLine = do
           Right results ->
             -- A database failure is logged with its diagnosis; refusals are the engine's own record.
             traverse_ (\(what, failure) -> quietly (logLine ("engine pass: " <> T.unpack what <> ": " <> T.unpack (reasonDiagnosis failure)))) [(what, r) | (what, Left (PassDatabase r)) <- results]
+              -- R-P6.3: a question Lockstep could not answer is logged too (the database keeps its code).
+              >> traverse_ (\(what, code) -> quietly (logLine ("engine pass: " <> T.unpack what <> ": " <> T.unpack code))) [(what, c) | (what, Left (PassRefused c)) <- results, T.pack "clarify " `T.isPrefixOf` what]
         threadDelay (interval * 1000)
         loop
     -- A log that fails is not a reason to stop working; a stop still is.

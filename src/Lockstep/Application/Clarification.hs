@@ -19,8 +19,9 @@ module Lockstep.Application.Clarification
   , clarificationContext
   ) where
 
+import Control.Exception.Safe (finally)
 import Data.List qualified as L
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, fromMaybe)
 import Data.Text qualified as T
 import Fleece.Core ((#+))
 import Fleece.Core qualified as FC
@@ -30,7 +31,7 @@ import Text.Show (Show)
 
 import Lockstep.Application.Command (IdempotencyKey, mkIdempotencyKey)
 import Lockstep.Application.Conversation (Sender (..), StoredMessage (..), postMessage)
-import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, withDatabase)
+import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason, SessionLock (ClarificationLock), withDatabase, withSessionLock)
 import Lockstep.Application.Engine (Engine (..))
 import Lockstep.Application.Identity (newUuid)
 import Lockstep.Application.Inbox (InboxChoice (..), InboxEntry (..), inboxEntries)
@@ -42,8 +43,9 @@ import Lockstep.Kernel.Identity (HumanRequestId (..), InvocationId (..), identit
 import Lockstep.Kernel.Inbox (maxClarifications)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
 import Lockstep.Kernel.Roles (Clarification (..), Role (Planner), RoleAnswer (..))
-import Lockstep.Persistence.Clarification (ClarificationEnding (..), ClarificationRow (..))
+import Lockstep.Persistence.Clarification (ClarificationEnding (..), ClarificationRow (..), clarificationEndingCode)
 import Lockstep.Persistence.Clarification qualified as Store
+import Lockstep.Persistence.Conversation qualified as Conversations
 
 data ClarificationOutcome
   = -- | The Planner answered and its answer was posted.
@@ -83,24 +85,63 @@ answerClarifications runtime engine =
   answerClarificationsUntil runtime engine (pure False)
 
 -- | 'answerClarifications' that ends early, between questions, once the check says so.
+
+{- | R-P6.3: the phase runs under its own session lock, so only one worker
+settles and answers at a time (another skips the phase while one holds it);
+the stop is checked before each question.
+-}
 answerClarificationsUntil :: DatabaseRuntime -> Engine -> IO Bool -> IO (Either NotReadyReason [ClarificationReport])
-answerClarificationsUntil runtime engine _ = do
+answerClarificationsUntil runtime engine stopping = do
+  halt <- stopping
+  if halt
+    then pure (Right [])
+    else do
+      locked <- withSessionLock runtime ClarificationLock (T.pack "clarifications") (const (phase runtime engine stopping))
+      pure $
+        case locked of
+          Right result -> result
+          Left LockBusy -> Right []
+          Left (LockUnavailable reason) -> Left reason
+
+phase :: DatabaseRuntime -> Engine -> IO Bool -> IO (Either NotReadyReason [ClarificationReport])
+phase runtime engine stopping = do
   settled <-
     withDatabase runtime . O.withTransaction $ do
       rows <- Store.unfinishedClarifications
-      traverse_ (\r -> Store.finishClarification (clarificationId r) EndedUncertain (Just (T.pack "worker-stopped")) Nothing) rows
-      pure rows
+      traverse settle rows
   case settled of
     Left reason -> pure (Left reason)
     Right cut -> do
-      let
-        uncertain = [ClarificationReport (identityText (clarificationRequest r)) (fromIntegral (clarificationSequence r)) ClarifiedUncertain | r <- cut]
       open <- inboxEntries runtime
       case open of
         Left reason -> pure (Left reason)
         Right entries -> do
-          answered <- traverse (answerOne runtime engine) entries
-          pure (fmap ((uncertain <>) . catMaybes) (sequenceA answered))
+          answered <- each entries
+          pure (fmap ((cut <>) . catMaybes) (sequenceA answered))
+ where
+  each entries =
+    case entries of
+      [] -> pure []
+      entry : rest -> do
+        stop <- stopping
+        if stop
+          then pure []
+          else (:) <$> answerOne runtime engine entry <*> each rest
+  {- R-P6.3-2: an attempt a stopped worker left unfinished. If its answer was
+  already posted (its message's key names the attempt), it is finished answered
+  with that answer's digest; otherwise it is finished uncertain and never run
+  again. -}
+  settle r = do
+    posted <- Conversations.findMessageByKey (T.pack "clarification-" <> identityText (clarificationId r))
+    let
+      report = ClarificationReport (identityText (clarificationRequest r)) (fromIntegral (clarificationSequence r))
+    case posted of
+      Just m -> do
+        Store.finishClarification (clarificationId r) EndedAnswered Nothing (Just (digestOf (Conversations.messageRowBody m)))
+        pure (report ClarifiedAnswered)
+      Nothing -> do
+        Store.finishClarification (clarificationId r) EndedUncertain (Just (T.pack "worker-stopped")) Nothing
+        pure (report ClarifiedUncertain)
 
 {- | The request's latest message, when it is a person's question no attempt
 was made for; Nothing otherwise.
@@ -114,12 +155,15 @@ answerOne runtime engine entry =
         Left reason -> pure (Left reason)
         Right rows
           | L.any ((== fromIntegral (messageSequence question)) . clarificationSequence) rows -> pure (Right Nothing)
-          | L.length rows >= maxClarifications -> pure (Right (Just (report question ClarifiedLimit)))
+          -- R-P6.3-5: only attempts that ran count against the bound; one without a helper ran nothing.
+          | L.length (L.filter ran rows) >= maxClarifications -> pure (Right (Just (report question ClarifiedLimit)))
           | otherwise -> fmap (fmap (report question)) <$> attempt runtime engine entry requestId question (L.length rows)
     _ -> pure (Right Nothing)
  where
   report question =
     ClarificationReport (entryRequest entry) (messageSequence question)
+  ran r =
+    clarificationOutcome r /= Just (clarificationEndingCode EndedNoHelper)
 
 attempt :: DatabaseRuntime -> Engine -> InboxEntry -> HumanRequestId -> StoredMessage -> Int -> IO (Either NotReadyReason (Maybe ClarificationOutcome))
 attempt runtime engine entry requestId question earlier = do
@@ -154,8 +198,8 @@ attempt runtime engine entry requestId question earlier = do
         case prepared of
           Left code -> pure (RunFailed code)
           Right workspace -> do
-            outcome <- invokeRole runner adapter Planner workspace (clarificationContext entry) []
-            runnerRelease runner workspace
+            -- R-P6.3: the workspace is released whatever happens, an asynchronous stop included.
+            outcome <- invokeRole runner adapter Planner workspace (clarificationContext entry) [] `finally` runnerRelease runner workspace
             case outcome of
               RoleAnswered (AnswerClarification c) _ -> post invocation (clarificationText c)
               RoleAnswered _ _ -> pure (RunFailed (T.pack "wrong-kind"))
@@ -219,6 +263,8 @@ newtype AnswerKind
 data RequestContext
   = RequestContext
   { rcQuestion :: T.Text
+  , rcEvidence :: T.Text
+  , rcStoppedFor :: T.Text
   , rcChoices :: [ChoiceContext]
   , rcRule :: T.Text
   }
@@ -247,6 +293,8 @@ contextSchema =
     FC.object $
       FC.constructor RequestContext
         #+ FC.required "question" rcQuestion FC.text
+        #+ FC.required "evidence" rcEvidence FC.text
+        #+ FC.required "stopped_for" rcStoppedFor FC.text
         #+ FC.required "choices" rcChoices (FC.list choiceSchema)
         #+ FC.required "rule" rcRule FC.text
   choiceSchema =
@@ -265,9 +313,10 @@ contextSchema =
         #+ FC.required "title" (\(TicketContext t _) -> t) FC.text
         #+ FC.required "acceptance" (\(TicketContext _ a) -> a) FC.text
 
-{- | What the Planner reads: the request, its choices with their consequences,
-the conversation so far and the task; and the rule that its answer is
-information only. No repository is given (the workspace is empty).
+{- | What the Planner reads: the request (its question, its evidence, the code
+the fix stopped for, its choices with their consequences), the conversation so
+far and the task; and the rule that its answer is information only. No
+repository is given (the workspace is empty).
 -}
 clarificationContext :: InboxEntry -> T.Text
 clarificationContext entry =
@@ -280,6 +329,8 @@ clarificationContext entry =
       , ctxRequest =
           RequestContext
             { rcQuestion = entryQuestion entry
+            , rcEvidence = entryEvidence entry
+            , rcStoppedFor = fromMaybe (T.pack "unknown") (entryHalt entry)
             , rcChoices = [ChoiceContext (inboxChoiceName c) (inboxChoiceConsequence c) | c <- entryChoices entry]
             , rcRule = T.pack "Answer the person's last question with information only. You cannot decide, approve, choose or resume anything; only the person decides."
             }

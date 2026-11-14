@@ -8,6 +8,8 @@ module Lockstep.Application.Inbox
   , InboxEntry (..)
   , inboxEntries
   , askQuestion
+  , AttemptView (..)
+  , requestAttempts
   ) where
 
 import Control.Monad.Except (ExceptT (..), runExceptT)
@@ -48,6 +50,9 @@ data InboxEntry
   , entryTaskTitle :: T.Text
   , entryAcceptance :: T.Text
   , entryQuestion :: T.Text
+  , entryEvidence :: T.Text
+  , entryHalt :: Maybe T.Text
+  -- ^ The code the fix stopped for (R-P6.3-1).
   , entryStep :: Maybe Stage
   , entryChoices :: [InboxChoice]
   , entryMessages :: [StoredMessage]
@@ -89,6 +94,11 @@ inboxEntries runtime =
               , entryTaskTitle = Tasks.rowTitle task
               , entryAcceptance = Tasks.rowAcceptance task
               , entryQuestion = storedQuestion request
+              , entryEvidence = storedEvidence request
+              , entryHalt =
+                  case Transactions.txRowState <$> fix of
+                    Just (Halted _ code) -> Just code
+                    _ -> Nothing
               , entryStep = step
               , entryChoices = [InboxChoice c (maybe unknownConsequence (`choiceConsequence` c) step) | c <- storedChoices request]
               , entryMessages = maybe [] conversationMessages talk
@@ -107,8 +117,32 @@ factsOf workOrder requestId = do
       task <- Tasks.findTaskRow (Execution.admissionRowTask a)
       project <- Projects.findProjectById (Execution.admissionRowProject a)
       fix <- Transactions.findTransactionByWorkOrder workOrder
-      attempts <- L.length <$> Clarifications.requestClarifications requestId
+      -- R-P6.3-5: only attempts that ran count; one without a helper ran nothing.
+      attempts <- L.length . L.filter ran <$> Clarifications.requestClarifications requestId
       pure (Facts <$> task <*> project <*> pure fix <*> pure attempts)
+ where
+  ran r =
+    Clarifications.clarificationOutcome r /= Just (Clarifications.clarificationEndingCode Clarifications.EndedNoHelper)
+
+-- | One attempt to answer a question, for the task page (R-P6.3-6).
+data AttemptView
+  = AttemptView
+  { attemptQuestion :: Int
+  -- ^ The question's message sequence.
+  , attemptOutcome :: Maybe T.Text
+  -- ^ @answered@, @failed@, @no-helper@ or @uncertain@; Nothing while it runs.
+  }
+  deriving (Eq, Show)
+
+-- | The attempts made on a request's questions, in question order.
+requestAttempts :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason [AttemptView])
+requestAttempts runtime rawRequest =
+  case parseIdentity rawRequest of
+    Nothing -> pure (Right [])
+    Just requestId ->
+      withDatabase runtime $
+        fmap (\r -> AttemptView (fromIntegral (Clarifications.clarificationSequence r)) (Clarifications.clarificationOutcome r))
+          <$> Clarifications.requestClarifications requestId
 
 -- | The step a fix is at or stopped at.
 stepOf :: TxState -> Maybe Stage

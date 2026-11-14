@@ -914,7 +914,8 @@ taskAnswer db task notice = do
             request <- fromRight Nothing <$> haltRequest db (viewKey v)
             -- C-P6.3: the open request's questions and the Planner's answers.
             talk <- maybe (pure (Right Nothing)) (conversation db . storedRequestId) request
-            pure (Just (v, request, maybe [] conversationMessages (fromRight Nothing talk)))
+            attempts <- maybe (pure (Right [])) (Inbox.requestAttempts db . storedRequestId) request
+            pure (Just (v, request, maybe [] conversationMessages (fromRight Nothing talk), fromRight [] attempts))
           _ -> pure Nothing
   key <- idempotencyKeyText <$> generateIdempotencyKey
   case project of

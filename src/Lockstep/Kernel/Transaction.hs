@@ -141,12 +141,12 @@ retryOperation stage =
       StageReproduction -> "Retry runs the same reproduction command again."
       StageCandidate -> "Retry asks the Planner for new candidate tests and runs them at the basis."
       StageChallengePre -> "Retry runs the challenger on the candidate tests again."
-      StageFreeze -> "Retry makes the Supervisor's commit of the tests again."
+      StageFreeze -> "Retry makes Lockstep's commit of the tests again."
       StageImplement -> "Retry runs the Implementer again."
       StageVerify -> "Retry runs the verification commands again."
       StageChallengePost -> "Retry runs the challenger on the change again."
       StageReview -> "Retry runs the Reviewer again."
-      StageAccept -> "Retry makes the Supervisor's acceptance commit again."
+      StageAccept -> "Retry makes Lockstep's acceptance commit again."
 
 data Stage
   = StageBasis
