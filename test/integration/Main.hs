@@ -8,6 +8,7 @@ import Test.Tasty (defaultMain, testGroup)
 import Lockstep.ActivityBrowserTest qualified as ActivityBrowserTest
 import Lockstep.ActivityPageTest qualified as ActivityPageTest
 import Lockstep.AppShellTest qualified as AppShellTest
+import Lockstep.BacklogReviewTest qualified as BacklogReviewTest
 import Lockstep.BacklogTest qualified as BacklogTest
 import Lockstep.BrowserFormTest qualified as BrowserFormTest
 import Lockstep.CommandCenterTest qualified as CommandCenterTest
@@ -175,4 +176,5 @@ main =
       , StabilizationReviewTest.tests
       , StabilizationSessionTest.tests
       , BacklogTest.tests
+      , BacklogReviewTest.tests
       ]

@@ -349,6 +349,7 @@ test-suite lockstep-integration
       Lockstep.ActivityBrowserTest
       Lockstep.ActivityPageTest
       Lockstep.AppShellTest
+      Lockstep.BacklogReviewTest
       Lockstep.BacklogTest
       Lockstep.BrowserFormTest
       Lockstep.CommandCenterTest
