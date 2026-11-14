@@ -277,6 +277,10 @@ Post-Phase-5 operational stabilization, 2026-11-13 (the owner's instruction in t
   native subscription sign-in and end-to-end TLS unchanged. Applied and the helper restarted 2026-11-14T02:41Z.
 - **Not authorized by it**: the attended real-provider renewal check ("when separately authorized"); V3 or broad
   infrastructure changes; repeating the Brigid fix or the calculator smoke; extending the LAN exception; push.
+- **Then authorized separately** by the owner, in session: "Perform the attended real OAuth-renewal validation once the
+  token has naturally expired." Run 2026-11-14T03:05Z: two one-word CLI sessions on the helper's launch path. In
+  session 1 the CLI contacted `platform.claude.com` and succeeded; session 2 contacted `api.anthropic.com` only.
+  Nothing was refused, and about 3,400 tokens were used in all (`s1-sd1.md` §4).
 
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.

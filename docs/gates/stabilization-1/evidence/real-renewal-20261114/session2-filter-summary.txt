@@ -1,0 +1,6 @@
+mode passthrough
+allowed api.anthropic.com,platform.claude.com
+tunnels 2
+refused 0
+hosts api.anthropic.com
+refused-hosts -

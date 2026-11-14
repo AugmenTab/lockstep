@@ -10,7 +10,7 @@
 |---|---|
 | S1–S4 implementation and offline qualification | **Accepted** (the handoff's Planner disposition) |
 | S1-SD1, allow `platform.claude.com` | **Approved**; applied 2026-11-14T02:41Z |
-| Real-provider renewal | **Not tested; not yet authorized** (§4) |
+| Real-provider renewal | **Observed** 2026-11-14T03:05Z, attended and authorized by the owner (§4) |
 
 Nothing beyond the one host changed: no wildcard, no unrestricted egress, no API-key billing, no credential
 substitution. Native Claude Code subscription sign-in stays as it was (the CLI's own login in the auth volume,
@@ -81,31 +81,73 @@ What GREEN shows:
 **Not rerun today:** `check-live-renewal`. Neither the code nor the image has changed since the GREEN run; the image
 digest is the same `78fc11e1…`.
 
-## 4. Real-provider renewal: not validated
+## 4. Real-provider renewal: attended check, 2026-11-14
 
-**Accepted:** offline qualification (§3). It shows the filter admits the renewal host, and that the pinned CLI
-renews itself through the filter against a stand-in that answers as the token endpoint would.
+**Authorization:** the owner, in session: "Perform the attended real OAuth-renewal validation once the token has
+naturally expired."
 
-**Not established:** that Anthropic's real token endpoint accepts this renewal through the filter. The handoff
-allows the check only "when separately authorized", and it has not been authorized. No real-provider traffic was
-sent for this record.
+**Offline qualification (§3)** showed the filter admits the renewal host, and that the pinned CLI renews itself
+through the filter against a stand-in.
 
-Proposed attended check, for when it is authorized:
-1. Wait until the stored access token has expired. Ordinary disuse is enough; the credential is never read,
-   extracted or edited to force it.
-2. Run one short read-only role through the helper (one Planner run).
-3. Confirm all of these:
-   - the run did not end `provider-auth-rejected`;
-   - the run's `.refusals` file is absent or empty;
-   - the summary's `hosts` line is `api.anthropic.com,platform.claude.com`. A tunnel to the renewal host is the
-     renewal event itself, visible without touching the credential. A session that only ever reaches
-     `api.anthropic.com` proves nothing about renewal;
-   - a second role run then completes without contacting `platform.claude.com` again.
-4. Record the result and the hosts here.
+**What this check adds:** the same renewal, observed against Anthropic's real token endpoint.
+
+### How it was run
+
+`scripts/lib/check-real-renewal .local/control <out>` (owner's helper state):
+- Two sessions with the official pinned CLI 2.1.312 and your own sign-in, from the auth volume
+  `lockstep-provider-auth-main`.
+- Each session is launched exactly as the helper's `execute_native_run` launches a live role:
+  - the same image (`78fc11e1…`), the same container limits, and `agent-entry`'s two identities;
+  - the auth volume mounted only to the CLI;
+  - the passthrough filter on an internal network, with the allowlist read from your live `egress-hosts`;
+  - model `claude-sonnet-5-5`, effort `medium`, from the helper's live settings.
+- Each session has no tools, an empty read-only tree, and the prompt "Reply with exactly the word ok and nothing
+  else."
+- It was run directly, not through the service's signed runner channel. Lockstep never signs requests on the
+  service's behalf, and the handoff forbids repeating Brigid or the calculator merely to exercise a run.
+
+### Was the token naturally expired?
+
+The credential was not read to find out. It was last issued by your `--provider-auth-login` on 2026-11-12, before
+the 15:46Z run. It could not renew after that, because the renewal host was blocked until 2026-11-14T02:41Z. Its
+last use was 2026-11-12T21:45Z. The check ran at 03:05Z, about 29 hours later. Nothing was edited or forced.
+
+### Result
+
+| | Session 1 (03:05:45Z) | Session 2 (immediately after) |
+|---|---|---|
+| CLI exit, `is_error`, `api_error_status`, result | 0, false, null, `ok` | 0, false, null, `ok` |
+| Tunnels opened by the filter | 4 | 2 |
+| Hosts contacted (filter summary) | `api.anthropic.com`, **`platform.claude.com`** | `api.anthropic.com` only |
+| Refused | 0 (no `.refusals` file content) | 0 |
+| Usage (tokens) | 2 in, 1,697 cache write, 4 out | 2 in, 1,697 cache read, 4 out |
+
+**Reading:**
+- In session 1, the CLI opened a tunnel to its OAuth token host, `platform.claude.com`, and the API then accepted
+  its requests. That is the renewal event, seen from outside the credential.
+- Before S1-SD1, the same expired sign-in got 401 (the Brigid failure and `check-live-renewal` X).
+- Session 2 did not contact the token host, which means the renewed sign-in was saved in the auth volume and
+  reused.
+- No connection was refused, and no other host was contacted.
+
+**Evidence:** `evidence/real-renewal-20261114/`. It holds the filter summaries and the CLI's JSON results, which
+contain no token. Every kept file was searched for token strings (`sk-ant`, `access_token`, `refresh_token`,
+`Bearer`): none found. stderr was empty.
+
+### Limits of this evidence
+
+- **The cause of the tunnel is inferred.** The filter sees only the host, never the request, so it cannot show
+  which endpoint on `platform.claude.com` was called. That the call was the refresh grant at `/v1/oauth/token`
+  rests on three things:
+  - the pinned binary's `TOKEN_URL`;
+  - the stand-in check, where the CLI contacted that host only to renew;
+  - session 2, which had a valid token and did not contact the host at all.
+- **The token's expiry was not observed directly**, by design (see above).
+- **The renewal ran on the helper's launch path, not inside a Lockstep transaction.** The next ordinary
+  supervised run will be the first through the service.
 
 ## 5. Remaining authentication limitations
 
-- Real-provider renewal is unproven until the check in §4 is run.
 - If the refresh token itself is revoked or expires, the owner must sign in again (`--provider-auth-login`). Such a
   run fails with `provider-auth-rejected` and one instruction: sign in again, then retry.
 - Preflight still checks only that a sign-in is stored; it cannot tell whether that sign-in still works. A remote

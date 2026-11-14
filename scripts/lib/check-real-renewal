@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# S1-SD1 §4: the attended real-provider OAuth renewal check (owner-authorized only).
+#
+#   scripts/lib/check-real-renewal HELPER-STATE OUT-DIR
+#
+# Two tiny role sessions with the official pinned CLI and the owner's own sign-in, launched exactly
+# as scripts/control-helper's execute_native_run launches a live role: the same image, the auth
+# volume mounted only to the CLI, agent-entry's two identities, the same container limits, and the
+# passthrough filter with the helper's own allowlist (provider/egress-hosts) on an internal network.
+# No tools, an empty tree, a one-word prompt.
+#
+# The renewal event is read from the filter, never from the credential: a tunnel to the renewal
+# host in session 1 means the CLI renewed its access token; session 2 then reaching only the API
+# host means the renewed sign-in was kept. Nothing here reads, prints, copies or edits the
+# credential; the CLI's JSON result (no token in it) and the filter's records are all that is kept.
+set -u
+[ $# -eq 2 ] || { echo "usage: $0 HELPER-STATE OUT-DIR" >&2; exit 64; }
+state=$1
+out=$2
+image=lockstep-provider:claude-2.1.312
+volume=lockstep-provider-auth-main
+renewal_host=platform.claude.com
+api_host=api.anthropic.com
+mkdir -p "$out"
+
+# The allowlist as the helper reads it (read_egress_hosts, verbatim but for the path).
+read_egress_hosts() {
+  local file=$state/provider/egress-hosts line list="" n=0
+  [ -f "$file" ] && [ ! -L "$file" ] || return 1
+  [ "$(wc -c < "$file" | tr -d ' ')" -le 4096 ] || return 1
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    [[ $line =~ ^[a-z0-9.-]{1,253}$ ]] || return 1
+    list="$list${list:+,}$line"
+    n=$((n + 1))
+  done < "$file"
+  [ "$n" -ge 1 ] || return 1
+  printf '%s' "$list"
+}
+allow=$(read_egress_hosts) || { echo "FAIL the helper's egress-hosts is missing or invalid"; exit 1; }
+echo "allowlist $allow"
+
+# The helper's live settings (provider/config): model, effort, output cap.
+model=""
+effort=""
+read -r _ _ _ model effort <<< "$(cat "$state/runner/provider")"
+[ -n "$model" ] && [ -n "$effort" ] || { echo "FAIL no live provider settings"; exit 1; }
+echo "model $model effort $effort"
+
+session() { # N -> runs one session; leaves OUT/sN.{stdout,stderr,summary,refusals,exit}
+  local n=$1 run net filter name dir rc
+  run=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  net=lockstep-realrenew-$run
+  filter=lockstep-realrenew-egress-$run
+  name=lockstep-realrenew-run-$run
+  dir=$out/s$n
+  mkdir -p "$dir/tree" "$dir/input" "$dir/output" "$dir/ledger"
+  chmod 700 "$dir/ledger"
+  chmod 777 "$dir/output"
+  echo "run $run" > "$dir/run"
+  docker network create --internal "$net" >/dev/null || { echo "FAIL network"; return 1; }
+  docker run -d --name "$filter" --network "$net" --network-alias lockstep-egress --read-only \
+    --tmpfs /tmp:rw,nosuid,nodev,size=16777216 --cap-drop ALL --security-opt no-new-privileges \
+    --pids-limit 64 --memory 256m --memory-swap 256m --cpus 1 --user "$(id -u):$(id -g)" --log-driver none \
+    --env HOME=/tmp --env PATH=/usr/local/bin:/usr/bin:/bin --env LANG=C.UTF-8 --env TZ=UTC \
+    --mount "type=bind,source=$dir/ledger,target=/ledger" \
+    "$image" python3 /opt/lockstep/egress-proxy passthrough --run "$run" --ledger /ledger --allow "$allow" \
+    < /dev/null > /dev/null 2>&1 || { echo "FAIL filter start"; docker network rm "$net" >/dev/null; return 1; }
+  local w=0
+  while [ ! -f "$dir/ledger/runs/$run.ready" ] && [ $w -lt 150 ]; do sleep 0.1; w=$((w + 1)); done
+  docker network connect bridge "$filter" >/dev/null 2>&1 || { echo "FAIL filter egress"; return 1; }
+  docker run --rm --name "$name" --network "$net" --read-only \
+    --tmpfs /tmp:rw,nosuid,nodev,size=268435456 \
+    --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add DAC_OVERRIDE --cap-add KILL \
+    --security-opt no-new-privileges --pids-limit 256 --memory 4g --memory-swap 4g --cpus 2 --user 0:0 \
+    --env HOME=/tmp --env PATH=/usr/local/bin:/usr/bin:/bin --env LANG=C.UTF-8 --env LC_ALL=C.UTF-8 --env TZ=UTC \
+    --env HTTPS_PROXY=http://lockstep-egress:8080 --env HTTP_PROXY=http://lockstep-egress:8080 \
+    --env NO_PROXY= --env no_proxy= \
+    --env CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 --env DISABLE_AUTOUPDATER=1 \
+    --env DISABLE_TELEMETRY=1 --env DISABLE_ERROR_REPORTING=1 --env CLAUDE_CODE_MAX_OUTPUT_TOKENS=1000 \
+    --env CLAUDE_CONFIG_DIR=/auth --mount "type=volume,source=$volume,target=/auth" \
+    --log-driver none --workdir /work/tree \
+    --mount "type=bind,source=$dir/tree,target=/work/tree,readonly" \
+    --mount "type=bind,source=$dir/input,target=/input,readonly" \
+    --mount "type=bind,source=$dir/output,target=/output" \
+    "$image" /opt/lockstep/agent-entry "$(id -u)" "$(id -g)" \
+    claude -p --model "$model" --effort "$effort" --tools "" --dangerously-skip-permissions --no-session-persistence --output-format json \
+    --strict-mcp-config --disable-slash-commands --session-id "$(uuidgen | tr 'A-Z' 'a-z')" \
+    "Reply with exactly the word ok and nothing else." \
+    < /dev/null > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  echo "$rc" > "$dir/exit"
+  docker stop --time 3 "$filter" >/dev/null 2>&1 || true
+  docker rm -f "$filter" >/dev/null 2>&1 || true
+  docker network rm "$net" >/dev/null 2>&1 || true
+  cp "$dir/ledger/runs/$run" "$dir/summary" 2>/dev/null || : > "$dir/summary"
+  cp "$dir/ledger/runs/$run.refusals" "$dir/refusals" 2>/dev/null || : > "$dir/refusals"
+}
+
+field() { sed -n "s/^$2 //p" "$out/s$1/summary"; }
+json() { grep -o "\"$2\": *[^,}]*" "$out/s$1/stdout" | head -n 1 | sed 's/^[^:]*: *//'; }
+
+report() { # N
+  echo "session $1: exit $(cat "$out/s$1/exit"), is_error $(json "$1" is_error), api_error_status $(json "$1" api_error_status), result $(json "$1" result)"
+  echo "session $1: filter tunnels $(field "$1" tunnels), hosts $(field "$1" hosts), refused $(field "$1" refused), refused-hosts $(field "$1" refused-hosts)"
+}
+
+started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+echo "started $started"
+session 1 || exit 1
+report 1
+case ",$(field 1 hosts)," in
+  *",$renewal_host,"*) echo "RENEWAL session 1 opened a tunnel to $renewal_host" ;;
+  *) echo "NO-RENEWAL session 1 did not contact $renewal_host (the access token was still valid, or renewal was not needed)" ;;
+esac
+session 2 || exit 1
+report 2
+case ",$(field 2 hosts)," in
+  *",$renewal_host,"*) echo "SESSION-2 contacted $renewal_host again" ;;
+  *) echo "SESSION-2 reached only: $(field 2 hosts)" ;;
+esac
+echo "finished $(date -u +%Y-%m-%dT%H:%M:%SZ)"
