@@ -9,7 +9,8 @@
 - Bible v2.1 (16 October 2026, sha256 `62196658…640ff`) was superseded by v2.2 and stays the historical authority
   for records made under it.
 - Recorded in the repository by the writing agent (Implementer) at the owner's instruction: v2.2 and
-  ALIGN-01 on 2026-10-25, v2.3 on 2026-11-13. The agent decided nothing here.
+  ALIGN-01 on 2026-10-25, v2.3 on 2026-11-14 (UTC). Registers: `governance/SOURCE_REGISTER.md`,
+  `governance/DECISION_REGISTER.md`. The agent decided nothing here.
 
 ## 1. Sources and text
 

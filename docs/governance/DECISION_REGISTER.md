@@ -282,6 +282,32 @@ Post-Phase-5 operational stabilization, 2026-11-13 (the owner's instruction in t
   session 1 the CLI contacted `platform.claude.com` and succeeded; session 2 contacted `api.anthropic.com` only.
   Nothing was refused, and about 3,400 tokens were used in all (`s1-sd1.md` §4).
 
+**Governing documents v2.3 / v0.4, ratified 2026-11-13** (the owner's ratification as stated in the documents
+themselves; supplied by the owner in session and recorded by the writing agent 2026-11-14; records
+`docs/PROJECT_BIBLE.md` §3 and `SOURCE_REGISTER.md` §2):
+
+- **RATIFIED / APPROVED by the owner:** Project Bible v2.3, `LS-BIBLE-2.3-01` (consolidated PDF sha256
+  `f29fe7f3…a6f6c3`; amendment text `4a14dfee…590d`); Implementation PRD v0.4 (PDF `70e08228…45ff`; text
+  `a69558b1…4522`); Dependency-Aware Plan v0.4 (text `7e478504…5c50`). v2.3 is an interpretive overlay on Bible
+  v2.2 + LS-BIBLE-2.2-ALIGN-01; it qualifies or supersedes only the clauses it names (B23-01 – B23-20) and
+  governs prospectively.
+- **D6 policy directions APPROVED** (Bible v2.3 §8): **D6-AUTH** (one approved plan and authority envelope permits
+  automatic local dependency-ready progression; provisional unlocking of descendants; final human Done stays
+  distinct; consequential external effects stay human-gated), **D6-SOURCE** (Phase 6 minimum external-source
+  capability), **D6-GATE** (Gate D = model-free multi-Work-Unit execution plus a separately authorized real
+  Caesura milestone), **D6-SEC** (a durable host-enforced LAN boundary and capsule concurrency/restart
+  qualification before *unrestricted unattended* execution; unattended Caesura must not use the expired Brigid
+  LAN exception).
+- **Phase renumbering** (v2.3 §7): old plan P5.1–P5.10 become P6.1–P6.10, and each later phase moves up one
+  (through P12). Persistent Contract IDs, recorded events, gate receipts and migration history are not renamed.
+- **Recorded status** (v2.3 §6): VM-1 accepted 2026-11-13; stabilization S1–S4 accepted offline, with the
+  installed build and the real-provider renewal evidenced separately; D / P6 and later milestones future.
+- **Not authorized by it:** Phase 6 execution, external effects, provider spending, host administration, remote
+  publication; self-acceptance of any gate or change to an accepted Contract; V3 domain-model rewrite; multiple
+  code-writing agents in one repository; simulated AI managers; automatic remote Git publication; broad cloud
+  hosting; unsupported credential handling; unqualified network exemptions; automatic Skills promotion; a change
+  to the F3 metrics. Implementation Contracts and named gates still need their own authorization.
+
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.
 

@@ -36,8 +36,22 @@ Per Bible v2.1 "Document charter" and PRD v0.2 §13:
 | **Project Bible** | LS-BIBLE-2.2-RATIFY-2026-10-25 | **2.2** | 2026-10-25 | "Final / Ratified"; amended by LS-BIBLE-2.2-ALIGN-01 | 75 | `.local/LOCKSTEP_PROJECT_BIBLE_v2.2_FINAL.pdf` | `bbaddf281b4da6af97f341ff8aba5f794df41d781aa23e67082f26e96ebb018f` |
 | **Implementation PRD** | LS-V2-PRD | **0.3** | 2026-10-25 | "APPROVED BY HUMAN OWNER" (LS-V2-DOCS-0.3-APPROVE-2026-10-25) | 15 | `.local/LOCKSTEP_V2_IMPLEMENTATION_PRD_v0.3_APPROVED.pdf` | `519348e131eea2077ac50f8bb1e4157f5b370a9f48c850388261961a6f175bfd` |
 | **Dependency-aware plan** | LS-V2-DAP | **0.3** | 2026-10-25 | "APPROVED BY HUMAN OWNER" (LS-V2-DOCS-0.3-APPROVE-2026-10-25) | 24 | `.local/LOCKSTEP_V2_DEPENDENCY_AWARE_PLAN_v0.3_APPROVED.pdf` | `d017a29dc7d7ab55ca0110227b48b2ef12ec742dce50790fd0c34cad74b10b42` |
+| **Project Bible** (consolidated PDF: v2.3 amendment, then the unmodified v2.2 PDF as annex) | LS-BIBLE-2.3-01 | **2.3** | 2026-11-13 | "RATIFIED — HUMAN OWNER APPROVED, 13 NOVEMBER 2026" | not counted | `.local/LOCKSTEP_PROJECT_BIBLE_v2.3_FINAL.pdf` | `f29fe7f3feb35fe83d3bed858e20b300e8f14a1a1d437a0a84f0bf63e9a6f6c3` |
+| Project Bible v2.3 amendment, Markdown as supplied (committed) | LS-BIBLE-2.3-01 | 2.3 | 2026-11-13 | as above | — | `docs/bible/PROJECT_BIBLE_v2.3_AMENDMENT.md` | `4a14dfee364ae0f6669d574cd3df04424ee5892d7d997b1953045c2dfd9b590d` |
+| **Implementation PRD** | LS-V2-PRD | **0.4** | 2026-11-13 | "APPROVED — HUMAN OWNER RATIFIED, 13 NOVEMBER 2026" | not counted | `.local/LOCKSTEP_V2_IMPLEMENTATION_PRD_v0.4_APPROVED.pdf` | `70e082283842b1eb14b15ceb37f840f49cf70cd924527a747a53ac0650fe45ff` |
+| Implementation PRD v0.4, Markdown as supplied (committed) | LS-V2-PRD | 0.4 | 2026-11-13 | as above | — | `docs/prd/IMPLEMENTATION_PRD_v0.4.md` | `a69558b1d862b917b6bdd5ba7358cb6551df9b0669d576e2cf56ee74dc1c4522` |
+| **Dependency-aware plan**, Markdown as supplied (committed; no PDF supplied) | LS-V2-DAP | **0.4** | 2026-11-13 | "APPROVED — HUMAN OWNER RATIFIED, 13 NOVEMBER 2026" | — | `docs/plans/DEPENDENCY_AWARE_PLAN_v0.4.md` | `7e47850468693cf9f8df713ac4afc9e12da2d4709eea33d6a0642d44661e5c50` |
 
-**Current governing set (from 2026-10-25):** Bible v2.2 + LS-BIBLE-2.2-ALIGN-01, PRD v0.3 (read
+**Current governing set (from 2026-11-13):** Bible v2.3 (`LS-BIBLE-2.3-01`), an interpretive overlay on Bible
+v2.2 + LS-BIBLE-2.2-ALIGN-01 that qualifies or supersedes only the clauses it names; PRD v0.4; Plan v0.4. They
+govern prospectively: v2.2, PRD v0.3 and Plan v0.3 remain the historical authority for everything recorded under
+them, and accepted Contracts, IDs, gate receipts and migration history keep their identities (Bible v2.3 §7).
+Repository record: `docs/PROJECT_BIBLE.md` (§3). The owner supplied the v2.3 amendment, the PRD v0.4 and the Plan
+v0.4 as Markdown; they are committed unedited. The Markdown and the PDFs were not compared word for word.
+Provenance: the owner placed all five files in `docs/` on 2026-11-14; the writing agent moved them to these
+locations and recorded the digests.
+
+**Governing set from 2026-10-25 to 2026-11-13:** Bible v2.2 + LS-BIBLE-2.2-ALIGN-01, PRD v0.3 (read
 with v0.2 for unchanged text) and Plan v0.3. Bible v2.1, PRD v0.2 and Plan v0.2 remain the
 historical authority for everything recorded under them. Repository records with verbatim text:
 `docs/PROJECT_BIBLE.md`, `docs/prd/IMPLEMENTATION_PRD_v0.3.md`,
