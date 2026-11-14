@@ -15,6 +15,8 @@ module Lockstep.Application.Clarification
   , ClarificationReport (..)
   , clarificationOutcomeCode
   , answerClarifications
+  , answerClarificationsUntil
+  , clarificationContext
   ) where
 
 import Data.List qualified as L
@@ -77,7 +79,12 @@ data ClarificationReport
 
 -- | One pass: settle attempts a stopped worker left, then answer each pending question once.
 answerClarifications :: DatabaseRuntime -> Engine -> IO (Either NotReadyReason [ClarificationReport])
-answerClarifications runtime engine = do
+answerClarifications runtime engine =
+  answerClarificationsUntil runtime engine (pure False)
+
+-- | 'answerClarifications' that ends early, between questions, once the check says so.
+answerClarificationsUntil :: DatabaseRuntime -> Engine -> IO Bool -> IO (Either NotReadyReason [ClarificationReport])
+answerClarificationsUntil runtime engine _ = do
   settled <-
     withDatabase runtime . O.withTransaction $ do
       rows <- Store.unfinishedClarifications
@@ -147,7 +154,7 @@ attempt runtime engine entry requestId question earlier = do
         case prepared of
           Left code -> pure (RunFailed code)
           Right workspace -> do
-            outcome <- invokeRole runner adapter Planner workspace (contextText entry) []
+            outcome <- invokeRole runner adapter Planner workspace (clarificationContext entry) []
             runnerRelease runner workspace
             case outcome of
               RoleAnswered (AnswerClarification c) _ -> post invocation (clarificationText c)
@@ -262,8 +269,8 @@ contextSchema =
 the conversation so far and the task; and the rule that its answer is
 information only. No repository is given (the workspace is empty).
 -}
-contextText :: InboxEntry -> T.Text
-contextText entry =
+clarificationContext :: InboxEntry -> T.Text
+clarificationContext entry =
   encodeText
     contextSchema
     Context
