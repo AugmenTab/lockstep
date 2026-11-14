@@ -113,8 +113,16 @@ technically verified while its task stays open), so the page never shows one
 task Done and another waiting on it without saying why.
 -}
 explainWaiting :: [(T.Text, Standing)] -> Standing -> Standing
-explainWaiting _ =
-  id
+explainWaiting others standing =
+  case standing of
+    StandingWaiting titles -> StandingWaiting (fmap explained titles)
+    _ -> standing
+ where
+  explained title =
+    case L.lookup title others of
+      Just StandingHumanDone -> title <> T.pack " (its fix is Done, but Lockstep does not yet close the task itself, so this one still waits)"
+      Just (StandingTechnicallyVerified _) -> title <> T.pack " (checked and committed, not Done yet)"
+      _ -> title
 
 {- | The task a person can hand over next: the highest priority among those
 whose standing is ready, then the earliest in the given order. Never one that

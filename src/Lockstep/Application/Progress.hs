@@ -12,19 +12,20 @@ module Lockstep.Application.Progress
 
 import Control.Monad.Except (ExceptT (..), runExceptT)
 import Data.List qualified as L
-import Data.Maybe (isJust)
 import Data.Text qualified as T
 import Flipstone.Prelude
+import Orville.PostgreSQL qualified as O
 import Text.Show (Show, show)
 
 import Lockstep.Application.Backlog (TaskSource (..), taskSources)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, withDatabase)
-import Lockstep.Application.Execution (Admission (..), Enablement (..), ExecutionStatus (..), executionStatus, findAdmission)
+import Lockstep.Application.Execution (Enablement (..), ExecutionStatus (..), executionStatus)
 import Lockstep.Application.Projects (ProjectFolders, ProjectView (..), findProject)
 import Lockstep.Application.Tasks (TaskView (..), listTasks)
 import Lockstep.Kernel.Backlog (sourceProviderCode)
-import Lockstep.Kernel.Identity (ProjectId, TaskId, WorkOrderId (..), parseIdentity)
-import Lockstep.Kernel.Progress (Publication (..), Standing, WorkFacts (..), nextToHandOver, standingOf)
+import Lockstep.Kernel.Identity (ProjectId, TaskId)
+import Lockstep.Kernel.Progress (Publication (..), Standing, WorkFacts (..), explainWaiting, nextToHandOver, standingOf)
+import Lockstep.Persistence.Execution qualified as Execution
 import Lockstep.Persistence.Transactions qualified as Transactions
 
 data ProgressRow
@@ -70,9 +71,10 @@ data ProgressView
 {- | The project's progress; Nothing for an unknown project. Every task is read
 from its canonical rows now: its Ticket's state and dependencies (C-P3.6), its
 hand-over (C-P4.1), its fix's state and accepted commit (C-P4.6), its
-provenance (C-P6.1). A task never drops out: one that cannot be read is
-@unknown@ (and a Ticket that does not replay aborts the read, as on every
-other page).
+provenance (C-P6.1). A task never drops out; a Ticket that does not replay is
+an integrity failure that fails the whole page, as on every other page, never
+a partial list. The hand-overs and fixes of all the project's tasks are read
+in one database transaction (R-P6.2 D5).
 -}
 loadProgress :: DatabaseRuntime -> ProjectFolders -> T.Text -> IO (Either NotReadyReason (Maybe ProgressView))
 loadProgress runtime folders rawProject = do
@@ -84,7 +86,38 @@ loadProgress runtime folders rawProject = do
       tasks <- ExceptT (listTasks runtime (projectId project))
       sources <- ExceptT (taskSources runtime (projectId project))
       status <- ExceptT (executionStatus runtime folders (projectId project))
-      rows <- traverse (rowFor sources) tasks
+      (admissions, fixes) <-
+        ExceptT . withDatabase runtime . O.withTransaction $ do
+          handed <- Execution.projectAdmissions (projectKey project)
+          rows <- Transactions.transactionsForWorkOrders (fmap Execution.admissionRowWorkOrder handed)
+          pure (handed, rows)
+      let
+        fixOf task = do
+          admission <- L.find ((== task) . Execution.admissionRowTask) admissions
+          L.find ((== Execution.admissionRowWorkOrder admission) . Transactions.txRowWorkOrder) fixes
+        standingFor t =
+          let
+            fix = fixOf (taskKey t)
+          in
+            standingOf
+              WorkFacts
+                { factReadiness = taskReadinessOf t
+                , factHandedOver = L.any ((== taskKey t) . Execution.admissionRowTask) admissions
+                , factFix = Transactions.txRowState <$> fix
+                , factAcceptedCommit = fix >>= Transactions.txRowAccepted
+                }
+        standings = [(taskTitle t, standingFor t) | t <- tasks]
+        rows =
+          [ ProgressRow
+              { rowTask = taskKey t
+              , rowTitle = taskTitle t
+              , rowPriority = taskPriority t
+              , rowSource = sourceText <$> L.find ((== taskKey t) . taskSourceTask) sources
+              , rowStanding = explainWaiting standings (standingFor t)
+              , rowPublication = NotPublished
+              }
+          | t <- tasks
+          ]
       pure . Just $
         ProgressView
           { progressProject = projectKey project
@@ -94,29 +127,6 @@ loadProgress runtime folders rawProject = do
           , progressWhere = whereItRuns status
           }
  where
-  rowFor sources t = do
-    admission <- ExceptT (findAdmission runtime (taskId t))
-    fix <-
-      case admission >>= parseIdentity . admissionWorkOrder of
-        Nothing -> pure Nothing
-        Just workOrder -> ExceptT (withDatabase runtime (Transactions.findTransactionByWorkOrder workOrder))
-    let
-      facts =
-        WorkFacts
-          { factReadiness = taskReadinessOf t
-          , factHandedOver = isJust admission
-          , factFix = Transactions.txRowState <$> fix
-          , factAcceptedCommit = fix >>= Transactions.txRowAccepted
-          }
-    pure
-      ProgressRow
-        { rowTask = taskKey t
-        , rowTitle = taskTitle t
-        , rowPriority = taskPriority t
-        , rowSource = sourceText <$> L.find ((== taskKey t) . taskSourceTask) sources
-        , rowStanding = standingOf facts
-        , rowPublication = NotPublished
-        }
   sourceText s =
     T.unwords
       [ sourceProviderCode (taskSourceProvider s)

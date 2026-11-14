@@ -16,6 +16,7 @@ module Lockstep.Persistence.Transactions
   , findTransaction
   , lockTransaction
   , findTransactionByWorkOrder
+  , transactionsForWorkOrders
   , lockEngineer
   , busyTransactions
   , runningTransactions
@@ -330,6 +331,13 @@ lockTransaction txId =
 findTransactionByWorkOrder :: O.MonadOrville m => WorkOrderId -> m (Maybe TransactionRow)
 findTransactionByWorkOrder workOrder =
   O.findFirstEntityBy transactionTable (O.where_ (O.fieldEquals txWorkOrderField workOrder))
+
+-- | C-P6.2 R-P6.2 D5: the transactions of these Work Orders, in one query.
+transactionsForWorkOrders :: O.MonadOrville m => [WorkOrderId] -> m [TransactionRow]
+transactionsForWorkOrders workOrders =
+  case workOrders of
+    [] -> pure []
+    w : ws -> O.findEntitiesBy transactionTable (O.where_ (O.fieldIn txWorkOrderField (w :| ws)))
 
 {- | C-P4.R1 R-O1: holds the Engineer's start lock until the database
 transaction ends, so two starts for one Engineer check and insert one after

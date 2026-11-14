@@ -10,6 +10,8 @@ module Lockstep.Web.ExecutionPages
   , capsuleSection
   , taskFixingSection
   , stepWords
+  , haltWords
+  , stoppedWords
   ) where
 
 import Brigid.HTML.Attributes qualified as A

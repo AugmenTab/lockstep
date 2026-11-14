@@ -10,6 +10,7 @@ module Lockstep.Persistence.Execution
   , AdmissionRow (..)
   , findAdmissionByTask
   , findAdmissionByKey
+  , projectAdmissions
   , insertAdmission
   , projectRepository
   , workOrderEffectiveDigest
@@ -165,6 +166,11 @@ admissionWorkOrderField =
 findAdmissionByTask :: O.MonadOrville m => TaskId -> m (Maybe AdmissionRow)
 findAdmissionByTask task =
   O.findFirstEntityBy admissionTable (O.where_ (O.fieldEquals admissionTaskField task))
+
+-- | C-P6.2 R-P6.2 D5: every hand-over of a project, in one query.
+projectAdmissions :: O.MonadOrville m => ProjectId -> m [AdmissionRow]
+projectAdmissions project =
+  O.findEntitiesBy admissionTable (O.where_ (O.fieldEquals admissionProjectField project))
 
 findAdmissionByKey :: O.MonadOrville m => T.Text -> m (Maybe AdmissionRow)
 findAdmissionByKey key =
