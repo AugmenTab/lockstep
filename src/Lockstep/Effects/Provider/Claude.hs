@@ -233,6 +233,15 @@ roleInstructions role view =
           , "     \"tests\": [{\"path\": PATH (not an allowed path), \"content\": FILE TEXT,"
           , "                \"expect\": \"red\" or \"green\" (red: fails now, because of the bug),"
           , "                \"argv\": [PROGRAM, ARGS...], \"signature\": TEXT (needed for red)}, ...1 to 20]}"
+          , ""
+          , "If answer.kind is \"clarification\" (a person asked about a fix that stopped for their decision):"
+          , ""
+          , "Read context.json's request (its question, its choices and what each would do) and the"
+          , "conversation. Answer the person's last question with information only: what happened and what"
+          , "each choice would do. You cannot decide, approve, choose or resume anything, and nothing you"
+          , "write does; only the person decides, on the task's page. There may be no project files to read."
+          , ""
+          , "    {\"kind\": \"clarification\", \"text\": TEXT}"
           ]
         Challenger ->
           [ "Look for ways the Contract, the tests or the change could be wrong. Answer:"

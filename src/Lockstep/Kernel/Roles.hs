@@ -258,7 +258,7 @@ checkAnswer role answer =
     (Challenger, AnswerChallenge c) -> answer <$ challenge c
     (Implementer, AnswerImplementation i) -> answer <$ rule "summary-invalid" (textValid (implementationSummary i))
     (Reviewer, AnswerReview r) -> answer <$ review r
-    (Planner, AnswerClarification _) -> Left (T.pack "wrong-kind")
+    (Planner, AnswerClarification c) -> answer <$ rule "text-invalid" (textValid (clarificationText c))
     _ -> Left (T.pack "wrong-kind")
  where
   rule code ok =

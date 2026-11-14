@@ -43,11 +43,13 @@ import Text.Show (show)
 import Lockstep.Application.Activity (readActivity)
 import Lockstep.Application.CapsuleStatus (StopOutcome (..), capsuleStatusFromEnvironment, stopCapsuleRun)
 import Lockstep.Application.Command (IdempotencyKey, WorkspaceState (..), generateIdempotencyKey, idempotencyKeyText, mkIdempotencyKey, readWorkspace)
-import Lockstep.Application.Conversation (Channel (..), Sender (..), StoredRequest (..), postMessage)
+import Lockstep.Application.Conversation (Channel (..), Conversation (..), Sender (..), StoredRequest (..), conversation, postMessage)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason (..), Readiness (..), checkReadiness, revisionNumber)
 import Lockstep.Application.Decisions (DecisionReceipt (..), applyDecision, decidedReceipt, findDecision, listDecisions, receiptApplied)
 import Lockstep.Application.Engine (TransactionView (..), decideCompletion, haltRequest, projectStarted, transactionForWorkOrder, transactionView)
 import Lockstep.Application.Execution (Admission (..), ExecutionStatus (..), admitBug, enableExecution, executionStatus, findAdmission)
+import Lockstep.Application.Inbox (inboxEntries)
+import Lockstep.Application.Inbox qualified as Inbox
 import Lockstep.Application.LedgerView (EffectLine (..), LedgerProjection (..), OrderLine (..), projectLedger)
 import Lockstep.Application.OperatorTrust (Session (..), exchangeSignIn, lookupSession, revokeSession)
 import Lockstep.Application.Progress (loadProgress)
@@ -81,7 +83,7 @@ import Lockstep.Kernel.Conversation (RequestInput (..))
 import Lockstep.Kernel.Decision (decisionRefusalWords)
 import Lockstep.Kernel.EffectView (EffectStatus (..))
 import Lockstep.Kernel.Execution (executionRefusalWords)
-import Lockstep.Kernel.Identity (ProjectId (..), TaskId (..), TransactionId (..), identityText)
+import Lockstep.Kernel.Identity (HumanRequestId (..), ProjectId (..), TaskId (..), TransactionId (..), identityText)
 import Lockstep.Kernel.Policy (checksRefusalWords, lossWords)
 import Lockstep.Kernel.Project (FolderChoice, SetupState (..), parseFolderChoice, refusalWords, setupStateCode)
 import Lockstep.Kernel.Task (Priority, parsePriority, taskRefusalWords)
@@ -104,6 +106,7 @@ import Lockstep.Web.Fields
   , outcomeField
   , pathField
   , priorityField
+  , questionField
   , reasonField
   , requestField
   , revisionField
@@ -120,6 +123,7 @@ import Lockstep.Web.RequestGuard (RouteClass (..))
 import Lockstep.Web.Routes.App
   ( ActionRoutes
   , AdmitBug (..)
+  , AskQuestion (..)
   , ChecksFragment (..)
   , ChooseChecks (..)
   , Completion (..)
@@ -300,6 +304,7 @@ actionRoute route ctx =
         . Shrubbery.branch (\(DecideTask tid) -> decideTaskRoute ctx tid)
         . Shrubbery.branch (\(AdmitBug tid) -> admitBugRoute ctx tid)
         . Shrubbery.branch (\(HaltDecision xid) -> haltDecisionRoute ctx xid)
+        . Shrubbery.branch (\(AskQuestion rid) -> askQuestionRoute ctx rid)
         . Shrubbery.branch (\(Completion xid) -> completionRoute ctx xid)
         . Shrubbery.branch (\(Decide key) -> decideRoute ctx key)
         $ Shrubbery.branchEnd
@@ -769,6 +774,44 @@ haltDecisionRoute ctx xid =
                   Right (Left code) -> transactionAnswer db tx (Just (haltAnswerWords code))
           (Right _, Right _) -> transactionAnswer db tx (Just "This is no longer the question Lockstep is waiting on. Here is the fix as it stands now.")
 
+{- | C-P6.3 I3: a person's question about an open request; it decides nothing.
+The answer is the fix's task page, with the refusal in words.
+-}
+askQuestionRoute :: Ctx -> HumanRequestId -> IO Wai.Response
+askQuestionRoute ctx rid =
+  withForm ctx $ \fields -> do
+    let
+      db = ctxDb ctx
+    talk <- conversation db (identityText rid)
+    case talk of
+      Left _ -> pure notReady
+      Right Nothing -> pure notFound
+      Right (Just c) -> do
+        found <- transactionForWorkOrder db (storedWorkOrder (conversationRequest c))
+        case found of
+          Left _ -> pure notReady
+          Right Nothing -> pure notFound
+          Right (Just tx) ->
+            case V.runValidator ((,,) <$> keyField `V.required` idempotencyKey <*> revisionField `V.required` V.decimalUpTo integerMax <*> questionField `V.required` V.text) fields of
+              Left _ -> transactionAnswer db tx (Just unreadableTryAgain)
+              Right (k, revision, question) -> do
+                asked <- Inbox.askQuestion db k (identityText rid) revision question
+                case asked of
+                  Left _ -> pure notReady
+                  Right (Right _) -> transactionAnswer db tx Nothing
+                  Right (Left code) -> transactionAnswer db tx (Just (questionWords code))
+
+-- | A refused question in words.
+questionWords :: T.Text -> T.Text
+questionWords code =
+  case T.unpack code of
+    "stale-revision" -> "The question changed since this page was shown. Look at it again."
+    "request-closed" -> "This question was already answered, so nothing more can be asked about it."
+    "text-empty" -> "Write your question first."
+    "text-too-long" -> "Your question is too long (at most 4000 characters)."
+    "key-conflict" -> "This form was already used for a different question. Look at the fix again."
+    _ -> "Lockstep could not record your question. Look at the fix again."
+
 -- | A missing choice is asked for; anything else unreadable is said so.
 haltFormWords :: FormErrors -> T.Text
 haltFormWords errs
@@ -868,8 +911,10 @@ taskAnswer db task notice = do
         tx <- transactionForWorkOrder db (admissionWorkOrder a)
         case tx of
           Right (Just v) -> do
-            request <- haltRequest db (viewKey v)
-            pure (Just (v, fromRight Nothing request))
+            request <- fromRight Nothing <$> haltRequest db (viewKey v)
+            -- C-P6.3: the open request's questions and the Planner's answers.
+            talk <- maybe (pure (Right Nothing)) (conversation db . storedRequestId) request
+            pure (Just (v, request, maybe [] conversationMessages (fromRight Nothing talk)))
           _ -> pure Nothing
   key <- idempotencyKeyText <$> generateIdempotencyKey
   case project of
@@ -952,7 +997,10 @@ renderSection db section session =
       pure $ case (projects, tasks) of
         (Right ps, Right ts) -> tasksOverview [(p, [t | t <- ts, taskProjectKey t == projectKey p]) | p <- ps] True
         _ -> tasksOverview [] False
-    Decisions -> decisionsOverview . either (const Nothing) Just <$> listDecisions db
+    Decisions -> do
+      decisions <- listDecisions db
+      inbox <- inboxEntries db
+      pure (decisionsOverview (either (const Nothing) Just decisions) (either (const Nothing) Just inbox))
     Activity -> activityPage <$> readActivity db
     Settings -> do
       projects <- fromRight [] <$> listProjects db

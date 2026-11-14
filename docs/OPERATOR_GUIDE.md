@@ -358,6 +358,15 @@ killed with its container, its run stays unfinished, and after the restart it is
 bug waits for you — Lockstep never runs it again by itself (C-P4.R1). A database failure in the middle of a
 step leaves nothing half-recorded; the step is taken again, or waits for you, after the database is back.
 
+### Questions about a stopped fix (C-P6.3)
+
+When a fix stops for your decision, **Decisions → Fixes waiting for your answer** lists it with its project, task,
+question, the step it stopped at and what each answer would do. On the task's page you can **ask** about it before
+deciding: Lockstep's Planner answers once per question (at most 3 per stop), read-only and as information only —
+nothing it writes decides, approves or resumes anything; only your decision on that page moves the fix. Without a
+coding helper no answer is given (nothing is invented). A question cut off by a restart is not asked again; ask
+again yourself.
+
 ### A project's Progress page (C-P6.2)
 
 From a project's page, **Progress** (`/app/projects/<id>/progress`) shows every task's standing read from

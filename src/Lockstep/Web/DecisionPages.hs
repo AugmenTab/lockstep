@@ -29,11 +29,13 @@ import Flipstone.Prelude
 import Text.Show (show)
 
 import Lockstep.Application.Decisions (DecisionReceipt (..), OpenDecision (..), StoppedFacts (..), UnknownFacts (..), decisionId)
+import Lockstep.Application.Inbox (InboxChoice (..), InboxEntry (..))
 import Lockstep.Kernel.Decision (DecisionRequest (..), choiceWords)
 import Lockstep.Kernel.Identity (WorkOrderId (..), uuidText)
+import Lockstep.Web.ExecutionPages (stepWords)
 import Lockstep.Web.Fields (acknowledgeField, choiceField, expectedField, keyField, textField)
 import Lockstep.Web.Fragment (attr, cls, elementId, fragment)
-import Lockstep.Web.Routes.App (Section (Decisions), decideAction, decisionLink, sectionLink)
+import Lockstep.Web.Routes.App (Section (Decisions), decideAction, decisionLink, sectionLink, taskLink)
 import Lockstep.Web.Routes.Params (DecisionKey, decisionOperation, decisionWorkOrder, stoppedWorkKey, unknownOutcomeKey)
 
 {- | A person's answer to a decision (C-P3.8 M6), spelled as the form's
@@ -100,9 +102,9 @@ titleOf decision =
     StoppedWork s -> stoppedTitle s
     UnknownOutcome u -> unknownTitle u
 
-decisionsOverview :: Maybe [OpenDecision] -> LBS.ByteString
-decisionsOverview open =
-  fragment
+decisionsOverview :: Maybe [OpenDecision] -> Maybe [InboxEntry] -> LBS.ByteString
+decisionsOverview open inbox =
+  fragment $
     [ E.h1 [] [E.text "Decisions"]
     , E.p [] [E.text "Things only you can decide. Open one to see what it is about and what each answer will do."]
     , case open of
@@ -114,8 +116,37 @@ decisionsOverview open =
             [ E.li [] [E.a [A.href (decisionLink (openDecisionKey d))] [E.text (titleOf d)], E.text (" \8212 " <> askWords d)]
             | d <- ds
             ]
-    , E.p [cls "ls-muted"] [E.text "Approving work Lockstep does, signing finished work off and confirming changed checks arrive in a later update of Lockstep."]
     ]
+      <> inboxSection inbox
+      <> [E.p [cls "ls-muted"] [E.text "Approving work Lockstep does, signing finished work off and confirming changed checks arrive in a later update of Lockstep."]]
+
+{- | C-P6.3 I1, I2: every fix waiting for a person's answer, across projects,
+with what each answer would do. Links only: answering and asking happen on the
+task's own page (this section has no form).
+-}
+inboxSection :: Maybe [InboxEntry] -> [E.ChildHTML E.Division E.Body]
+inboxSection inbox =
+  [ E.h2 [A.id (elementId 'f' "ixes-waiting")] [E.text "Fixes waiting for your answer"]
+  , case inbox of
+      Nothing -> E.p [cls "ls-notice"] [E.text "The fixes waiting for you cannot be shown right now. Run lockstep to see what to do."]
+      Just [] -> E.p [] [E.text "No fix is waiting for your answer."]
+      Just entries -> E.ul [cls "ls-projects"] (fmap entryItem entries)
+  ]
+ where
+  entryItem e =
+    E.li
+      []
+      [ E.a [A.href (taskLink (entryTask e))] [E.text (entryTaskTitle e)]
+      , E.text (" (" <> entryProjectName e <> ")")
+      , E.p [] [E.text (entryQuestion e)]
+      , E.p [cls "ls-muted"] [E.text ("It stopped while " <> stepWords (entryStep e) <> ".")]
+      , E.ul [] [E.li [] [E.text (inboxChoiceName c <> ": " <> inboxChoiceConsequence c)] | c <- entryChoices e]
+      , E.p [cls "ls-muted"] [E.text (answersWords (entryAnswersLeft e))]
+      ]
+  answersWords n =
+    if n <= 0
+      then "Lockstep has answered as many of your questions about it as it may; decide on its page."
+      else "You can ask about it on its page; Lockstep can answer " <> T.pack (show n) <> " more of your questions, as information only."
 
 choicesFor :: OpenDecision -> [DecisionChoice]
 choicesFor decision =

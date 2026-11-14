@@ -24,6 +24,7 @@ module Lockstep.Web.Fields
   , confirmFewerField
   , choiceField
   , requestField
+  , questionField
   , runField
   , textField
   , acknowledgeField
@@ -94,6 +95,10 @@ choiceField = B.Name (NET.new 'c' "hoice")
 
 requestField :: B.Name
 requestField = B.Name (NET.new 'r' "equest")
+
+-- | C-P6.3 I3: a person's question about an open request.
+questionField :: B.Name
+questionField = B.Name (NET.new 'q' "uestion")
 
 -- | Phase 5: the run a stop names (the run under way in the project's Dev Capsule).
 runField :: B.Name

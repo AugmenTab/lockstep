@@ -65,6 +65,7 @@ module Lockstep.Web.Routes.App
   , DecideTask (..)
   , AdmitBug (..)
   , HaltDecision (..)
+  , AskQuestion (..)
   , Completion (..)
   , Decide (..)
   , createProjectAction
@@ -77,6 +78,7 @@ module Lockstep.Web.Routes.App
   , decideTaskAction
   , admitBugAction
   , haltDecisionAction
+  , askQuestionAction
   , completionAction
   , decideAction
   ) where
@@ -88,8 +90,8 @@ import Data.Text qualified as T
 import Flipstone.Prelude
 import Shrubbery qualified
 
-import Lockstep.Kernel.Identity (ProjectId, TaskId, TransactionId)
-import Lockstep.Web.Routes.Params (DecisionKey, decisionKeyParam, projectIdParam, taskIdParam, transactionIdParam)
+import Lockstep.Kernel.Identity (HumanRequestId, ProjectId, TaskId, TransactionId)
+import Lockstep.Web.Routes.Params (DecisionKey, decisionKeyParam, humanRequestIdParam, projectIdParam, taskIdParam, transactionIdParam)
 
 type Routes =
   Shrubbery.Union
@@ -317,6 +319,7 @@ type ActionRoutes =
     , DecideTask
     , AdmitBug
     , HaltDecision
+    , AskQuestion
     , Completion
     , Decide
     ]
@@ -336,6 +339,7 @@ actionRoutes =
       /: R.post decideTask
       /: R.post admitBug
       /: R.post haltDecision
+      /: R.post askQuestion
       /: R.post completion
       /: R.post decide
       /: R.emptyRoutes
@@ -448,6 +452,17 @@ haltDecision =
 haltDecisionAction :: TransactionId -> B.RelativeURL B.Post
 haltDecisionAction xid =
   B.post (HaltDecision xid) haltDecision
+
+-- | C-P6.3 I3: a person's question about an open Human Request.
+newtype AskQuestion = AskQuestion {askQuestionRequest :: HumanRequestId}
+
+askQuestion :: R.Router r => R.Builder r AskQuestion AskQuestion
+askQuestion =
+  api AskQuestion /- "requests" /+ R.Param humanRequestIdParam askQuestionRequest /- "questions"
+
+askQuestionAction :: HumanRequestId -> B.RelativeURL B.Post
+askQuestionAction rid =
+  B.post (AskQuestion rid) askQuestion
 
 newtype Completion = Completion {completionTransaction :: TransactionId}
 

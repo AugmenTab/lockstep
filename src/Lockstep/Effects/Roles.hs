@@ -72,6 +72,7 @@ import Lockstep.Kernel.Roles
   , Challenge (..)
   , Check (..)
   , Citation (..)
+  , Clarification (..)
   , Criterion (..)
   , Discovery (..)
   , Expectation (..)
@@ -507,6 +508,7 @@ decodeAnswer bytes = do
       | k == T.pack "challenge" -> either malformed (fmap AnswerChallenge . fromChallenge) (FA.decode challengeSchema lazy)
       | k == T.pack "implementation" -> either malformed (fmap AnswerImplementation . fromImplementation) (FA.decode implementationSchema lazy)
       | k == T.pack "review" -> either malformed (fmap AnswerReview . fromReview) (FA.decode reviewSchema lazy)
+      | k == T.pack "clarification" -> either malformed (fmap AnswerClarification . fromClarification) (FA.decode clarificationSchema lazy)
       | otherwise -> Left (T.pack "malformed-output unknown kind")
 
 type Extra =
@@ -837,6 +839,24 @@ implementationSchema =
 fromImplementation :: DocImplementation -> Either T.Text Implementation
 fromImplementation (DocImplementation _ s extra) =
   known extra >> Right (Implementation s)
+
+-- | C-P6.3 I4: the Planner's answer to a person's question; its text and nothing else.
+data DocClarification
+  = DocClarification T.Text T.Text Extra
+
+clarificationSchema :: FC.Fleece t => FC.Schema t DocClarification
+clarificationSchema =
+  FC.object $
+    FC.additional
+      ( FC.constructor DocClarification
+          #+ FC.required "kind" (\(DocClarification k _ _) -> k) FC.text
+          #+ FC.required "text" (\(DocClarification _ t _) -> t) FC.text
+      )
+      (FC.additionalFields (\(DocClarification _ _ e) -> e) FC.anyJSON)
+
+fromClarification :: DocClarification -> Either T.Text Clarification
+fromClarification (DocClarification _ t extra) =
+  known extra >> Right (Clarification t)
 
 {- | A review answer. Stabilization S3: the optional @inspected@ is the
 Reviewer's own list of the files it read; the Supervisor compares it with the

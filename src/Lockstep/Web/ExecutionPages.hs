@@ -25,7 +25,7 @@ import Flipstone.Prelude
 import Text.Show (show)
 
 import Lockstep.Application.CapsuleStatus (CapsuleStatus (..))
-import Lockstep.Application.Conversation (StoredRequest (..))
+import Lockstep.Application.Conversation (StoredMessage (..), StoredRequest (..))
 import Lockstep.Application.Engine (InvocationView (..), TransactionView (..))
 import Lockstep.Application.EngineEvidence (CheckRun (..), Evidence (..), FindingTime (..), FindingView (..), ReviewView (..), transactionEvidence)
 import Lockstep.Application.Execution (Admission (..), Enablement (..), ExecutionStatus (..))
@@ -33,16 +33,16 @@ import Lockstep.Application.ProjectChecks (Standing (..))
 import Lockstep.Application.Projects (ProjectView (..))
 import Lockstep.Application.Tasks (TaskView (..))
 import Lockstep.Kernel.Execution (executionRefusalWords)
-import Lockstep.Kernel.Identity (InvocationId (..), ProjectId, RepositoryId (..), identityText)
+import Lockstep.Kernel.Identity (HumanRequestId (..), InvocationId (..), ProjectId, RepositoryId (..), identityText, parseIdentity)
 import Lockstep.Kernel.Policy (ineligibilityWords)
 import Lockstep.Kernel.Profile (profileIdText)
 import Lockstep.Kernel.Roles (CandidateTest (..), Criterion (..), Verdict (..))
 import Lockstep.Kernel.Runner (OutcomeKind (..))
 import Lockstep.Kernel.Task (TaskReadiness (..))
 import Lockstep.Kernel.Transaction (Disposition (..), FixedHalt (..), HaltCode (..), Stage (..), StateName (..), haltCodeFromText, noCodingAgent, parseStage, parseStateName, providerAuthRejectedCode, retryOperation)
-import Lockstep.Web.Fields (choiceField, expectedField, expectedSetField, keyField, requestField, revisionField, runField, ticketRevisionField)
+import Lockstep.Web.Fields (choiceField, expectedField, expectedSetField, keyField, questionField, requestField, revisionField, runField, ticketRevisionField)
 import Lockstep.Web.Fragment (attr, cls, elementId)
-import Lockstep.Web.Routes.App (admitBugAction, completionAction, enableExecutionAction, haltDecisionAction, stopCapsuleRunAction)
+import Lockstep.Web.Routes.App (admitBugAction, askQuestionAction, completionAction, enableExecutionAction, haltDecisionAction, stopCapsuleRunAction)
 
 heading :: T.Text -> T.Text -> E.ChildHTML E.Division E.Body
 heading sectionId title =
@@ -172,10 +172,10 @@ standingWords standing =
     Nothing -> "Its place in line is not known right now."
 
 -- | The task page's Fixing it section: only for a task of a project Lockstep may work in.
-taskFixingSection :: TaskView -> Maybe ExecutionStatus -> Maybe Admission -> Maybe Standing -> Maybe (TransactionView, Maybe StoredRequest) -> T.Text -> [E.ChildHTML E.Division E.Body]
+taskFixingSection :: TaskView -> Maybe ExecutionStatus -> Maybe Admission -> Maybe Standing -> Maybe (TransactionView, Maybe StoredRequest, [StoredMessage]) -> T.Text -> [E.ChildHTML E.Division E.Body]
 taskFixingSection task status admission standing work key =
   case (status, admission, work) of
-    (_, Just a, Just (tx, request)) -> transactionSection a tx request key
+    (_, Just a, Just (tx, request, messages)) -> transactionSection a tx request messages key
     (_, Just a, Nothing) ->
       [ heading "fixing" "Fixing it"
       , E.p [cls "ls-good-text"] [E.text "Lockstep has this bug in line to fix."]
@@ -214,8 +214,8 @@ taskFixingSection task status admission standing work key =
 checks showed, what was found and the review; what Lockstep could not tell;
 a person's decision when it stopped; Done or not when it is committed.
 -}
-transactionSection :: Admission -> TransactionView -> Maybe StoredRequest -> T.Text -> [E.ChildHTML E.Division E.Body]
-transactionSection a tx request key =
+transactionSection :: Admission -> TransactionView -> Maybe StoredRequest -> [StoredMessage] -> T.Text -> [E.ChildHTML E.Division E.Body]
+transactionSection a tx request messages key =
   [heading "fixing" "Fixing it"]
     <> standingNow
     <> earlier
@@ -269,8 +269,37 @@ transactionSection a tx request key =
                 , E.button [A.id (elementId 'a' "nswer-halt"), attr "type" "submit", cls "ls-primary"] [E.text "Record my decision"]
                 ]
             ]
+              <> conversationPart r
         | otherwise -> [E.p [cls "ls-muted"] [E.text "Your decision is recorded; Lockstep acts on it shortly."]]
       Nothing -> [E.p [cls "ls-muted"] [E.text "Lockstep is preparing the question for you. Look again shortly."]]
+  -- C-P6.3 I3–I5: the questions asked about this request, the Planner's answers (information only), and a way to ask.
+  conversationPart r =
+    [ E.h3 [] [E.text "Questions about this"]
+    , case [m | m <- messages, messageKind m `L.elem` ["human", "planner"]] of
+        [] -> E.p [cls "ls-muted"] [E.text "You can ask what a choice would do before you decide. Lockstep's Planner answers with information only: it decides nothing, and only your decision above moves the fix."]
+        said -> E.ul [cls "ls-conversation"] (fmap saidItem said)
+    ]
+      <> case parseIdentity (storedRequestId r) of
+        Nothing -> []
+        Just rid ->
+          [ E.form
+              [A.id (elementId 'a' "sk-form"), A.method B.FormPOST, A.action (askQuestionAction rid)]
+              [ hidden keyField (key <> "-q")
+              , hidden revisionField (T.pack (show (storedRevision r)))
+              , E.label [A.for (elementId 'q' "uestion-text")] [E.text "Your question (it decides nothing)"]
+              , E.textarea [A.id (elementId 'q' "uestion-text"), A.name questionField, attr "rows" "3", attr "maxlength" "4000"] ""
+              , E.button [A.id (elementId 'a' "sk-question"), attr "type" "submit"] [E.text "Ask"]
+              ]
+          ]
+  saidItem m =
+    E.li
+      []
+      [ E.text
+          ( if messageKind m == "planner"
+              then "Lockstep's Planner answered (information only; it decides nothing): " <> messageBody m
+              else "You asked: " <> messageBody m
+          )
+      ]
   choice name =
     E.div
       [cls "ls-choice"]

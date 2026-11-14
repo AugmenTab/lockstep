@@ -11,6 +11,7 @@ module Lockstep.Web.Routes.Params
   , projectIdParam
   , taskIdParam
   , transactionIdParam
+  , humanRequestIdParam
   , DecisionKey
   , decisionKeyParam
   , decisionKeyText
@@ -30,7 +31,7 @@ import Flipstone.Prelude
 import Text.Show (show)
 
 import Lockstep.Kernel.Effect (OperationId (..))
-import Lockstep.Kernel.Identity (ProjectId (..), ReceiptId (..), TaskId (..), TransactionId (..), Uuid, WorkOrderId (..), identityText, parseIdentity, receiptIdNumber)
+import Lockstep.Kernel.Identity (HumanRequestId (..), ProjectId (..), ReceiptId (..), TaskId (..), TransactionId (..), Uuid, WorkOrderId (..), identityText, parseIdentity, receiptIdNumber)
 import Lockstep.Web.Validation (digitsUpTo)
 
 identityParam :: Coercible Uuid identity => T.Text -> R.ParameterDefinition identity
@@ -52,6 +53,11 @@ taskIdParam =
 transactionIdParam :: R.ParameterDefinition TransactionId
 transactionIdParam =
   identityParam "transactionId"
+
+-- | C-P6.3: a Human Request.
+humanRequestIdParam :: R.ParameterDefinition HumanRequestId
+humanRequestIdParam =
+  identityParam "requestId"
 
 {- | What a decision's address names (C-P3.8 M6): stopped work is named by its
 work order, an unknown outcome by its operation, and both share the one frozen

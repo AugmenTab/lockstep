@@ -34,6 +34,7 @@ import Flipstone.Prelude
 import System.Timeout (timeout)
 import Text.Show (Show)
 
+import Lockstep.Application.Clarification (ClarificationOutcome (ClarifiedLimit), ClarificationReport (..), answerClarifications, clarificationOutcomeCode)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, reasonDiagnosis)
 import Lockstep.Application.Engine (Engine, StepReport (..), activeTransactionIds, advanceTransaction, pendingWorkOrders, startTransactionFor)
 import Lockstep.Kernel.Identity (TransactionId (..), WorkOrderId (..), identityText)
@@ -70,9 +71,22 @@ enginePass runtime engine stopping = do
       Left reason -> pure [(T.pack "pending work orders", Left (PassDatabase reason))]
       Right workOrders -> catMaybes <$> traverse start workOrders
   active <- activeTransactionIds runtime
-  case active of
-    Left reason -> pure (started <> [(T.pack "active transactions", Left (PassDatabase reason))])
-    Right ids -> (started <>) <$> each ids
+  advanced <-
+    case active of
+      Left reason -> pure (started <> [(T.pack "active transactions", Left (PassDatabase reason))])
+      Right ids -> (started <>) <$> each ids
+  -- C-P6.3 I4, I8: then the questions people asked, each answered once; nothing is reported when there are none.
+  stop <- stopping
+  if stop
+    then pure advanced
+    else do
+      clarified <- answerClarifications runtime engine
+      pure $
+        advanced
+          <> case clarified of
+            Left reason -> [(T.pack "clarifications", Left (PassDatabase reason))]
+            -- A question left at the limit stays so every pass; it is not reported again each time.
+            Right reports -> [(T.pack "clarify " <> reportRequest r, Right (clarificationOutcomeCode (reportOutcome r))) | r <- reports, reportOutcome r /= ClarifiedLimit]
  where
   -- A start that happened is seen as its transaction's advance; one that did not is reported
   -- (a refusal, such as an Engineer whose writer is busy, is tried again next pass).
