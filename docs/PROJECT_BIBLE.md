@@ -20,6 +20,7 @@
 | Ratified v2.3 consolidated PDF (v2.3 front matter and amendment, then the unmodified 75-page v2.2 PDF as annex; not committed) | `.local/LOCKSTEP_PROJECT_BIBLE_v2.3_FINAL.pdf` | `f29fe7f3feb35fe83d3bed858e20b300e8f14a1a1d437a0a84f0bf63e9a6f6c3` |
 | Ratified v2.3 amendment text, as supplied by the owner | [`bible/PROJECT_BIBLE_v2.3_AMENDMENT.md`](bible/PROJECT_BIBLE_v2.3_AMENDMENT.md) | `4a14dfee364ae0f6669d574cd3df04424ee5892d7d997b1953045c2dfd9b590d` |
 | Approved Implementation PRD v0.4 PDF (not committed) | `.local/LOCKSTEP_V2_IMPLEMENTATION_PRD_v0.4_APPROVED.pdf` | `70e082283842b1eb14b15ceb37f840f49cf70cd924527a747a53ac0650fe45ff` |
+| Approved Implementation PRD v0.4 (`LS-V2-PRD`), text as supplied by the owner | [`prd/IMPLEMENTATION_PRD_v0.4.md`](prd/IMPLEMENTATION_PRD_v0.4.md) | `a69558b1d862b917b6bdd5ba7358cb6551df9b0669d576e2cf56ee74dc1c4522` |
 | Approved Dependency-Aware Plan v0.4 (`LS-V2-DAP`), text as supplied by the owner | [`plans/DEPENDENCY_AWARE_PLAN_v0.4.md`](plans/DEPENDENCY_AWARE_PLAN_v0.4.md) | `7e47850468693cf9f8df713ac4afc9e12da2d4709eea33d6a0642d44661e5c50` |
 
 The text file was produced by `pdftotext -layout` (Debian bookworm `poppler-utils`
@@ -110,7 +111,7 @@ numbering.
 3. The ratified v2.2 text, including its own reading guide: the v2.1 body pages are retained,
    nine v2.2 inserts follow their source sections, and v2.2 §3.1 replaces only original §3.1
    item 1.
-4. Implementation PRD v0.4 and Dependency-Aware Plan v0.4 (`docs/plans/DEPENDENCY_AWARE_PLAN_v0.4.md`), the
-   paired governing editions. The PRD v0.4 is held only as its PDF (§1); it has no text copy in `docs/prd/` yet.
+4. Implementation PRD v0.4 (`docs/prd/IMPLEMENTATION_PRD_v0.4.md`) and Dependency-Aware Plan v0.4
+   (`docs/plans/DEPENDENCY_AWARE_PLAN_v0.4.md`), the paired governing editions.
 5. Implementation PRD v0.3 (`docs/prd/`) and Dependency-Aware Plan v0.3 (`docs/plans/`), the historical
    sources for records made under them; they read with PRD v0.2 for unchanged requirement text.
