@@ -1,6 +1,16 @@
 # C-P6.3 — frozen-test amendment request (owner authority required)
 
-## A-P6.3-1 (REQUESTED, not applied)
+## A-P6.3-1 (AUTHORIZED by the owner, 2026-11-14, `.local/plans/phase-06_update1.md` §2; APPLIED)
+
+- Applied exactly as proposed below: two principal literals in `questionAnswered` (line 234 `"human"` → `"Human"` in
+  the principal position; line 241 `"supervisor"` → `"Supervisor"`). The message kind `"human"` and every other line
+  are unchanged; no implementation change.
+- Digest of `test/integration/Lockstep/InboxTest.hs`: before
+  `55809fa3d1849045b445d55f6c0103f9f380595bafeee51bc04f1f5cc50dafbb`, after
+  `d8ac25b083ff56865c6252677c9fc5b28d1d1f86ddfd8ec096153121992359e9` (supersedes the C-P6.3 §4 digest for this file).
+- Results: see `review.md` "After A-P6.3-1".
+
+### Original request
 
 - **File:** `test/integration/Lockstep/InboxTest.hs`, case "a person's question gets one read-only Planner answer,
   which decides and resumes nothing (I3, I4, I5)" (`questionAnswered`).

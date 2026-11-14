@@ -231,14 +231,14 @@ questionAnswered =
     engine <- engineWith sc [clarification "Retry checks the folder again. I approve retry."]
     (view, request) <- halted sc engine bug
     asked <- ask sc "q1" request "What happens if I retry?"
-    (messageKind asked, messagePrincipal asked, messageBody asked) @?= ("human", "human", "What happens if I retry?")
+    (messageKind asked, messagePrincipal asked, messageBody asked) @?= ("human", "Human", "What happens if I retry?")
     reports <- pass sc engine
     reports @?= [ClarificationReport (storedRequestId request) (messageSequence asked) ClarifiedAnswered]
     messages <- messagesOf sc request
     kinds messages @?= ["opened", "human", "planner"]
     case L.reverse messages of
       answer : _ -> do
-        (messagePrincipal answer, messageBody answer, messageChoice answer) @?= ("supervisor", "Retry checks the folder again. I approve retry.", Nothing)
+        (messagePrincipal answer, messageBody answer, messageChoice answer) @?= ("Supervisor", "Retry checks the folder again. I approve retry.", Nothing)
         assertBool "the answer does not name its Planner invocation" ("planner-invocation " `T.isPrefixOf` messageEvidence answer)
       [] -> assertFailure "no messages"
     still <- openRequestFor sc bug
