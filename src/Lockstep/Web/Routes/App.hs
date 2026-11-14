@@ -30,6 +30,7 @@ module Lockstep.Web.Routes.App
   , TaskPage (..)
   , ChecksPage (..)
   , DecisionPage (..)
+  , ProjectProgressPage (..)
   , sectionLink
   , newProjectLink
   , projectLink
@@ -37,6 +38,7 @@ module Lockstep.Web.Routes.App
   , taskLink
   , checksLink
   , decisionLink
+  , progressLink
 
     -- * Fragments
   , FragmentRoutes
@@ -47,6 +49,7 @@ module Lockstep.Web.Routes.App
   , TaskFragment (..)
   , ChecksFragment (..)
   , DecisionFragment (..)
+  , ProjectProgressFragment (..)
 
     -- * Actions
   , ActionRoutes
@@ -148,6 +151,7 @@ type ShellRoutes =
     , TaskPage
     , ChecksPage
     , DecisionPage
+    , ProjectProgressPage
     ]
 
 shellRoutes :: R.Router r => r ShellRoutes
@@ -162,6 +166,7 @@ shellRoutes =
       /: R.get taskPage
       /: R.get checksPage
       /: R.get decisionPage
+      /: R.get projectProgressPage
       /: R.emptyRoutes
 
 data AppHome = AppHome
@@ -238,6 +243,17 @@ decisionLink :: DecisionKey -> B.RelativeURL B.Get
 decisionLink key =
   B.get (DecisionPage key) decisionPage
 
+-- | C-P6.2 C7: a project's Progress page.
+newtype ProjectProgressPage = ProjectProgressPage {projectProgressPageId :: ProjectId}
+
+projectProgressPage :: R.Router r => R.Builder r ProjectProgressPage ProjectProgressPage
+projectProgressPage =
+  R.make ProjectProgressPage /- "app" /- "projects" /+ R.Param projectIdParam projectProgressPageId /- "progress"
+
+progressLink :: ProjectId -> B.RelativeURL B.Get
+progressLink pid =
+  B.get (ProjectProgressPage pid) projectProgressPage
+
 -- * Fragments
 
 type FragmentRoutes =
@@ -249,6 +265,7 @@ type FragmentRoutes =
     , TaskFragment
     , ChecksFragment
     , DecisionFragment
+    , ProjectProgressFragment
     ]
 
 fragmentRoutes :: R.Router r => r FragmentRoutes
@@ -261,6 +278,7 @@ fragmentRoutes =
       /: R.get (fragments TaskFragment /- "task" /+ R.Param taskIdParam taskFragmentId)
       /: R.get (fragments ChecksFragment /- "project-checks" /+ R.Param projectIdParam checksFragmentProject)
       /: R.get (fragments DecisionFragment /- "decision" /+ R.Param decisionKeyParam decisionFragmentKey)
+      /: R.get (fragments ProjectProgressFragment /- "project-progress" /+ R.Param projectIdParam projectProgressFragmentId)
       /: R.emptyRoutes
 
 fragments :: R.Router r => a -> R.Builder r route a
@@ -280,6 +298,8 @@ newtype TaskFragment = TaskFragment {taskFragmentId :: TaskId}
 newtype ChecksFragment = ChecksFragment {checksFragmentProject :: ProjectId}
 
 newtype DecisionFragment = DecisionFragment {decisionFragmentKey :: DecisionKey}
+
+newtype ProjectProgressFragment = ProjectProgressFragment {projectProgressFragmentId :: ProjectId}
 
 -- * Actions
 

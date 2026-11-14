@@ -56,6 +56,7 @@ library
       Lockstep.Application.OperatorTrust
       Lockstep.Application.ProfileDocument
       Lockstep.Application.Profiles
+      Lockstep.Application.Progress
       Lockstep.Application.ProjectChecks
       Lockstep.Application.Projects
       Lockstep.Application.Reconciler
@@ -107,6 +108,7 @@ library
       Lockstep.Kernel.KeyLifetime
       Lockstep.Kernel.Policy
       Lockstep.Kernel.Profile
+      Lockstep.Kernel.Progress
       Lockstep.Kernel.Project
       Lockstep.Kernel.Reconciliation
       Lockstep.Kernel.Recovery
@@ -167,6 +169,7 @@ library
       Lockstep.Web.LedgerPage
       Lockstep.Web.Liveness
       Lockstep.Web.Operator
+      Lockstep.Web.ProgressPage
       Lockstep.Web.Readiness
       Lockstep.Web.RequestGuard
       Lockstep.Web.Routes
@@ -407,6 +410,7 @@ test-suite lockstep-integration
       Lockstep.ProcessRunnerTest
       Lockstep.ProcessTest
       Lockstep.ProfileRegistryTest
+      Lockstep.ProgressPageTest
       Lockstep.ProjectChecksBrowserTest
       Lockstep.ProjectChecksPageTest
       Lockstep.ProjectChecksTest
@@ -537,6 +541,7 @@ test-suite lockstep-unit
       Lockstep.Kernel.LifecyclePropertyTest
       Lockstep.Kernel.PolicyTest
       Lockstep.Kernel.ProfileTest
+      Lockstep.Kernel.ProgressTest
       Lockstep.Kernel.ProjectTest
       Lockstep.Kernel.ReconciliationTest
       Lockstep.Kernel.RecoveryTest
@@ -566,6 +571,7 @@ test-suite lockstep-unit
       Lockstep.Web.LedgerPageTest
       Lockstep.Web.LivenessPageTest
       Lockstep.Web.OperatorRoutesTest
+      Lockstep.Web.ProgressPageTest
       Lockstep.Web.ReadinessRouteTest
       Lockstep.Web.RequestGuardTest
       Lockstep.Web.ServerTest

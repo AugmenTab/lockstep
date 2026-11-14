@@ -66,6 +66,7 @@ import Lockstep.OperatorTrustTest qualified as OperatorTrustTest
 import Lockstep.ProcessRunnerTest qualified as ProcessRunnerTest
 import Lockstep.ProcessTest qualified as ProcessTest
 import Lockstep.ProfileRegistryTest qualified as ProfileRegistryTest
+import Lockstep.ProgressPageTest qualified as ProgressPageTest
 import Lockstep.ProjectChecksBrowserTest qualified as ProjectChecksBrowserTest
 import Lockstep.ProjectChecksPageTest qualified as ProjectChecksPageTest
 import Lockstep.ProjectChecksTest qualified as ProjectChecksTest
@@ -177,4 +178,5 @@ main =
       , StabilizationSessionTest.tests
       , BacklogTest.tests
       , BacklogReviewTest.tests
+      , ProgressPageTest.tests
       ]

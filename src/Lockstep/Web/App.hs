@@ -50,6 +50,7 @@ import Lockstep.Application.Engine (TransactionView (..), decideCompletion, halt
 import Lockstep.Application.Execution (Admission (..), ExecutionStatus (..), admitBug, enableExecution, executionStatus, findAdmission)
 import Lockstep.Application.LedgerView (EffectLine (..), LedgerProjection (..), OrderLine (..), projectLedger)
 import Lockstep.Application.OperatorTrust (Session (..), exchangeSignIn, lookupSession, revokeSession)
+import Lockstep.Application.Progress (loadProgress)
 import Lockstep.Application.ProjectChecks (ChecksOutcome (..), ChecksRefusal (FewerChecksUnconfirmed), ExpectedChecks (..), ProjectChecks (..), QueueEntry (..), checksRefusalCode, chooseChecksTyped, projectChecks)
 import Lockstep.Application.Projects
   ( NewProject (..)
@@ -114,6 +115,7 @@ import Lockstep.Web.Fields
 import Lockstep.Web.Form (Form, FormField, readForm)
 import Lockstep.Web.Fragment (attr, cls, elementId, fragment)
 import Lockstep.Web.Json (SessionBody (..), sessionSchema)
+import Lockstep.Web.ProgressPage (progressPage)
 import Lockstep.Web.RequestGuard (RouteClass (..))
 import Lockstep.Web.Routes.App
   ( ActionRoutes
@@ -135,6 +137,7 @@ import Lockstep.Web.Routes.App
   , NewProjectFragment
   , NewTaskFragment (..)
   , ProjectFragment (..)
+  , ProjectProgressFragment (..)
   , Routes
   , Section (..)
   , SectionFragment (..)
@@ -147,6 +150,7 @@ import Lockstep.Web.Routes.App
   , createProjectAction
   , decisionLink
   , newProjectLink
+  , progressLink
   , projectLink
   , routes
   , sectionLink
@@ -275,6 +279,7 @@ fragmentRoute route ctx =
         . Shrubbery.branch (\(TaskFragment tid) -> taskFragment ctx tid)
         . Shrubbery.branch (\(ChecksFragment pid) -> checksFragment ctx pid)
         . Shrubbery.branch (\(DecisionFragment key) -> withSession ctx $ \_ -> decisionAnswer (ctxDb ctx) key Nothing)
+        . Shrubbery.branch (\(ProjectProgressFragment pid) -> progressFragment ctx pid)
         $ Shrubbery.branchEnd
     )
     route
@@ -412,6 +417,18 @@ taskFragment ctx tid =
       Right (Just task) -> taskAnswer (ctxDb ctx) task Nothing
       Right Nothing -> pure notFound
       Left _ -> pure notReady
+
+-- | C-P6.2: a project's Progress page, read only; its address goes in the page's history.
+progressFragment :: Ctx -> ProjectId -> IO Wai.Response
+progressFragment ctx pid =
+  withSession ctx $ \_ -> do
+    folders <- projectFoldersFromEnvironment
+    found <- loadProgress (ctxDb ctx) folders (identityText pid)
+    pure $
+      case found of
+        Right (Just view) -> pathAnswer (progressLink pid) (progressPage view)
+        Right Nothing -> notFound
+        Left _ -> notReady
 
 checksFragment :: Ctx -> ProjectId -> IO Wai.Response
 checksFragment ctx pid =
@@ -1140,6 +1157,8 @@ projectPage db view notice = do
                  , E.dd [] [E.code [] [E.text (T.pack (show (projectRevision view)))]]
                  ]
              ]
+         , -- C-P6.2 C7.
+           E.p [] [E.a [A.href (progressLink (projectKey view)), A.id (elementId 'p' "roject-progress")] [E.text "Progress: where all of this project's work stands"]]
          , E.p [] [E.a [A.href (sectionLink Projects)] [E.text "Back to Projects"]]
          ]
 

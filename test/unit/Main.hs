@@ -49,6 +49,7 @@ import Lockstep.Kernel.IdentityTest qualified as IdentityTest
 import Lockstep.Kernel.LifecyclePropertyTest qualified as LifecyclePropertyTest
 import Lockstep.Kernel.PolicyTest qualified as PolicyTest
 import Lockstep.Kernel.ProfileTest qualified as ProfileTest
+import Lockstep.Kernel.ProgressTest qualified as ProgressTest
 import Lockstep.Kernel.ProjectTest qualified as ProjectTest
 import Lockstep.Kernel.ReconciliationTest qualified as ReconciliationTest
 import Lockstep.Kernel.RecoveryTest qualified as RecoveryTest
@@ -77,6 +78,7 @@ import Lockstep.Web.CommandRoutesTest qualified as CommandRoutesTest
 import Lockstep.Web.LedgerPageTest qualified as LedgerPageTest
 import Lockstep.Web.LivenessPageTest qualified as LivenessPageTest
 import Lockstep.Web.OperatorRoutesTest qualified as OperatorRoutesTest
+import Lockstep.Web.ProgressPageTest qualified as ProgressPageTest
 import Lockstep.Web.ReadinessRouteTest qualified as ReadinessRouteTest
 import Lockstep.Web.RequestGuardTest qualified as RequestGuardTest
 import Lockstep.Web.ServerTest qualified as ServerTest
@@ -161,4 +163,6 @@ main =
       , ReviewScopeTest.tests
       , BacklogTest.tests
       , BacklogDocumentTest.tests
+      , ProgressTest.tests
+      , ProgressPageTest.tests
       ]
