@@ -13,12 +13,13 @@ module Lockstep.Kernel.Progress
   , nextToHandOver
   ) where
 
+import Data.List qualified as L
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (Show)
 
-import Lockstep.Kernel.Task (TaskReadiness)
-import Lockstep.Kernel.Transaction (Stage, TxState)
+import Lockstep.Kernel.Task (TaskReadiness (..), mostImportantReady)
+import Lockstep.Kernel.Transaction (Stage, TxState (..))
 
 data WorkFacts
   = WorkFacts
@@ -50,13 +51,51 @@ data Standing
     StandingUnknown T.Text
   deriving (Eq, Show)
 
+{- | C1's precedence: canceled; then the fix's state; then a Done task; then
+handed over (queued); otherwise the task's readiness.
+-}
 standingOf :: WorkFacts -> Standing
-standingOf _ =
-  StandingUnknown T.empty
+standingOf f =
+  case (factReadiness f, factFix f) of
+    (TaskCanceled, _) -> StandingCanceled
+    (_, Just fix) ->
+      case fix of
+        Done -> StandingHumanDone
+        Accepted -> StandingTechnicallyVerified (factAcceptedCommit f)
+        Halted stage code -> StandingWaitingForYou stage code
+        Stopped code -> StandingStopped code
+        Running stage -> StandingActive stage
+    (Finished, Nothing) -> StandingHumanDone
+    (_, Nothing) | factHandedOver f -> StandingQueued
+    (readiness, Nothing) ->
+      case readiness of
+        NotYetReady -> StandingProposed
+        ReadyToWork -> StandingReady
+        WaitingFor titles -> StandingWaiting titles
+        BlockedBecause reason -> StandingBlocked reason
+        CannotStart titles -> StandingCannotStart titles
+        -- Under way with no fix of its own: not handed over through Lockstep, so it is not shown as active.
+        BeingWorkedOn -> StandingQueued
+        StateUnrecognised name -> StandingUnknown name
 
+-- | The standing's stable code (the page's @data-standing@).
 standingCode :: Standing -> T.Text
-standingCode _ =
-  T.empty
+standingCode standing =
+  T.pack $
+    case standing of
+      StandingProposed -> "proposed"
+      StandingReady -> "ready"
+      StandingWaiting _ -> "waiting"
+      StandingBlocked _ -> "blocked"
+      StandingCannotStart _ -> "cannot-start"
+      StandingQueued -> "queued"
+      StandingActive _ -> "active"
+      StandingWaitingForYou _ _ -> "waiting-for-you"
+      StandingTechnicallyVerified _ -> "technically-verified"
+      StandingHumanDone -> "human-done"
+      StandingStopped _ -> "stopped"
+      StandingCanceled -> "canceled"
+      StandingUnknown _ -> "unknown"
 
 -- | Whether the work was published. Phase 6 publishes nothing (P8), so there is one value.
 data Publication
@@ -64,13 +103,13 @@ data Publication
   deriving (Eq, Show)
 
 publicationCode :: Publication -> T.Text
-publicationCode _ =
-  T.empty
+publicationCode NotPublished =
+  T.pack "not-published"
 
 {- | The task a person can hand over next: the highest priority among those
 whose standing is ready, then the earliest in the given order. Never one that
 waits, is blocked or is not ready, whatever its priority.
 -}
 nextToHandOver :: [(a, Int, Standing)] -> Maybe a
-nextToHandOver _ =
-  Nothing
+nextToHandOver tasks =
+  mostImportantReady [(a, priority, order, if standing == StandingReady then ReadyToWork else NotYetReady) | (order, (a, priority, standing)) <- L.zip [0 :: Int ..] tasks]

@@ -358,6 +358,15 @@ killed with its container, its run stays unfinished, and after the restart it is
 bug waits for you — Lockstep never runs it again by itself (C-P4.R1). A database failure in the middle of a
 step leaves nothing half-recorded; the step is taken again, or waits for you, after the database is back.
 
+### A project's Progress page (C-P6.2)
+
+From a project's page, **Progress** (`/app/projects/<id>/progress`) shows every task's standing read from
+Lockstep's records: not yet ready, ready (and which one to hand over next), waiting for which tasks, blocked and
+why, handed over, being worked on (at which step), waiting for your answer, **checked and committed** (on the
+fix's own work branch — *not* Done until you mark it fixed), Done, stopped or canceled; where an imported task
+came from; who works in the project under which checks. Nothing is published: Lockstep never pushes. Model usage
+is shown as not recorded (Lockstep does not record it per project yet). The page is read only.
+
 ### Importing a backlog (C-P6.1)
 
 ```sh
