@@ -72,6 +72,10 @@ data Command
   | -- | C-P6.1 B14: a project, a document file, and the Jira locator when the file is a Jira search response.
     BacklogImport String FilePath (Maybe String)
   | BacklogExport String
+  | -- | C-P6.4 M4: a project and a lockstep-plan document file, proposed by the person.
+    PlanPropose String FilePath
+  | -- | C-P6.4 M10: a project, its PRD file and optionally its architecture file, for the Planner to draft from.
+    PlanDraft String FilePath (Maybe FilePath)
   deriving (Eq, Show)
 
 -- | @work-order create@ options (contract C-P2.8 §5).
@@ -202,7 +206,26 @@ parseArgs args =
     "sandbox" : rest -> parseSandboxCommand rest
     "control" : rest -> parseControlCommand rest
     "backlog" : rest -> parseBacklogCommand rest
+    "plan" : rest -> parsePlanCommand rest
     command : _ -> Left (UnknownCommand command)
+
+-- | Contract C-P6.4: @plan propose --project ID FILE@, @plan draft --project ID --prd FILE [--architecture FILE]@.
+parsePlanCommand :: [String] -> Either CliError Command
+parsePlanCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "plan")
+    "propose" : options -> do
+      (acc, mbFile) <- parseOptionsAndArgument [projectOption] [] options
+      project <- required projectOption acc
+      file <- argument "FILE" mbFile
+      pure (PlanPropose project file)
+    "draft" : options -> do
+      (acc, mbArgument) <- parseOptionsAndArgument [projectOption, "--prd", "--architecture"] [] options
+      noArgument mbArgument
+      project <- required projectOption acc
+      prd <- required "--prd" acc
+      pure (PlanDraft project prd (L.lookup "--architecture" acc))
+    command : _ -> Left (UnknownCommand ("plan " <> command))
 
 -- | Contract C-P6.1 B14: @backlog import --project ID [--jira LOCATOR] FILE@, @backlog export --project ID@.
 parseBacklogCommand :: [String] -> Either CliError Command
@@ -912,6 +935,8 @@ usage =
     , "       lockstep control serve [--port N] --state DIR"
     , "       lockstep backlog import --project PROJECT [--jira LOCATOR] FILE"
     , "       lockstep backlog export --project PROJECT"
+    , "       lockstep plan propose --project PROJECT FILE"
+    , "       lockstep plan draft --project PROJECT --prd FILE [--architecture FILE]"
     , ""
     , "  serve        run the local service on 127.0.0.1 (default port 8000)"
     , "  --port N     listen on port N (1-65535)"
@@ -941,6 +966,10 @@ usage =
     , "                        response read from FILE) into a project as proposed tasks; prints"
     , "                        the decision; nothing is scheduled or run"
     , "  backlog export        print a project's tasks as a lockstep-backlog document"
+    , "  plan propose          propose a lockstep-plan document as the project's next plan"
+    , "                        revision; only your approval on the plan page makes it work"
+    , "  plan draft            ask Lockstep's Planner to draft a plan from a PRD (and an"
+    , "                        architecture); lockstep serve drafts it; you decide on the plan page"
     , "  schedule run-once     run the deterministic scheduler once"
     , "  supervisor            run Lockstep's own deterministic supervisor steps once: start a"
     , "                        claimed work order with sandbox effects, execute or recover one"

@@ -34,6 +34,9 @@ module Lockstep.Kernel.Identity
   , InvocationId (..)
   , HumanRequestId (..)
   , BacklogSourceId (..)
+  , PlanId (..)
+  , PlanRevisionId (..)
+  , PlanDraftId (..)
 
     -- * Parsing and rendering any of them
   , parseIdentity
@@ -118,6 +121,21 @@ newtype HumanRequestId
 -- | A backlog source a project imports from (C-P6.1 B2, B3).
 newtype BacklogSourceId
   = BacklogSourceId Uuid
+  deriving (Eq, Ord, Show)
+
+-- | A project's Master Plan (C-P6.4 M4).
+newtype PlanId
+  = PlanId Uuid
+  deriving (Eq, Ord, Show)
+
+-- | One immutable revision of a Master Plan (C-P6.4 M4).
+newtype PlanRevisionId
+  = PlanRevisionId Uuid
+  deriving (Eq, Ord, Show)
+
+-- | A person's request that the Planner draft a plan from a PRD (C-P6.4 M10).
+newtype PlanDraftId
+  = PlanDraftId Uuid
   deriving (Eq, Ord, Show)
 
 {- | A background job (C-P1.5): the number its row was given by the database

@@ -31,6 +31,7 @@ module Lockstep.Web.Routes.App
   , ChecksPage (..)
   , DecisionPage (..)
   , ProjectProgressPage (..)
+  , ProjectPlanPage (..)
   , sectionLink
   , newProjectLink
   , projectLink
@@ -39,6 +40,7 @@ module Lockstep.Web.Routes.App
   , checksLink
   , decisionLink
   , progressLink
+  , planLink
 
     -- * Fragments
   , FragmentRoutes
@@ -50,6 +52,7 @@ module Lockstep.Web.Routes.App
   , ChecksFragment (..)
   , DecisionFragment (..)
   , ProjectProgressFragment (..)
+  , ProjectPlanFragment (..)
 
     -- * Actions
   , ActionRoutes
@@ -66,6 +69,7 @@ module Lockstep.Web.Routes.App
   , AdmitBug (..)
   , HaltDecision (..)
   , AskQuestion (..)
+  , DecidePlan (..)
   , Completion (..)
   , Decide (..)
   , createProjectAction
@@ -79,6 +83,7 @@ module Lockstep.Web.Routes.App
   , admitBugAction
   , haltDecisionAction
   , askQuestionAction
+  , decidePlanAction
   , completionAction
   , decideAction
   ) where
@@ -154,6 +159,7 @@ type ShellRoutes =
     , ChecksPage
     , DecisionPage
     , ProjectProgressPage
+    , ProjectPlanPage
     ]
 
 shellRoutes :: R.Router r => r ShellRoutes
@@ -169,6 +175,7 @@ shellRoutes =
       /: R.get checksPage
       /: R.get decisionPage
       /: R.get projectProgressPage
+      /: R.get projectPlanPage
       /: R.emptyRoutes
 
 data AppHome = AppHome
@@ -256,6 +263,17 @@ progressLink :: ProjectId -> B.RelativeURL B.Get
 progressLink pid =
   B.get (ProjectProgressPage pid) projectProgressPage
 
+-- | C-P6.4 M8: a project's Master Plan page.
+newtype ProjectPlanPage = ProjectPlanPage {projectPlanPageId :: ProjectId}
+
+projectPlanPage :: R.Router r => R.Builder r ProjectPlanPage ProjectPlanPage
+projectPlanPage =
+  R.make ProjectPlanPage /- "app" /- "projects" /+ R.Param projectIdParam projectPlanPageId /- "plan"
+
+planLink :: ProjectId -> B.RelativeURL B.Get
+planLink pid =
+  B.get (ProjectPlanPage pid) projectPlanPage
+
 -- * Fragments
 
 type FragmentRoutes =
@@ -268,6 +286,7 @@ type FragmentRoutes =
     , ChecksFragment
     , DecisionFragment
     , ProjectProgressFragment
+    , ProjectPlanFragment
     ]
 
 fragmentRoutes :: R.Router r => r FragmentRoutes
@@ -281,6 +300,7 @@ fragmentRoutes =
       /: R.get (fragments ChecksFragment /- "project-checks" /+ R.Param projectIdParam checksFragmentProject)
       /: R.get (fragments DecisionFragment /- "decision" /+ R.Param decisionKeyParam decisionFragmentKey)
       /: R.get (fragments ProjectProgressFragment /- "project-progress" /+ R.Param projectIdParam projectProgressFragmentId)
+      /: R.get (fragments ProjectPlanFragment /- "project-plan" /+ R.Param projectIdParam projectPlanFragmentId)
       /: R.emptyRoutes
 
 fragments :: R.Router r => a -> R.Builder r route a
@@ -303,6 +323,8 @@ newtype DecisionFragment = DecisionFragment {decisionFragmentKey :: DecisionKey}
 
 newtype ProjectProgressFragment = ProjectProgressFragment {projectProgressFragmentId :: ProjectId}
 
+newtype ProjectPlanFragment = ProjectPlanFragment {projectPlanFragmentId :: ProjectId}
+
 -- * Actions
 
 type ActionRoutes =
@@ -320,6 +342,7 @@ type ActionRoutes =
     , AdmitBug
     , HaltDecision
     , AskQuestion
+    , DecidePlan
     , Completion
     , Decide
     ]
@@ -340,6 +363,7 @@ actionRoutes =
       /: R.post admitBug
       /: R.post haltDecision
       /: R.post askQuestion
+      /: R.post decidePlan
       /: R.post completion
       /: R.post decide
       /: R.emptyRoutes
@@ -463,6 +487,17 @@ askQuestion =
 askQuestionAction :: HumanRequestId -> B.RelativeURL B.Post
 askQuestionAction rid =
   B.post (AskQuestion rid) askQuestion
+
+-- | C-P6.4 M5: the owner's decision on a plan revision.
+newtype DecidePlan = DecidePlan {decidePlanProject :: ProjectId}
+
+decidePlan :: R.Router r => R.Builder r DecidePlan DecidePlan
+decidePlan =
+  api DecidePlan /- "projects" /+ R.Param projectIdParam decidePlanProject /- "plan" /- "decisions"
+
+decidePlanAction :: ProjectId -> B.RelativeURL B.Post
+decidePlanAction pid =
+  B.post (DecidePlan pid) decidePlan
 
 newtype Completion = Completion {completionTransaction :: TransactionId}
 

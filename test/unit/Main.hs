@@ -8,6 +8,7 @@ import Test.Tasty (defaultMain, testGroup)
 import Lockstep.Application.BacklogDocumentTest qualified as BacklogDocumentTest
 import Lockstep.Application.CommandTest qualified as CommandTest
 import Lockstep.Application.NoopCommandTest qualified as NoopCommandTest
+import Lockstep.Application.PlanDocumentTest qualified as PlanDocumentTest
 import Lockstep.Application.ProfileDocumentTest qualified as ProfileDocumentTest
 import Lockstep.Application.ReadinessTest qualified as ReadinessTest
 import Lockstep.Effects.ClaudeAdapterTest qualified as ClaudeAdapterTest
@@ -48,6 +49,7 @@ import Lockstep.Kernel.GitBasisTest qualified as GitBasisTest
 import Lockstep.Kernel.IdentityTest qualified as IdentityTest
 import Lockstep.Kernel.InboxTest qualified as InboxTest
 import Lockstep.Kernel.LifecyclePropertyTest qualified as LifecyclePropertyTest
+import Lockstep.Kernel.PlanTest qualified as PlanTest
 import Lockstep.Kernel.PolicyTest qualified as PolicyTest
 import Lockstep.Kernel.ProfileTest qualified as ProfileTest
 import Lockstep.Kernel.ProgressTest qualified as ProgressTest
@@ -169,4 +171,6 @@ main =
       , ProgressPageTest.tests
       , ProgressReviewTest.tests
       , InboxTest.tests
+      , PlanTest.tests
+      , PlanDocumentTest.tests
       ]

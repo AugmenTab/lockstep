@@ -80,6 +80,7 @@ import Lockstep.Kernel.Roles
   , Finding (..)
   , FindingHint (..)
   , Implementation (..)
+  , PlanDraft (..)
   , Review (..)
   , Role (..)
   , RoleAnswer (..)
@@ -509,6 +510,7 @@ decodeAnswer bytes = do
       | k == T.pack "implementation" -> either malformed (fmap AnswerImplementation . fromImplementation) (FA.decode implementationSchema lazy)
       | k == T.pack "review" -> either malformed (fmap AnswerReview . fromReview) (FA.decode reviewSchema lazy)
       | k == T.pack "clarification" -> either malformed (fmap AnswerClarification . fromClarification) (FA.decode clarificationSchema lazy)
+      | k == T.pack "plan" -> either malformed (fmap AnswerPlan . fromPlan) (FA.decode planSchema lazy)
       | otherwise -> Left (T.pack "malformed-output unknown kind")
 
 type Extra =
@@ -857,6 +859,26 @@ clarificationSchema =
 fromClarification :: DocClarification -> Either T.Text Clarification
 fromClarification (DocClarification _ t extra) =
   known extra >> Right (Clarification t)
+
+{- | C-P6.4 M10: the Planner's plan, kept as the JSON text of its @plan@
+object; the Supervisor decodes and validates it as a @lockstep-plan@ document.
+-}
+data DocPlan
+  = DocPlan T.Text FC.AnyJSON Extra
+
+planSchema :: FC.Fleece t => FC.Schema t DocPlan
+planSchema =
+  FC.object $
+    FC.additional
+      ( FC.constructor DocPlan
+          #+ FC.required "kind" (\(DocPlan k _ _) -> k) FC.text
+          #+ FC.required "plan" (\(DocPlan _ p _) -> p) FC.anyJSON
+      )
+      (FC.additionalFields (\(DocPlan _ _ e) -> e) FC.anyJSON)
+
+fromPlan :: DocPlan -> Either T.Text PlanDraft
+fromPlan (DocPlan _ p extra) =
+  known extra >> Right (PlanDraft (encodeText FC.anyJSON p))
 
 {- | A review answer. Stabilization S3: the optional @inspected@ is the
 Reviewer's own list of the files it read; the Supervisor compares it with the

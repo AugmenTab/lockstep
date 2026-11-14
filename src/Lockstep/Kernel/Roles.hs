@@ -25,6 +25,7 @@ module Lockstep.Kernel.Roles
   , Review (..)
   , RoleAnswer (..)
   , Clarification (..)
+  , PlanDraft (..)
   , checkAnswer
   , reviewScopeGap
   , changedPaths
@@ -194,11 +195,20 @@ data RoleAnswer
   | AnswerReview Review
   | -- | C-P6.3 I4: the Planner's answer to a person's question; information only.
     AnswerClarification Clarification
+  | -- | C-P6.4 M10: the Planner's draft of a Master Plan; the Supervisor judges it, it decides nothing.
+    AnswerPlan PlanDraft
   deriving (Eq, Show)
 
 -- | C-P6.3 I4: what the Planner says in answer to a question (1–4000 characters).
 newtype Clarification
   = Clarification {clarificationText :: T.Text}
+  deriving (Eq, Show)
+
+{- | C-P6.4 M10: the plan document the Planner drafted, as JSON text (at most
+200000 characters); its format and rules are checked by the Supervisor.
+-}
+newtype PlanDraft
+  = PlanDraft {planDraftDocument :: T.Text}
   deriving (Eq, Show)
 
 -- | 1–4000 characters, not only spaces; new lines and tabs, no other control character.
@@ -259,6 +269,7 @@ checkAnswer role answer =
     (Implementer, AnswerImplementation i) -> answer <$ rule "summary-invalid" (textValid (implementationSummary i))
     (Reviewer, AnswerReview r) -> answer <$ review r
     (Planner, AnswerClarification c) -> answer <$ rule "text-invalid" (textValid (clarificationText c))
+    (Planner, AnswerPlan p) -> answer <$ rule "plan-invalid" (not (T.null (T.strip (planDraftDocument p))) && T.length (planDraftDocument p) <= 200000)
     _ -> Left (T.pack "wrong-kind")
  where
   rule code ok =

@@ -242,6 +242,17 @@ roleInstructions role view =
           , "write does; only the person decides, on the task's page. There may be no project files to read."
           , ""
           , "    {\"kind\": \"clarification\", \"text\": TEXT}"
+          , ""
+          , "If answer.kind is \"plan\" (a person asked for a Master Plan drafted from their PRD):"
+          , ""
+          , "Read context.json's documents (each with its name and sha256). Propose a lockstep-plan"
+          , "version 1 document: units of work with stable keys, typed edges (technical,"
+          , "human-acceptance, external), acceptance criteria that cite the documents by name, negative"
+          , "cases, checks, and every question or contradiction you found as an uncertainty. Its sources"
+          , "must be exactly the given documents with their given sha256. Your plan is a proposal only:"
+          , "the owner approves it or not, and Lockstep refuses any plan that breaks its rules."
+          , ""
+          , "    {\"kind\": \"plan\", \"plan\": LOCKSTEP-PLAN DOCUMENT}"
           ]
         Challenger ->
           [ "Look for ways the Contract, the tests or the change could be wrong. Answer:"

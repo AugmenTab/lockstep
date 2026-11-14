@@ -25,6 +25,8 @@ module Lockstep.Web.Fields
   , choiceField
   , requestField
   , questionField
+  , digestField
+  , decisionField
   , runField
   , textField
   , acknowledgeField
@@ -99,6 +101,14 @@ requestField = B.Name (NET.new 'r' "equest")
 -- | C-P6.3 I3: a person's question about an open request.
 questionField :: B.Name
 questionField = B.Name (NET.new 'q' "uestion")
+
+-- | C-P6.4 M5: the digest a plan decision names.
+digestField :: B.Name
+digestField = B.Name (NET.new 'd' "igest")
+
+-- | C-P6.4 M5: @approve@ or @reject@.
+decisionField :: B.Name
+decisionField = B.Name (NET.new 'd' "ecision")
 
 -- | Phase 5: the run a stop names (the run under way in the project's Dev Capsule).
 runField :: B.Name

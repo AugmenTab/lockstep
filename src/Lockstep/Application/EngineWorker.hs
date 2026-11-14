@@ -37,6 +37,8 @@ import Text.Show (Show)
 import Lockstep.Application.Clarification (ClarificationOutcome (..), ClarificationReport (..), answerClarificationsUntil, clarificationOutcomeCode)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, reasonDiagnosis)
 import Lockstep.Application.Engine (Engine, StepReport (..), activeTransactionIds, advanceTransaction, pendingWorkOrders, startTransactionFor)
+import Lockstep.Application.Plans (DraftOutcome (..), draftOutcomeCode, draftPlansUntil)
+import Lockstep.Application.Plans qualified as Plans
 import Lockstep.Kernel.Identity (TransactionId (..), WorkOrderId (..), identityText)
 
 data EngineWorker
@@ -81,13 +83,24 @@ enginePass runtime engine stopping = do
     then pure advanced
     else do
       clarified <- answerClarificationsUntil runtime engine stopping
+      -- C-P6.4 M10: then the plans people asked the Planner to draft, each once; nothing is reported when there are none.
+      drafted <- draftPlansUntil runtime engine stopping
       pure $
         advanced
           <> case clarified of
             Left reason -> [(T.pack "clarifications", Left (PassDatabase reason))]
             -- A question left at the limit stays so every pass; it is not reported again each time.
             Right reports -> [(T.pack "clarify " <> reportRequest r, clarificationResult (reportOutcome r)) | r <- reports, reportOutcome r /= ClarifiedLimit]
+          <> case drafted of
+            Left reason -> [(T.pack "plan drafts", Left (PassDatabase reason))]
+            Right reports -> [(T.pack "draft " <> Plans.reportDraft r, draftResult (Plans.reportOutcome r)) | r <- reports]
  where
+  -- A draft that ended without a proposal, other than for lack of a helper, is a refusal the worker logs.
+  draftResult outcome =
+    case outcome of
+      DraftProposed _ -> Right (draftOutcomeCode outcome)
+      DraftNoHelper -> Right (draftOutcomeCode outcome)
+      _ -> Left (PassRefused (draftOutcomeCode outcome))
   -- R-P6.3: a question no answer came for is a refusal the worker logs; an answer, or no helper, is not.
   clarificationResult outcome =
     case outcome of

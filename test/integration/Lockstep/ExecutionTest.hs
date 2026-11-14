@@ -170,6 +170,11 @@ count sc query = do
     [n] -> pure n
     _ -> assertFailure ("count " <> query)
 
+-- | A-P6.4-1: the tables a standalone bug's hand-over and claim write.
+bugTables :: String
+bugTables =
+  "('lockstep_tickets', 'lockstep_project_tasks', 'lockstep_subjects', 'lockstep_work_orders', 'lockstep_bug_admissions', 'lockstep_work_units', 'lockstep_schedule_decisions', 'lockstep_transactions', 'lockstep_execution_enablements')"
+
 countsAre :: Scenario -> Int -> [String] -> Assertion
 countsAre sc n =
   traverse_ (count sc >=> (@?= n))
@@ -421,7 +426,7 @@ tests =
           _ <- admit sc "menu" t (taskTicketRevision t) >>= either (\c -> assertFailure ("refused: " <> T.unpack c)) pure
           countsAre sc 0 ["lockstep_schedule_decisions", "lockstep_effect_intents", "lockstep_jobs", "lockstep_work_units"]
           count sc "lockstep_subjects WHERE kind = 'work-order' AND state = 'pending'" >>= (@?= 1)
-    , testCase "no plan is needed: the existing scheduler step claims the bug, its Work Unit has no plan reference, and no column names a phase" $
+    , testCase "no plan is needed: the existing scheduler step claims the bug, its Work Unit has no plan reference, and none of its rows requires a plan or phase" $
         withScenario $ \sc -> do
           view <- connected sc "Website"
           _ <- enabled sc view
@@ -434,8 +439,10 @@ tests =
           assertBool ("no Work Unit: " <> show unit) (isRight unit)
           count sc "lockstep_work_units WHERE plan_ref IS NULL" >>= (@?= 1)
           count sc ("lockstep_work_units WHERE work_order_id = '" <> T.unpack (admissionWorkOrder a) <> "' AND ticket_id = '" <> T.unpack (taskId t) <> "'") >>= (@?= 1)
-          count sc "information_schema.columns WHERE table_name LIKE 'lockstep%' AND column_name LIKE '%phase%'" >>= (@?= 0)
-          count sc "information_schema.columns WHERE table_name LIKE 'lockstep%' AND column_name LIKE '%plan%' AND NOT (table_name = 'lockstep_work_units' AND column_name = 'plan_ref')" >>= (@?= 0)
+          -- A-P6.4-1: none of the rows a standalone bug writes requires a plan or a phase (no NOT NULL column so
+          -- named, and no NOT NULL reference to a plan table); plan tables may exist beside them.
+          count sc ("information_schema.columns WHERE table_name IN " <> bugTables <> " AND is_nullable = 'NO' AND (column_name LIKE '%plan%' OR column_name LIKE '%phase%')") >>= (@?= 0)
+          count sc ("information_schema.key_column_usage k JOIN information_schema.constraint_column_usage c ON c.constraint_name = k.constraint_name JOIN information_schema.columns col ON col.table_name = k.table_name AND col.column_name = k.column_name WHERE k.table_name IN " <> bugTables <> " AND c.table_name LIKE '%plan%' AND col.is_nullable = 'NO'") >>= (@?= 0)
           (\(WorkOrderId u) -> uuidText u) w @?= admissionWorkOrder a
     , testCase "the records are immutable" $
         withScenario $ \sc -> do

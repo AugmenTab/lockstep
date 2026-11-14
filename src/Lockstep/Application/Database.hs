@@ -355,6 +355,8 @@ data SessionLock
     TransactionStepLock
   | -- | C-P6.3 R-P6.3: one clarification phase at a time, whichever worker runs it
     ClarificationLock
+  | -- | C-P6.4 M10: one plan-drafting phase at a time, whichever worker runs it
+    PlanDraftLock
   deriving (Eq, Show)
 
 lockNamespace :: SessionLock -> Int32
@@ -364,6 +366,7 @@ lockNamespace lock =
     ProjectConnectLock -> 7302
     TransactionStepLock -> 7303
     ClarificationLock -> 7304
+    PlanDraftLock -> 7305
 
 -- | How long a request waits for a lock another request holds.
 lockWaitSeconds :: Int

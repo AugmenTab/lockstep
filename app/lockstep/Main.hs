@@ -80,6 +80,8 @@ import Lockstep.Application.Ledger qualified as Ledger
 import Lockstep.Application.LedgerRefusal (LedgerRefusal (InvalidKind, WorkOrderNotClaimed), refusalFailure)
 import Lockstep.Application.LedgerView (projectLedger, projectionTimeText, renderProjection)
 import Lockstep.Application.OperatorTrust (issueSignIn, revokeAllSessions, signInUrl)
+import Lockstep.Application.Plans (DraftView (..), ProposalRefusal (..), proposePlanFile, requestDraftFiles)
+import Lockstep.Application.Plans qualified as Plans
 import Lockstep.Application.Profiles
   ( AddOutcome (..)
   , ProfileFailure (..)
@@ -193,6 +195,10 @@ main = do
       withRequiredDatabase (backlogImport project file jira)
     Right (BacklogExport project) ->
       withRequiredDatabase (backlogExport project)
+    Right (PlanPropose project file) ->
+      withRequiredDatabase (planPropose project file)
+    Right (PlanDraft project prd architecture) ->
+      withRequiredDatabase (planDraft project prd architecture)
     Right command ->
       -- C-P2.8 §5: the ledger commands (every other command is matched above).
       withRequiredDatabase (ledgerCommand command)
@@ -530,6 +536,36 @@ backlogExport project runtime = do
       putStrLn ("refused " <> T.unpack code)
       refuse ("backlog export refused (" <> T.unpack code <> ")")
     Right (Right document) -> putStrLn (T.unpack document)
+
+{- | C-P6.4 M4: proposes a plan document as the project's next revision and
+prints its number and digest; a refusal prints @refused CODE@ (and each
+problem) and exits 65. A proposal is not an approval.
+-}
+planPropose :: String -> FilePath -> DatabaseRuntime -> IO ()
+planPropose project file runtime = do
+  key <- generateIdempotencyKey
+  result <- proposePlanFile runtime key (T.pack project) (T.pack "command-line") file
+  case result of
+    Left reason -> notReady reason
+    Right (Left (ProposalRefusal code problems)) -> do
+      putStrLn ("refused " <> T.unpack code)
+      traverse_ (putStrLn . ("  " <>) . T.unpack) problems
+      refuse ("plan propose refused (" <> T.unpack code <> ")")
+    Right (Right r) ->
+      putStrLn ("proposed revision " <> show (Plans.revisionNumber r) <> " digest " <> T.unpack (Plans.revisionDigest r) <> "; approve or reject it on the project's plan page")
+
+-- | C-P6.4 M10: records a request for the Planner to draft a plan; @lockstep serve@ drafts it.
+planDraft :: String -> FilePath -> Maybe FilePath -> DatabaseRuntime -> IO ()
+planDraft project prd architecture runtime = do
+  key <- generateIdempotencyKey
+  result <- requestDraftFiles runtime key (T.pack project) (T.pack "command-line") prd architecture
+  case result of
+    Left reason -> notReady reason
+    Right (Left code) -> do
+      putStrLn ("refused " <> T.unpack code)
+      refuse ("plan draft refused (" <> T.unpack code <> ")")
+    Right (Right d) ->
+      putStrLn ("draft " <> T.unpack (draftId d) <> " requested (PRD " <> T.unpack (draftPrdDigest d) <> "); lockstep serve drafts it")
 
 -- | C-P2.1 I10.
 engineerAdd :: String -> DatabaseRuntime -> IO ()

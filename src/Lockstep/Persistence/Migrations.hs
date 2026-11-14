@@ -778,4 +778,118 @@ CREATE TRIGGER lockstep_clarifications_no_delete BEFORE DELETE ON lockstep_clari
 CREATE TRIGGER lockstep_clarifications_no_truncate BEFORE TRUNCATE ON lockstep_clarifications FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
 |]
       )
+    ,
+      ( [Interpolate.i|C-P6.4: Master Plans, their immutable revisions, the owner's decisions, units, edges, reconciliations and Planner drafts|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_plans (
+  id uuid PRIMARY KEY,
+  project_id uuid NOT NULL UNIQUE REFERENCES lockstep_projects (id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TRIGGER lockstep_plans_immutable BEFORE UPDATE OR DELETE ON lockstep_plans FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_plans_no_truncate BEFORE TRUNCATE ON lockstep_plans FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TABLE lockstep_plan_drafts (
+  id uuid PRIMARY KEY,
+  project_id uuid NOT NULL REFERENCES lockstep_projects (id),
+  idempotency_key text NOT NULL UNIQUE CHECK (char_length(idempotency_key) BETWEEN 1 AND 200),
+  request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
+  prd_text text NOT NULL CHECK (char_length(prd_text) BETWEEN 1 AND 200000),
+  prd_digest text NOT NULL CHECK (prd_digest ~ '^[0-9a-f]{64}$'),
+  architecture_text text CHECK (architecture_text IS NULL OR char_length(architecture_text) BETWEEN 1 AND 200000),
+  architecture_digest text CHECK (architecture_digest IS NULL OR architecture_digest ~ '^[0-9a-f]{64}$'),
+  requested_by text NOT NULL CHECK (char_length(requested_by) BETWEEN 1 AND 200),
+  requested_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  started_at timestamptz,
+  finished_at timestamptz,
+  outcome text CHECK (outcome IN ('proposed', 'refused', 'failed', 'no-helper', 'uncertain')),
+  code text CHECK (code IS NULL OR char_length(code) BETWEEN 1 AND 4000),
+  CHECK ((architecture_text IS NULL) = (architecture_digest IS NULL)),
+  CHECK ((finished_at IS NULL) = (outcome IS NULL)),
+  CHECK (finished_at IS NULL OR started_at IS NOT NULL)
+);
+CREATE FUNCTION lockstep_plan_draft_progress() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.finished_at IS NOT NULL
+     OR (OLD.started_at IS NOT NULL AND NEW.started_at IS DISTINCT FROM OLD.started_at)
+     OR (NEW.id, NEW.project_id, NEW.idempotency_key, NEW.request_digest, NEW.prd_text, NEW.prd_digest, NEW.architecture_text, NEW.architecture_digest, NEW.requested_by, NEW.requested_at)
+        IS DISTINCT FROM (OLD.id, OLD.project_id, OLD.idempotency_key, OLD.request_digest, OLD.prd_text, OLD.prd_digest, OLD.architecture_text, OLD.architecture_digest, OLD.requested_by, OLD.requested_at) THEN
+    RAISE EXCEPTION 'lockstep: % rows are immutable (a draft starts once and finishes once)', TG_TABLE_NAME;
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER lockstep_plan_drafts_progress BEFORE UPDATE ON lockstep_plan_drafts FOR EACH ROW EXECUTE FUNCTION lockstep_plan_draft_progress();
+CREATE TRIGGER lockstep_plan_drafts_no_delete BEFORE DELETE ON lockstep_plan_drafts FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_plan_drafts_no_truncate BEFORE TRUNCATE ON lockstep_plan_drafts FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TABLE lockstep_plan_revisions (
+  id uuid PRIMARY KEY,
+  plan_id uuid NOT NULL REFERENCES lockstep_plans (id),
+  revision_number integer NOT NULL CHECK (revision_number >= 1),
+  digest text NOT NULL CHECK (digest ~ '^[0-9a-f]{64}$'),
+  document text NOT NULL,
+  proposed_by text NOT NULL CHECK (proposed_by IN ('Human', 'Planner')),
+  proposer text NOT NULL CHECK (char_length(proposer) BETWEEN 1 AND 200),
+  draft_id uuid REFERENCES lockstep_plan_drafts (id),
+  idempotency_key text NOT NULL UNIQUE CHECK (char_length(idempotency_key) BETWEEN 1 AND 200),
+  uncertainties integer NOT NULL CHECK (uncertainties >= 0),
+  proposed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (plan_id, revision_number),
+  UNIQUE (plan_id, digest),
+  CHECK ((proposed_by = 'Planner') = (draft_id IS NOT NULL))
+);
+CREATE TRIGGER lockstep_plan_revisions_immutable BEFORE UPDATE OR DELETE ON lockstep_plan_revisions FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_plan_revisions_no_truncate BEFORE TRUNCATE ON lockstep_plan_revisions FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TABLE lockstep_plan_decisions (
+  revision_id uuid PRIMARY KEY REFERENCES lockstep_plan_revisions (id),
+  decision text NOT NULL CHECK (decision IN ('approved', 'rejected')),
+  digest text NOT NULL CHECK (digest ~ '^[0-9a-f]{64}$'),
+  actor text NOT NULL CHECK (char_length(actor) BETWEEN 1 AND 200),
+  decided_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE FUNCTION lockstep_refuse_plan_decision_digest() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF (SELECT digest FROM lockstep_plan_revisions WHERE id = NEW.revision_id) IS DISTINCT FROM NEW.digest THEN
+    RAISE EXCEPTION 'lockstep: a plan decision must name its revision''s digest';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER lockstep_plan_decisions_digest BEFORE INSERT ON lockstep_plan_decisions FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_plan_decision_digest();
+CREATE TRIGGER lockstep_plan_decisions_immutable BEFORE UPDATE OR DELETE ON lockstep_plan_decisions FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_plan_decisions_no_truncate BEFORE TRUNCATE ON lockstep_plan_decisions FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TABLE lockstep_plan_units (
+  revision_id uuid NOT NULL REFERENCES lockstep_plan_decisions (revision_id),
+  unit_key text NOT NULL CHECK (char_length(unit_key) BETWEEN 1 AND 64),
+  task_id uuid NOT NULL REFERENCES lockstep_project_tasks (ticket_id),
+  unit_digest text NOT NULL CHECK (unit_digest ~ '^[0-9a-f]{64}$'),
+  work_kind text NOT NULL,
+  profile_id text NOT NULL,
+  provisional boolean NOT NULL,
+  priority integer NOT NULL,
+  ordinal integer NOT NULL CHECK (ordinal >= 0),
+  PRIMARY KEY (revision_id, unit_key),
+  UNIQUE (revision_id, task_id)
+);
+CREATE TRIGGER lockstep_plan_units_immutable BEFORE UPDATE OR DELETE ON lockstep_plan_units FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_plan_units_no_truncate BEFORE TRUNCATE ON lockstep_plan_units FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TABLE lockstep_plan_edges (
+  revision_id uuid NOT NULL,
+  dependent_key text NOT NULL,
+  prerequisite_key text NOT NULL,
+  kind text NOT NULL CHECK (kind IN ('technical', 'human-acceptance', 'external')),
+  PRIMARY KEY (revision_id, dependent_key, prerequisite_key),
+  FOREIGN KEY (revision_id, dependent_key) REFERENCES lockstep_plan_units (revision_id, unit_key),
+  FOREIGN KEY (revision_id, prerequisite_key) REFERENCES lockstep_plan_units (revision_id, unit_key)
+);
+CREATE TRIGGER lockstep_plan_edges_immutable BEFORE UPDATE OR DELETE ON lockstep_plan_edges FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_plan_edges_no_truncate BEFORE TRUNCATE ON lockstep_plan_edges FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TABLE lockstep_plan_reconciliations (
+  revision_id uuid NOT NULL REFERENCES lockstep_plan_decisions (revision_id),
+  unit_key text NOT NULL CHECK (char_length(unit_key) BETWEEN 1 AND 64),
+  outcome text NOT NULL CHECK (outcome IN ('added', 'kept', 'changed', 'invalidated', 'withdrawn')),
+  previous_revision_id uuid REFERENCES lockstep_plan_revisions (id),
+  PRIMARY KEY (revision_id, unit_key)
+);
+CREATE TRIGGER lockstep_plan_reconciliations_immutable BEFORE UPDATE OR DELETE ON lockstep_plan_reconciliations FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_plan_reconciliations_no_truncate BEFORE TRUNCATE ON lockstep_plan_reconciliations FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+|]
+      )
     ]

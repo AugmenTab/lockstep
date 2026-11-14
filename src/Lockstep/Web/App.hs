@@ -52,6 +52,7 @@ import Lockstep.Application.Inbox (inboxEntries)
 import Lockstep.Application.Inbox qualified as Inbox
 import Lockstep.Application.LedgerView (EffectLine (..), LedgerProjection (..), OrderLine (..), projectLedger)
 import Lockstep.Application.OperatorTrust (Session (..), exchangeSignIn, lookupSession, revokeSession)
+import Lockstep.Application.Plans (PlanDecision (..), decidePlan, planView)
 import Lockstep.Application.Progress (loadProgress)
 import Lockstep.Application.ProjectChecks (ChecksOutcome (..), ChecksRefusal (FewerChecksUnconfirmed), ExpectedChecks (..), ProjectChecks (..), QueueEntry (..), checksRefusalCode, chooseChecksTyped, projectChecks)
 import Lockstep.Application.Projects
@@ -97,7 +98,9 @@ import Lockstep.Web.Fields
   , actionField
   , choiceField
   , confirmFewerField
+  , decisionField
   , dependsOnField
+  , digestField
   , expectedField
   , expectedSetField
   , folderField
@@ -118,6 +121,7 @@ import Lockstep.Web.Fields
 import Lockstep.Web.Form (Form, FormField, readForm)
 import Lockstep.Web.Fragment (attr, cls, elementId, fragment)
 import Lockstep.Web.Json (SessionBody (..), sessionSchema)
+import Lockstep.Web.PlanPage (planDecisionWords, planPage)
 import Lockstep.Web.ProgressPage (progressPage)
 import Lockstep.Web.RequestGuard (RouteClass (..))
 import Lockstep.Web.Routes.App
@@ -131,6 +135,7 @@ import Lockstep.Web.Routes.App
   , CreateProject
   , CreateTask (..)
   , Decide (..)
+  , DecidePlan (..)
   , DecideTask (..)
   , DecisionFragment (..)
   , EditTask (..)
@@ -141,6 +146,7 @@ import Lockstep.Web.Routes.App
   , NewProjectFragment
   , NewTaskFragment (..)
   , ProjectFragment (..)
+  , ProjectPlanFragment (..)
   , ProjectProgressFragment (..)
   , Routes
   , Section (..)
@@ -154,6 +160,7 @@ import Lockstep.Web.Routes.App
   , createProjectAction
   , decisionLink
   , newProjectLink
+  , planLink
   , progressLink
   , projectLink
   , routes
@@ -284,6 +291,7 @@ fragmentRoute route ctx =
         . Shrubbery.branch (\(ChecksFragment pid) -> checksFragment ctx pid)
         . Shrubbery.branch (\(DecisionFragment key) -> withSession ctx $ \_ -> decisionAnswer (ctxDb ctx) key Nothing)
         . Shrubbery.branch (\(ProjectProgressFragment pid) -> progressFragment ctx pid)
+        . Shrubbery.branch (\(ProjectPlanFragment pid) -> withSession ctx $ \_ -> planAnswer (ctxDb ctx) pid Nothing)
         $ Shrubbery.branchEnd
     )
     route
@@ -305,6 +313,7 @@ actionRoute route ctx =
         . Shrubbery.branch (\(AdmitBug tid) -> admitBugRoute ctx tid)
         . Shrubbery.branch (\(HaltDecision xid) -> haltDecisionRoute ctx xid)
         . Shrubbery.branch (\(AskQuestion rid) -> askQuestionRoute ctx rid)
+        . Shrubbery.branch (\(DecidePlan pid) -> decidePlanRoute ctx pid)
         . Shrubbery.branch (\(Completion xid) -> completionRoute ctx xid)
         . Shrubbery.branch (\(Decide key) -> decideRoute ctx key)
         $ Shrubbery.branchEnd
@@ -801,6 +810,40 @@ askQuestionRoute ctx rid =
                   Right (Right _) -> transactionAnswer db tx Nothing
                   Right (Left code) -> transactionAnswer db tx (Just (questionWords code))
 
+{- | C-P6.4 M5: the owner's decision on one plan revision, named by its number
+and digest. The answer is the plan page, with a refusal in words.
+-}
+decidePlanRoute :: Ctx -> ProjectId -> IO Wai.Response
+decidePlanRoute ctx pid =
+  withForm ctx $ \fields -> do
+    let
+      db = ctxDb ctx
+      choice d =
+        case T.unpack d of
+          "approve" -> Just ApprovePlan
+          "reject" -> Just RejectPlan
+          _ -> Nothing
+    case V.runValidator ((,,) <$> revisionField `V.required` V.decimalUpTo integerMax <*> digestField `V.required` V.text <*> decisionField `V.required` (V.text `V.chain` V.maybeValidator choice "Not a decision.")) fields of
+      Left _ -> planAnswer db pid (Just unreadableTryAgain)
+      Right (number, digest, decision) -> do
+        decided <- decidePlan db "application" (identityText pid) (fromInteger number) digest decision
+        case decided of
+          Left _ -> pure notReady
+          Right (Right _) -> planAnswer db pid Nothing
+          Right (Left code) -> planAnswer db pid (Just (planDecisionWords code))
+
+-- | The project's plan page, with a notice; 404 for an unknown project.
+planAnswer :: DatabaseRuntime -> ProjectId -> Maybe T.Text -> IO Wai.Response
+planAnswer db pid notice = do
+  project <- findProject db (identityText pid)
+  view <- planView db (identityText pid)
+  pure $
+    case (project, view) of
+      (Right (Just p), Right (Right v)) -> pathAnswer (planLink pid) (planPage pid (projectName p) v notice)
+      (Right Nothing, _) -> notFound
+      (_, Right (Left _)) -> notFound
+      _ -> notReady
+
 -- | A refused question in words.
 questionWords :: T.Text -> T.Text
 questionWords code =
@@ -1208,6 +1251,7 @@ projectPage db view notice = do
              ]
          , -- C-P6.2 C7.
            E.p [] [E.a [A.href (progressLink (projectKey view)), A.id (elementId 'p' "roject-progress")] [E.text "Progress: where all of this project's work stands"]]
+         , E.p [] [E.a [A.href (planLink (projectKey view)), A.id (elementId 'p' "roject-plan")] [E.text "Plan: the work you approved, and drafts for you to decide"]]
          , E.p [] [E.a [A.href (sectionLink Projects)] [E.text "Back to Projects"]]
          ]
 

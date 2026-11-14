@@ -66,6 +66,8 @@ import Lockstep.MigrationDbTest qualified as MigrationDbTest
 import Lockstep.OperatorCommandTest qualified as OperatorCommandTest
 import Lockstep.OperatorLedgerTest qualified as OperatorLedgerTest
 import Lockstep.OperatorTrustTest qualified as OperatorTrustTest
+import Lockstep.PlanPageTest qualified as PlanPageTest
+import Lockstep.PlanTest qualified as PlanTest
 import Lockstep.ProcessRunnerTest qualified as ProcessRunnerTest
 import Lockstep.ProcessTest qualified as ProcessTest
 import Lockstep.ProfileRegistryTest qualified as ProfileRegistryTest
@@ -185,4 +187,6 @@ main =
       , InboxTest.tests
       , InboxPageTest.tests
       , InboxReviewTest.tests
+      , PlanTest.tests
+      , PlanPageTest.tests
       ]

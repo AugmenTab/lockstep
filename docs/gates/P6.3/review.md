@@ -39,6 +39,16 @@ Full check of `2d65a1f`: format, lint, build, unit 950/950, guard PASSED; integr
 A-P6.3-1 (pending owner authority); backup/restore NOT_RUN on this revision (it runs only after a passing
 integration step). `.local/evals/phase-06/p63r-full-check.log`.
 
+## After A-P6.3-1 (owner-authorized, applied at `fd35945`)
+
+Full check of **`fd35945`**: format, lint/static, build, unit **950/950**, no-live-model guard, integration
+**622/622**, backup/restore (dump + digest, restore round trip, corrupted dump refused) — **all PASSED**.
+`.local/evals/phase-06/a631-full-check.log`. P6.3 is locally qualified; owner acceptance pending.
+
+Found later (during P6.4): the task page's question form posts to `/app/api/requests/<id>/questions`, which
+`static/app.js`'s `FORM_ACTION` did not list, so in a real browser the form would be sent without the session header
+(401). The HTTP tests post directly and did not see it. Fixed with P6.4's `app.js` change (the pattern now lists it).
+
 ## Remediation tests (frozen with this record)
 
 | File | sha256 |

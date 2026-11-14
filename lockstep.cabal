@@ -56,6 +56,8 @@ library
       Lockstep.Application.LedgerRefusal
       Lockstep.Application.LedgerView
       Lockstep.Application.OperatorTrust
+      Lockstep.Application.PlanDocument
+      Lockstep.Application.Plans
       Lockstep.Application.ProfileDocument
       Lockstep.Application.Profiles
       Lockstep.Application.Progress
@@ -109,6 +111,7 @@ library
       Lockstep.Kernel.Identity
       Lockstep.Kernel.Inbox
       Lockstep.Kernel.KeyLifetime
+      Lockstep.Kernel.Plan
       Lockstep.Kernel.Policy
       Lockstep.Kernel.Profile
       Lockstep.Kernel.Progress
@@ -143,6 +146,7 @@ library
       Lockstep.Persistence.Migration
       Lockstep.Persistence.Migrations
       Lockstep.Persistence.OperatorSessions
+      Lockstep.Persistence.Plans
       Lockstep.Persistence.Profiles
       Lockstep.Persistence.Projects
       Lockstep.Persistence.Queries
@@ -173,6 +177,7 @@ library
       Lockstep.Web.LedgerPage
       Lockstep.Web.Liveness
       Lockstep.Web.Operator
+      Lockstep.Web.PlanPage
       Lockstep.Web.ProgressPage
       Lockstep.Web.Readiness
       Lockstep.Web.RequestGuard
@@ -414,6 +419,8 @@ test-suite lockstep-integration
       Lockstep.OperatorCommandTest
       Lockstep.OperatorLedgerTest
       Lockstep.OperatorTrustTest
+      Lockstep.PlanPageTest
+      Lockstep.PlanTest
       Lockstep.ProcessRunnerTest
       Lockstep.ProcessTest
       Lockstep.ProfileRegistryTest
@@ -506,6 +513,7 @@ test-suite lockstep-unit
       Lockstep.Application.BacklogDocumentTest
       Lockstep.Application.CommandTest
       Lockstep.Application.NoopCommandTest
+      Lockstep.Application.PlanDocumentTest
       Lockstep.Application.ProfileDocumentTest
       Lockstep.Application.ReadinessTest
       Lockstep.Effects.ClaudeAdapterTest
@@ -547,6 +555,7 @@ test-suite lockstep-unit
       Lockstep.Kernel.InboxTest
       Lockstep.Kernel.LifecycleFixtures
       Lockstep.Kernel.LifecyclePropertyTest
+      Lockstep.Kernel.PlanTest
       Lockstep.Kernel.PolicyTest
       Lockstep.Kernel.ProfileTest
       Lockstep.Kernel.ProgressTest

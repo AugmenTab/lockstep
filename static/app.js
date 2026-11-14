@@ -27,7 +27,8 @@
   var CHECKS = new RegExp('^/app/projects/' + UUID + '/checks$');
   var DECISION = new RegExp('^/app/decisions/' + UUID + '$');
   var PROGRESS = new RegExp('^/app/projects/' + UUID + '/progress$');
-  var FORM_ACTION = new RegExp('^/app/api/(projects|projects/' + UUID + '/(connect|tasks|checks|execution)|tasks/' + UUID + '/(edit|decide|bug)|decisions/' + UUID + '|transactions/' + UUID + '/(decision|completion))$');
+  var PLAN = new RegExp('^/app/projects/' + UUID + '/plan$');
+  var FORM_ACTION = new RegExp('^/app/api/(projects|projects/' + UUID + '/(connect|tasks|checks|execution|plan/decisions)|tasks/' + UUID + '/(edit|decide|bug)|decisions/' + UUID + '|transactions/' + UUID + '/(decision|completion)|requests/' + UUID + '/questions)$');
 
   // The sign-in token arrives in the fragment of /app/sign-in. Take it, then
   // remove it from the address bar and from this history entry before anything else.
@@ -53,6 +54,8 @@
     if (decision) { return { fragment: '/app/fragments/decision/' + decision[1], section: 'decisions' }; }
     var progress = PROGRESS.exec(path);
     if (progress) { return { fragment: '/app/fragments/project-progress/' + progress[1], section: 'projects' }; }
+    var plan = PLAN.exec(path);
+    if (plan) { return { fragment: '/app/fragments/project-plan/' + plan[1], section: 'projects' }; }
     var match = /^\/app\/([a-z]+)$/.exec(path);
     if (!match) { return null; }
     for (var i = 0; i < SECTIONS.length; i += 1) {
@@ -217,7 +220,7 @@
     if (event.detail.target !== content) { return; }
     // An answer that is a project's page says so; the address follows it.
     var path = event.detail.xhr ? event.detail.xhr.getResponseHeader('X-Lockstep-Path') : null;
-    if (path && (PROJECT.test(path) || TASK.test(path) || CHECKS.test(path) || DECISION.test(path) || PROGRESS.test(path)) && path !== window.location.pathname) {
+    if (path && (PROJECT.test(path) || TASK.test(path) || CHECKS.test(path) || DECISION.test(path) || PROGRESS.test(path) || PLAN.test(path)) && path !== window.location.pathname) {
       current = path;
       window.history.pushState(null, '', path);
     }
