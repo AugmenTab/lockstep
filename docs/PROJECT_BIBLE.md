@@ -1,13 +1,15 @@
 # Lockstep — Project Bible (canonical repository record)
 
-- Current constitution: **Project Bible v2.2 — Final / Ratified, 25 October 2026**
-  (decision `LS-BIBLE-2.2-RATIFY-2026-10-25`), as amended by **`LS-BIBLE-2.2-ALIGN-01`**
-  (approved by the human owner on 25 October 2026, approval record
-  `LS-V2-DOCS-0.3-APPROVE-2026-10-25`; §2 below).
-- Supersedes as current constitution: Bible v2.1 (16 October 2026, sha256 `62196658…640ff`), which
-  stays the historical authority for records made under it.
-- Recorded in the repository by the writing agent (Implementer) at the owner's instruction,
-  2026-10-25. The agent decided nothing here.
+- Current constitution: **Project Bible v2.3 (`LS-BIBLE-2.3-01`), ratified by the human owner on 13 November
+  2026** (§3 below). v2.3 is an interpretive overlay on the preserved **Project Bible v2.2 — Final / Ratified,
+  25 October 2026** (decision `LS-BIBLE-2.2-RATIFY-2026-10-25`), as amended by **`LS-BIBLE-2.2-ALIGN-01`**
+  (approved by the human owner on 25 October 2026, approval record `LS-V2-DOCS-0.3-APPROVE-2026-10-25`; §2
+  below). v2.3 qualifies or supersedes only the clauses it names; every other v2.2 provision keeps its force.
+- Paired governing editions: Implementation PRD v0.4 and Dependency-Aware Plan v0.4, approved 13 November 2026.
+- Bible v2.1 (16 October 2026, sha256 `62196658…640ff`) was superseded by v2.2 and stays the historical authority
+  for records made under it.
+- Recorded in the repository by the writing agent (Implementer) at the owner's instruction: v2.2 and
+  ALIGN-01 on 2026-10-25, v2.3 on 2026-11-13. The agent decided nothing here.
 
 ## 1. Sources and text
 
@@ -15,6 +17,9 @@
 |---|---|---|
 | Ratified v2.2 PDF (immutable source; 75 pages; not committed) | `.local/LOCKSTEP_PROJECT_BIBLE_v2.2_FINAL.pdf` | `bbaddf281b4da6af97f341ff8aba5f794df41d781aa23e67082f26e96ebb018f` |
 | Full v2.2 text, verbatim machine extraction of that PDF | [`bible/PROJECT_BIBLE_v2.2.txt`](bible/PROJECT_BIBLE_v2.2.txt) | `7706762014b3d44d749e3bda351ebc05ff79ecfa53059758d3be5f2195baa815` |
+| Ratified v2.3 consolidated PDF (v2.3 front matter and amendment, then the unmodified 75-page v2.2 PDF as annex; not committed) | `.local/LOCKSTEP_PROJECT_BIBLE_v2.3_FINAL.pdf` | `f29fe7f3feb35fe83d3bed858e20b300e8f14a1a1d437a0a84f0bf63e9a6f6c3` |
+| Ratified v2.3 amendment text, as supplied by the owner | [`bible/PROJECT_BIBLE_v2.3_AMENDMENT.md`](bible/PROJECT_BIBLE_v2.3_AMENDMENT.md) | `4a14dfee364ae0f6669d574cd3df04424ee5892d7d997b1953045c2dfd9b590d` |
+| Approved Implementation PRD v0.4 PDF (not committed) | `.local/LOCKSTEP_V2_IMPLEMENTATION_PRD_v0.4_APPROVED.pdf` | `70e082283842b1eb14b15ceb37f840f49cf70cd924527a747a53ac0650fe45ff` |
 
 The text file was produced by `pdftotext -layout` (Debian bookworm `poppler-utils`
 22.12.0-2+deb12u3) and is committed unedited: no word was retyped or corrected. Layout artefacts
@@ -69,11 +74,42 @@ It is a narrow addendum: the ratified v2.2 PDF and its text are not changed or r
 | §13.3 insert 03, "Non-goal for Gate C" (text lines 1581–1584): P3.14, P4.3, P10.2 | Item 3: P3.14 is the legacy identifier now in the Phase 4 bounded loop (plan v0.3 P4.15); P4.3 and P10.2 are the plan v0.3 identifiers |
 | §39 Milestone C | Item 2: C-EXEC (Phase 4); C-UX added for Phase 3 |
 
-## 3. Reading order
+## 3. Bible v2.3 (`LS-BIBLE-2.3-01`, ratified 13 November 2026)
 
-1. This file's §2 amendment.
-2. The ratified v2.2 text, including its own reading guide: the v2.1 body pages are retained,
+Text: [`bible/PROJECT_BIBLE_v2.3_AMENDMENT.md`](bible/PROJECT_BIBLE_v2.3_AMENDMENT.md), committed as the owner
+supplied it, unedited. It is the amendment that opens the consolidated v2.3 PDF; the two were not compared word
+for word when they were recorded. The v2.2 PDF and its text (§1) are not changed or redated: in the consolidated PDF they are the
+historical annex, and where they conflict with a clause v2.3 names, v2.3 governs prospectively from 13 November
+2026.
+
+What it contains, by its own sections:
+
+| v2.3 § | Subject | Clauses |
+|---|---|---|
+| 1 | Lockstep models one disciplined Engineer; the human is technical lead; front-loaded judgment; deterministic control plane | B23-01 – B23-04 |
+| 2 | Dev Capsules as the execution substrate; credentials outside untrusted execution; separate verification; resources; host-enforced network trust | B23-05 – B23-09 |
+| 3 | Two intake modes, one work graph; the plan is the schedule; bounded continuity; provisional progress with human final Done; genuine escalation | B23-10 – B23-14 |
+| 4 | The future Verifier's two duties; explicit architectural standards; convention-aware tests and complete review | B23-15 – B23-17 |
+| 5 | One source of execution truth; operational autonomy; Caesura as the Gate D dogfood | B23-18 – B23-20 |
+| 6 | Prospective milestone map and recorded status (A through F3) | — |
+| 7 | Phase renumbering: v0.3 plan to v0.4 plan (old P5.x becomes P6.x, and so on) | — |
+| 8 | Ratified policy decisions D6-AUTH, D6-SOURCE, D6-GATE, D6-SEC; what it does not authorize | — |
+| 9 | Document authority and how the consolidated PDF is built | — |
+
+Its limits, in its own words: ratification "does not, by itself, authorize Phase 6 execution, external effects,
+provider spending, or host administration; it does not self-accept any gate, modify an accepted Contract, or
+declare future functionality complete." The renumbering in v2.3 §7 does not change persistent Contract IDs,
+recorded events, gate receipts or migration history; records made before 13 November 2026 keep their v0.3
+numbering.
+
+## 4. Reading order
+
+1. The v2.3 amendment (§3).
+2. This file's §2 amendment, `LS-BIBLE-2.2-ALIGN-01`, where v2.3 leaves it standing.
+3. The ratified v2.2 text, including its own reading guide: the v2.1 body pages are retained,
    nine v2.2 inserts follow their source sections, and v2.2 §3.1 replaces only original §3.1
    item 1.
-3. Implementation PRD v0.3 (`docs/prd/`) and Dependency-Aware Plan v0.3 (`docs/plans/`), which
-   read with PRD v0.2 for unchanged requirement text.
+4. Implementation PRD v0.4 and Dependency-Aware Plan v0.4, the paired governing editions. Only the PRD v0.4 PDF
+   is held so far (§1); neither has a text copy in `docs/prd/` or `docs/plans/` yet.
+5. Implementation PRD v0.3 (`docs/prd/`) and Dependency-Aware Plan v0.3 (`docs/plans/`), the historical
+   sources for records made under them; they read with PRD v0.2 for unchanged requirement text.
