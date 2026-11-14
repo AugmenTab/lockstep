@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# S1-SD1 qualification: what the real passthrough filter admits under a given egress-hosts file.
+#
+#   scripts/lib/probe-egress-allowlist EGRESS-HOSTS-FILE OUT-DIR
+#
+# Builds the --allow list exactly as scripts/control-helper does (read_egress_hosts, copied
+# verbatim), runs the filter from the pinned provider image on an --internal Docker network (no
+# route out, so nothing reaches any provider), and sends it CONNECT and plain requests for the
+# allowed hosts and for near misses. An allowed host can only end "upstream-unreachable" (it was
+# admitted, then could not connect); anything not allowed ends "host-refused" or "method-refused".
+# Reads no credential and mounts no auth volume. Prints PASS/FAIL lines; exit 0 iff no FAIL.
+set -u
+[ $# -eq 2 ] || { echo "usage: $0 EGRESS-HOSTS-FILE OUT-DIR" >&2; exit 64; }
+file=$1
+out=$2
+image=lockstep-provider:claude-2.1.312
+net=lockstep-allowlist-probe-$$
+filter=lockstep-allowlist-filter-$$
+fails=0
+run=5d1a11c0e55e0000000000000000000a
+
+# Verbatim from scripts/control-helper (provider_dir replaced by the file argument).
+read_egress_hosts() {
+  local line out="" n=0
+  [ -f "$file" ] && [ ! -L "$file" ] || return 1
+  [ "$(wc -c < "$file" | tr -d ' ')" -le 4096 ] || return 1
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    [[ $line =~ ^[a-z0-9.-]{1,253}$ ]] || return 1
+    out="$out${out:+,}$line"
+    n=$((n + 1))
+  done < "$file"
+  [ "$n" -ge 1 ] || return 1
+  printf '%s' "$out"
+}
+
+check() { # LABEL ACTUAL EXPECTED
+  if [ "$2" = "$3" ]; then echo "PASS $1 ($2)"; else echo "FAIL $1 (got $2, want $3)"; fails=$((fails + 1)); fi
+}
+
+cleanup() {
+  docker rm -f "$filter" >/dev/null 2>&1 || true
+  docker network rm "$net" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+allow=$(read_egress_hosts) || { echo "FAIL the helper would refuse $file"; exit 1; }
+check "the helper's --allow list" "$allow" "api.anthropic.com,platform.claude.com"
+
+mkdir -p "$out/ledger" "$out/client"
+chmod 700 "$out/ledger"
+cat > "$out/client/probe.py" <<'EOF'
+import socket, sys
+addr = sys.argv[1]
+for line in sys.stdin:
+    raw = line.rstrip("\n")
+    if not raw:
+        continue
+    method, target = raw.split(" ", 1)
+    s = socket.create_connection((addr, 8080), timeout=45)
+    s.settimeout(45)
+    s.sendall(("%s %s HTTP/1.1\r\nHost: probe\r\nContent-Length: 0\r\n\r\n" % (method, target)).encode("ascii"))
+    data = b""
+    try:
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+    except OSError:
+        pass
+    s.close()
+    head, _, body = data.partition(b"\r\n\r\n")
+    status = head.split(b"\r\n", 1)[0].decode("ascii", "replace").split(" ")[1:2]
+    print("%s %s %s %s" % (method, target, (status or ["-"])[0], body.decode("ascii", "replace").strip() or "-"))
+EOF
+
+docker network create --internal "$net" >/dev/null || { echo "FAIL network"; exit 1; }
+docker run -d --name "$filter" --network "$net" --read-only --tmpfs /tmp:rw,size=16777216 --cap-drop ALL \
+  --security-opt no-new-privileges --user "$(id -u):$(id -g)" --env HOME=/tmp \
+  --mount "type=bind,source=$out/ledger,target=/ledger" \
+  "$image" python3 /opt/lockstep/egress-proxy passthrough --run "$run" --ledger /ledger --allow "$allow" >/dev/null ||
+  { echo "FAIL filter start"; exit 1; }
+n=0
+while [ ! -f "$out/ledger/runs/$run.ready" ] && [ $n -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+[ -f "$out/ledger/runs/$run.ready" ] || { echo "FAIL filter not ready"; exit 1; }
+addr=$(tr -d '\n' < "$out/ledger/runs/$run.ready")
+
+printf '%s\n' \
+  "CONNECT api.anthropic.com:443" \
+  "CONNECT platform.claude.com:443" \
+  "CONNECT claude.com:443" \
+  "CONNECT claude.ai:443" \
+  "CONNECT anthropic.com:443" \
+  "CONNECT console.anthropic.com:443" \
+  "CONNECT statsig.anthropic.com:443" \
+  "CONNECT evil.platform.claude.com:443" \
+  "CONNECT platform.claude.com.example.net:443" \
+  "CONNECT xplatform.claude.com:443" \
+  "CONNECT PLATFORM.CLAUDE.COM:443" \
+  "CONNECT platform.claude.com.:443" \
+  "CONNECT platform.claude.com:80" \
+  "CONNECT platform.claude.com:8443" \
+  "CONNECT example.com:443" \
+  "CONNECT 160.79.104.10:443" \
+  "GET http://platform.claude.com/v1/oauth/token" \
+  "POST https://platform.claude.com/v1/oauth/token" \
+  > "$out/client/cases"
+docker run --rm -i --network "$net" --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --user "$(id -u):$(id -g)" --mount "type=bind,source=$out/client,target=/probe,readonly" \
+  "$image" python3 /probe/probe.py "$addr" < "$out/client/cases" > "$out/responses.txt" 2>&1
+
+outcome() { # METHOD TARGET -> the filter's answer body
+  local m t s b
+  while read -r m t s b; do
+    if [ "$m" = "$1" ] && [ "$t" = "$2" ]; then echo "$b"; return; fi
+  done < "$out/responses.txt"
+  echo missing
+}
+
+check "api.anthropic.com:443 admitted" "$(outcome CONNECT api.anthropic.com:443)" upstream-unreachable
+check "platform.claude.com:443 admitted" "$(outcome CONNECT platform.claude.com:443)" upstream-unreachable
+for t in claude.com:443 claude.ai:443 anthropic.com:443 console.anthropic.com:443 statsig.anthropic.com:443 \
+  evil.platform.claude.com:443 platform.claude.com.example.net:443 xplatform.claude.com:443 \
+  PLATFORM.CLAUDE.COM:443 platform.claude.com.:443 platform.claude.com:80 platform.claude.com:8443 \
+  example.com:443 160.79.104.10:443; do
+  check "$t refused" "$(outcome CONNECT "$t")" host-refused
+done
+check "plain GET to the renewal host refused" "$(outcome GET http://platform.claude.com/v1/oauth/token)" method-refused
+check "plain POST to the renewal host refused" "$(outcome POST https://platform.claude.com/v1/oauth/token)" method-refused
+
+docker stop --time 5 "$filter" >/dev/null 2>&1 || true
+check "the filter's summary names exactly the two hosts" \
+  "$(grep '^allowed ' "$out/ledger/runs/$run" | cut -d' ' -f2)" "api.anthropic.com,platform.claude.com"
+check "no tunnel was opened" "$(grep '^tunnels ' "$out/ledger/runs/$run" | cut -d' ' -f2)" 0
+echo "probe-egress-allowlist: $fails failure(s)"
+[ "$fails" -eq 0 ]

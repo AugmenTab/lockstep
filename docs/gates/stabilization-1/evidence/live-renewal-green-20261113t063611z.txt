@@ -1,0 +1,41 @@
+PASS V the pinned CLI's OAuth TOKEN_URL is on platform.claude.com (TOKEN_URL:"https://platform.claude.com/v1/oauth/token")
+PASS V the helper's renewal host is that host
+PASS R an allowed host still tunnels (status 200)
+PASS R a host not allowed stays refused (status 403)
+PASS R a port not allowed stays refused (status 403)
+PASS R plain (non-CONNECT) requests stay refused (status 403 status 403)
+PASS R the refused host and port are recorded with the reason, run and time
+PASS R a refused port is recorded
+PASS R a plain request is recorded by its URL's host and port only
+PASS R an origin-form request is recorded by its Host header
+PASS R the summary keeps its fields and adds the refused hosts
+PASS R the summary's counts are unchanged in form (refused 4, tunnels 1)
+PASS R no path, query, user information, header, cookie or body is in any filter record
+PASS R many refusals are all refused (status 403)
+PASS R the record is bounded at 64 lines (64)
+PASS R and every refusal is still counted (74)
+PASS the offline sign-in check says logged in although the access token has expired
+PASS the helper names native subscription mode
+PASS X the helper names the blocked renewal path at start
+PASS X the run is not refused by the offline check (it cannot see the expiry)
+PASS X the run fails (exit 1)
+PASS X the CLI reports the provider's 401
+PASS X the CLI never reached the renewal endpoint (0 token requests)
+PASS X it sent the expired token (2 times)
+PASS X the signed result names the refused renewal host (platform.claude.com:443:host-refused)
+PASS X the helper log names the cause
+PASS X the volume still holds the expired sign-in (expired)
+PASS N the helper names the open renewal path at start
+PASS N the run with an expired access token completes (exit 0)
+PASS N its answer was written
+PASS N the CLI renewed once at the token endpoint (1)
+PASS N then used only the renewed token (3 renewed, 0 expired)
+PASS N nothing was refused (-)
+PASS C no API key and no token in the role container's environment
+PASS N the renewed sign-in is kept in the auth volume (renewed)
+PASS N the next role session completes (exit 0)
+PASS N without renewing again (0 token requests)
+PASS N with the renewed token (2)
+PASS C the synthetic token sk-ant-oat01-expired... is in no kept file (results, work, helper log, ledger, evidence)
+PASS C the synthetic token sk-ant-oat01-renewed... is in no kept file (results, work, helper log, ledger, evidence)
+PASS C the synthetic token sk-ant-ort01-refresh... is in no kept file (results, work, helper log, ledger, evidence)

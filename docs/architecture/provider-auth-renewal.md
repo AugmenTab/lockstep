@@ -72,6 +72,9 @@ itself.
 
 ## 4. Owner decision requested: allow the renewal host (S1-SD1)
 
+**Status (2026-11-14): approved and applied**, see `docs/gates/stabilization-1/s1-sd1.md`. The text below is the
+request as it was made.
+
 **Request.** Add one exact host, `platform.claude.com`, to the owner's `DIR/provider/egress-hosts` (one line). Nothing
 else changes: no wildcard, no other host, end-to-end TLS, the filter still refuses everything not listed.
 

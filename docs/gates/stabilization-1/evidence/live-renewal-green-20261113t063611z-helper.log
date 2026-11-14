@@ -1,0 +1,13 @@
+2026-11-13T06:36:23Z native renewal: blocked: the CLI renews an expired access token at platform.claude.com, which /Users/tab/personal/lockstep/.local/live-renewal-20261113t063611z/provider/egress-hosts does not allow; a run that starts after the access token expires fails with HTTP 401 (provider-auth-rejected) until the owner signs in again (--provider-auth-login) or allows that host (docs/architecture/provider-auth-renewal.md)
+2026-11-13T06:36:23Z live runs on (OFFLINE TEST: upstream standin:8443, CA /Users/tab/personal/lockstep/.local/evidence/live-renewal-20261113t063611z/ca.pem, internal network lockstep-rn-20261113t063611z, key offline-credential): claude-code claude-sonnet-5-5 medium, subscription, native (usage in tokens), at most 16000 output tokens a request (image sha256:78fc11e12b8437a36593db90e14d3f1f6d6fcf63b9d9844cf1f832fc9694b5ac)
+2026-11-13T06:36:23Z started (pid 41379, protocol 1, timeout 90s, instance s1rn, runner image sha256:7004c315379c069c9a85e2d50a0ddbb55cca8124ca57bb0bdaafaced8aa0647d)
+2026-11-13T06:36:23Z the request or result directory is missing, a symlink or not private; nothing is read
+2026-11-13T06:36:28Z run-live-write 5ac2d89117ddc58324a077598f74f528: exited (exit 1, 0 tokens); egress refused platform.claude.com:443:host-refused: the CLI could not renew an expired sign-in (its renewal host platform.claude.com is not in /Users/tab/personal/lockstep/.local/live-renewal-20261113t063611z/provider/egress-hosts); see docs/architecture/provider-auth-renewal.md
+2026-11-13T06:36:29Z stopped
+2026-11-13T06:36:33Z native renewal: the CLI may renew an expired access token at platform.claude.com (allowed in egress-hosts)
+2026-11-13T06:36:33Z live runs on (OFFLINE TEST: upstream standin:8443, CA /Users/tab/personal/lockstep/.local/evidence/live-renewal-20261113t063611z/ca.pem, internal network lockstep-rn-20261113t063611z, key offline-credential): claude-code claude-sonnet-5-5 medium, subscription, native (usage in tokens), at most 16000 output tokens a request (image sha256:78fc11e12b8437a36593db90e14d3f1f6d6fcf63b9d9844cf1f832fc9694b5ac)
+2026-11-13T06:36:33Z started (pid 43049, protocol 1, timeout 90s, instance s1rn, runner image sha256:7004c315379c069c9a85e2d50a0ddbb55cca8124ca57bb0bdaafaced8aa0647d)
+2026-11-13T06:36:33Z the request or result directory is missing, a symlink or not private; nothing is read
+2026-11-13T06:36:37Z run-live-write 678d60f17ee5e5eb871a064a34a38aad: exited (exit 0, 420 tokens)
+2026-11-13T06:36:43Z run-live-write c4fe3c740a9307ae9b57effc1f22d964: exited (exit 0, 280 tokens)
+2026-11-13T06:36:43Z stopped

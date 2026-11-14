@@ -264,6 +264,20 @@ Post-Phase-5 operational stabilization, 2026-11-13 (the owner's instruction in t
   evaluated, not adopted); extending the LAN exception; Phase 6, V3 restructuring, integrations, a Verifier role,
   push or merge; acceptance of the milestone (the owner's).
 
+**Stabilization S1–S4 and S1-SD1, 2026-11-14** (the owner's instruction in the session, "Read
+@.local/plans/phase-05_update5.md and implement"; handoff sha256
+`c008d4c41ddc01b5cae3051fa7b08df32189a18d1e1b333f63137ae781120554`; recorded by the writing agent; record
+`docs/gates/stabilization-1/s1-sd1.md`):
+
+- **S1–S4: offline qualification ACCEPTED** (the handoff's Planner disposition, delivered by the owner). This
+  accepts the implementation and its model-free qualification only, not real-provider renewal.
+- **S1-SD1: APPROVED** (the handoff recommends it; the owner's instruction to implement the handoff is recorded as
+  the owner's approval). The owner's `provider/egress-hosts` now holds exactly `api.anthropic.com` and
+  `platform.claude.com`, nothing else: no wildcard, no unrestricted egress, no API key, no credential substitution;
+  native subscription sign-in and end-to-end TLS unchanged. Applied and the helper restarted 2026-11-14T02:41Z.
+- **Not authorized by it**: the attended real-provider renewal check ("when separately authorized"); V3 or broad
+  infrastructure changes; repeating the Brigid fix or the calculator smoke; extending the LAN exception; push.
+
 DG-02 does **not** block P1.1 (it blocks P1.2). DG-03…DG-13 block later phases
 only; they remain `OPEN` by design and must not be guessed now.
 

@@ -4,6 +4,9 @@
   `stabilization-1`. **The Implementer does not accept this milestone.** Nothing pushed or merged.
 - **Handoff:** `.local/plans/phase-05_update4.md` (sha256 `622eb5d5…`). Contract: `contract.md` (this directory).
 
+> **Update 2026-11-14:** S1–S4 offline qualification accepted, and S1-SD1 approved and applied
+> (`s1-sd1.md`). Real-provider renewal is still not tested. The rest of this packet is the record as presented.
+
 ## 1. Revisions
 
 | | |
