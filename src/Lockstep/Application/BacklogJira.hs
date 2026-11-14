@@ -9,6 +9,8 @@ else in the provider's data reaches Lockstep. It never contacts Jira.
   criterion, referenced as @KEY description@; an absent or empty one is none.
 * A link of type @Blocks@ with an @inwardIssue@ is a blocker ("is blocked
   by"); outward links and other link types are not read.
+* The file must be a complete search result: a response that starts past the
+  first issue, or whose @total@ exceeds the issues it holds, is refused.
 -}
 module Lockstep.Application.BacklogJira
   ( fromJiraSearch
@@ -64,8 +66,12 @@ data JiraIssue
   , jiraFields :: JiraFields
   }
 
-newtype JiraSearch
-  = JiraSearch {jiraIssues :: [JiraIssue]}
+data JiraSearch
+  = JiraSearch
+  { jiraStartAt :: Maybe Integer
+  , jiraTotal :: Maybe Integer
+  , jiraIssues :: [JiraIssue]
+  }
 
 refSchema :: FC.Fleece t => FC.Schema t JiraRef
 refSchema =
@@ -100,13 +106,20 @@ issueSchema =
 
 searchSchema :: FC.Fleece t => FC.Schema t JiraSearch
 searchSchema =
-  FC.object $ FC.constructor JiraSearch #+ FC.required "issues" jiraIssues (FC.list issueSchema)
+  FC.object $
+    FC.constructor JiraSearch
+      #+ FC.optional "startAt" jiraStartAt FC.integer
+      #+ FC.optional "total" jiraTotal FC.integer
+      #+ FC.required "issues" jiraIssues (FC.list issueSchema)
 
 fromJiraSearch :: SourceLocator -> LBS.ByteString -> Either T.Text BacklogDocument
 fromJiraSearch locator bytes =
   case FA.decode searchSchema bytes of
     Left reason -> Left (T.pack ("not a Jira search response: " <> reason))
     Right search -> do
+      -- R-P6.1-4: one page of a larger search would look stale and leave blockers dangling.
+      when (maybe False (/= 0) (jiraStartAt search) || maybe False (> toInteger (L.length (jiraIssues search))) (jiraTotal search)) $
+        Left (T.pack "not a complete search result (a page of a larger one); save the whole result in one file")
       items <- traverse fromIssue (jiraIssues search)
       revision <- revisionOf (L.foldl' max 0 (fmap revisionNumber items))
       pure

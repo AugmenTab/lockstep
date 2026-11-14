@@ -15,6 +15,7 @@ module Lockstep.Persistence.Backlog
   , insertSource
   , advanceSourceRevision
   , sourceItems
+  , findTaskSource
   , insertTaskSource
   , updateTaskSource
   , advanceItemRevision
@@ -196,6 +197,11 @@ sourceItems sourceId =
   O.findEntitiesBy
     taskSourceTable
     (O.where_ (O.fieldEquals taskSourceSourceField sourceId) <> O.orderBy (O.orderByField taskSourceImportedAtField O.ascendingOrder <> O.orderByField taskSourceKeyField O.ascendingOrder))
+
+-- | The provenance of one task, if it was imported.
+findTaskSource :: O.MonadOrville m => TaskId -> m (Maybe TaskSourceRow)
+findTaskSource =
+  O.findEntity taskSourceTable
 
 insertTaskSource :: O.MonadOrville m => TaskSourceRow -> m ()
 insertTaskSource =

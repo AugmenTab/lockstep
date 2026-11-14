@@ -213,6 +213,9 @@ data StoredItem
   , storedRevision :: SourceRevision
   , storedDigest :: ContentDigest
   , storedBlockers :: [SourceKey]
+  {- ^ The source items the task's dependencies reach as they stand now (a person's edits included), not what
+  the source last said: the graph a cycle is checked against.
+  -}
   , storedCondition :: LocalCondition
   }
   deriving (Eq, Show)

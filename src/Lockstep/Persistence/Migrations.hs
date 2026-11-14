@@ -720,6 +720,15 @@ BEGIN
   RETURN NEW;
 END $$;
 CREATE TRIGGER lockstep_task_sources_identity BEFORE UPDATE ON lockstep_task_sources FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_task_source_identity_change();
+CREATE FUNCTION lockstep_refuse_task_source_other_project() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF (SELECT project_id FROM lockstep_project_tasks WHERE ticket_id = NEW.task_id)
+     IS DISTINCT FROM (SELECT project_id FROM lockstep_backlog_sources WHERE id = NEW.source_id) THEN
+    RAISE EXCEPTION 'lockstep: a task''s source must belong to the task''s project';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER lockstep_task_sources_same_project BEFORE INSERT ON lockstep_task_sources FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_task_source_other_project();
 CREATE TRIGGER lockstep_task_sources_no_delete BEFORE DELETE ON lockstep_task_sources FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
 CREATE TRIGGER lockstep_task_sources_no_truncate BEFORE TRUNCATE ON lockstep_task_sources FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
 CREATE TABLE lockstep_backlog_imports (

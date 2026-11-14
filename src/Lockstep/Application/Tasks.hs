@@ -20,6 +20,7 @@ module Lockstep.Application.Tasks
   , findTaskIn
   , findTaskWithProjectIn
   , mostImportantReadyTask
+  , requestDigest
   ) where
 
 import Data.List qualified as L

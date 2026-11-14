@@ -24,7 +24,8 @@ import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import Data.ByteString.Lazy qualified as LBS
 import Data.List qualified as L
 import Data.Map.Strict qualified as Map
-import Data.Maybe (isNothing, mapMaybe)
+import Data.Maybe (fromMaybe, isNothing, mapMaybe)
+import Data.Set qualified as Set
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Flipstone.Prelude
@@ -39,6 +40,7 @@ import Lockstep.Application.Identity (newUuid)
 import Lockstep.Application.Ledger (createTicketIn, reviseTicketIn, ticketFactsIn)
 import Lockstep.Application.LedgerRefusal (LedgerError (..), ledgerRefusalCode)
 import Lockstep.Application.Profiles (sha256Hasher)
+import Lockstep.Application.Tasks (requestDigest)
 import Lockstep.Kernel.Backlog
   ( BacklogDocument (..)
   , BacklogItem (..)
@@ -55,6 +57,7 @@ import Lockstep.Kernel.Backlog
   , decideImport
   , documentRefusalCode
   , itemContentText
+  , maxItems
   , mkSourceKey
   , mkSourceLocator
   , mkSourceRevision
@@ -65,7 +68,7 @@ import Lockstep.Kernel.Backlog
   )
 import Lockstep.Kernel.Identity (BacklogSourceId (..), ProjectId (..), TaskId (..), TicketId (..), identityText, parseIdentity)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText, mkContentDigest)
-import Lockstep.Kernel.Task (Priority (Normal), createsCycleOf, mkTaskTitle, priorityValue, taskRequestText)
+import Lockstep.Kernel.Task (Priority (Normal), createsCycleOf, mkTaskTitle, priorityValue)
 import Lockstep.Persistence.Backlog qualified as Store
 import Lockstep.Persistence.Execution (projectRepository)
 import Lockstep.Persistence.Integrity (integrityViolation)
@@ -190,7 +193,10 @@ importBacklogDocument runtime rawProject documentDigest document =
             (_, _, _, Just source) | Store.sourceRowProject source /= projectId -> pure (refuse "source-owned-elsewhere")
             (Just _, _, _, _) -> do
               stored <- maybe (pure []) (Store.sourceItems . Store.sourceRowId) existing
-              conditions <- traverse storedItem stored
+              edges <- Tasks.projectEdges projectId
+              let
+                reaches = effectiveBlockers edges (Map.fromList (mapMaybe (\src -> (,) (Store.taskSourceRowTask src) <$> mkSourceKey (Store.taskSourceRowKey src)) stored))
+              conditions <- traverse (storedItem reaches) stored
               case sequenceA conditions of
                 Left code -> pure (Left code)
                 Right storedItems -> do
@@ -219,8 +225,9 @@ importBacklogDocument runtime rawProject documentDigest document =
         , Just task <- [taskOf (itemKey i)]
         ]
     edges <- Tasks.projectEdges projectId
+    -- R-P6.1-1: the Kernel saw the project's real dependencies, so a cycle here would be a defect, not a refusal.
     if closesCycle edges written
-      then pure (refuse "dependency-cycle")
+      then integrityViolation "the import would close a dependency cycle the decision did not refuse"
       else do
         when isNew $
           Store.insertSource
@@ -276,12 +283,31 @@ importBacklogDocument runtime rawProject documentDigest document =
                     }
               )
 
+{- | R-P6.1-1, R-P6.1-2: for each task of this source, the source items its
+current dependencies reach — directly, or through tasks that are not from this
+source (a person's own tasks), which are followed until a source task is met.
+This is the graph as it stands, so a dependency a person added counts and one
+a person removed does not.
+-}
+effectiveBlockers :: [(TaskId, TaskId)] -> Map.Map TaskId SourceKey -> TaskId -> [SourceKey]
+effectiveBlockers edges sourceKeys start =
+  L.sort (go Set.empty (dependsOn start) [])
+ where
+  dependsOn t = [d | (t', d) <- edges, t' == t]
+  go _ [] found = L.nub found
+  go seen (t : rest) found
+    | Set.member t seen = go seen rest found
+    | otherwise =
+        case Map.lookup t sourceKeys of
+          Just k -> go (Set.insert t seen) rest (k : found)
+          Nothing -> go (Set.insert t seen) (dependsOn t <> rest) found
+
 -- | A stored item as the Kernel sees it, with the task row and provenance row it came from (B6).
-storedItem :: Store.TaskSourceRow -> O.Orville (Either T.Text (StoredItem, (Tasks.TaskRow, Store.TaskSourceRow)))
-storedItem src = do
+storedItem :: (TaskId -> [SourceKey]) -> Store.TaskSourceRow -> O.Orville (Either T.Text (StoredItem, (Tasks.TaskRow, Store.TaskSourceRow)))
+storedItem reaches src = do
   row <- Tasks.findTaskRow (Store.taskSourceRowTask src)
   facts <- ticketFactsIn (taskTicket (Store.taskSourceRowTask src))
-  case (row, facts, mkSourceKey (Store.taskSourceRowKey src), mkContentDigest (Store.taskSourceRowDigest src), mkSourceRevision (toInteger (Store.taskSourceRowItemRevision src)), traverse mkSourceKey (T.lines (Store.taskSourceRowBlockers src))) of
+  case (row, facts, mkSourceKey (Store.taskSourceRowKey src), mkContentDigest (Store.taskSourceRowDigest src), mkSourceRevision (toInteger (Store.taskSourceRowItemRevision src)), Just (reaches (Store.taskSourceRowTask src))) of
     (Just taskRow, Right (state, _, _, _), Just key, Just digest, Just revision, Just blockers) ->
       let
         condition
@@ -312,7 +338,7 @@ creationDigest :: ProjectId -> T.Text -> T.Text -> [TaskId] -> Either T.Text T.T
 creationDigest projectId title acceptance dependencies =
   case mkTaskTitle title of
     Left _ -> refuse "title-invalid"
-    Right t -> Right (sha256Hex (taskRequestText (identityText projectId) t acceptance Normal (fmap identityText (L.sort dependencies))))
+    Right t -> Right (requestDigest projectId t acceptance Normal (L.sort dependencies))
 
 -- | Creates or updates one item's task (its dependencies are written once every task exists).
 writeTask :: ProjectId -> BacklogSourceId -> Map.Map SourceKey Store.TaskSourceRow -> Written -> O.Orville (Either T.Text ())
@@ -394,6 +420,8 @@ exportBacklog runtime rawProject =
               rows <- Tasks.projectTaskRows projectId
               items <- traverse exportedItem rows
               pure $ do
+                -- R-P6.1-3: never write a document the import would refuse whole.
+                when (L.length rows > maxItems) (refuse "too-many-items")
                 exported <- sequenceA items
                 locator <- maybe (refuse "invalid-locator") Right (mkSourceLocator (T.pack "lockstep:project/" <> identityText projectId))
                 revision <- maybe (refuse "revision-out-of-range") Right (mkSourceRevision (L.sum (fmap (toInteger . sourceRevisionValue . itemRevision) exported)))
@@ -407,12 +435,19 @@ exportBacklog runtime rawProject =
                         }
                   )
 
+{- | One task as an item. R-P6.1-3: an imported task whose acceptance is still
+exactly what its criteria render exports those criteria, with their own
+references, so an export imported and exported again is the same; any other
+task exports one criterion a line (a leading @- @ marker removed), referenced to
+the task.
+-}
 exportedItem :: Tasks.TaskRow -> O.Orville (Either T.Text BacklogItem)
 exportedItem row = do
   let
     task = Tasks.rowTaskId row
   facts <- ticketFactsIn (taskTicket task) >>= ledgerStep
   dependencies <- Tasks.dependenciesOf task
+  provenance <- Store.findTaskSource task
   pure $ do
     (_, _, ticketRevision, _) <- facts
     key <- keyFor task
@@ -420,14 +455,19 @@ exportedItem row = do
     revision <- maybe (refuse "revision-out-of-range") Right (mkSourceRevision (toInteger (Tasks.rowRevision row) + toInteger ticketRevision))
     let
       reference = T.pack "lockstep:task/" <> identityText task
-      criteria =
+      byLine =
         [ Criterion line (Just reference)
         | raw <- T.lines (Tasks.rowAcceptance row)
         , let
-            line = T.unwords (T.words raw)
+            words' = T.words raw
+            line = T.unwords (if L.take 1 words' == [T.pack "-"] then L.drop 1 words' else words')
         , not (T.null line)
         ]
-    pure (BacklogItem key revision (Tasks.rowTitle row) criteria blockers)
+      imported' =
+        case fmap (decodeCriteria . Store.taskSourceRowCriteria) provenance of
+          Just (Right criteria) | acceptanceText criteria == Tasks.rowAcceptance row -> Just criteria
+          _ -> Nothing
+    pure (BacklogItem key revision (Tasks.rowTitle row) (fromMaybe byLine imported') blockers)
  where
   keyFor t = maybe (refuse "invalid-key") Right (mkSourceKey (identityText t))
 

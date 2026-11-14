@@ -31,7 +31,22 @@ item **is a task**; what is new is where it came from.
 dependencies. No state or authority is exported. Importing an export into another project creates proposed copies with provenance. |
 | B12 | **Provider adapter boundary (D6-SOURCE).** A read-only Jira adapter converts a Jira REST v2 search response (`issues[].key`, `fields.summary`, `fields.updated`, `fields.description`, `fields.issuelinks` of type `Blocks` with an `inwardIssue`) into a canonical document, offline, from a file. It reads only those fields; everything else in the provider's data is ignored and cannot authorize anything. It never contacts Jira. **Live Jira/Shortcut intake: NOT_RUN** (no owner-authorized connection). A Shortcut adapter is not built here (NOT_BUILT; the canonical format covers it). |
 | B13 | **Audit.** Each accepted import records one immutable row in `lockstep_backlog_imports`: source, document digest (SHA-256 of the bytes), document revision, counts, and the rendered decision. A refused document records nothing. |
-| B14 | **Operator interface.** `lockstep backlog import PROJECT FILE [--jira LOCATOR]` prints the decision; `lockstep backlog export PROJECT` prints the document. No web route is added in P6.1 (the command center is P6.2). |
+| B14 | **Operator interface.** `lockstep backlog import --project PROJECT [--jira LOCATOR] FILE` prints the decision; `lockstep backlog export --project PROJECT` prints the document. No web route is added in P6.1 (the command center is P6.2). (Text corrected by R-P6.1 to the syntax the code and Operator Guide use.) |
+
+### Clarifications and deviations recorded by the review (R-P6.1, `review.md`)
+
+- B5: a repeated import creates no task, Ticket or provenance row; each accepted import still records its one B13
+  audit row.
+- B7: an item blocked by a refused item that *was imported before* is not refused (its task exists). Cycles are
+  checked against the project's dependencies **as they stand** (a person's additions and removals included, paths
+  through the person's own tasks followed); only the items that would close a cycle are refused `blocker-cycle`.
+- B11: an imported task whose acceptance is unchanged exports its original criteria; an export of more than 500
+  tasks is refused `too-many-items`.
+- B12: the Jira file must be a complete search result (`startAt` 0, `total` not more than the issues it holds).
+- **Deviation:** "dependency origin and dependency kind" (handoff §5) is represented only as provenance (the
+  source's blockers in `lockstep_task_sources`); task dependencies stay untyped technical edges (C-P3.6). Typed edge
+  kinds come with the Master Plan graph (P6.4, DG-08 §3.2).
+- Migration 22 also refuses a provenance row joining a task of one project to another project's source.
 
 ### Document format (`lockstep-backlog`, version 1)
 
