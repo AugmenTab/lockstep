@@ -24,6 +24,7 @@ module Lockstep.Kernel.Roles
   , verdictName
   , Review (..)
   , RoleAnswer (..)
+  , Clarification (..)
   , checkAnswer
   , reviewScopeGap
   , changedPaths
@@ -191,6 +192,13 @@ data RoleAnswer
   | AnswerChallenge Challenge
   | AnswerImplementation Implementation
   | AnswerReview Review
+  | -- | C-P6.3 I4: the Planner's answer to a person's question; information only.
+    AnswerClarification Clarification
+  deriving (Eq, Show)
+
+-- | C-P6.3 I4: what the Planner says in answer to a question (1–4000 characters).
+newtype Clarification
+  = Clarification {clarificationText :: T.Text}
   deriving (Eq, Show)
 
 -- | 1–4000 characters, not only spaces; new lines and tabs, no other control character.
@@ -250,6 +258,7 @@ checkAnswer role answer =
     (Challenger, AnswerChallenge c) -> answer <$ challenge c
     (Implementer, AnswerImplementation i) -> answer <$ rule "summary-invalid" (textValid (implementationSummary i))
     (Reviewer, AnswerReview r) -> answer <$ review r
+    (Planner, AnswerClarification _) -> Left (T.pack "wrong-kind")
     _ -> Left (T.pack "wrong-kind")
  where
   rule code ok =

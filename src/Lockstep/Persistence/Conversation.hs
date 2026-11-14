@@ -18,6 +18,8 @@ module Lockstep.Persistence.Conversation
   , requestMessages
   , insertMessage
   , workOrderExists
+  , requestTable
+  , requestIdField
   ) where
 
 import Data.List.NonEmpty (NonEmpty ((:|)))

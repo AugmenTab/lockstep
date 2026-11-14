@@ -747,4 +747,35 @@ CREATE TRIGGER lockstep_backlog_imports_immutable BEFORE UPDATE OR DELETE ON loc
 CREATE TRIGGER lockstep_backlog_imports_no_truncate BEFORE TRUNCATE ON lockstep_backlog_imports FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
 |]
       )
+    ,
+      ( [Interpolate.i|C-P6.3: the Planner's attempts to answer a person's questions|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_clarifications (
+  id uuid PRIMARY KEY,
+  request_id uuid NOT NULL REFERENCES lockstep_human_requests (id),
+  message_sequence integer NOT NULL CHECK (message_sequence >= 1),
+  request_revision integer NOT NULL CHECK (request_revision >= 1),
+  started_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  finished_at timestamptz,
+  outcome text CHECK (outcome IN ('answered', 'failed', 'no-helper', 'uncertain')),
+  code text CHECK (code IS NULL OR char_length(code) BETWEEN 1 AND 200),
+  answer_digest text CHECK (answer_digest IS NULL OR answer_digest ~ '^[0-9a-f]{64}$'),
+  UNIQUE (request_id, message_sequence),
+  CHECK ((finished_at IS NULL) = (outcome IS NULL)),
+  CHECK ((outcome = 'answered') = (answer_digest IS NOT NULL))
+);
+CREATE FUNCTION lockstep_clarification_finish_once() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.finished_at IS NOT NULL
+     OR (NEW.id, NEW.request_id, NEW.message_sequence, NEW.request_revision, NEW.started_at)
+        IS DISTINCT FROM (OLD.id, OLD.request_id, OLD.message_sequence, OLD.request_revision, OLD.started_at) THEN
+    RAISE EXCEPTION 'lockstep: % rows are immutable (a clarification is finished exactly once)', TG_TABLE_NAME;
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER lockstep_clarifications_finish_once BEFORE UPDATE ON lockstep_clarifications FOR EACH ROW EXECUTE FUNCTION lockstep_clarification_finish_once();
+CREATE TRIGGER lockstep_clarifications_no_delete BEFORE DELETE ON lockstep_clarifications FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_clarifications_no_truncate BEFORE TRUNCATE ON lockstep_clarifications FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+|]
+      )
     ]

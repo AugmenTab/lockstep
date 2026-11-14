@@ -49,6 +49,8 @@ import Lockstep.GateCRemediationTest qualified as GateCRemediationTest
 import Lockstep.GitSupervisorTest qualified as GitSupervisorTest
 import Lockstep.HandoverTest qualified as HandoverTest
 import Lockstep.HelperRunnerTest qualified as HelperRunnerTest
+import Lockstep.InboxPageTest qualified as InboxPageTest
+import Lockstep.InboxTest qualified as InboxTest
 import Lockstep.InstallBrowserTest qualified as InstallBrowserTest
 import Lockstep.InstallHelperTest qualified as InstallHelperTest
 import Lockstep.InstallPaneTest qualified as InstallPaneTest
@@ -179,4 +181,6 @@ main =
       , BacklogTest.tests
       , BacklogReviewTest.tests
       , ProgressPageTest.tests
+      , InboxTest.tests
+      , InboxPageTest.tests
       ]
