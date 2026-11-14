@@ -31,6 +31,9 @@ source-repository head
 library
   exposed-modules:
       Lockstep.Application.Activity
+      Lockstep.Application.Backlog
+      Lockstep.Application.BacklogDocument
+      Lockstep.Application.BacklogJira
       Lockstep.Application.CapsuleStatus
       Lockstep.Application.Command
       Lockstep.Application.CommandCenter
@@ -87,6 +90,7 @@ library
       Lockstep.Foundation.SystemConfig
       Lockstep.Kernel.Activation
       Lockstep.Kernel.Activity
+      Lockstep.Kernel.Backlog
       Lockstep.Kernel.Candidate
       Lockstep.Kernel.Capsule
       Lockstep.Kernel.Conversation
@@ -344,6 +348,7 @@ test-suite lockstep-integration
       Lockstep.ActivityBrowserTest
       Lockstep.ActivityPageTest
       Lockstep.AppShellTest
+      Lockstep.BacklogTest
       Lockstep.BrowserFormTest
       Lockstep.CommandCenterTest
       Lockstep.ControlBrowserTest
@@ -485,6 +490,7 @@ test-suite lockstep-unit
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
+      Lockstep.Application.BacklogDocumentTest
       Lockstep.Application.CommandTest
       Lockstep.Application.NoopCommandTest
       Lockstep.Application.ProfileDocumentTest
@@ -514,6 +520,7 @@ test-suite lockstep-unit
       Lockstep.Foundation.SessionProtocolTest
       Lockstep.Foundation.SystemConfigTest
       Lockstep.Kernel.ActivityTest
+      Lockstep.Kernel.BacklogTest
       Lockstep.Kernel.CandidateTest
       Lockstep.Kernel.ConversationTest
       Lockstep.Kernel.DecisionTest

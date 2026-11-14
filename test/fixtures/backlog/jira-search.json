@@ -1,0 +1,49 @@
+{
+  "expand": "names,schema",
+  "startAt": 0,
+  "maxResults": 50,
+  "total": 3,
+  "issues": [
+    {
+      "id": "10001",
+      "key": "CAE-1",
+      "self": "https://acme.atlassian.net/rest/api/2/issue/10001",
+      "fields": {
+        "summary": "Play a sleep track",
+        "updated": "2026-11-10T09:15:00.000+0000",
+        "description": "A track plays\nuntil the timer ends.",
+        "status": {"name": "Done"},
+        "priority": {"name": "Highest"},
+        "assignee": {"displayName": "Someone"},
+        "labels": ["approved", "ready"],
+        "issuelinks": []
+      }
+    },
+    {
+      "id": "10002",
+      "key": "CAE-2",
+      "fields": {
+        "summary": "Fade out at the end",
+        "updated": "2026-11-11T12:00:00.000+0100",
+        "description": null,
+        "status": {"name": "Ready for Dev"},
+        "issuelinks": [
+          {"id": "1", "type": {"name": "Blocks", "inward": "is blocked by", "outward": "blocks"}, "inwardIssue": {"key": "CAE-1"}},
+          {"id": "2", "type": {"name": "Relates", "inward": "relates to", "outward": "relates to"}, "inwardIssue": {"key": "CAE-3"}}
+        ]
+      }
+    },
+    {
+      "id": "10003",
+      "key": "CAE-3",
+      "fields": {
+        "summary": "Timer settings",
+        "updated": "2026-11-09T08:00:00.000+0000",
+        "description": "Choose 15, 30 or 60 minutes.",
+        "issuelinks": [
+          {"id": "3", "type": {"name": "Blocks", "inward": "is blocked by", "outward": "blocks"}, "outwardIssue": {"key": "CAE-2"}}
+        ]
+      }
+    }
+  ]
+}

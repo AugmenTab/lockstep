@@ -33,6 +33,7 @@ module Lockstep.Kernel.Identity
   , TransactionId (..)
   , InvocationId (..)
   , HumanRequestId (..)
+  , BacklogSourceId (..)
 
     -- * Parsing and rendering any of them
   , parseIdentity
@@ -112,6 +113,11 @@ newtype InvocationId
 -- | A Human Request and its conversation (C-P3.9).
 newtype HumanRequestId
   = HumanRequestId Uuid
+  deriving (Eq, Ord, Show)
+
+-- | A backlog source a project imports from (C-P6.1 B2, B3).
+newtype BacklogSourceId
+  = BacklogSourceId Uuid
   deriving (Eq, Ord, Show)
 
 {- | A background job (C-P1.5): the number its row was given by the database

@@ -5,6 +5,7 @@ module Main
 import Flipstone.Prelude
 import Test.Tasty (defaultMain, testGroup)
 
+import Lockstep.Application.BacklogDocumentTest qualified as BacklogDocumentTest
 import Lockstep.Application.CommandTest qualified as CommandTest
 import Lockstep.Application.NoopCommandTest qualified as NoopCommandTest
 import Lockstep.Application.ProfileDocumentTest qualified as ProfileDocumentTest
@@ -34,6 +35,7 @@ import Lockstep.Foundation.RunnerProtocolTest qualified as RunnerProtocolTest
 import Lockstep.Foundation.SessionProtocolTest qualified as SessionProtocolTest
 import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
 import Lockstep.Kernel.ActivityTest qualified as ActivityTest
+import Lockstep.Kernel.BacklogTest qualified as BacklogTest
 import Lockstep.Kernel.CandidateTest qualified as KernelCandidateTest
 import Lockstep.Kernel.ConversationTest qualified as ConversationTest
 import Lockstep.Kernel.DecisionTest qualified as DecisionTest
@@ -157,4 +159,6 @@ main =
       , RoleCrashTest.tests
       , ReproductionRetryTest.tests
       , ReviewScopeTest.tests
+      , BacklogTest.tests
+      , BacklogDocumentTest.tests
       ]

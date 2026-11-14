@@ -672,4 +672,70 @@ END $$;
 CREATE UNIQUE INDEX lockstep_transactions_one_writer ON lockstep_transactions (engineer_name) WHERE state IN ('running', 'halted');
 |]
       )
+    ,
+      ( [Interpolate.i|C-P6.1: backlog sources, the provenance of imported tasks, and import records|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_backlog_sources (
+  id uuid PRIMARY KEY,
+  project_id uuid NOT NULL REFERENCES lockstep_projects (id),
+  provider text NOT NULL CHECK (provider IN ('canonical', 'jira', 'shortcut')),
+  locator text NOT NULL CHECK (char_length(locator) BETWEEN 1 AND 200 AND locator !~ '[[:space:][:cntrl:]]'),
+  source_revision bigint NOT NULL CHECK (source_revision >= 0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (provider, locator)
+);
+CREATE FUNCTION lockstep_refuse_backlog_source_identity_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF (OLD.id, OLD.project_id, OLD.provider, OLD.locator, OLD.created_at)
+     IS DISTINCT FROM (NEW.id, NEW.project_id, NEW.provider, NEW.locator, NEW.created_at)
+     OR NEW.source_revision < OLD.source_revision THEN
+    RAISE EXCEPTION 'lockstep: % rows are immutable (identity, owner and revision order)', TG_TABLE_NAME;
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER lockstep_backlog_sources_identity BEFORE UPDATE ON lockstep_backlog_sources FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_backlog_source_identity_change();
+CREATE TRIGGER lockstep_backlog_sources_no_delete BEFORE DELETE ON lockstep_backlog_sources FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_backlog_sources_no_truncate BEFORE TRUNCATE ON lockstep_backlog_sources FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TABLE lockstep_task_sources (
+  task_id uuid PRIMARY KEY REFERENCES lockstep_project_tasks (ticket_id),
+  source_id uuid NOT NULL REFERENCES lockstep_backlog_sources (id),
+  source_key text NOT NULL CHECK (char_length(source_key) BETWEEN 1 AND 100 AND source_key ~ '^[A-Za-z0-9._:/\#-]+$'),
+  item_revision bigint NOT NULL CHECK (item_revision >= 0),
+  content_digest text NOT NULL CHECK (content_digest ~ '^[0-9a-f]{64}$'),
+  blockers text NOT NULL,
+  criteria text NOT NULL,
+  task_revision bigint NOT NULL CHECK (task_revision >= 1),
+  imported_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (source_id, source_key)
+);
+CREATE FUNCTION lockstep_refuse_task_source_identity_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF (OLD.task_id, OLD.source_id, OLD.source_key, OLD.imported_at)
+     IS DISTINCT FROM (NEW.task_id, NEW.source_id, NEW.source_key, NEW.imported_at)
+     OR NEW.item_revision < OLD.item_revision THEN
+    RAISE EXCEPTION 'lockstep: % rows are immutable (identity and revision order)', TG_TABLE_NAME;
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER lockstep_task_sources_identity BEFORE UPDATE ON lockstep_task_sources FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_task_source_identity_change();
+CREATE TRIGGER lockstep_task_sources_no_delete BEFORE DELETE ON lockstep_task_sources FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_task_sources_no_truncate BEFORE TRUNCATE ON lockstep_task_sources FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TABLE lockstep_backlog_imports (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  source_id uuid NOT NULL REFERENCES lockstep_backlog_sources (id),
+  document_digest text NOT NULL CHECK (document_digest ~ '^[0-9a-f]{64}$'),
+  source_revision bigint NOT NULL CHECK (source_revision >= 0),
+  created integer NOT NULL CHECK (created >= 0),
+  updated integer NOT NULL CHECK (updated >= 0),
+  unchanged integer NOT NULL CHECK (unchanged >= 0),
+  refused integer NOT NULL CHECK (refused >= 0),
+  decision text NOT NULL,
+  imported_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TRIGGER lockstep_backlog_imports_immutable BEFORE UPDATE OR DELETE ON lockstep_backlog_imports FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_backlog_imports_no_truncate BEFORE TRUNCATE ON lockstep_backlog_imports FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+|]
+      )
     ]
