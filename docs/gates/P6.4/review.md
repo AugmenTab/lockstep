@@ -37,3 +37,10 @@ Baseline against `4c2ad25`: **4 of 5 fail**, each at its defect (R-P6.4-1 the pe
 R-P6.4-2 the withdrawn task still `ready`; R-P6.4-4 `already-proposed` for a rejected plan; R-P6.4-5/9 the long
 acceptance proposed). The concurrent-approvals case passes (the review judged the locking right; it is kept as a
 guard). `.local/evals/phase-06/p64r-baseline.log`.
+
+Lint was not run on the remediation test before its freeze; it has one style hint (`Use fromLeft`). As for C-P4.L,
+the hint is ignored for that module only in `.hlint.yaml`; the test's content is unchanged.
+
+## After remediation
+
+Trial: P6.4 integration **17/17** (C-P6.4 12, R-P6.4 5), unit **35/35**. Full check: see below.

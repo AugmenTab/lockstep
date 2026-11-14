@@ -30,6 +30,9 @@
 - ignore: {name: Redundant <$>, within: [Lockstep.LiveAdapterTest]}
 - ignore: {name: Avoid lambda, within: [Lockstep.Effects.ClaudeAdapterTest]}
 - ignore: {name: Eta reduce, within: [Lockstep.Effects.ClaudeAdapterTest]}
+# R-P6.4: one style hint in a remediation test frozen before lint was run on it (as C-P4.L;
+# recorded in docs/gates/P6.4/review.md).
+- ignore: {name: Use fromLeft, within: [Lockstep.PlanReviewTest]}
 
 - warn: {lhs: a ++ b, rhs: a <> b}
 

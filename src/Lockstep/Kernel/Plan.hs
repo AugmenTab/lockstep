@@ -69,7 +69,7 @@ import Text.Show (Show, show)
 
 import Lockstep.Kernel.Enum (parseEnumText)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
-import Lockstep.Kernel.Task (Priority, priorityCode)
+import Lockstep.Kernel.Task (Priority, mkAcceptance, priorityCode)
 
 -- The document ----------------------------------------------------------------------
 
@@ -293,6 +293,10 @@ data PlanProblem
   | UnknownProfile UnitKey T.Text
   | IncompatibleMode UnitKey
   | InvalidTitle (Maybe UnitKey)
+  | -- | R-P6.4-5: the unit's acceptance would not fit a task (over 4000 characters, or a control character).
+    InvalidAcceptance UnitKey
+  | -- | R-P6.4-9: a criterion that cites no source; reconciliation could not see a source change for it.
+    UncitedCriterion UnitKey
   deriving (Eq, Show)
 
 planProblemCode :: PlanProblem -> T.Text
@@ -317,6 +321,8 @@ planProblemCode p =
       UnknownProfile _ _ -> "unknown-profile"
       IncompatibleMode _ -> "incompatible-mode"
       InvalidTitle _ -> "invalid-title"
+      InvalidAcceptance _ -> "invalid-acceptance"
+      UncitedCriterion _ -> "uncited-criterion"
 
 {- | The problem in words: its code, then what it concerns (a cycle as its
 edges in order, "a needs b").
@@ -348,6 +354,8 @@ planProblemText p =
       UnknownProfile u profile -> Just (unitKeyText u <> T.pack " (" <> profile <> T.pack ")")
       IncompatibleMode u -> Just (unitKeyText u)
       InvalidTitle u -> fmap unitKeyText u
+      InvalidAcceptance u -> Just (unitKeyText u)
+      UncitedCriterion u -> Just (unitKeyText u)
 
 {- | Every problem of the document, or the document unchanged. Problems are
 listed in a fixed order (title, sources, envelope, units, citations, edges,
@@ -393,6 +401,8 @@ validatePlan context document =
       <> [UnknownProfile (unitKey u) (unitProfile u) | unitProfile u `L.notElem` contextProfiles context]
       <> [ExternalEffectNotAuthorized (Just (unitKey u)) | unitEffect u == ExternalEffect]
       <> [NoAcceptance (unitKey u) | L.all (T.null . T.strip . planCriterionText) (unitAcceptance u)]
+      <> [InvalidAcceptance (unitKey u) | isLeft (mkAcceptance (T.intercalate (T.pack "\n") (fmap planCriterionText (unitAcceptance u))))]
+      <> [UncitedCriterion (unitKey u) | L.any (L.null . planCriterionCites) (unitAcceptance u)]
   citations =
     L.concatMap (L.concatMap planCriterionCites . unitAcceptance) units
       <> L.concatMap uncertaintyCites (planUncertainties document)

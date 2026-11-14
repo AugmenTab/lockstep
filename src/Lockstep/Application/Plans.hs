@@ -69,7 +69,7 @@ import Lockstep.Kernel.Plan
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText, profileIdText)
 import Lockstep.Kernel.Roles (PlanDraft (..), Role (Planner), RoleAnswer (..))
 import Lockstep.Kernel.Task (mkAcceptance, mkTaskTitle, priorityOf, priorityValue)
-import Lockstep.Kernel.Ticket (TicketInput (TicketAccept))
+import Lockstep.Kernel.Ticket (TicketInput (TicketAccept, TicketBlock, TicketUnblock))
 import Lockstep.Kernel.Transition (Command (..), Principal (Human))
 import Lockstep.Persistence.Integrity (integrityViolation)
 import Lockstep.Persistence.Plans qualified as Store
@@ -220,52 +220,62 @@ propose runtime keyText project proposer document =
   whenReady runtime $ do
     planUuid <- newUuid
     revisionUuid <- newUuid
-    withDatabase runtime . O.withTransaction $ do
-      Store.lockPlans
-      found <- Projects.findProjectById project
-      profiles <- knownProfiles
-      case (found, validatePlan (PlanContext profiles) document) of
-        (Nothing, _) -> pure (refusal "unknown-project")
-        (_, Left problems) -> pure (Left (ProposalRefusal (T.pack "invalid-plan") (fmap planProblemText problems)))
-        (Just _, Right valid) -> do
+    withDatabase runtime . O.withTransaction $ proposeIn planUuid revisionUuid keyText project proposer document
+
+-- | 'propose' inside the caller's transaction (R-P6.4-6: a draft is finished in the same transaction).
+proposeIn :: Uuid -> Uuid -> T.Text -> ProjectId -> Proposer -> PlanDocument -> O.Orville (Either ProposalRefusal RevisionView)
+proposeIn planUuid revisionUuid keyText project proposer document = do
+  Store.lockPlans
+  found <- Projects.findProjectById project
+  profiles <- knownProfiles
+  case (found, validatePlan (PlanContext profiles) document) of
+    (Nothing, _) -> pure (refusal "unknown-project")
+    (_, Left problems) -> pure (Left (ProposalRefusal (T.pack "invalid-plan") (fmap planProblemText problems)))
+    (Just _, Right valid) -> do
+      let
+        digest = planDigestText sha256Hasher valid
+      existingPlan <- Store.findPlanOf project
+      byKey <- Store.findRevisionByKey keyText
+      case byKey of
+        Just r
+          | Just (Store.revisionRowPlan r) == fmap Store.planRowId existingPlan && Store.revisionRowDigest r == digest ->
+              Right <$> revisionView r
+          | otherwise -> pure (refusal "key-conflict")
+        Nothing -> do
+          plan <-
+            case existingPlan of
+              Just p -> pure p
+              Nothing -> do
+                let
+                  p = Store.PlanRow (PlanId planUuid) project
+                Store.insertPlan p
+                pure p
+          revisions <- Store.planRevisions (Store.planRowId plan)
+          decided <- traverse (\r -> (,) r <$> Store.decisionOf (Store.revisionRowId r)) revisions
           let
-            digest = planDigestText sha256Hasher valid
-          existingPlan <- Store.findPlanOf project
-          byKey <- Store.findRevisionByKey keyText
-          case byKey of
-            Just r
-              | Just (Store.revisionRowPlan r) == fmap Store.planRowId existingPlan && Store.revisionRowDigest r == digest ->
-                  Right <$> revisionView r
-              | otherwise -> pure (refusal "key-conflict")
-            Nothing -> do
-              plan <-
-                case existingPlan of
-                  Just p -> pure p
-                  Nothing -> do
-                    let
-                      p = Store.PlanRow (PlanId planUuid) project
-                    Store.insertPlan p
-                    pure p
-              revisions <- Store.planRevisions (Store.planRowId plan)
-              if L.any ((== digest) . Store.revisionRowDigest) revisions
-                then pure (refusal "already-proposed")
-                else do
-                  let
-                    row =
-                      Store.RevisionRow
-                        { Store.revisionRowId = PlanRevisionId revisionUuid
-                        , Store.revisionRowPlan = Store.planRowId plan
-                        , Store.revisionRowNumber = 1 + L.foldl' max 0 (fmap Store.revisionRowNumber revisions)
-                        , Store.revisionRowDigest = digest
-                        , Store.revisionRowDocument = encodePlanDocument valid
-                        , Store.revisionRowProposedBy = T.pack (case proposer of ByHuman _ -> "Human"; ByPlanner _ -> "Planner")
-                        , Store.revisionRowProposer = case proposer of ByHuman a -> T.take 200 a; ByPlanner d -> identityText d
-                        , Store.revisionRowDraft = case proposer of ByHuman _ -> Nothing; ByPlanner d -> Just d
-                        , Store.revisionRowKey = keyText
-                        , Store.revisionRowUncertainties = fromIntegral (L.length (planUncertainties valid))
-                        }
-                  Store.insertRevision row
-                  Right <$> revisionView row
+            effective = effectiveNumber decided
+            -- R-P6.4-4: the same plan is refused only while it waits for a decision or is in effect; a
+            -- rejected or superseded one may be proposed again as a new revision.
+            live (r, d) = Store.revisionRowDigest r == digest && (isNothing d || Just (Store.revisionRowNumber r) == effective)
+          if L.any live decided
+            then pure (refusal "already-proposed")
+            else do
+              let
+                row =
+                  Store.RevisionRow
+                    { Store.revisionRowId = PlanRevisionId revisionUuid
+                    , Store.revisionRowPlan = Store.planRowId plan
+                    , Store.revisionRowNumber = 1 + L.foldl' max 0 (fmap Store.revisionRowNumber revisions)
+                    , Store.revisionRowDigest = digest
+                    , Store.revisionRowDocument = encodePlanDocument valid
+                    , Store.revisionRowProposedBy = T.pack (case proposer of ByHuman _ -> "Human"; ByPlanner _ -> "Planner")
+                    , Store.revisionRowProposer = case proposer of ByHuman a -> T.take 200 a; ByPlanner d -> identityText d
+                    , Store.revisionRowDraft = case proposer of ByHuman _ -> Nothing; ByPlanner d -> Just d
+                    , Store.revisionRowKey = keyText
+                    , Store.revisionRowUncertainties = fromIntegral (L.length (planUncertainties valid))
+                    }
+              Store.insertRevision row
+              Right <$> revisionView row
 
 -- Views -----------------------------------------------------------------------------
 
@@ -394,33 +404,52 @@ approve :: ProjectId -> Store.RevisionRow -> [Store.RevisionRow] -> [Store.Revis
 approve project row previousEffective approvedBefore uuids actor = do
   document <- stored row
   previousDocument <- traverse stored (L.take 1 previousEffective)
-  -- A unit keeps the task it had in the newest earlier approved revision that had it.
-  earlierUnits <- L.concat <$> traverse (Store.revisionUnits . Store.revisionRowId) (L.sortOn (negate . Store.revisionRowNumber) approvedBefore)
+  -- Earlier approved revisions, newest first: a unit keeps the task it had in the newest one that had it.
+  let
+    newestFirst = L.sortOn (negate . Store.revisionRowNumber) approvedBefore
+  earlierUnits <- L.concat <$> traverse (Store.revisionUnits . Store.revisionRowId) newestFirst
+  earlierDocuments <- traverse stored newestFirst
   let
     units = planUnits document
-    existing u = L.find ((== unitKeyText (unitKey u)) . Store.unitRowKey) earlierUnits
-    fresh = [u | u <- units, isNothing (existing u)]
+    existing k = L.find ((== unitKeyText k) . Store.unitRowKey) earlierUnits
+    fresh = [u | u <- units, isNothing (existing (unitKey u))]
     newTasks = L.zip (fmap unitKey fresh) (fmap TaskId uuids)
-    taskOf k = maybe (L.lookup k newTasks) (Just . Store.unitRowTask) (L.find ((== unitKeyText k) . Store.unitRowKey) earlierUnits)
-    acceptanceOf u = T.intercalate (T.pack "\n") (fmap planCriterionText (unitAcceptance u))
-    checked = traverse (\u -> (,) u <$> either (const (Left (T.pack "acceptance-too-long"))) Right (mkAcceptance (acceptanceOf u))) units
+    taskOf k = maybe (L.lookup k newTasks) (Just . Store.unitRowTask) (existing k)
+    -- R-P6.4-1: the unit as the plan last wrote its task (the newest earlier approved revision that had it).
+    lastWritten k = listToMaybe [u | d <- earlierDocuments, u <- planUnits d, unitKey u == k]
+    planTasks = L.nub (mapMaybe (taskOf . unitKey) units <> fmap Store.unitRowTask earlierUnits)
+    withdrawnKeys = [unitKey u | d <- previousDocument, u <- planUnits d, unitKey u `L.notElem` fmap unitKey units]
+    checked = traverse (\u -> (,) u <$> either (const (Left (T.pack "acceptance-invalid"))) Right (mkAcceptance (acceptanceOf u))) units
   case (checked, L.length fresh > L.length uuids) of
     (Left code, _) -> pure (Left code)
     (_, True) -> pure (refuse "too-many-units")
     (Right withAcceptance, False) -> do
-      Store.insertDecision (Store.DecisionRow (Store.revisionRowId row) (T.pack "approved") (Store.revisionRowDigest row) (T.take 200 actor))
-      written <- traverse (writeUnit project taskOf) withAcceptance
-      case sequenceA_ written of
-        Left code -> integrityViolation ("the approval could not write a unit it had validated: " <> T.unpack code)
-        Right () -> do
-          -- The plan's edges are the units' dependencies (all kinds; P6.5–P6.7 read their kinds from the plan).
-          traverse_
-            ( \u ->
-                case taskOf (unitKey u) of
-                  Nothing -> pure ()
-                  Just t -> Tasks.replaceDependencies t (mapMaybe taskOf [edgePrerequisite e | e <- planEdges document, edgeDependent e == unitKey u])
-            )
-            units
+      -- R-P6.4-1: a unit whose task text the plan changes, on a task a person edited since the plan wrote it, is refused.
+      conflicts <- traverse (\u -> conflictOf (taskOf (unitKey u)) (lastWritten (unitKey u)) u) units
+      if L.or conflicts
+        then pure (refuse "locally-edited")
+        else do
+          Store.insertDecision (Store.DecisionRow (Store.revisionRowId row) (T.pack "approved") (Store.revisionRowDigest row) (T.take 200 actor))
+          written <- traverse (\(u, a) -> writeUnit project taskOf (lastWritten (unitKey u)) (u, a)) withAcceptance
+          -- R-P6.4-2: a withdrawn unit's task is blocked, so it is no longer handed over.
+          withdrew <- traverse (maybe (pure (Right ())) (withdrawTask (Store.revisionRowNumber row)) . taskOf) withdrawnKeys
+          case sequenceA_ (written <> withdrew) of
+            Left code -> integrityViolation ("the approval could not write a unit it had validated: " <> T.unpack code)
+            Right () -> do
+              -- The plan's edges are the units' dependencies (all kinds; P6.5–P6.7 read their kinds from the plan);
+              -- R-P6.4-1: a person's own dependencies on tasks outside the plan are kept.
+              traverse_
+                ( \u ->
+                    case taskOf (unitKey u) of
+                      Nothing -> pure ()
+                      Just t -> do
+                        current <- Tasks.dependenciesOf t
+                        let
+                          own = [d | d <- current, d `L.notElem` planTasks]
+                          wanted = L.nub (mapMaybe taskOf [edgePrerequisite e | e <- planEdges document, edgeDependent e == unitKey u] <> own)
+                        when (L.sort wanted /= L.sort current) (Tasks.replaceDependencies t wanted)
+                )
+                units
           Store.insertUnits
             [ Store.UnitRow
                 { Store.unitRowRevision = Store.revisionRowId row
@@ -446,9 +475,40 @@ approve project row previousEffective approvedBefore uuids actor = do
             ]
           pure (Right ())
 
--- | Creates a fresh unit's task (a Ticket accepted to ready by the owner's approval), or brings an existing one up to the unit.
-writeUnit :: ProjectId -> (UnitKey -> Maybe TaskId) -> (PlanUnit, T.Text) -> O.Orville (Either T.Text ())
-writeUnit project taskOf (u, acceptance) =
+acceptanceOf :: PlanUnit -> T.Text
+acceptanceOf u =
+  T.intercalate (T.pack "\n") (fmap planCriterionText (unitAcceptance u))
+
+-- | Whether the task text the unit gives (title, acceptance, priority) differs from the earlier unit's.
+textChanged :: PlanUnit -> PlanUnit -> Bool
+textChanged old u =
+  T.strip (unitTitle old) /= T.strip (unitTitle u) || acceptanceOf old /= acceptanceOf u || unitPriority old /= unitPriority u
+
+{- | R-P6.4-1: True when the plan would change the task's text but the task no
+longer has the text the plan last wrote (a person edited it).
+-}
+conflictOf :: Maybe TaskId -> Maybe PlanUnit -> PlanUnit -> O.Orville Bool
+conflictOf task previous u =
+  case (task, previous) of
+    (Just t, Just old)
+      | textChanged old u -> do
+          row <- Tasks.findTaskRow t
+          pure $
+            case row of
+              Nothing -> False
+              Just r ->
+                Tasks.rowTitle r /= T.strip (unitTitle old)
+                  || Tasks.rowAcceptance r /= acceptanceOf old
+                  || priorityOf (fromIntegral (Tasks.rowPriority r)) /= unitPriority old
+    _ -> pure False
+
+{- | Creates a fresh unit's task (a Ticket accepted to ready by the owner's
+approval); for a unit the plan had before, changes its task's text only when
+the unit's text changed (R-P6.4-1), and makes a task its withdrawal blocked
+ready again (R-P6.4-2).
+-}
+writeUnit :: ProjectId -> (UnitKey -> Maybe TaskId) -> Maybe PlanUnit -> (PlanUnit, T.Text) -> O.Orville (Either T.Text ())
+writeUnit project taskOf previous (u, acceptance) =
   case (taskOf (unitKey u), mkTaskTitle (unitTitle u)) of
     (_, Left _) -> pure (refuse "title-invalid")
     (Nothing, _) -> pure (refuse "no-task")
@@ -466,17 +526,51 @@ writeUnit project taskOf (u, acceptance) =
                 Left code -> pure (Left code)
                 Right (_, _, revision, _) -> fmap (const ()) <$> (decideTicketIn ticket revision (Command Human TicketAccept) >>= ledgerStep)
         Just taskRow -> do
-          revised <-
-            if T.strip (unitTitle u) /= Tasks.rowTitle taskRow
-              then fmap (const ()) <$> (reviseTicketIn (TicketId ((\(TaskId x) -> x) t)) (T.strip (unitTitle u)) >>= ledgerStep)
-              else pure (Right ())
-          case revised of
+          restored <- restoreTask t
+          case restored of
             Left code -> pure (Left code)
             Right ()
-              | Tasks.rowAcceptance taskRow == acceptance && priorityOf (fromIntegral (Tasks.rowPriority taskRow)) == unitPriority u -> pure (Right ())
-              | otherwise -> do
-                  updated <- Tasks.updateTask t (Tasks.rowRevision taskRow) acceptance (priorityValue (unitPriority u))
-                  pure (if updated then Right () else refuse "stale-revision")
+              | maybe False (`textChanged` u) previous -> do
+                  revised <-
+                    if T.strip (unitTitle u) /= Tasks.rowTitle taskRow
+                      then fmap (const ()) <$> (reviseTicketIn (TicketId ((\(TaskId x) -> x) t)) (T.strip (unitTitle u)) >>= ledgerStep)
+                      else pure (Right ())
+                  case revised of
+                    Left code -> pure (Left code)
+                    Right () -> do
+                      updated <- Tasks.updateTask t (Tasks.rowRevision taskRow) acceptance (priorityValue (unitPriority u))
+                      pure (if updated then Right () else refuse "stale-revision")
+              | otherwise -> pure (Right ())
+
+-- | The reason a withdrawal blocks a task with; a task blocked with it is made ready again when its unit returns.
+withdrawnReason :: Int32 -> T.Text
+withdrawnReason number =
+  withdrawnPrefix <> T.pack " by its revision " <> T.pack (show number) <> T.pack "."
+
+withdrawnPrefix :: T.Text
+withdrawnPrefix =
+  T.pack "This work was withdrawn from the plan"
+
+-- | R-P6.4-2: blocks a withdrawn unit's task, by the owner's approval; a finished, canceled or blocked task is left as it is.
+withdrawTask :: Int32 -> TaskId -> O.Orville (Either T.Text ())
+withdrawTask number t = do
+  facts <- ticketFactsIn (TicketId ((\(TaskId x) -> x) t)) >>= ledgerStep
+  case facts of
+    Left code -> pure (Left code)
+    Right (state, _, revision, _)
+      | state `L.elem` fmap T.pack ["done", "canceled", "blocked"] -> pure (Right ())
+      | otherwise -> fmap (const ()) <$> (decideTicketIn (TicketId ((\(TaskId x) -> x) t)) revision (Command Human (TicketBlock (withdrawnReason number))) >>= ledgerStep)
+
+-- | R-P6.4-2: a task its unit's withdrawal blocked is unblocked when the unit returns; any other block stays.
+restoreTask :: TaskId -> O.Orville (Either T.Text ())
+restoreTask t = do
+  facts <- ticketFactsIn (TicketId ((\(TaskId x) -> x) t)) >>= ledgerStep
+  case facts of
+    Left code -> pure (Left code)
+    Right (state, reason, revision, _)
+      | state == T.pack "blocked" && maybe False (T.isPrefixOf withdrawnPrefix) reason ->
+          fmap (const ()) <$> (decideTicketIn (TicketId ((\(TaskId x) -> x) t)) revision (Command Human TicketUnblock) >>= ledgerStep)
+      | otherwise -> pure (Right ())
 
 -- | The task row's creation key for a unit: fixed by the project and the unit's key (61 characters).
 creationKey :: ProjectId -> UnitKey -> T.Text
@@ -602,40 +696,53 @@ draftOne runtime engine row = do
     Left reason -> pure (Left reason)
     Right (False, _) -> pure (Right Nothing)
     Right (True, earlier) -> do
-      outcome <- run earlier
-      finished <- withDatabase runtime (finishWith outcome)
+      (outcome, settledAlready) <- run earlier
+      finished <- if settledAlready then pure (Right ()) else withDatabase runtime (finishWith outcome)
       pure (Just (DraftReport (identityText (Store.draftRowId row)) outcome) <$ finished)
  where
+  unsettled o = pure (o, False)
   run earlier =
     case engineAdapter engine Planner earlier of
-      Nothing -> pure DraftNoHelper
+      Nothing -> unsettled DraftNoHelper
       Just adapter -> do
         let
           runner = engineRunner engine
         prepared <- runnerPrepare runner
         case prepared of
-          Left code -> pure (DraftFailed code)
+          Left code -> unsettled (DraftFailed code)
           Right workspace -> do
             outcome <- invokeRole runner adapter Planner workspace (draftContext row) [] `finally` runnerRelease runner workspace
             case outcome of
               RoleAnswered (AnswerPlan p) _ -> judge (planDraftDocument p)
-              RoleAnswered _ _ -> pure (DraftFailed (T.pack "wrong-kind"))
-              RoleFailed code _ -> pure (DraftFailed code)
-              RoleUncertain _ -> pure DraftUncertain
+              RoleAnswered _ _ -> unsettled (DraftFailed (T.pack "wrong-kind"))
+              RoleFailed code _ -> unsettled (DraftFailed code)
+              RoleUncertain _ -> unsettled DraftUncertain
+  {- R-P6.4-6: a valid draft's revision is proposed and the draft finished in one
+  transaction, so a draft is never left unfinished with its revision proposed. -}
   judge text =
     case decodePlanDocumentText text of
-      Left e -> pure (DraftRefused [planDocumentErrorCode e])
+      Left e -> unsettled (DraftRefused [planDocumentErrorCode e])
       Right document ->
         case sourceProblems document of
-          problems@(_ : _) -> pure (DraftRefused problems)
+          problems@(_ : _) -> unsettled (DraftRefused problems)
           [] -> do
-            proposed <- propose runtime (T.pack "plan-draft-" <> identityText (Store.draftRowId row)) (Store.draftRowProject row) (ByPlanner (Store.draftRowId row)) document
+            planUuid <- newUuid
+            revisionUuid <- newUuid
+            proposed <-
+              withDatabase runtime . O.withTransaction $ do
+                p <- proposeIn planUuid revisionUuid (T.pack "plan-draft-" <> identityText (Store.draftRowId row)) (Store.draftRowProject row) (ByPlanner (Store.draftRowId row)) document
+                let
+                  outcome =
+                    case p of
+                      Right r -> DraftProposed (revisionNumber r)
+                      Left (ProposalRefusal code []) -> DraftRefused [code]
+                      Left (ProposalRefusal _ problems) -> DraftRefused problems
+                finishWith outcome
+                pure outcome
             pure $
               case proposed of
-                Left _ -> DraftFailed (T.pack "database-unavailable")
-                Right (Right r) -> DraftProposed (revisionNumber r)
-                Right (Left (ProposalRefusal code [])) -> DraftRefused [code]
-                Right (Left (ProposalRefusal _ problems)) -> DraftRefused problems
+                Left _ -> (DraftFailed (T.pack "database-unavailable"), False)
+                Right outcome -> (outcome, True)
   -- The plan must answer to exactly the documents the person gave, with their real digests.
   expected =
     (T.pack "prd", Store.draftRowPrdDigest row) : maybe [] (\d -> [(T.pack "architecture", d)]) (Store.draftRowArchitectureDigest row)
@@ -652,7 +759,8 @@ draftOne runtime engine row = do
       DraftRefused problems -> Store.finishDraft (Store.draftRowId row) (T.pack "refused") (Just (T.take 4000 (T.intercalate (T.pack "\n") problems)))
       DraftFailed code -> Store.finishDraft (Store.draftRowId row) (T.pack "failed") (Just (T.take 4000 code))
       DraftNoHelper -> Store.finishDraft (Store.draftRowId row) (T.pack "no-helper") Nothing
-      DraftUncertain -> Store.finishDraft (Store.draftRowId row) (T.pack "uncertain") Nothing
+      -- R-P6.4-6: distinct from a worker stopped mid-draft (@worker-stopped@).
+      DraftUncertain -> Store.finishDraft (Store.draftRowId row) (T.pack "uncertain") (Just (T.pack "planner-uncertain"))
 
 -- The Planner's context (M10) ---------------------------------------------------------
 

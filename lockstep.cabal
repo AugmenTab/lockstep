@@ -420,6 +420,7 @@ test-suite lockstep-integration
       Lockstep.OperatorLedgerTest
       Lockstep.OperatorTrustTest
       Lockstep.PlanPageTest
+      Lockstep.PlanReviewTest
       Lockstep.PlanTest
       Lockstep.ProcessRunnerTest
       Lockstep.ProcessTest

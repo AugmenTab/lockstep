@@ -892,4 +892,11 @@ CREATE TRIGGER lockstep_plan_reconciliations_immutable BEFORE UPDATE OR DELETE O
 CREATE TRIGGER lockstep_plan_reconciliations_no_truncate BEFORE TRUNCATE ON lockstep_plan_reconciliations FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
 |]
       )
+    ,
+      ( [Interpolate.i|R-P6.4-4: a rejected or superseded plan may be proposed again as a new revision|]
+      , [Interpolate.i|
+ALTER TABLE lockstep_plan_revisions DROP CONSTRAINT lockstep_plan_revisions_plan_id_digest_key;
+CREATE INDEX lockstep_plan_revisions_digest ON lockstep_plan_revisions (plan_id, digest);
+|]
+      )
     ]

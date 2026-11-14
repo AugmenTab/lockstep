@@ -372,8 +372,11 @@ their SHA-256; `lockstep serve` asks the Planner once (read-only, no repository)
 whose sources are not exactly your documents or that breaks the plan's rules (a cycle is shown with its edges).
 Every proposal is a numbered, immutable **revision**; nothing runs from it. On the project's **Plan** page
 (`/app/projects/<id>/plan`) you approve or reject a revision by its digest; approving turns each unit into an
-ordinary ready task with the plan's dependencies (a unit keeps its task across revisions), and a later approved
-revision records what changed and which work built on it no longer counts. The open questions stay on the page.
+ordinary ready task with the plan's dependencies (a unit keeps its task across revisions). A later approved
+revision records what changed and which work built on it will need redoing; it changes a task only where its unit
+changed, never over your own edits (it is then refused `locally-edited`), keeps the dependencies you added, and
+blocks the task of a unit it withdraws. A rejected or replaced plan can be proposed again. The open questions stay
+on the page.
 
 ### Questions about a stopped fix (C-P6.3)
 

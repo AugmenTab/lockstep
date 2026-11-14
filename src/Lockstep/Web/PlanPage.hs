@@ -142,8 +142,8 @@ outcomeWords outcome =
   case T.unpack outcome of
     "added" -> "new in this revision"
     "kept" -> "unchanged"
-    "changed" -> "changed: earlier work on it no longer counts"
-    "invalidated" -> "unchanged, but it builds on something that changed, so earlier work on it no longer counts"
+    "changed" -> "changed: earlier work on it will need redoing (Lockstep does not enforce this yet)"
+    "invalidated" -> "unchanged, but it builds on something that changed: earlier work on it will need redoing (Lockstep does not enforce this yet)"
     "withdrawn" -> "no longer in the plan (its task is kept)"
     _ -> outcome
 
@@ -154,7 +154,9 @@ draftWords d =
     Just "proposed" -> "Lockstep drafted a plan (" <> fromMaybe "" (draftCode d) <> "); it is listed above for your decision."
     Just "refused" -> "Lockstep's draft broke the plan's rules and was not proposed: " <> fromMaybe "" (draftCode d)
     Just "no-helper" -> "No coding helper is set up, so no plan was drafted."
-    Just "uncertain" -> "Lockstep stopped while drafting; nothing was proposed. Ask again if you still want a draft."
+    Just "uncertain"
+      | draftCode d == Just "worker-stopped" -> "Lockstep stopped while drafting; nothing was proposed. Ask again if you still want a draft."
+      | otherwise -> "Lockstep could not tell whether the Planner finished, so nothing was proposed. Ask again if you still want a draft."
     Just _ -> "Lockstep could not draft a plan: " <> fromMaybe "" (draftCode d)
 
 -- | A refused plan decision in words.
