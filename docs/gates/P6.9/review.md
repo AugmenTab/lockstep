@@ -50,4 +50,8 @@ integration + backup/restore (694). Log: `.local/evals/phase-06/p69-full-check.l
 
 ## After remediation
 
-(filled after the remediation tests, the implementation and the full check)
+- Remediation `ef3c64a`: C-P6.9 and R-P6.9 unit 16/16, integration 12/12.
+- Full check of `ef3c64a` (`scripts/check --integration`): all passed: format, lint, build, unit (1078),
+  no-live-model guard, integration + backup/restore (699). Log: `.local/evals/phase-06/p69r-full-check.log`.
+- C-P6.9 is locally qualified, with the limitations in `amendments.md`; OQ-P6.9-1 and OQ-P6.9-2 are open for the
+  owner. Owner acceptance is pending.
