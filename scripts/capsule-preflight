@@ -213,7 +213,41 @@ fi
 # substitute for it.
 unattended_arg=()
 [ "$unattended" = yes ] && unattended_arg=(--unattended)
-"$here/capsule/host-boundary" --helper-state "$hstate" ${unattended_arg[@]+"${unattended_arg[@]}"} || failures=$((failures + 1))
+"$here/capsule/host-boundary" --helper-state "$hstate" ${unattended_arg[@]+"${unattended_arg[@]}"}
+hbrc=$?
+case $hbrc in
+  0) ;;
+  1) failures=$((failures + 1)) ;; # it printed its own FAIL line
+  *) fail host-boundary "the attestation did not run (scripts/capsule/host-boundary exited $hbrc)" ;;
+esac
+# R-P6.10b-1: the rules match only the boundary's user, so each running capsule's hostagent must run as that
+# user (Lima writes its pid to LIMA_HOME/INSTANCE/ha.pid). Only once a boundary is recorded.
+hbrec=$hstate/capsule/host-boundary
+if [ -f "$hbrec" ] && [ ! -L "$hbrec" ]; then
+  hbuser=$(sed -n 's/^capsule-user //p' "$hbrec")
+  hbuid=$(id -u "$hbuser" 2>/dev/null)
+  for c in "$cap" "$vcap"; do
+    [ -n "$c" ] || continue
+    pidf=$cstate/capsules/lima/lockstep-$c/ha.pid
+    why=""
+    if [ ! -f "$pidf" ]; then
+      # The verification capsule may be stopped; the Engineer's capsule was started above.
+      [ "$c" = "$cap" ] && why="no hostagent pid for the running capsule $c ($pidf)"
+    else
+      hapid=$(head -n 1 "$pidf" | tr -cd '0-9')
+      hauid=$(ps -o uid= -p "${hapid:-0}" 2>/dev/null | tr -d ' ')
+      if [ -z "$hbuid" ]; then why="there is no user ${hbuser:-?} on this host"
+      elif [ -z "$hauid" ]; then why="the hostagent of $c (pid ${hapid:-?}) is not running"
+      elif [ "$hauid" != "$hbuid" ]; then why="the hostagent of $c runs as uid $hauid, not ${hbuser} (uid $hbuid); the rules do not match its traffic"
+      fi
+    fi
+    if [ -z "$why" ]; then
+      [ -f "$pidf" ] && pass "host-boundary-runtime $c"
+    elif [ "$unattended" = yes ]; then fail "host-boundary-runtime $c" "$why"
+    else warn "host-boundary-runtime $c" "$why (an unattended run would not start)"
+    fi
+  done
+fi
 
 echo "capsule-preflight: $failures failure(s)"
 [ "$failures" = 0 ]

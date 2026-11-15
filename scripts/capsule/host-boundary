@@ -45,6 +45,7 @@ refuse() {
 # GNU stat first: there `stat -f` means the file system and can succeed with the wrong answer.
 mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 owner_of() { stat -c %U "$1" 2>/dev/null || stat -f %Su "$1"; }
+uid_of() { stat -c %u "$1" 2>/dev/null || stat -f %u "$1"; }
 digest() {
   if command -v shasum > /dev/null 2>&1; then shasum -a 256 | cut -d ' ' -f 1
   else sha256sum | cut -d ' ' -f 1
@@ -66,7 +67,8 @@ lines=$(grep -c '' "$exp")
 case $anchor in "" | *[!A-Za-z0-9._-]*) anchor="" ;; esac
 case $cuser in "" | *[!A-Za-z0-9._-]*) cuser="" ;; esac
 case $want in *[!0-9a-f]*) want="" ;; esac
-if [ "$header" != "lockstep-host-boundary 1" ] || [ "$lines" != 4 ] || [ -z "$anchor" ] || [ -z "$cuser" ] || [ ${#want} != 64 ]; then
+# R-P6.10b-5: only Lockstep's own anchor is attested.
+if [ "$header" != "lockstep-host-boundary 1" ] || [ "$lines" != 4 ] || [ "$anchor" != com.lockstep.capsule ] || [ -z "$cuser" ] || [ ${#want} != 64 ]; then
   refuse boundary-expected-malformed "$exp is not a lockstep-host-boundary 1 record (header, anchor, capsule-user, rules-sha256)"
 fi
 
@@ -91,8 +93,12 @@ printf 'NOTE host-boundary rules-sha256 %s\n' "$got"
 cfg=$hstate/capsule/config
 cstate=$(sed -n 's/^runtime-state //p' "$cfg" 2>/dev/null)
 [ -n "$cstate" ] && [ -d "$cstate" ] || refuse runtime-user-wrong "no capsule runtime state in $cfg"
-runner=$(owner_of "$cstate")
-[ "$runner" = "$cuser" ] || refuse runtime-user-wrong "the capsule runtime state $cstate belongs to $runner, not $cuser; the rules would not match its traffic"
+# R-P6.10b-1: by uid (pf's rules match a uid); a user that does not exist on this host owns nothing. This is the
+# state's owner only; the preflight also checks the uid each running hostagent has (host-boundary-runtime).
+cuid=$(id -u "$cuser" 2>/dev/null)
+[ -n "$cuid" ] || refuse runtime-user-wrong "there is no user $cuser on this host"
+ruid=$(uid_of "$cstate")
+[ "$ruid" = "$cuid" ] || refuse runtime-user-wrong "the capsule runtime state $cstate belongs to uid $ruid ($(owner_of "$cstate")), not $cuser (uid $cuid); the rules would not match its traffic"
 
 printf 'PASS host-boundary\n'
 exit 0

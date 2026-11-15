@@ -480,6 +480,12 @@ capsule-user _lockstep_capsule
 rules-sha256 <the digest the preflight prints as "NOTE host-boundary rules-sha256 …">
 ```
 
+If pf's state can be read only as root on this Mac, the preflight reports `pf-unreadable` and prints no digest
+(and unattended runs cannot start; D6-SEC decides how the attestation reads it). The owner can take the same
+digest once by hand: `sudo pfctl -a com.lockstep.capsule -s rules`, with trailing blanks and empty lines removed,
+through `shasum -a 256`. Once a boundary is recorded, the preflight also checks that each running capsule's
+hostagent runs as `capsule-user` (`host-boundary-runtime`); the rules match nothing else.
+
 ### Questions about a stopped fix (C-P6.3)
 
 When a fix stops for your decision, **Decisions → Fixes waiting for your answer** lists it with its project, task,
