@@ -42,6 +42,7 @@ library
       Lockstep.Application.Conversation
       Lockstep.Application.Database
       Lockstep.Application.Decisions
+      Lockstep.Application.Dispatch
       Lockstep.Application.Dispatcher
       Lockstep.Application.Engine
       Lockstep.Application.EngineCandidate
@@ -101,6 +102,7 @@ library
       Lockstep.Kernel.Conversation
       Lockstep.Kernel.Decision
       Lockstep.Kernel.Delivery
+      Lockstep.Kernel.Dispatch
       Lockstep.Kernel.Effect
       Lockstep.Kernel.EffectView
       Lockstep.Kernel.Enum
@@ -373,6 +375,7 @@ test-suite lockstep-integration
       Lockstep.DecisionsPageTest
       Lockstep.DecisionsTest
       Lockstep.DispatcherTest
+      Lockstep.DispatchTest
       Lockstep.EndToEndTest
       Lockstep.EngineAttemptPageTest
       Lockstep.EngineCandidateTest
@@ -547,6 +550,7 @@ test-suite lockstep-unit
       Lockstep.Kernel.ConversationTest
       Lockstep.Kernel.DecisionTest
       Lockstep.Kernel.DeliveryTest
+      Lockstep.Kernel.DispatchTest
       Lockstep.Kernel.EffectTest
       Lockstep.Kernel.EffectViewTest
       Lockstep.Kernel.EventCodecTest

@@ -19,6 +19,7 @@ import Lockstep.ConversationTest qualified as ConversationTest
 import Lockstep.DecisionsBrowserTest qualified as DecisionsBrowserTest
 import Lockstep.DecisionsPageTest qualified as DecisionsPageTest
 import Lockstep.DecisionsTest qualified as DecisionsTest
+import Lockstep.DispatchTest qualified as DispatchTest
 import Lockstep.DispatcherTest qualified as DispatcherTest
 import Lockstep.EndToEndTest qualified as EndToEndTest
 import Lockstep.EngineAttemptPageTest qualified as EngineAttemptPageTest
@@ -191,4 +192,5 @@ main =
       , PlanTest.tests
       , PlanPageTest.tests
       , PlanReviewTest.tests
+      , DispatchTest.tests
       ]

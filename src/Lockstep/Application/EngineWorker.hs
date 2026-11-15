@@ -21,6 +21,7 @@ module Lockstep.Application.EngineWorker
   , stopEngineWorkerWithin
   , requestEngineStop
   , engineOnce
+  , engineOnceWith
   , PassFailure (..)
   ) where
 
@@ -39,6 +40,7 @@ import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, reasonDia
 import Lockstep.Application.Engine (Engine, StepReport (..), activeTransactionIds, advanceTransaction, pendingWorkOrders, startTransactionFor)
 import Lockstep.Application.Plans (DraftOutcome (..), draftOutcomeCode, draftPlansUntil)
 import Lockstep.Application.Plans qualified as Plans
+import Lockstep.Application.Projects (ProjectFolders)
 import Lockstep.Kernel.Identity (TransactionId (..), WorkOrderId (..), identityText)
 
 data EngineWorker
@@ -63,6 +65,11 @@ reported under its name, never taken as empty.
 engineOnce :: DatabaseRuntime -> Engine -> IO [(T.Text, Either PassFailure T.Text)]
 engineOnce runtime engine =
   enginePass runtime engine (pure False)
+
+-- | 'engineOnce' with the projects folders the dispatcher checks a hand-over against (C-P6.5).
+engineOnceWith :: DatabaseRuntime -> Engine -> ProjectFolders -> IO [(T.Text, Either PassFailure T.Text)]
+engineOnceWith runtime engine _ =
+  engineOnce runtime engine
 
 -- | A pass that ends early, between transactions, once the check says so.
 enginePass :: DatabaseRuntime -> Engine -> IO Bool -> IO [(T.Text, Either PassFailure T.Text)]

@@ -41,6 +41,7 @@ import Lockstep.Kernel.CandidateTest qualified as KernelCandidateTest
 import Lockstep.Kernel.ConversationTest qualified as ConversationTest
 import Lockstep.Kernel.DecisionTest qualified as DecisionTest
 import Lockstep.Kernel.DeliveryTest qualified as DeliveryTest
+import Lockstep.Kernel.DispatchTest qualified as KernelDispatchTest
 import Lockstep.Kernel.EffectTest qualified as EffectTest
 import Lockstep.Kernel.EffectViewTest qualified as EffectViewTest
 import Lockstep.Kernel.EventCodecTest qualified as EventCodecTest
@@ -173,4 +174,5 @@ main =
       , InboxTest.tests
       , PlanTest.tests
       , PlanDocumentTest.tests
+      , KernelDispatchTest.tests
       ]
