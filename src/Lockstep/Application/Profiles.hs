@@ -68,6 +68,7 @@ import Lockstep.Kernel.Profile
   )
 import Lockstep.Kernel.Transition (Principal (Human))
 import Lockstep.Kernel.WorkOrder (parseWorkOrderKind)
+import Lockstep.Kernel.WorkPolicy (engineeringDefinition, engineeringProfileId)
 import Lockstep.Persistence.Integrity (integrityViolation)
 import Lockstep.Persistence.Profiles qualified as Store
 
@@ -178,6 +179,10 @@ addProfile runtime bytes =
               stored = StoredProfile profileId version digest
             existing <- Store.profileVersions profileId
             case L.find ((== fromIntegral version) . Store.profileRowVersion) existing of
+              -- R-P6.6-7: Lockstep's engineering checks are only ever Lockstep's own document.
+              _
+                | profileIdText profileId == engineeringProfileId && Right definition /= engineeringDefinition ->
+                    recordRefusal decision (T.pack "profile-reserved") (T.pack "lockstep-engineering is Lockstep's own set of checks; choose it, or name yours differently")
               Just row
                 | Store.profileRowDigest row == digest -> do
                     _ <- record decision {Store.profileDecisionOutcome = T.pack "unchanged"}

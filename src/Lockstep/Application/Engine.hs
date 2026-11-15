@@ -104,6 +104,7 @@ import Lockstep.Kernel.Dispatch (chooseBasis)
 import Lockstep.Kernel.GitBasis (Change (..), TreeEntry (..), TreeMode (..), protectedPathValid, treeModeText, treePathValid, workBranch)
 import Lockstep.Kernel.Identity (InvocationId (..), ProjectId (..), TaskId (..), TransactionId (..), WorkOrderId (..), identityText, parseIdentity)
 import Lockstep.Kernel.Plan (WorkKind)
+import Lockstep.Kernel.Profile (PathClass (PathDocs, PathTests))
 import Lockstep.Kernel.Roles
   ( Candidate (..)
   , CandidateTest (..)
@@ -160,7 +161,7 @@ import Lockstep.Kernel.Transaction
   , txStateName
   )
 import Lockstep.Kernel.Transition (Principal (..), principalLabel)
-import Lockstep.Kernel.WorkPolicy (TestFirst (GreenOnly), WorkPolicy (..), documentationOnly, workPolicy)
+import Lockstep.Kernel.WorkPolicy (TestFirst (GreenOnly), WorkPolicy (..), pathClassOf, workPolicy)
 import Lockstep.Persistence.Dispatch qualified as Dispatches
 import Lockstep.Persistence.Transactions qualified as Store
 
@@ -841,18 +842,19 @@ discoveryStage runtime engine row =
                   , (T.pack "basis", string basis)
                   , (T.pack "answer", JObject [(T.pack "file", string (T.pack "result.json")), (T.pack "kind", string (T.pack "discovery"))])
                   ]
-          invoked <- invokeRecorded runtime engine row Planner StageDiscovery basis [] [] context
-          case invoked of
-            Left code -> pure (Left code)
-            Right (Left input) -> settle runtime row input [] id
-            Right (Right (answer, entries, workspace, _)) ->
+          -- R-P6.6-9: the kind is read before the Planner runs.
+          kind <- workKindOf runtime row
+          invoked <- either (pure . Left) (const (invokeRecorded runtime engine row Planner StageDiscovery basis [] [] context)) kind
+          case (invoked, kind) of
+            (Left code, _) -> pure (Left code)
+            (_, Left code) -> pure (Left code)
+            (Right (Left input), _) -> settle runtime row input [] id
+            (Right (Right (answer, entries, workspace, _)), Right k) ->
               case answer of
                 AnswerDiscovery d -> do
                   cited <- citationsHold (workspaceTree workspace) entries (discoveryCitations d)
-                  kind <- workKindOf runtime row
-                  case kind of
-                    Left code -> pure (Left code)
-                    Right k
+                  case () of
+                    _
                       | not cited -> settle runtime row (RoleFailed (T.pack "citation-outside-source")) [] id
                       -- C-P6.6 G5 a: nothing is broken in a refactor or a documentation change, so there is nothing to reproduce.
                       | isJust (discoveryReproduction d) && not (policyReproduction (workPolicy k)) ->
@@ -1209,9 +1211,12 @@ candidateStage runtime engine row =
     Nothing -> settle runtime row (SupervisorFailed (T.pack "basis-missing")) [] id
     Just basis -> do
       g <- gathered runtime row
-      case g of
-        Left code -> settle runtime row (SupervisorFailed code) [] id
-        Right ((title, acceptance), discovery, reproduction, feedback, _) -> do
+      -- R-P6.6-9: the kind is read before anything runs.
+      kindRead <- workKindOf runtime row
+      case (g, kindRead) of
+        (Left code, _) -> settle runtime row (SupervisorFailed code) [] id
+        (_, Left code) -> pure (Left code)
+        (Right ((title, acceptance), discovery, reproduction, feedback, _), Right kind) -> do
           let
             context =
               renderJson $
@@ -1229,10 +1234,10 @@ candidateStage runtime engine row =
           case invoked of
             Left code -> pure (Left code)
             Right (Left input) -> settle runtime row input [] id
-            Right (Right (AnswerCandidate c, entries, workspace, _)) -> examine basis (title, acceptance) c entries workspace
+            Right (Right (AnswerCandidate c, entries, workspace, _)) -> examine kind basis (title, acceptance) c entries workspace
             Right (Right _) -> settle runtime row (RoleFailed (T.pack "answer-invalid wrong-stage")) [] id
  where
-  examine basis (title, acceptance) c entries workspace = do
+  examine kind basis (title, acceptance) c entries workspace = do
     cited <- citationsHold (workspaceTree workspace) entries (L.concatMap criterionCitations (candidateCriteria c))
     unusable <- traverse (unusablePath (workspaceTree workspace) entries . testPath) (candidateTests c)
     let
@@ -1245,8 +1250,10 @@ candidateStage runtime engine row =
         | not cited -> rejected (T.pack "citation-outside-source")
         | not (L.all protectedPathValid paths) -> rejected (T.pack "test-path-unsupported")
         | L.or unusable || L.any (foldsOnto entries paths) paths -> rejected (T.pack "test-path-unusable")
-        | otherwise -> baseline basis c entries [candidateRecord]
-  baseline basis c entries records = do
+        -- R-P6.6-1: a non-behavioural change's frozen tests are tests, never a program file brought in through the freeze.
+        | policyNonBehavioural (workPolicy kind) && not (L.all ((== PathTests) . pathClassOf) paths) -> rejected (T.pack "test-path-not-test")
+        | otherwise -> baseline kind basis c entries [candidateRecord]
+  baseline kind basis c entries records = do
     runs <- traverse (baselineRun basis c) (candidateTests c)
     let
       missing = L.any programMissing runs
@@ -1264,13 +1271,11 @@ candidateStage runtime engine row =
                   existingFailed =
                     L.or [cls == GreenCandidateFailed && unchangedAtBasis entries t | (t, (cls, _, _)) <- L.zip (candidateTests c) classified]
                   classes = [cls | (cls, _, _) <- classified]
-                kind <- workKindOf runtime row
-                case kind of
-                  Left code -> pure (Left code)
-                  Right k
+                case () of
+                  _
                     | existingFailed -> settle runtime row RegressionFailed bodies id
                     -- C-P6.6 G5 b: a refactor or a documentation change keeps behaviour; its tests are all green.
-                    | policyTestFirst (workPolicy k) == GreenOnly -> settle runtime row (CandidateCharacterized classes) bodies id
+                    | policyTestFirst (workPolicy kind) == GreenOnly -> settle runtime row (CandidateCharacterized classes) bodies id
                     | otherwise -> settle runtime row (CandidateClassified classes) bodies id
   baselineRun basis c t = do
     ws <- workspaceAt engine row basis (testFiles c)
@@ -1777,9 +1782,10 @@ acceptStage runtime row = do
               behaviour <-
                 case kind of
                   Right k
+                    -- R-P6.6-1: judged from the basis, so nothing comes in through the freeze; the frozen tests are at test paths.
                     | policyNonBehavioural (workPolicy k) ->
-                        fmap (\(changed, _) -> if documentationOnly changed then Nothing else Just (T.pack "behaviour-in-documentation"))
-                          <$> changeScope (Store.txRowFolder row) (Just freeze) candidate
+                        fmap (\(changed, _) -> if L.all (\p -> pathClassOf p `L.elem` [PathDocs, PathTests]) changed then Nothing else Just (T.pack "behaviour-in-documentation"))
+                          <$> changeScope (Store.txRowFolder row) (Store.txRowBasis row) candidate
                   Right _ -> pure (Right Nothing)
                   Left code -> pure (Left code)
               moved <-

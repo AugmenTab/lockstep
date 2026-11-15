@@ -158,17 +158,21 @@ missingChecks k gates =
  where
   floorProfile = engineeringRaw {rawProfileId = T.pack "lockstep-floor-" <> workKindCode k, rawGates = kindFloor k}
 
-{- | G5 c: the class of a changed path, by its name, conservatively: only a
-documentation extension, or a well-known documentation name without one, is
-documentation.
+{- | G5 c (R-P6.6-2, R-P6.6-3): the class of a changed path, by its name,
+conservatively. Dependency pins, build files, instructions for model roles and
+agents, tests, and anything under a source folder come first; then only a
+documentation extension, or a documentation name without one (the whole
+name), is documentation.
 -}
 pathClassOf :: T.Text -> PathClass
 pathClassOf path
-  | name `L.elem` dependencyNames || extension == T.pack "lock" = PathDependencies
+  | name `L.elem` dependencyNames || extension == T.pack "lock" || pinned = PathDependencies
   | name `L.elem` buildNames || extension == T.pack "cabal" = PathBuild
+  | name `L.elem` agentNames || L.any (`L.elem` agentDirectories) directories = PathConfiguration
   | L.any (`L.elem` testDirectories) directories || T.pack "test_" `T.isPrefixOf` name || L.any (`T.isInfixOf` base) [T.pack "_test", T.pack "test."] = PathTests
+  | L.any (`L.elem` sourceDirectories) directories = PathSource
   | extension `L.elem` docExtensions = PathDocs
-  | T.null extension && L.any (`T.isPrefixOf` name) docNames = PathDocs
+  | T.null extension && name `L.elem` docNames = PathDocs
   | extension `L.elem` configExtensions = PathConfiguration
   | otherwise = PathSource
  where
@@ -189,6 +193,15 @@ pathClassOf path
   dependencyNames = fmap T.pack ["stack.yaml.lock", "package-lock.json", "yarn.lock", "cargo.lock", "poetry.lock", "requirements.txt", "go.sum", "gemfile.lock"]
   buildNames = fmap T.pack ["makefile", "dockerfile", "package.yaml", "stack.yaml", "cabal.project", "setup.py", "pyproject.toml", "build.gradle", "pom.xml", "cmakelists.txt"]
   testDirectories = fmap T.pack ["test", "tests", "spec"]
+  -- Pinned requirements and constraints, in a file or a folder of them.
+  pinned =
+    (L.any (`T.isPrefixOf` name) (fmap T.pack ["requirements", "constraints"]) && extension `L.elem` fmap T.pack ["txt", "in"])
+      || name == T.pack "runtime.txt"
+      || L.any (`L.elem` fmap T.pack ["requirements", "constraints"]) directories
+  -- Instructions later model roles or assistants read: never documentation.
+  agentNames = fmap T.pack ["claude.md", "agents.md", "gemini.md", "copilot-instructions.md", ".cursorrules", ".windsurfrules"]
+  agentDirectories = fmap T.pack [".claude", ".github", ".cursor"]
+  sourceDirectories = fmap T.pack ["src", "lib"]
   configExtensions = fmap T.pack ["yaml", "yml", "toml", "json", "ini", "cfg", "conf"]
 
 -- | Whether every path is documentation.

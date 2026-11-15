@@ -50,6 +50,7 @@ import Lockstep.Kernel.Profile
   , ResolutionInput (..)
   , contentDigestText
   , definitionId
+  , definitionVersion
   , effectiveDigest
   , effectiveGates
   , effectiveSources
@@ -399,13 +400,13 @@ registerEngineering = do
       | d == kernel -> do
           let
             digest = contentDigestText (refDigest (profileRef sha256Hasher d))
-          Store.insertProfile (Store.ProfileRow (definitionId d) 1 digest engineeringText)
+          Store.insertProfile (Store.ProfileRow (definitionId d) (fromIntegral (definitionVersion d)) digest engineeringText)
           _ <-
             Store.insertProfileDecision
               Store.NewProfileDecision
                 { Store.profileDecisionOperation = T.pack "profile-add"
                 , Store.profileDecisionProfile = Just engineeringProfileId
-                , Store.profileDecisionVersion = Just 1
+                , Store.profileDecisionVersion = Just (fromIntegral (definitionVersion d))
                 , Store.profileDecisionDigest = Just digest
                 , Store.profileDecisionEngineer = Nothing
                 , Store.profileDecisionRepository = Nothing

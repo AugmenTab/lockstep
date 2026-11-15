@@ -64,6 +64,8 @@ data DispatchView
   -- ^ Each other unit's key and waiting reason code, in the plan's order.
   , dispatchViewWords :: [(T.Text, T.Text)]
   -- ^ The same units' keys and their reasons in words.
+  , dispatchViewRefusal :: Maybe (T.Text, T.Text)
+  -- ^ The next unit whose last hand-over was refused, and the refusal's code (R-P6.6-8: the page's offer reads it).
   }
   deriving (Eq, Show)
 
@@ -283,11 +285,12 @@ dispatchView runtime rawProject =
             Just facts -> do
               let
                 decision = factsDecision facts
-              refused <-
+              refusal <-
                 case decisionNext decision of
                   Nothing -> pure Nothing
-                  Just k -> fmap (\r -> (k, RefusedHandOver (Dispatches.refusalCode r))) <$> Dispatches.latestRefusal (Plans.revisionRowId (factsRevision facts)) (unitKeyText k)
+                  Just k -> fmap (\r -> (k, Dispatches.refusalCode r)) <$> Dispatches.latestRefusal (Plans.revisionRowId (factsRevision facts)) (unitKeyText k)
               let
+                refused = fmap (\(k, code) -> (k, RefusedHandOver code)) refusal
                 ordinal k = maybe 0 unitFactOrdinal (L.find ((== k) . unitFactKey) (factsUnits facts))
                 waiting = L.sortOn (\(k, _) -> (ordinal k, k)) (maybe [] pure refused <> decisionWaiting decision)
               pure $
@@ -296,4 +299,5 @@ dispatchView runtime rawProject =
                     { dispatchViewNext = if isJust refused then Nothing else unitKeyText <$> decisionNext decision
                     , dispatchViewWaiting = [(unitKeyText k, waitReasonCode r) | (k, r) <- waiting]
                     , dispatchViewWords = [(unitKeyText k, waitReasonWords r) | (k, r) <- waiting]
+                    , dispatchViewRefusal = fmap (\(k, code) -> (unitKeyText k, code)) refusal
                     }

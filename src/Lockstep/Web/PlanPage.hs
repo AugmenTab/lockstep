@@ -53,10 +53,11 @@ planPage project name view next currentChecks notice =
   {- C-P6.6 G3: a plan in effect with work other than bug fixes needs checks for that work; Lockstep's
   engineering checks hold them (and every bug check). The choice stays the owner's, on the checks' own form. -}
   engineeringOffer =
-    case (currentChecks, planViewEffective view) of
-      (Just current, Just r)
+    case (currentChecks, next >>= dispatchViewRefusal) of
+      -- R-P6.6-8: offered only when the next unit was refused because this project's checks do not cover it.
+      (Just current, Just (_, code))
         | current /= "lockstep-engineering"
-        , L.any ((/= "bug-fix") . unitWorkKind) (planUnits (revisionDocument r)) ->
+        , code `L.elem` ["kind-checks-missing", "profile-checks-missing"] ->
             [ E.h2 [] [E.text "Checks for this plan's work"]
             , E.p [] [E.text "This plan has work other than bug fixes: new features, a new build, tidying or documentation. Lockstep hands that work over only when this project's checks cover it. Lockstep's engineering checks do, and keep every bug check."]
             , E.form
