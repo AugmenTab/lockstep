@@ -65,6 +65,8 @@ case "${1:-}" in
   capsule)
     # Phase 5: the Capsule Runtime's typed vocabulary (docs/architecture/dev-capsules.md §12).
     stack test lockstep:lockstep-capsule
+    # C-P6.10b: the host-boundary attestation, against a stand-in pfctl (model-free, no host rule).
+    scripts/lib/check-host-boundary
     ;;
 
   guard)

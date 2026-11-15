@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# Contract C-P6.10b: the host-boundary attestation (scripts/capsule/host-boundary), model-free. A stand-in
+# pfctl, first on PATH for these runs only, prints fixture output (rules present, absent, altered, pf
+# disabled, a command that fails); a stand-in sudo records any use. No host rule is read or changed.
+#
+#   scripts/lib/check-host-boundary
+set -uo pipefail
+cd "$(dirname "$0")/../.."
+root=$PWD
+hb=$root/scripts/capsule/host-boundary
+pf=$root/scripts/capsule-preflight
+work=$(mktemp -d "${TMPDIR:-/tmp}/lockstep-check-host-boundary.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+failures=0
+record() { printf '%s %s\n' "$1" "$2"; [ "$1" = PASS ] || failures=$((failures + 1)); }
+expect() { local d=$1; shift; if "$@" > /dev/null 2>&1; then record PASS "$d"; else record FAIL "$d"; fi; }
+digest() {
+  if command -v shasum > /dev/null 2>&1; then shasum -a 256 | cut -d ' ' -f 1
+  else sha256sum | cut -d ' ' -f 1
+  fi
+}
+
+[ -x "$hb" ] || { record FAIL "B0 scripts/capsule/host-boundary exists and is executable"; echo "check-host-boundary: $failures failure(s)"; exit 1; }
+
+me=$(id -un)
+anchor=com.lockstep.capsule
+
+# ---- fixtures: the anchor's rules as pfctl prints them
+cat > "$work/rules.txt" <<'EOF'
+pass out quick proto udp from any to <lockstep_dns> port = 53 user = 499
+pass out quick proto tcp from any to <lockstep_dns> port = 53 user = 499
+block return out quick proto tcp from any to (self) user = 499
+block return out quick proto udp from any to (self) user = 499
+block return out quick proto tcp from any to <lockstep_private> user = 499
+block return out quick proto udp from any to <lockstep_private> user = 499
+EOF
+want=$(digest < "$work/rules.txt")
+sed 's/block return out quick proto udp from any to (self)/pass out quick proto udp from any to (self)/' "$work/rules.txt" > "$work/rules-altered.txt"
+{ sed -n '3,6p' "$work/rules.txt"; sed -n '1,2p' "$work/rules.txt"; } > "$work/rules-reordered.txt"
+{ cat "$work/rules.txt"; echo 'pass out quick proto tcp from any to 192.168.1.197 port = 8320 user = 499'; } > "$work/rules-extra.txt"
+sed -n '1,5p' "$work/rules.txt" > "$work/rules-dropped.txt"
+{ echo; sed 's/$/   /' "$work/rules.txt"; echo; } > "$work/rules-blanks.txt"
+: > "$work/rules-empty.txt"
+printf 'Status: Enabled for 0 days 01:02:03           Debug: Urgent\n\nState Table                          Total             Rate\n' > "$work/info-enabled.txt"
+printf 'Status: Disabled                              Debug: Urgent\n' > "$work/info-disabled.txt"
+
+mkdir -p "$work/bin"
+cat > "$work/bin/pfctl" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "$LOCKSTEP_TEST_PFCTL_LOG"
+f=$LOCKSTEP_TEST_PFCTL_FIXTURES
+case "$LOCKSTEP_TEST_PFCTL:$*" in
+  info-denied:"-s info") echo "pfctl: /dev/pf: Permission denied" >&2; exit 1 ;;
+  disabled:"-s info") cat "$f/info-disabled.txt"; exit 0 ;;
+  *:"-s info") cat "$f/info-enabled.txt"; exit 0 ;;
+  rules-denied:"-a com.lockstep.capsule -s rules") echo "pfctl: /dev/pf: Permission denied" >&2; exit 1 ;;
+  *:"-a com.lockstep.capsule -s rules") cat "$f/rules-$LOCKSTEP_TEST_PFCTL.txt" 2>/dev/null || cat "$f/rules.txt"; exit 0 ;;
+esac
+echo "pfctl stand-in: unexpected arguments: $*" >&2
+exit 2
+EOF
+cat > "$work/bin/sudo" <<'EOF'
+#!/bin/sh
+printf 'sudo %s\n' "$*" >> "$LOCKSTEP_TEST_PFCTL_LOG"
+exit 1
+EOF
+chmod 755 "$work/bin/pfctl" "$work/bin/sudo"
+export LOCKSTEP_TEST_PFCTL_FIXTURES=$work
+export LOCKSTEP_TEST_PFCTL_LOG=$work/pfctl.log
+: > "$LOCKSTEP_TEST_PFCTL_LOG"
+
+# A helper state: capsule config naming a runtime state directory this user owns.
+st=$work/state
+mkdir -p "$st/capsule" "$work/cvm"
+chmod 700 "$st" "$st/capsule"
+printf 'lockstep-capsule 1\nruntime-state %s\ncapsule vmq1\nproject vmq-project\nverify-capsule vmv1\nlockstep-project 0b6f7d1e-2c4a-4e8b-9f10-3a5c7e9b1d24\n' "$work/cvm" > "$st/capsule/config"
+chmod 600 "$st/capsule/config"
+expectation() { # USER DIGEST [extra line]
+  { printf 'lockstep-host-boundary 1\nanchor %s\ncapsule-user %s\nrules-sha256 %s\n' "$anchor" "$1" "$2"; [ $# -lt 3 ] || printf '%s\n' "$3"; } > "$st/capsule/host-boundary"
+  chmod 600 "$st/capsule/host-boundary"
+}
+# run MODE [--unattended] > out; rc in $rc
+run() { local m=$1; shift; LOCKSTEP_TEST_PFCTL=$m PATH="$work/bin:$PATH" "$hb" --helper-state "$st" "$@" > "$work/out" 2>&1; rc=$?; }
+line() { grep -E '^(PASS|FAIL|WARN) host-boundary' "$work/out"; }
+refused() { # CODE: unattended FAIL exit 1, attended WARN exit 0, never PASS
+  local m=$1 code=$2 d=$3
+  run "$m" --unattended
+  expect "$d: unattended, FAIL $code and exit 1" bash -c "[ $rc = 1 ] && grep -q '^FAIL host-boundary: $code: ' '$work/out' && ! grep -q '^PASS' '$work/out'"
+  run "$m"
+  expect "$d: attended, WARN $code and exit 0" bash -c "[ $rc = 0 ] && grep -q '^WARN host-boundary: $code: ' '$work/out' && ! grep -q '^PASS' '$work/out'"
+}
+
+# ---- B1 the boundary as recorded
+expectation "$me" "$want"
+run ok --unattended
+expect "B1 the recorded rules, loaded and enabled, pass unattended (exit $rc)" bash -c "[ $rc = 0 ] && [ \"\$(grep -c -E '^(PASS|FAIL|WARN) ' '$work/out')\" = 1 ] && grep -qx 'PASS host-boundary' '$work/out'"
+expect "B1 the observed digest is printed for the owner to record" grep -qx "NOTE host-boundary rules-sha256 $want" "$work/out"
+run blanks --unattended
+expect "B2 trailing blanks and empty lines are not a difference" grep -qx 'PASS host-boundary' "$work/out"
+
+# ---- B3-B5 the expectation itself
+rm -f "$st/capsule/host-boundary"
+refused ok boundary-expected-missing "B3 no recorded boundary"
+expectation "$me" "$want"
+chmod 644 "$st/capsule/host-boundary"
+refused ok boundary-expected-not-private "B4 a recorded boundary others can read"
+expectation "$me" "$want"
+mv "$st/capsule/host-boundary" "$work/real-expectation"
+ln -s "$work/real-expectation" "$st/capsule/host-boundary"
+refused ok boundary-expected-not-private "B4 a recorded boundary that is a symbolic link"
+rm -f "$st/capsule/host-boundary"
+expectation "$me" "$want" "allow-all"
+refused ok boundary-expected-malformed "B5 a recorded boundary with an extra line"
+expectation "$me" "${want%?}"
+refused ok boundary-expected-malformed "B5 a recorded digest that is not 64 hex digits"
+expectation "$me" "$want"
+sed -i.bak '1s/.*/lockstep-host-boundary 2/' "$st/capsule/host-boundary"
+rm -f "$st/capsule/host-boundary.bak"
+refused ok boundary-expected-malformed "B5 another record version"
+expectation "$me" "$want"
+
+# ---- B6-B9 pf's state
+refused info-denied pf-unreadable "B6 pf's status cannot be read (permission denied)"
+refused rules-denied pf-unreadable "B6 the anchor's rules cannot be read"
+refused disabled pf-disabled "B7 pf is disabled"
+refused empty anchor-absent "B8 the anchor has no rules (flushed, or not loaded after a reboot)"
+refused altered anchor-altered "B9 a rule changed (block became pass)"
+refused reordered anchor-altered "B9 the rules reordered (quick rules: order is policy)"
+refused extra anchor-altered "B9 an extra pass rule for one LAN service"
+refused dropped anchor-altered "B9 a rule removed"
+
+# ---- B10 the capsules run as the boundary's user
+expectation _lockstep_capsule "$want"
+refused ok runtime-user-wrong "B10 the capsule runtime belongs to another user than the rules match"
+expectation "$me" "$want"
+
+# ---- B11 nothing falls back to the listener exception
+printf 'lockstep-lan-exception 1\n' > "$st/capsule/lan-exception"
+chmod 600 "$st/capsule/lan-exception"
+refused empty anchor-absent "B11 with a LAN exception present, an absent boundary is still refused"
+rm -f "$st/capsule/lan-exception"
+
+# ---- B12 read-only: only the two read commands, never sudo
+expect "B12 pfctl was asked only to show pf's status and the anchor's rules" bash -c "! grep -qvxE -- '-s info|-a $anchor -s rules' '$LOCKSTEP_TEST_PFCTL_LOG'"
+expect "B12 sudo was never used" bash -c "! grep -q '^sudo' '$LOCKSTEP_TEST_PFCTL_LOG'"
+
+# ---- B13 usage
+"$hb" > "$work/out" 2>&1
+expect "B13 without --helper-state: usage error (exit 64)" test $? = 64
+"$hb" --helper-state "$st" --everything > "$work/out" 2>&1
+expect "B13 an unknown option: usage error (exit 64)" test $? = 64
+
+# ---- B14 the preflight runs it, unattended when asked, and counts its FAIL
+expect "B14 capsule-preflight runs scripts/capsule/host-boundary" grep -q 'capsule/host-boundary' "$pf"
+expect "B14 capsule-preflight accepts --unattended" grep -qF -- '--unattended) unattended=yes' "$pf"
+expect "B14 and passes it on to the attestation" grep -qF 'unattended_arg=(--unattended)' "$pf"
+
+echo "check-host-boundary: $failures failure(s)"
+[ "$failures" = 0 ]

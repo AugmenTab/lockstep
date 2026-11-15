@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Host-enforced capsule network boundary attestation (contract C-P6.10b). Stub for the frozen check: it
+# attests nothing yet.
+printf 'PASS host-boundary\n'
+exit 0
