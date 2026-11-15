@@ -14,6 +14,7 @@ module Lockstep.Application.Dispatch
   , handOverUnit
   ) where
 
+import Data.Bifunctor (second)
 import Data.List qualified as L
 import Data.Maybe (catMaybes, isJust, listToMaybe)
 import Data.Text qualified as T
@@ -290,7 +291,7 @@ dispatchView runtime rawProject =
                   Nothing -> pure Nothing
                   Just k -> fmap (\r -> (k, Dispatches.refusalCode r)) <$> Dispatches.latestRefusal (Plans.revisionRowId (factsRevision facts)) (unitKeyText k)
               let
-                refused = fmap (\(k, code) -> (k, RefusedHandOver code)) refusal
+                refused = fmap (second RefusedHandOver) refusal
                 ordinal k = maybe 0 unitFactOrdinal (L.find ((== k) . unitFactKey) (factsUnits facts))
                 waiting = L.sortOn (\(k, _) -> (ordinal k, k)) (maybe [] pure refused <> decisionWaiting decision)
               pure $

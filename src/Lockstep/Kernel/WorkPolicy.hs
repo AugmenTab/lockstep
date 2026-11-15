@@ -195,7 +195,7 @@ pathClassOf path
   testDirectories = fmap T.pack ["test", "tests", "spec"]
   -- Pinned requirements and constraints, in a file or a folder of them.
   pinned =
-    (L.any (`T.isPrefixOf` name) (fmap T.pack ["requirements", "constraints"]) && extension `L.elem` fmap T.pack ["txt", "in"])
+    (L.any ((`T.isPrefixOf` name) . T.pack) ["requirements", "constraints"] && extension `L.elem` fmap T.pack ["txt", "in"])
       || name == T.pack "runtime.txt"
       || L.any (`L.elem` fmap T.pack ["requirements", "constraints"]) directories
   -- Instructions later model roles or assistants read: never documentation.
