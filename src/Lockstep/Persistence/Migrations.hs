@@ -968,4 +968,10 @@ ALTER TABLE lockstep_bug_admissions DROP CONSTRAINT lockstep_bug_admissions_task
 CREATE INDEX lockstep_bug_admissions_task ON lockstep_bug_admissions (task_id, id);
 |]
       )
+    ,
+      ( [Interpolate.i|R-P6.7-7: at most one invalidation per fix|]
+      , [Interpolate.i|
+CREATE UNIQUE INDEX lockstep_fix_invalidations_one ON lockstep_fix_invalidations (transaction_id);
+|]
+      )
     ]

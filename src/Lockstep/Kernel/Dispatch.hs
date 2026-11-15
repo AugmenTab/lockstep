@@ -186,7 +186,7 @@ waitReasonWords r =
     CanceledUnit -> T.pack "Canceled."
     NotLocal -> T.pack "Not handed over: it has effects outside this computer, which no plan may have yet."
     UnrecognisedState name -> T.pack "Lockstep cannot tell where this stands (" <> name <> T.pack ")."
-    StoppedUnit -> T.pack "Stopped: its fix was stopped, so Lockstep will not work on it again. Cancel its task, or change the plan; work that needs it waits."
+    StoppedUnit -> T.pack "Stopped: its fix was stopped, so Lockstep will not work on it again by itself. To redo it, hand it over again; or cancel its task, or change the plan. Work that needs it waits."
     RefusedHandOver code -> T.pack "Lockstep could not hand it over (" <> code <> T.pack "); it tries again on each pass."
     InvalidatedUnit -> T.pack "Its accepted fix no longer counts: something it was built on was rejected, or the plan changed. It must be redone: stop its fix if it has not stopped, then hand it over again."
 

@@ -79,6 +79,7 @@ import Lockstep.Kernel.WorkOrder (WorkOrderKind (Engineering))
 import Lockstep.Kernel.WorkPolicy (WorkPolicy (..), engineeringDefinition, engineeringRaw, kindClass, missingChecks, workPolicy)
 import Lockstep.Persistence.Execution qualified as Store
 import Lockstep.Persistence.Integrity (integrityViolation)
+import Lockstep.Persistence.Plans qualified as Plans
 import Lockstep.Persistence.Profiles qualified as Profiles
 import Lockstep.Persistence.Projects qualified as Projects
 import Lockstep.Persistence.Tasks qualified as Tasks
@@ -463,8 +464,31 @@ registerBugFix =
 
 -- | X6, in its order; a refusal writes nothing.
 admitBug :: DatabaseRuntime -> ProjectFolders -> IdempotencyKey -> T.Text -> Int -> IO (Either NotReadyReason (Either T.Text Admission))
-admitBug runtime folders key rawId expected =
-  fmap (fmap fst) <$> admitTask runtime folders personOptions key rawId expected
+admitBug runtime folders key rawId expected = do
+  {- R-P6.7-3: a rework keeps the kind its task was last handed over with, and the Profile its plan unit names;
+  a first hand-over by a person stays the plain C-P4.1 one (C-P6.4 M6: a plan-derived task is handed over like
+  any other). -}
+  previous <-
+    maybe
+      (pure (Right Nothing))
+      (\tid -> withDatabase runtime (curry Just <$> Store.findAdmissionByTask tid <*> effectiveUnitOf tid))
+      (parseIdentity rawId)
+  case previous of
+    Left reason -> pure (Left reason)
+    Right found -> fmap (fmap fst) <$> admitTask runtime folders (maybe personOptions reworkOptions found) key rawId expected
+ where
+  reworkOptions (latest, unit) =
+    case latest of
+      Nothing -> personOptions
+      Just a -> personOptions {admitKind = Store.admissionRowWorkKind a, admitProfile = Plans.unitRowProfile <$> unit}
+
+-- | The unit of the project's effective plan revision whose task this is, if any.
+effectiveUnitOf :: TaskId -> O.Orville (Maybe Plans.UnitRow)
+effectiveUnitOf tid = do
+  row <- Tasks.findTaskRow tid
+  effective <- maybe (pure Nothing) (Plans.effectiveRevision . Tasks.rowProjectId) row
+  units <- maybe (pure []) (Plans.revisionUnits . Plans.revisionRowId) effective
+  pure (L.find ((== tid) . Plans.unitRowTask) units)
 
 {- | Who hands a task over, and what else its hand-over checks and writes
 inside its transaction (C-P6.5 S4): a guard run after the locks, whose

@@ -30,6 +30,7 @@ module Lockstep.Application.Engine
   , projectStarted
   ) where
 
+import Control.Applicative ((<|>))
 import Control.Exception (IOException, onException, try)
 import Control.Monad (unless, (>=>))
 import Crypto.Hash (SHA256 (SHA256), hashWith)
@@ -104,6 +105,7 @@ import Lockstep.Kernel.Candidate (MutantRun (..), classifyTest, disposeFinding, 
 import Lockstep.Kernel.Dispatch (chooseBasis)
 import Lockstep.Kernel.GitBasis (Change (..), TreeEntry (..), TreeMode (..), protectedPathValid, treeModeText, treePathValid, workBranch)
 import Lockstep.Kernel.Identity (InvocationId (..), ProjectId (..), TaskId (..), TransactionId (..), WorkOrderId (..), identityText, parseIdentity)
+import Lockstep.Kernel.Invalidation (stopOnlyCodes)
 import Lockstep.Kernel.Plan (WorkKind)
 import Lockstep.Kernel.Profile (PathClass (PathDocs, PathTests))
 import Lockstep.Kernel.Roles
@@ -433,6 +435,14 @@ applyInput runtime txId revision principal input records change =
 -- | 'applyInput' with further writes made in the same database transaction once the input is applied.
 applyInputWith :: DatabaseRuntime -> TransactionId -> Int32 -> Principal -> TxInput -> [(RecordKind, Json)] -> (Store.TransactionRow -> Store.TransactionRow) -> O.Orville () -> IO (Either T.Text Store.TransactionRow)
 applyInputWith runtime txId revision principal input records change also =
+  applyInputGuarded runtime txId revision principal input records change also (pure Nothing)
+
+{- | 'applyInputWith' with a check made under the row lock before anything is
+applied: a refusal code from it is the step's refusal, and nothing is written
+(R-P6.7-1, R-P6.7-2: what was read before the lock may have changed since).
+-}
+applyInputGuarded :: DatabaseRuntime -> TransactionId -> Int32 -> Principal -> TxInput -> [(RecordKind, Json)] -> (Store.TransactionRow -> Store.TransactionRow) -> O.Orville () -> O.Orville (Maybe T.Text) -> IO (Either T.Text Store.TransactionRow)
+applyInputGuarded runtime txId revision principal input records change also guard =
   db runtime . O.withTransaction $ do
     locked <- Store.lockTransaction txId
     case locked of
@@ -440,9 +450,13 @@ applyInputWith runtime txId revision principal input records change also =
       Just row
         | Store.txRowRevision row /= revision -> pure (Left (T.pack "stale-step"))
         | otherwise -> do
-            applied <- applyLocked row principal input records change
-            traverse_ (const also) applied
-            pure applied
+            refused <- guard
+            case refused of
+              Just code -> pure (Left code)
+              Nothing -> do
+                applied <- applyLocked row principal input records change
+                traverse_ (const also) applied
+                pure applied
 
 {- | 'applyInput' on a row already locked at the right revision, inside the
 caller's database transaction. A refusal ('Left') writes nothing.
@@ -515,7 +529,12 @@ advanceRow runtime engine row =
     Running stage -> do
       settled <- settleUnfinished runtime row stage
       -- C-P6.7 V4: an invalidated fix runs no further stage; it halts here (after an unfinished run is settled).
-      cause <- db runtime (Right <$> invalidationOf (Store.txRowId row))
+      -- R-P6.7-5: so does one whose recorded bases no longer count, however that came about.
+      cause <-
+        db runtime . fmap Right $ do
+          invalid <- invalidationOf (Store.txRowId row)
+          stale <- staleBasis (Store.txRowId row)
+          pure (invalid <|> (if stale then Just (T.pack "basis-stale") else Nothing))
       case (settled, cause) of
         (Left code, _) -> pure (Left code)
         (Right (Just input), _) -> report input
@@ -633,19 +652,25 @@ decideCompletion runtime raw sender choice =
           Done -> refuse "closed"
           Stopped _ -> refuse "closed"
           Accepted -> do
-            invalid <- withDatabase runtime (invalidationOf txId)
             let
               body = record completionSchema (Completion choice (senderChannel sender) (senderEvidence sender))
-            case (invalid, input) of
-              (Left reason, _) -> pure (Left reason)
-              -- C-P6.7 V3: an acceptance that no longer counts cannot be the person's Done; Not done stays theirs.
-              (Right (Just _), HumanDone) -> refuse "acceptance-invalidated"
-              _ -> do
-                -- C-P6.7 V2: Not done rejects this fix; every fix built on it stops counting, in the same transaction.
-                applied <- applyInputWith runtime txId (Store.txRowRevision row) Human input [(RecordCompletion, body)] id (when (input == HumanStop) (rejectedIn txId))
-                case applied of
-                  Left code -> pure (Right (Left code))
-                  Right _ -> Right <$> db runtime (maybe (Left (T.pack "unknown-transaction")) Right <$> loadView txId)
+              -- C-P6.7 V3, R-P6.7-1, R-P6.7-9, under the row lock: an acceptance that no longer counts cannot be the
+              -- person's Done, nor one built on a fix that is not Done yet. Not done stays theirs.
+              doneGuard
+                | input == HumanDone = do
+                    invalid <- invalidationOf txId
+                    pending <- ancestorsNotDone txId
+                    pure $
+                      case (invalid, pending) of
+                        (Just _, _) -> Just (T.pack "acceptance-invalidated")
+                        (_, True) -> Just (T.pack "ancestor-not-done")
+                        _ -> Nothing
+                | otherwise = pure Nothing
+            -- C-P6.7 V2: Not done rejects this fix; every fix built on it stops counting, in the same transaction.
+            applied <- applyInputGuarded runtime txId (Store.txRowRevision row) Human input [(RecordCompletion, body)] id (when (input == HumanStop) (rejectedIn txId)) doneGuard
+            case applied of
+              Left code -> pure (Right (Left code))
+              Right _ -> Right <$> db runtime (maybe (Left (T.pack "unknown-transaction")) Right <$> loadView txId)
           Running _ -> refuse "illegal-input"
           Halted _ _ -> refuse "illegal-input"
 
@@ -1782,6 +1807,12 @@ acceptStage runtime row = do
     Right True -> settle runtime row (Invalidated (T.pack "basis-stale")) [] id
     Right False -> acceptChecked runtime row
 
+-- | R-P6.7-9: whether a fix this one was built on is not yet the person's Done.
+ancestorsNotDone :: TransactionId -> O.Orville Bool
+ancestorsNotDone tx = do
+  bases <- Dispatches.fixBasesOf tx
+  L.or <$> traverse (fmap ((/= Just Done) . fmap Store.txRowState) . Store.findTransaction . Dispatches.fixBaseAncestor) bases
+
 -- | Whether a recorded ancestor of the fix no longer counts (not accepted or done, or invalidated).
 staleBasis :: TransactionId -> O.Orville Bool
 staleBasis tx = do
@@ -1845,13 +1876,30 @@ acceptChecked runtime row = do
                   Right Nothing -> advanceBranch (T.unpack (Store.txRowFolder row)) branch freeze candidate
               case moved of
                 Left code -> settle runtime row (SupervisorFailed code) [] id
-                Right () ->
-                  settle
-                    runtime
-                    row
-                    CommitAccepted
-                    [(RecordAcceptance, record acceptanceSchema (AcceptanceRecord candidate branch freeze))]
-                    (\r -> r {Store.txRowAccepted = Just candidate})
+                Right () -> do
+                  -- R-P6.7-2: under the row lock, the fix and everything it was built on must still count.
+                  let
+                    stillValid = do
+                      invalid <- invalidationOf (Store.txRowId row)
+                      stale <- staleBasis (Store.txRowId row)
+                      pure (invalid <|> (if stale then Just (T.pack "basis-stale") else Nothing))
+                  accepted <-
+                    applyInputGuarded
+                      runtime
+                      (Store.txRowId row)
+                      (Store.txRowRevision row)
+                      Supervisor
+                      CommitAccepted
+                      [(RecordAcceptance, record acceptanceSchema (AcceptanceRecord candidate branch freeze))]
+                      (\r -> r {Store.txRowAccepted = Just candidate})
+                      (pure ())
+                      stillValid
+                  case accepted of
+                    Right _ -> pure (Right CommitAccepted)
+                    -- The work branch already points at the candidate; that ref stays, and the fix is not accepted.
+                    Left code
+                      | code `L.elem` stopOnlyCodes -> settle runtime row (Invalidated code) [] id
+                      | otherwise -> pure (Left code)
     _ -> settle runtime row (SupervisorFailed (T.pack "acceptance-inputs-missing")) [] id
 
 -- Halts (E3) ---------------------------------------------------------------------------

@@ -420,6 +420,9 @@ commit stays.
 To redo the work, stop the fix if it has not stopped, then hand its task over again. That is a new fix, which
 collects its evidence anew. Lockstep never hands a stopped unit over again by itself.
 
+Mark fixes Done in the order they were built: a fix built on another is not Done until that one is
+(`ancestor-not-done`).
+
 ### Questions about a stopped fix (C-P6.3)
 
 When a fix stops for your decision, **Decisions → Fixes waiting for your answer** lists it with its project, task,

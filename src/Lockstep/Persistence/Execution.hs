@@ -183,10 +183,10 @@ findAdmissionByWorkOrder :: O.MonadOrville m => WorkOrderId -> m (Maybe Admissio
 findAdmissionByWorkOrder workOrder =
   O.findFirstEntityBy admissionTable (O.where_ (O.fieldEquals admissionWorkOrderField workOrder))
 
--- | C-P6.2 R-P6.2 D5: every hand-over of a project, in one query.
+-- | C-P6.2 R-P6.2 D5: every hand-over of a project, in one query; newest first (R-P6.7-4: a task's latest counts).
 projectAdmissions :: O.MonadOrville m => ProjectId -> m [AdmissionRow]
 projectAdmissions project =
-  O.findEntitiesBy admissionTable (O.where_ (O.fieldEquals admissionProjectField project))
+  O.findEntitiesBy admissionTable (O.where_ (O.fieldEquals admissionProjectField project) <> O.orderBy (O.orderByField admissionIdField O.descendingOrder))
 
 findAdmissionByKey :: O.MonadOrville m => T.Text -> m (Maybe AdmissionRow)
 findAdmissionByKey key =

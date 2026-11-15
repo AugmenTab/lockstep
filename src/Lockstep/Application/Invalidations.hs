@@ -19,15 +19,20 @@ import Orville.PostgreSQL qualified as O
 import Lockstep.Kernel.Identity (PlanRevisionId, TransactionId)
 import Lockstep.Kernel.Invalidation (InvalidationCause (..), descendantsOf, invalidationCode)
 import Lockstep.Persistence.Dispatch qualified as Store
+import Lockstep.Persistence.Transactions qualified as Transactions
 
 -- | The code of a fix's first invalidation, if it has one.
 invalidationOf :: TransactionId -> O.Orville (Maybe T.Text)
 invalidationOf tx =
   fmap Store.invalidationCodeOf . listToMaybe <$> Store.invalidationsOf tx
 
--- | Records one invalidation unless the fix already has one; whether it was recorded.
+{- | Records one invalidation unless the fix already has one; whether it was
+recorded. R-P6.7-1: under the fix's row lock, so it serializes with any step of
+that fix, the person's Done among them.
+-}
 recordOnce :: Store.InvalidationRow -> O.Orville Bool
 recordOnce row = do
+  _ <- Transactions.lockTransaction (Store.invalidationTransaction row)
   existing <- invalidationOf (Store.invalidationTransaction row)
   case existing of
     Just _ -> pure False
