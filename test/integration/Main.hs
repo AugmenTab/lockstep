@@ -73,6 +73,7 @@ import Lockstep.PlanReviewTest qualified as PlanReviewTest
 import Lockstep.PlanTest qualified as PlanTest
 import Lockstep.ProcessRunnerTest qualified as ProcessRunnerTest
 import Lockstep.ProcessTest qualified as ProcessTest
+import Lockstep.ProfileParityTest qualified as ProfileParityTest
 import Lockstep.ProfileRegistryTest qualified as ProfileRegistryTest
 import Lockstep.ProgressPageTest qualified as ProgressPageTest
 import Lockstep.ProjectChecksBrowserTest qualified as ProjectChecksBrowserTest
@@ -195,4 +196,5 @@ main =
       , PlanReviewTest.tests
       , DispatchTest.tests
       , DispatchReviewTest.tests
+      , ProfileParityTest.tests
       ]

@@ -497,6 +497,8 @@ data TxInput
   | -- | S2: the discovery gave no reproduction command; nothing ran, nothing was reproduced
     ReproductionOmitted
   | CandidateClassified [BaselineClass]
+  | -- | C-P6.6 G5: a green-only kind's candidate tests, as classified at the basis
+    CandidateCharacterized [BaselineClass]
   | CandidateRejected T.Text
   | RegressionFailed
   | ChallengeDisposed [Disposition]
@@ -533,6 +535,7 @@ txInputName input =
       NotReproduced -> "not-reproduced"
       ReproductionOmitted -> "reproduction-omitted"
       CandidateClassified _ -> "candidate-classified"
+      CandidateCharacterized _ -> "candidate-characterized"
       CandidateRejected _ -> "candidate-rejected"
       RegressionFailed -> "regression-failed"
       ChallengeDisposed _ -> "challenge-disposed"
