@@ -8,6 +8,9 @@ module Lockstep.Persistence.Dispatch
   , FixBaseRow (..)
   , insertFixBase
   , fixBasesOf
+  , RefusalRow (..)
+  , insertRefusal
+  , latestRefusal
   ) where
 
 import Data.Text qualified as T
@@ -70,3 +73,41 @@ insertFixBase =
 fixBasesOf :: O.MonadOrville m => TransactionId -> m [FixBaseRow]
 fixBasesOf tx =
   O.findEntitiesBy fixBaseTable (O.where_ (O.fieldEquals fixBaseTransactionField tx))
+
+-- | R-P6.5-6: a refused hand-over of a unit of a revision, and its code.
+data RefusalRow
+  = RefusalRow
+  { refusalRevision :: PlanRevisionId
+  , refusalUnit :: T.Text
+  , refusalCode :: T.Text
+  }
+  deriving (Eq, Show)
+
+refusalTable :: O.TableDefinition O.NoKey RefusalRow RefusalRow
+refusalTable =
+  O.mkTableDefinitionWithoutKey "lockstep_plan_dispatch_refusals" $
+    RefusalRow
+      <$> O.marshallField refusalRevision refusalRevisionField
+      <*> O.marshallField refusalUnit refusalUnitField
+      <*> O.marshallField refusalCode (O.unboundedTextField "code")
+
+refusalRevisionField :: O.FieldDefinition O.NotNull PlanRevisionId
+refusalRevisionField =
+  keyField "revision_id"
+
+refusalUnitField :: O.FieldDefinition O.NotNull T.Text
+refusalUnitField =
+  O.unboundedTextField "unit_key"
+
+insertRefusal :: O.MonadOrville m => RefusalRow -> m ()
+insertRefusal =
+  O.insertEntity refusalTable
+
+-- | The last refusal recorded for a unit of a revision.
+latestRefusal :: O.MonadOrville m => PlanRevisionId -> T.Text -> m (Maybe RefusalRow)
+latestRefusal revision unit =
+  O.findFirstEntityBy
+    refusalTable
+    ( O.where_ (O.fieldEquals refusalRevisionField revision `O.andExpr` O.fieldEquals refusalUnitField unit)
+        <> O.orderBy (O.orderByField (O.bigIntegerField "id") O.descendingOrder)
+    )

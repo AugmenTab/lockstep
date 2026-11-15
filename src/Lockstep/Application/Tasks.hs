@@ -20,13 +20,13 @@ module Lockstep.Application.Tasks
   , findTaskIn
   , findTaskWithProjectIn
   , fixFactOf
-  , acceptedBases
+  , basisCandidates
   , mostImportantReadyTask
   , requestDigest
   ) where
 
 import Data.List qualified as L
-import Data.Maybe (fromMaybe)
+import Data.Maybe (catMaybes, fromMaybe)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
@@ -41,7 +41,7 @@ import Lockstep.Application.Profiles (sha256Hasher)
 import Lockstep.Kernel.Dispatch (FixFact (..), PrerequisiteFact (..), prerequisiteSatisfied, readinessWith)
 import Lockstep.Kernel.Evidence (mkHumanSignoff)
 import Lockstep.Kernel.Identity (ProjectId (..), TaskId (..), TicketId (..), TransactionId, identityText, parseIdentity)
-import Lockstep.Kernel.Plan (EdgeKind, parseEdgeKind)
+import Lockstep.Kernel.Plan (EdgeKind (Technical), parseEdgeKind)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
 import Lockstep.Kernel.Task
   ( Priority
@@ -198,13 +198,16 @@ planLinks project = do
               ]
           }
 
--- | A task's prerequisites as S1 reads them, each with its fix's transaction.
-prerequisitesOf :: Store.TaskRow -> O.Orville (Either T.Text [(PrerequisiteFact, Maybe Transactions.TransactionRow)])
-prerequisitesOf row = do
+-- | The plan links a task's prerequisites need: none to read for a task without dependencies.
+linksFor :: Store.TaskRow -> [TaskId] -> O.Orville PlanLinks
+linksFor row deps =
+  if L.null deps then pure (PlanLinks [] []) else planLinks (Store.rowProjectId row)
+
+-- | A task's prerequisites (its dependencies, given) as S1 reads them, each with its fix's transaction.
+prerequisitesOf :: PlanLinks -> Store.TaskRow -> [TaskId] -> O.Orville (Either T.Text [(PrerequisiteFact, Maybe Transactions.TransactionRow)])
+prerequisitesOf links row deps = do
   let
     tid = Store.rowTaskId row
-  deps <- Store.dependenciesOf tid
-  links <- if L.null deps then pure (PlanLinks [] []) else planLinks (Store.rowProjectId row)
   facts <-
     traverse
       ( \d -> do
@@ -228,35 +231,50 @@ prerequisitesOf row = do
       deps
   pure (sequenceA facts)
 
-{- | C-P6.5 S8: the prerequisites of a task satisfied by a technical acceptance
-alone (not by a done Ticket or the person's Done): each one's transaction and
-accepted commit.
+{- | C-P6.5 S8 (R-P6.5-1): what a fix of the task is built on, read when its
+basis stage runs. Every prerequisite must still be satisfied (S1), else
+@prerequisite-unsatisfied@. The candidates are the prerequisites reached by a
+technical plan edge whose fix has an accepted commit (accepted, or marked Done
+since): each one's transaction and commit. An accepted or Done fix without its
+commit is stored state that does not hold, never "no candidate". The outer
+'Left' is a Ticket that does not replay.
 -}
-acceptedBases :: TaskId -> O.Orville (Either T.Text [(TransactionId, T.Text)])
-acceptedBases tid = do
+basisCandidates :: TaskId -> O.Orville (Either T.Text (Either T.Text [(TransactionId, T.Text)]))
+basisCandidates tid = do
   found <- Store.findTaskRow tid
   case found of
-    Nothing -> pure (Right [])
-    Just row ->
-      fmap
-        ( \ps ->
-            [ (Transactions.txRowId tx, commit)
-            | (p, Just tx) <- ps
-            , prerequisiteSatisfied p
-            , prerequisiteTicketState p /= T.pack "done"
-            , prerequisiteFix p == FixAccepted
-            , Just commit <- [Transactions.txRowAccepted tx]
-            ]
-        )
-        <$> prerequisitesOf row
+    Nothing -> pure (Right (Right []))
+    Just row -> do
+      deps <- Store.dependenciesOf tid
+      links <- linksFor row deps
+      prerequisites <- prerequisitesOf links row deps
+      case prerequisites of
+        Left code -> pure (Left code)
+        Right ps
+          | not (L.all (\(p, _) -> prerequisiteTicketState p /= T.pack "canceled" && prerequisiteSatisfied p) ps) ->
+              pure (Right (refuse "prerequisite-unsatisfied"))
+          | otherwise -> Right . Right . catMaybes <$> traverse candidate ps
+ where
+  candidate (p, tx)
+    | prerequisiteEdge p == Just Technical && prerequisiteFix p `L.elem` [FixAccepted, FixDone] =
+        case tx >>= \t -> (,) (Transactions.txRowId t) <$> Transactions.txRowAccepted t of
+          Just c -> pure (Just c)
+          Nothing -> integrityViolation "an accepted fix has no accepted commit"
+    | otherwise = pure Nothing
 
 -- | The view of a stored task: its row, its Ticket's facts and its prerequisites' facts (C-P6.5 S1).
 loadView :: Store.TaskRow -> O.Orville (Either T.Text TaskView)
 loadView row = do
+  deps <- Store.dependenciesOf (Store.rowTaskId row)
+  links <- linksFor row deps
+  loadViewWith links row deps
+
+-- | 'loadView' with the project's plan links already read (R-P6.5-12: a listing reads them once per project).
+loadViewWith :: PlanLinks -> Store.TaskRow -> [TaskId] -> O.Orville (Either T.Text TaskView)
+loadViewWith links row deps = do
   facts <- ticketFactsIn (taskTicket (Store.rowTaskId row))
   own <- ledgerStep facts
-  prerequisites <- prerequisitesOf row
-  deps <- Store.dependenciesOf (Store.rowTaskId row)
+  prerequisites <- prerequisitesOf links row deps
   pure $ do
     (state, reason, revision, _) <- own
     prerequisiteFacts <- fmap fst <$> prerequisites
@@ -449,13 +467,22 @@ violation (reported as corrupt data with its code), never shown wrongly and
 never silently left out.
 -}
 views :: [Store.TaskRow] -> O.Orville [TaskView]
-views =
-  traverse replayed
+views rows = do
+  withDeps <- traverse (\r -> (,) r <$> Store.dependenciesOf (Store.rowTaskId r)) rows
+  -- R-P6.5-12: each project's plan links once, for the projects whose listed tasks have dependencies.
+  links <- traverse (\p -> (,) p <$> planLinks p) (L.nub [Store.rowProjectId r | (r, deps) <- withDeps, not (L.null deps)])
+  traverse
+    (\(r, deps) -> loadViewWith (fromMaybe (PlanLinks [] []) (L.lookup (Store.rowProjectId r) links)) r deps >>= orViolation r)
+    withDeps
 
 -- | One row's view; a Ticket that does not replay aborts the read.
 replayed :: Store.TaskRow -> O.Orville TaskView
 replayed row =
-  loadView row >>= either (\code -> integrityViolation ("task " <> T.unpack (identityText (Store.rowTaskId row)) <> " does not replay: " <> T.unpack code)) pure
+  loadView row >>= orViolation row
+
+orViolation :: Store.TaskRow -> Either T.Text TaskView -> O.Orville TaskView
+orViolation row =
+  either (\code -> integrityViolation ("task " <> T.unpack (identityText (Store.rowTaskId row)) <> " does not replay: " <> T.unpack code)) pure
 
 findTask :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe TaskView))
 findTask runtime rawId =

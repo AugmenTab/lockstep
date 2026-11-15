@@ -141,6 +141,10 @@ data WaitReason
   | CanceledUnit
   | NotLocal
   | UnrecognisedState T.Text
+  | -- | R-P6.5-5: its fix was stopped; it is never handed over again.
+    StoppedUnit
+  | -- | R-P6.5-6: its hand-over was refused, with the refusal's code; it is tried again on each pass.
+    RefusedHandOver T.Text
   deriving (Eq, Show)
 
 waitReasonCode :: WaitReason -> T.Text
@@ -160,6 +164,8 @@ waitReasonCode r =
       CanceledUnit -> "canceled"
       NotLocal -> "not-local"
       UnrecognisedState _ -> "unknown"
+      StoppedUnit -> "stopped"
+      RefusedHandOver _ -> "refused"
 
 waitReasonWords :: WaitReason -> T.Text
 waitReasonWords r =
@@ -177,6 +183,8 @@ waitReasonWords r =
     CanceledUnit -> T.pack "Canceled."
     NotLocal -> T.pack "Not handed over: it has effects outside this computer, which no plan may have yet."
     UnrecognisedState name -> T.pack "Lockstep cannot tell where this stands (" <> name <> T.pack ")."
+    StoppedUnit -> T.pack "Stopped: its fix was stopped, so Lockstep will not work on it again. Cancel its task, or change the plan; work that needs it waits."
+    RefusedHandOver code -> T.pack "Lockstep could not hand it over (" <> code <> T.pack "); it tries again on each pass."
 
 data DispatchDecision
   = DispatchDecision
@@ -202,6 +210,7 @@ dispatchDecision project units =
   own u =
     case (unitFactHandedOver u, unitFactReadiness u) of
       (Just FixDone, _) -> Just FinishedUnit
+      (Just FixStopped, _) -> Just StoppedUnit
       (Just _, _) -> Just HandedOver
       (Nothing, ReadyToWork) -> Nothing
       (Nothing, NotYetReady) -> Just NotYetAccepted

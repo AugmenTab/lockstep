@@ -90,7 +90,7 @@ import Lockstep.Application.EngineRecords
 import Lockstep.Application.EngineRecords qualified as Records
 import Lockstep.Application.Identity (newIdentity)
 import Lockstep.Application.Repositories (ownershipHolds)
-import Lockstep.Application.Tasks (TaskView (..), acceptedBases, findTaskIn)
+import Lockstep.Application.Tasks (TaskView (..), basisCandidates, findTaskIn)
 import Lockstep.Effects.GitSupervisor (Basis (..), CommitMeta (..), advanceBranch, branchHead, commitBasis, commitChanges, commitTime, createWorkBranch, isAncestor, observeBasis, snapshotChanges, treeEntries, writeSnapshot)
 import Lockstep.Effects.Process (RunResult (..))
 import Lockstep.Effects.Roles (Adapter (..), Runner (..), RunnerFailure (..), Workspace (..), decodeAnswer, prepareRole, readAnswer, runPrepared)
@@ -424,13 +424,21 @@ started from (@stale-step@ otherwise), with its records; a halt adds a
 -}
 applyInput :: DatabaseRuntime -> TransactionId -> Int32 -> Principal -> TxInput -> [(RecordKind, Json)] -> (Store.TransactionRow -> Store.TransactionRow) -> IO (Either T.Text Store.TransactionRow)
 applyInput runtime txId revision principal input records change =
+  applyInputWith runtime txId revision principal input records change (pure ())
+
+-- | 'applyInput' with further writes made in the same database transaction once the input is applied.
+applyInputWith :: DatabaseRuntime -> TransactionId -> Int32 -> Principal -> TxInput -> [(RecordKind, Json)] -> (Store.TransactionRow -> Store.TransactionRow) -> O.Orville () -> IO (Either T.Text Store.TransactionRow)
+applyInputWith runtime txId revision principal input records change also =
   db runtime . O.withTransaction $ do
     locked <- Store.lockTransaction txId
     case locked of
       Nothing -> pure (Left (T.pack "unknown-transaction"))
       Just row
         | Store.txRowRevision row /= revision -> pure (Left (T.pack "stale-step"))
-        | otherwise -> applyLocked row principal input records change
+        | otherwise -> do
+            applied <- applyLocked row principal input records change
+            traverse_ (const also) applied
+            pure applied
 
 {- | 'applyInput' on a row already locked at the right revision, inside the
 caller's database transaction. A refusal ('Left') writes nothing.
@@ -697,10 +705,12 @@ settle runtime row input records change =
 
 {- | E5: the Engineer still owns the repository (C-P4.1), its main worktree is
 clean and @HEAD@ is a commit; that commit is the basis, and the Work Order's
-branch is created at it. C-P6.5 S8: a fix whose prerequisites are satisfied by
-technical acceptances alone is built on the accepted commit that contains the
-others (@basis-ambiguous@ if none does), whatever the checkout holds, and
-records the acceptances it builds on.
+branch is created at it. C-P6.5 S8 (R-P6.5-1): every prerequisite must still be
+satisfied (@prerequisite-unsatisfied@ otherwise); a fix with prerequisites
+reached by technical plan edges whose fixes have accepted commits is built on
+the one of those commits that contains the others (@basis-ambiguous@ if none
+does), whatever the checkout holds, and records them in the same database
+transaction as its basis.
 -}
 basisStage :: DatabaseRuntime -> Store.TransactionRow -> IO (Either T.Text TxInput)
 basisStage runtime row = do
@@ -714,11 +724,13 @@ basisStage runtime row = do
     Left code -> pure (Left code)
     Right (Left code) -> refuse code
     Right (Right ()) -> do
-      inherited <- db runtime (acceptedBases (Store.txRowTask row))
+      inherited <- db runtime (basisCandidates (Store.txRowTask row))
       case inherited of
         Left code -> pure (Left code)
-        Right [] -> observeBasis folder >>= either refuse (begin [])
-        Right bases -> do
+        -- R-P6.5-1: a prerequisite that no longer holds (its fix marked Not done, say) stops this fix here.
+        Right (Left code) -> refuse code
+        Right (Right []) -> observeBasis folder >>= either refuse (begin [])
+        Right (Right bases) -> do
           -- C-P6.5 S8: built on the accepted commit that contains every other accepted prerequisite.
           let
             commits = L.nub (fmap snd bases)
@@ -739,28 +751,22 @@ basisStage runtime row = do
     made <- createWorkBranch folder branch (basisCommit basis)
     case made of
       Left code -> refuse code
-      Right () -> do
-        -- Each accepted fix this one builds on, recorded once (a retried stage finds them recorded).
-        provenance <-
-          db runtime $ do
-            recorded <- fmap Dispatches.fixBaseAncestor <$> Dispatches.fixBasesOf (Store.txRowId row)
-            traverse_
-              (\(ancestor, commit) -> Dispatches.insertFixBase (Dispatches.FixBaseRow (Store.txRowId row) ancestor commit))
-              [b | b@(ancestor, _) <- bases, ancestor `L.notElem` recorded]
-            pure (Right ())
-        case provenance of
-          Left code -> pure (Left code)
-          Right () ->
-            settle
-              runtime
-              row
-              BasisReady
-              [
-                ( RecordBasis
-                , record basisSchema (BasisRecord (basisCommit basis) (basisTree basis) branch)
-                )
-              ]
-              (\r -> r {Store.txRowBasis = Just (basisCommit basis), Store.txRowBranch = Just branch})
+      Right () ->
+        -- R-P6.5-10: each accepted fix this one builds on is recorded in the same database transaction as the basis.
+        (BasisReady <$)
+          <$> applyInputWith
+            runtime
+            (Store.txRowId row)
+            (Store.txRowRevision row)
+            Supervisor
+            BasisReady
+            [
+              ( RecordBasis
+              , record basisSchema (BasisRecord (basisCommit basis) (basisTree basis) branch)
+              )
+            ]
+            (\r -> r {Store.txRowBasis = Just (basisCommit basis), Store.txRowBranch = Just branch})
+            (traverse_ (\(ancestor, commit) -> Dispatches.insertFixBase (Dispatches.FixBaseRow (Store.txRowId row) ancestor commit)) bases)
 
 -- Workspaces ---------------------------------------------------------------------------
 

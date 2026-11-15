@@ -387,7 +387,10 @@ dependent fix starts from that accepted commit (not from your checkout) and reco
 several fixes it needs do not contain each other, it stops at its basis (`basis-ambiguous`) and asks you. One
 project works on one thing at a time; a fix waiting for your decision holds only its own project. A plan with a
 token budget waits (`usage-unknown`): Lockstep does not record usage yet, so it never assumes the budget allows
-more. The Plan page's **What runs next** shows the next unit and why each other one waits. Lockstep never marks
+more. The Plan page's **What runs next** shows the next unit and why each other one waits: a unit whose fix you
+stopped is *stopped* (cancel its task or change the plan), and a hand-over Lockstep could not make is *refused*
+with its reason (it tries again on each pass). If a fix it needs is marked Not done before a dependent fix starts,
+the dependent stops at its basis (`prerequisite-unsatisfied`). Lockstep never marks
 anything Done, pushes or merges. A task whose fix is handed over, running, waiting for you, or checked and waiting
 for your Done cannot be canceled (`fix-active`): stop the fix first (its Stop choice), then cancel the task.
 

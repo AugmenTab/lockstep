@@ -926,4 +926,20 @@ CREATE TRIGGER lockstep_fix_bases_immutable BEFORE UPDATE OR DELETE ON lockstep_
 CREATE TRIGGER lockstep_fix_bases_no_truncate BEFORE TRUNCATE ON lockstep_fix_bases FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
 |]
       )
+    ,
+      ( [Interpolate.i|R-P6.5-6: the scheduler's refused hand-overs, each recorded when it differs from the last for its unit|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_plan_dispatch_refusals (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  revision_id uuid NOT NULL REFERENCES lockstep_plan_decisions (revision_id),
+  unit_key text NOT NULL,
+  code text NOT NULL CHECK (char_length(code) BETWEEN 1 AND 200),
+  recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  FOREIGN KEY (revision_id, unit_key) REFERENCES lockstep_plan_units (revision_id, unit_key)
+);
+CREATE INDEX lockstep_plan_dispatch_refusals_unit ON lockstep_plan_dispatch_refusals (revision_id, unit_key, id);
+CREATE TRIGGER lockstep_plan_dispatch_refusals_immutable BEFORE UPDATE OR DELETE ON lockstep_plan_dispatch_refusals FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_plan_dispatch_refusals_no_truncate BEFORE TRUNCATE ON lockstep_plan_dispatch_refusals FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+|]
+      )
     ]
