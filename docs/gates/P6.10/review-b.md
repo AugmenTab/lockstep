@@ -44,4 +44,9 @@ BLOCKED until D6-SEC and P6.10c), but P6.10c must extend the attestation before 
 
 ## After remediation
 
-(filled after the remediation and the full check)
+- Remediation `6b0a6c6`: `check-host-boundary` 42/42, `check-host-boundary-review` 9/9.
+- Full check of `6b0a6c6` (`scripts/check --integration`): all passed: format, lint and static checks (both checks
+  above), build, unit (1078), no-live-model guard, integration + backup/restore (699). Log:
+  `.local/evals/phase-06/p610br-full-check.log`.
+- C-P6.10b is locally qualified as a nonprivileged safeguard; R-P6.10b-2, -3, -4 and -6 are open for P6.10c (they
+  need the owner's D6-SEC grant and an amendment of the frozen check). Owner acceptance is pending.
