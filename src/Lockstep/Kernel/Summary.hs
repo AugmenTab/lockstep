@@ -146,6 +146,8 @@ data ItemFacts
 categoryOf :: ItemFacts -> Category
 categoryOf item =
   case itemFix item of
+    -- R-P6.8-10: a canceled task is canceled, whatever its fix.
+    _ | itemReadiness item == TaskCanceled -> CategoryCanceled
     Just f
       | state == "done" -> CategoryDone
       | state == "stopped" -> CategoryStopped
@@ -159,12 +161,12 @@ categoryOf item =
       state = T.unpack (fixState f)
     Nothing ->
       case itemReadiness item of
-        TaskCanceled -> CategoryCanceled
         Finished -> CategoryDone
         ReadyToWork -> CategoryEligible
-        _
-          | itemPlanned item -> CategoryPlanned
-          | otherwise -> CategoryWaiting
+        -- R-P6.8-10: planned only while merely not ready yet; blocked, unstartable or unknown is waiting.
+        NotYetReady | itemPlanned item -> CategoryPlanned
+        WaitingFor _ | itemPlanned item -> CategoryPlanned
+        _ -> CategoryWaiting
 
 data Intervention
   = NecessaryIntervention

@@ -107,6 +107,10 @@ progressPageWith view summary =
                       <> " role runs reported nothing, so these totals leave them out. Lockstep shows no money: these are subscription tokens."
                   )
               ]
+      -- R-P6.8-11: role runs counted, none of which reported its tokens.
+      Just s
+        | summaryRuns s > 0 ->
+            E.p [A.id (elementId 'u' "sage")] [E.text ("Model usage: not reported. None of the " <> T.pack (show (summaryRuns s)) <> " role runs reported the tokens it used, so no figure is shown, and none is guessed.")]
       _ -> E.p [] [E.text "Model usage: not recorded. Lockstep does not yet record the tokens its helpers use for each project, so no figure is shown."]
   -- C-P6.8: what happened, task by task, from the records, with the evidence each line rests on.
   evidenceSection s =
@@ -131,16 +135,20 @@ progressPageWith view summary =
                             <> ". Evidence: "
                         )
                     ]
-                      <> L.intersperse (E.text ", ") [E.code [] [E.text (evidenceText e)] | e <- summaryEvidence i]
+                      <> L.intersperse (E.text ", ") [E.code [] [E.text (evidenceText i e)] | e <- summaryEvidence i]
                       <> [E.text (if L.null (summaryEvidence i) then "none recorded." else ".")]
                   )
               | i <- summaryItems s
               ]
-          , E.h3 [] [E.text "Your interventions"]
+          , E.h3 [] [E.text "Decisions waiting for you"]
           ]
+            <> case summaryPending s of
+              [] -> [E.p [] [E.text "None."]]
+              ps -> [E.ul [A.id (elementId 'p' "ending")] [E.li [] [E.text (title <> ": "), E.code [] [E.text (plainEvidence e)]] | (title, e) <- ps]]
+            <> [E.h3 [] [E.text "Your interventions"]]
             <> case summaryInterventions s of
               [] -> [E.p [] [E.text "None recorded."]]
-              xs -> [E.ul [] [E.li [attr "data-intervention" (interventionCode (interventionKind x))] [E.text (interventionTask x <> ": " <> interventionWhat x <> " (" <> interventionCode (interventionKind x) <> "), "), E.code [] [E.text (evidenceText (interventionEvidence x))]] | x <- xs]]
+              xs -> [E.ul [] [E.li [attr "data-intervention" (interventionCode (interventionKind x))] [E.text (interventionTask x <> ": " <> interventionWhat x <> " (" <> interventionCode (interventionKind x) <> "), "), E.code [] [E.text (plainEvidence (interventionEvidence x))]] | x <- xs]]
             <> [ E.p
                    [cls "ls-muted"]
                    [E.text ("Made for the plan revision " <> fromMaybe "none (no approved plan)" (summaryRevision s) <> ", from the records as they are now.")]
@@ -149,7 +157,15 @@ progressPageWith view summary =
     ]
   taskLinkText t =
     maybe (progressLink (progressProject view)) taskLink (parseIdentity t)
-  evidenceText e =
+  -- R-P6.8-12: each record says what it is.
+  evidenceText i e =
+    case e of
+      OfRecord t n
+        | Just n == summaryChecksRecord i -> "verification record " <> T.pack (show n) <> " of fix " <> t
+        | Just n == summaryReviewRecord i -> "review record " <> T.pack (show n) <> " of fix " <> t
+        | Just n == summaryHaltRecord i -> "halt record " <> T.pack (show n) <> " of fix " <> t
+      _ -> plainEvidence e
+  plainEvidence e =
     case e of
       OfFix t -> "fix " <> t
       OfRecord t n -> "record " <> T.pack (show n) <> " of fix " <> t

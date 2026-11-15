@@ -1,9 +1,9 @@
 {- | A project's evidence-linked summary (contract C-P6.8): every task in one
-category, its fix's verification and review as recorded, the evidence each
-claim rests on, the decisions waiting for a person, the interventions people
-made, the usage helpers reported, and the plan revision it describes. Read
-from the canonical rows in one database transaction; it writes nothing, and no
-agent text decides anything in it.
+category, its fix's verification and review as recorded for its current
+candidate, the evidence each claim rests on, the decisions waiting for a
+person, the interventions people made, the usage helpers reported, and the
+plan revision it describes. The fixes are read in one database transaction;
+it writes nothing, and no agent text decides anything in it.
 -}
 module Lockstep.Application.Summary
   ( SummaryItem (..)
@@ -14,7 +14,7 @@ module Lockstep.Application.Summary
   ) where
 
 import Data.List qualified as L
-import Data.Maybe (fromMaybe, isJust, listToMaybe, mapMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe, mapMaybe)
 import Data.Text qualified as T
 import Fleece.Core ((#+))
 import Fleece.Core qualified as FC
@@ -25,12 +25,13 @@ import Text.Show (Show)
 import Lockstep.Application.Conversation (StoredRequest (..), openRequests)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), checkReadiness, withDatabase)
 import Lockstep.Application.Dispatch (DispatchView (..), dispatchView)
-import Lockstep.Application.EngineRecords (Completion (completionChoice), Halt (haltCode), ReviewRecord (reviewVerdict), VerificationSummary (summaryPassed), completionSchema, haltSchema, reviewSchema, verificationSummarySchema)
+import Lockstep.Application.EngineRecords (Completion (completionChoice), Halt (haltCode), ReviewRecord (reviewCommit, reviewVerdict), VerificationSummary (summaryPassed), completionSchema, haltSchema, reviewSchema, verificationSummarySchema)
+import Lockstep.Application.EngineRecords qualified as Records
 import Lockstep.Application.Invalidations (invalidationOf)
 import Lockstep.Application.Tasks (TaskView (..), listTasks)
 import Lockstep.Foundation.Fleece (decodeText)
 import Lockstep.Kernel.Identity (ProjectId (..), TaskId (..), TransactionId (..), WorkOrderId (..), identityText, parseIdentity)
-import Lockstep.Kernel.Roles (Verdict (..))
+import Lockstep.Kernel.Roles (Role (..), Verdict (..), roleName)
 import Lockstep.Kernel.Summary
   ( Category
   , Checks (..)
@@ -46,9 +47,10 @@ import Lockstep.Kernel.Summary
   , noUsage
   , usageKnown
   )
-import Lockstep.Kernel.Transaction (RecordKind (..), stateColumns, txStateName)
+import Lockstep.Kernel.Transaction (RecordKind (..), TxState (Halted), stateColumns, txStateName)
 import Lockstep.Persistence.Execution qualified as Execution
 import Lockstep.Persistence.Plans qualified as Plans
+import Lockstep.Persistence.Projects qualified as Projects
 import Lockstep.Persistence.Transactions qualified as Transactions
 
 data SummaryItem
@@ -62,6 +64,10 @@ data SummaryItem
   , summaryPublication :: T.Text
   -- ^ @local@ for a commit (nothing is pushed or merged in Phase 6), @none@ without one.
   , summaryEvidence :: [Evidence]
+  , summaryChecksRecord :: Maybe Int
+  -- ^ Which of the evidence's records the checks, the review and the halt come from (R-P6.8-12).
+  , summaryReviewRecord :: Maybe Int
+  , summaryHaltRecord :: Maybe Int
   }
   deriving (Eq, Show)
 
@@ -90,6 +96,8 @@ data ProjectSummary
   -- ^ Role runs whose helper reported no usage.
   , summaryConstraints :: [(T.Text, T.Text)]
   -- ^ Plan units waiting on a resource: the unit and its waiting code.
+  , summaryRecords :: Int
+  -- ^ How many fix records it was made from (R-P6.8-9).
   }
   deriving (Eq, Show)
 
@@ -134,54 +142,73 @@ usageFromOutput output =
   parse line =
     either (const Nothing) (\(UsageEnvelope (UsageDoc a b c d)) -> Just (Usage a b c d)) (decodeText usageEnvelopeSchema (T.strip line))
 
--- The summary ------------------------------------------------------------------------------------
+-- One fix ----------------------------------------------------------------------------------------
 
--- | What a task's latest fix says, from its rows.
+-- | What one fix says, from its rows.
 data FixRead
   = FixRead
   { readSummary :: FixSummary
   , readWorkOrder :: T.Text
+  , readHaltRecord :: Maybe Int
   , readInterventions :: [(T.Text, Evidence)]
   , readUsage :: [Usage]
+  , readRecords :: Int
   }
 
--- | The latest record of a kind, decoded, with its sequence.
-latestOf :: RecordKind -> (T.Text -> Either String a) -> [Transactions.RecordRow] -> Maybe (a, Int)
-latestOf kind decode records =
-  listToMaybe
-    [ (value, fromIntegral (Transactions.recordRowSequence r))
-    | r <- L.sortOn (negate . Transactions.recordRowSequence) records
-    , Transactions.recordRowKind r == kind
-    , Right value <- [decode (Transactions.recordRowBody r)]
-    ]
+-- | R-P6.8-2: the latest record of a kind, whether it decodes or not.
+latestRow :: RecordKind -> [Transactions.RecordRow] -> Maybe Transactions.RecordRow
+latestRow kind records =
+  listToMaybe [r | r <- L.sortOn (negate . Transactions.recordRowSequence) records, Transactions.recordRowKind r == kind]
 
-fixRead :: TaskView -> O.Orville (Maybe FixRead)
-fixRead task = do
-  admission <- Execution.findAdmissionByTask (taskKey task)
-  found <- maybe (pure Nothing) (Transactions.findTransactionByWorkOrder . Execution.admissionRowWorkOrder) admission
-  case found of
-    Nothing -> pure Nothing
-    Just row -> do
-      let
-        txId = Transactions.txRowId row
-        tx = identityText txId
-      records <- Transactions.transactionRecords txId
-      invocations <- Transactions.transactionInvocations txId
-      invalid <- invalidationOf txId
-      let
-        checks =
-          case latestOf RecordVerificationSummary (decodeText verificationSummarySchema) records of
-            Just (s, n) -> (if summaryPassed s then ChecksPassed else ChecksFailed, Just n)
-            Nothing -> (ChecksNotRun, Nothing)
-        review =
-          case latestOf RecordReview (decodeText reviewSchema) records of
-            Just (r, n) -> (verdictOutcome (reviewVerdict r), Just n)
-            Nothing -> (ReviewNotRun, Nothing)
-        summary =
+-- | The halts of a verification that could not run: not a failure (R-P6.8-8).
+inconclusiveHalts :: [T.Text]
+inconclusiveHalts =
+  fmap T.pack ["verification-environment-missing", "verification-run-failed"]
+
+-- | The role names, so role runs are told apart from the Supervisor's commands (R-P6.8-13).
+roleNames :: [T.Text]
+roleNames =
+  fmap roleName [Planner, Challenger, Implementer, Reviewer]
+
+fixOfRow :: Transactions.TransactionRow -> O.Orville FixRead
+fixOfRow row = do
+  let
+    txId = Transactions.txRowId row
+    tx = identityText txId
+    candidate = Transactions.txRowCandidate row
+    halt = snd (stateColumns (Transactions.txRowState row))
+    halted =
+      case Transactions.txRowState row of
+        Halted _ _ -> True
+        _ -> False
+  records <- Transactions.transactionRecords txId
+  invocations <- Transactions.transactionInvocations txId
+  invalid <- invalidationOf txId
+  let
+    sequenceOf r = fromIntegral (Transactions.recordRowSequence r)
+    -- R-P6.8-1, R-P6.8-2: the latest record counts only when it reads and is about the current candidate.
+    checks =
+      case latestRow RecordVerificationSummary records of
+        Just r
+          | Right s <- decodeText verificationSummarySchema (Transactions.recordRowBody r)
+          , Just (Records.summaryCommit s) == candidate
+          , not (maybe False (`L.elem` inconclusiveHalts) halt) ->
+              (if summaryPassed s then ChecksPassed else ChecksFailed, Just (sequenceOf r))
+        _ -> (ChecksNotRun, Nothing)
+    review =
+      case latestRow RecordReview records of
+        Just r
+          | Right v <- decodeText reviewSchema (Transactions.recordRowBody r)
+          , Just (reviewCommit v) == candidate ->
+              (verdictOutcome (reviewVerdict v), Just (sequenceOf r))
+        _ -> (ReviewNotRun, Nothing)
+  pure
+    FixRead
+      { readSummary =
           FixSummary
             { fixId = tx
             , fixState = txStateName (Transactions.txRowState row)
-            , fixHalt = snd (stateColumns (Transactions.txRowState row))
+            , fixHalt = halt
             , fixInvalidated = isJust invalid
             , fixChecks = fst checks
             , fixChecksRecord = snd checks
@@ -189,19 +216,16 @@ fixRead task = do
             , fixReviewRecord = snd review
             , fixCommit = Transactions.txRowAccepted row
             }
-      pure
-        ( Just
-            FixRead
-              { readSummary = summary
-              , readWorkOrder = identityText (Transactions.txRowWorkOrder row)
-              , readInterventions = interventionsOf tx records
-              , readUsage =
-                  [ usageFromOutput (fromMaybe T.empty (Transactions.invocationRowStdoutTail i))
-                  | i <- invocations
-                  , Transactions.invocationRowAdapter i /= T.pack "supervisor"
-                  ]
-              }
-        )
+      , readWorkOrder = identityText (Transactions.txRowWorkOrder row)
+      , readHaltRecord = if halted then sequenceOf <$> latestRow RecordHalt records else Nothing
+      , readInterventions = interventionsOf tx records
+      , readUsage =
+          [ usageFromOutput (fromMaybe T.empty (Transactions.invocationRowStdoutTail i))
+          | i <- invocations
+          , Transactions.invocationRowWhat i `L.elem` roleNames
+          ]
+      , readRecords = L.length records
+      }
  where
   verdictOutcome v =
     case v of
@@ -209,8 +233,9 @@ fixRead task = do
       Reject -> ReviewSaidReject
       NeedsHuman -> ReviewSaidNeedsPerson
 
-{- | E4: each person's answer to a halt (with the code of the halt before it)
-and each Done or Not done, with the record that holds it.
+{- | E4: each person's answer to a halt (with the code of the halt before it,
+@unknown@ when that halt does not read) and each Done or Not done, with the
+record that holds it.
 -}
 interventionsOf :: T.Text -> [Transactions.RecordRow] -> [(T.Text, Evidence)]
 interventionsOf tx records =
@@ -221,11 +246,24 @@ interventionsOf tx records =
       here = OfRecord tx (fromIntegral (Transactions.recordRowSequence r))
     in
       case Transactions.recordRowKind r of
-        RecordHalt -> (either (const lastHalt) (Just . haltCode) (decodeText haltSchema (Transactions.recordRowBody r)), found)
+        RecordHalt -> (Just (either (const (T.pack "unknown")) haltCode (decodeText haltSchema (Transactions.recordRowBody r))), found)
         RecordResume -> (lastHalt, (fromMaybe (T.pack "unknown") lastHalt, here) : found)
         RecordCompletion ->
           (lastHalt, either (const found) (\c -> (completionChoice c, here) : found) (decodeText completionSchema (Transactions.recordRowBody r)))
         _ -> (lastHalt, found)
+
+-- | A task's fixes, newest first: each hand-over and its fix, if it has started.
+data TaskRead
+  = TaskRead
+  { taskRead :: TaskView
+  , taskHandedOver :: Bool
+  , taskLatestStarted :: Bool
+  -- ^ Whether its latest hand-over's fix has started.
+  , taskFixes :: [FixRead]
+  -- ^ Every fix that started, newest first.
+  }
+
+-- The summary ------------------------------------------------------------------------------------
 
 -- | The project's summary now; Nothing for an unknown project.
 projectSummary :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe ProjectSummary))
@@ -243,53 +281,98 @@ projectSummary runtime rawProject =
           (_, _, Left r) -> pure (Left r)
           (Right ts, Right open, Right v) -> do
             read' <- withDatabase runtime (O.withTransaction (readAll project ts))
-            pure (fmap (assemble ts open (either (const []) dispatchViewWaiting v)) read')
+            pure (fmap (fmap (assemble open (either (const []) dispatchViewWaiting v))) read')
  where
-  readAll :: ProjectId -> [TaskView] -> O.Orville (Maybe (Maybe T.Text, [T.Text], [(TaskView, Maybe FixRead)]))
+  readAll :: ProjectId -> [TaskView] -> O.Orville (Maybe (Maybe T.Text, [T.Text], [TaskRead]))
   readAll project ts = do
-    effective <- Plans.effectiveRevision project
-    units <- maybe (pure []) (Plans.revisionUnits . Plans.revisionRowId) effective
-    fixes <- traverse (\t -> (,) t <$> fixRead t) ts
-    pure (Just (Plans.revisionRowDigest <$> effective, fmap (identityText . Plans.unitRowTask) units, fixes))
-  assemble _ open waiting read' =
-    case read' of
-      Nothing -> Nothing
-      Just (revision, planned, fixes) ->
-        let
-          items =
-            [ SummaryItem
-                { summaryTask = taskId t
-                , summaryTitle = taskTitle t
-                , summaryCategory = categoryOf (ItemFacts (taskId t `L.elem` planned) (taskReadinessOf t) (readSummary <$> f))
-                , summaryChecks = maybe ChecksNotRun (fixChecks . readSummary) f
-                , summaryReview = maybe ReviewNotRun (fixReview . readSummary) f
-                , summaryCommit = f >>= fixCommit . readSummary
-                , summaryPublication = T.pack (if isJust (f >>= fixCommit . readSummary) then "local" else "none")
-                , summaryEvidence = maybe [] (evidenceOf . readSummary) f
-                }
-            | (t, f) <- fixes
+    found <- Projects.findProjectById project
+    case found of
+      -- R-P6.8-15: an unknown project has no summary.
+      Nothing -> pure Nothing
+      Just _ -> do
+        effective <- Plans.effectiveRevision project
+        units <- maybe (pure []) (Plans.revisionUnits . Plans.revisionRowId) effective
+        -- Newest first: a task's latest hand-over counts for its category; every one counts for its history (R-P6.8-3).
+        admissions <- Execution.projectAdmissions project
+        reads <-
+          traverse
+            ( \t -> do
+                let
+                  mine = [a | a <- admissions, Execution.admissionRowTask a == taskKey t]
+                rows <- traverse (Transactions.findTransactionByWorkOrder . Execution.admissionRowWorkOrder) mine
+                fixes <- traverse fixOfRow (catMaybes rows)
+                pure (TaskRead t (not (L.null mine)) (isJust (join (listToMaybe rows))) fixes)
+            )
+            ts
+        pure (Just (Plans.revisionRowDigest <$> effective, fmap (identityText . Plans.unitRowTask) units, reads))
+  assemble open waiting (revision, planned, reads) =
+    let
+      latestFix r = if taskLatestStarted r then listToMaybe (taskFixes r) else Nothing
+      latestOf r =
+        case (taskHandedOver r, latestFix r) of
+          (_, Just f) -> Just (readSummary f)
+          -- R-P6.8-4: handed over, not started: neither eligible nor any earlier fix's state.
+          (True, Nothing) -> Just queued
+          (False, Nothing) -> Nothing
+      items =
+        [ SummaryItem
+            { summaryTask = taskId t
+            , summaryTitle = taskTitle t
+            , summaryCategory = categoryOf (ItemFacts (taskId t `L.elem` planned) (taskReadinessOf t) (latestOf r))
+            , summaryChecks = maybe ChecksNotRun (fixChecks . readSummary) f
+            , summaryReview = maybe ReviewNotRun (fixReview . readSummary) f
+            , summaryCommit = f >>= fixCommit . readSummary
+            , summaryPublication = T.pack (if isJust (f >>= fixCommit . readSummary) then "local" else "none")
+            , summaryEvidence = maybe [] (evidenceOf open) f
+            , summaryChecksRecord = f >>= fixChecksRecord . readSummary
+            , summaryReviewRecord = f >>= fixReviewRecord . readSummary
+            , summaryHaltRecord = f >>= readHaltRecord
+            }
+        | r <- reads
+        , let
+            t = taskRead r
+            f = latestFix r
+        ]
+      allFixes = [(taskRead r, f) | r <- reads, f <- taskFixes r]
+      byWorkOrder = [(readWorkOrder f, taskTitle t) | (t, f) <- allFixes]
+      usages = L.concatMap (readUsage . snd) allFixes
+    in
+      ProjectSummary
+        { summaryRevision = revision
+        , summaryItems = items
+        , summaryPending = [(title, OfRequest (storedRequestId q)) | q <- open, Just title <- [L.lookup (storedWorkOrder q) byWorkOrder]]
+        , summaryInterventions =
+            [ InterventionItem (taskTitle t) what (interventionOf what) evidence
+            | (t, f) <- allFixes
+            , (what, evidence) <- readInterventions f
             ]
-          byWorkOrder = [(readWorkOrder f, taskTitle t) | (t, Just f) <- fixes]
-          usages = L.concat [readUsage f | (_, Just f) <- fixes]
-        in
-          Just
-            ProjectSummary
-              { summaryRevision = revision
-              , summaryItems = items
-              , summaryPending = [(title, OfRequest (storedRequestId q)) | q <- open, Just title <- [L.lookup (storedWorkOrder q) byWorkOrder]]
-              , summaryInterventions =
-                  [ InterventionItem (taskTitle t) what (interventionOf what) evidence
-                  | (t, Just f) <- fixes
-                  , (what, evidence) <- readInterventions f
-                  ]
-              , summaryUsage = L.foldl' addUsage noUsage usages
-              , summaryRuns = L.length usages
-              , summaryRunsUnknown = L.length (L.filter (not . usageKnown) usages)
-              , summaryConstraints = [(k, c) | (k, c) <- waiting, c `L.elem` fmap T.pack ["usage-unknown", "writer-busy", "execution-not-enabled", "refused"]]
-              }
-  evidenceOf f =
-    [OfFix (fixId f)]
-      <> [OfRecord (fixId f) n | Just n <- [fixChecksRecord f]]
-      <> [OfRecord (fixId f) n | Just n <- [fixReviewRecord f]]
-      <> [OfCommit c | Just c <- [fixCommit f]]
-      <> [OfInvalidation (fixId f) | fixInvalidated f]
+        , summaryUsage = L.foldl' addUsage noUsage usages
+        , summaryRuns = L.length usages
+        , summaryRunsUnknown = L.length (L.filter (not . usageKnown) usages)
+        , summaryConstraints = [(k, c) | (k, c) <- waiting, c `L.elem` fmap T.pack ["usage-unknown", "writer-busy", "execution-not-enabled", "refused"]]
+        , summaryRecords = L.sum (fmap (readRecords . snd) allFixes)
+        }
+  queued =
+    FixSummary
+      { fixId = T.empty
+      , fixState = T.pack "handed-over"
+      , fixHalt = Nothing
+      , fixInvalidated = False
+      , fixChecks = ChecksNotRun
+      , fixChecksRecord = Nothing
+      , fixReview = ReviewNotRun
+      , fixReviewRecord = Nothing
+      , fixCommit = Nothing
+      }
+  -- R-P6.8-5: a halted fix's evidence names its halt record and its open request.
+  evidenceOf open f =
+    let
+      s = readSummary f
+    in
+      [OfFix (fixId s)]
+        <> [OfRecord (fixId s) n | Just n <- [fixChecksRecord s]]
+        <> [OfRecord (fixId s) n | Just n <- [fixReviewRecord s]]
+        <> [OfRecord (fixId s) n | Just n <- [readHaltRecord f]]
+        <> [OfCommit c | Just c <- [fixCommit s]]
+        <> [OfInvalidation (fixId s) | fixInvalidated s]
+        <> [OfRequest (storedRequestId q) | q <- open, storedWorkOrder q == readWorkOrder f]
