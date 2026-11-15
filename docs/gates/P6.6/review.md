@@ -50,4 +50,17 @@ Formatted and linted before the digests were taken. Baseline against `e28bf89`:
 
 ## After remediation
 
-(filled after the trial and the full check)
+Trial: Phase 6 unit **142/142** and integration **84/84** (`.local/evals/phase-06/p66r-trial-*.log`). Contract text
+corrections and limitations are in `amendments.md`.
+
+The remediation commit `c526e18` was committed with two lint hints still open. They were fixed in `ecd1e66` before
+any full check completed: the first check started on `c526e18` was stopped.
+
+The first full check of `ecd1e66` passed format, lint, build, unit and the guard. Integration failed 1 of 667: the
+C-P3.1 control-helper case "two requests run one after the other" read three of its four ordering events
+(`.local/evals/phase-06/p66r-full-check.log`). That case does not touch C-P6.6 code. It passed when run alone
+(`p66r-flake-rerun.log`), and is recorded here as a timing flake.
+
+The full check was run again on `ecd1e66`: format, lint/static, build, unit **1029/1029**, no-live-model guard,
+integration **667/667**, backup/restore — **all PASSED** (`.local/evals/phase-06/p66r-full-check-2.log`). P6.6 is
+locally qualified; owner acceptance pending.
