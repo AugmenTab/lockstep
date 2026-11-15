@@ -43,4 +43,9 @@ the hint is ignored for that module only in `.hlint.yaml`; the test's content is
 
 ## After remediation
 
-Trial: P6.4 integration **17/17** (C-P6.4 12, R-P6.4 5), unit **35/35**. Full check: see below.
+Trial: P6.4 integration **17/17** (C-P6.4 12, R-P6.4 5), unit **35/35**.
+
+Full check of the remediation commit (`fix(plan): resolve the independent review of C-P6.4`): format, lint/static,
+build, unit **985/985**, no-live-model guard, integration **639/639**, backup/restore (dump + digest, restore round
+trip, corrupted dump refused) — **all PASSED** (`.local/evals/phase-06/p64r-full-check.log`). P6.4 is locally
+qualified; owner acceptance pending.
