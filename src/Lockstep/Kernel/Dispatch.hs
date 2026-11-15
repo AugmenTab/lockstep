@@ -168,7 +168,7 @@ waitReasonCode r =
       UnrecognisedState _ -> "unknown"
       StoppedUnit -> "stopped"
       RefusedHandOver _ -> "refused"
-      InvalidatedUnit -> ""
+      InvalidatedUnit -> "invalidated"
 
 waitReasonWords :: WaitReason -> T.Text
 waitReasonWords r =
@@ -188,7 +188,7 @@ waitReasonWords r =
     UnrecognisedState name -> T.pack "Lockstep cannot tell where this stands (" <> name <> T.pack ")."
     StoppedUnit -> T.pack "Stopped: its fix was stopped, so Lockstep will not work on it again. Cancel its task, or change the plan; work that needs it waits."
     RefusedHandOver code -> T.pack "Lockstep could not hand it over (" <> code <> T.pack "); it tries again on each pass."
-    InvalidatedUnit -> T.empty
+    InvalidatedUnit -> T.pack "Its accepted fix no longer counts: something it was built on was rejected, or the plan changed. It must be redone: stop its fix if it has not stopped, then hand it over again."
 
 data DispatchDecision
   = DispatchDecision
@@ -215,6 +215,7 @@ dispatchDecision project units =
     case (unitFactHandedOver u, unitFactReadiness u) of
       (Just FixDone, _) -> Just FinishedUnit
       (Just FixStopped, _) -> Just StoppedUnit
+      (Just FixAcceptanceInvalidated, _) -> Just InvalidatedUnit
       (Just _, _) -> Just HandedOver
       (Nothing, ReadyToWork) -> Nothing
       (Nothing, NotYetReady) -> Just NotYetAccepted

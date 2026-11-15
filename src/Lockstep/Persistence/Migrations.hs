@@ -948,4 +948,24 @@ CREATE TRIGGER lockstep_plan_dispatch_refusals_no_truncate BEFORE TRUNCATE ON lo
 ALTER TABLE lockstep_bug_admissions ADD COLUMN work_kind text NOT NULL DEFAULT 'bug-fix' CHECK (work_kind IN ('bug-fix', 'feature', 'greenfield', 'refactor', 'documentation'));
 |]
       )
+    ,
+      ( [Interpolate.i|C-P6.7: fixes that stopped counting, and a task handed over again once its fix has stopped|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_fix_invalidations (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  transaction_id uuid NOT NULL REFERENCES lockstep_transactions (id),
+  code text NOT NULL CHECK (code IN ('ancestor-rejected', 'plan-changed')),
+  cause_transaction_id uuid REFERENCES lockstep_transactions (id),
+  cause_revision_id uuid REFERENCES lockstep_plan_decisions (revision_id),
+  recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  CHECK ((code = 'ancestor-rejected' AND cause_transaction_id IS NOT NULL AND cause_revision_id IS NULL)
+      OR (code = 'plan-changed' AND cause_revision_id IS NOT NULL AND cause_transaction_id IS NULL))
+);
+CREATE INDEX lockstep_fix_invalidations_transaction ON lockstep_fix_invalidations (transaction_id);
+CREATE TRIGGER lockstep_fix_invalidations_immutable BEFORE UPDATE OR DELETE ON lockstep_fix_invalidations FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_fix_invalidations_no_truncate BEFORE TRUNCATE ON lockstep_fix_invalidations FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+ALTER TABLE lockstep_bug_admissions DROP CONSTRAINT lockstep_bug_admissions_task_id_key;
+CREATE INDEX lockstep_bug_admissions_task ON lockstep_bug_admissions (task_id, id);
+|]
+      )
     ]

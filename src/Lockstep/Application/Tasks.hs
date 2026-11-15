@@ -26,7 +26,7 @@ module Lockstep.Application.Tasks
   ) where
 
 import Data.List qualified as L
-import Data.Maybe (catMaybes, fromMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isJust)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
@@ -35,6 +35,7 @@ import Text.Show (Show)
 import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), checkReadiness, withDatabase)
 import Lockstep.Application.Identity (newUuid)
+import Lockstep.Application.Invalidations (invalidationOf)
 import Lockstep.Application.Ledger (createTicketIn, decideTicketIn, reviseTicketIn, ticketFactsIn)
 import Lockstep.Application.LedgerRefusal (LedgerError (..), LedgerRefusal (StaleRevision), ledgerRefusalCode)
 import Lockstep.Application.Profiles (sha256Hasher)
@@ -153,13 +154,17 @@ fixOf tid = do
     Nothing -> pure (NoFix, Nothing)
     Just a -> do
       tx <- Transactions.findTransactionByWorkOrder (Execution.admissionRowWorkOrder a)
-      pure (maybe FixUnderWay (stateFact . Transactions.txRowState) tx, tx)
+      -- C-P6.7 V3: an accepted fix that stopped counting satisfies nothing.
+      invalid <- maybe (pure Nothing) (invalidationOf . Transactions.txRowId) tx
+      pure (maybe FixUnderWay (stateFact invalid . Transactions.txRowState) tx, tx)
  where
-  stateFact state =
+  stateFact invalid state =
     case state of
       Running _ -> FixUnderWay
       Halted _ _ -> FixUnderWay
-      Accepted -> FixAccepted
+      Accepted
+        | isJust invalid -> FixAcceptanceInvalidated
+        | otherwise -> FixAccepted
       Done -> FixDone
       Stopped _ -> FixStopped
 

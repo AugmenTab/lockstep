@@ -407,6 +407,19 @@ The Plan page then offers **Use Lockstep's engineering checks** (`lockstep-engin
 and keeps every bug check. A unit whose own Profile lacks its kind's checks is refused `profile-too-weak`. The
 correction and attempt budgets are the same for every kind, and nothing in a plan or a Profile changes them.
 
+**Provisional progress and your authority (C-P6.7).** A fix that Lockstep verified, reviewed and committed on its
+work branch can unlock the work that needs it before you mark it Done. That is provisional: your Done stays yours,
+and nothing is pushed or merged.
+
+If you reject such a fix (Not done), every fix built on it, directly or not, stops counting. Their units show as
+*invalidated*, and Done is refused on them (`acceptance-invalidated`). A fix of theirs that is still running halts
+at its next stage (`ancestor-rejected`) and offers only Stop. Approving a plan revision that changes a unit does the
+same to that unit's work (`plan-changed`). Unrelated work goes on, and nothing is deleted: every record, branch and
+commit stays.
+
+To redo the work, stop the fix if it has not stopped, then hand its task over again. That is a new fix, which
+collects its evidence anew. Lockstep never hands a stopped unit over again by itself.
+
 ### Questions about a stopped fix (C-P6.3)
 
 When a fix stops for your decision, **Decisions → Fixes waiting for your answer** lists it with its project, task,

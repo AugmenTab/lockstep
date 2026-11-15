@@ -41,6 +41,7 @@ import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
 import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason, Readiness (..), SessionLock (PlanDraftLock), checkReadiness, withDatabase, withSessionLock)
 import Lockstep.Application.Engine (Engine (..))
 import Lockstep.Application.Identity (newUuid)
+import Lockstep.Application.Invalidations (planChangedIn)
 import Lockstep.Application.Ledger (createTicketIn, decideTicketIn, reviseTicketIn, ticketFactsIn)
 import Lockstep.Application.LedgerRefusal (LedgerError (..), ledgerRefusalCode)
 import Lockstep.Application.PlanDocument (decodePlanDocument, decodePlanDocumentText, encodePlanDocument, planDocumentErrorCode)
@@ -48,7 +49,7 @@ import Lockstep.Application.Profiles (sha256Hasher)
 import Lockstep.Application.Tasks (requestDigest)
 import Lockstep.Effects.Roles (RoleOutcome (..), Runner (..), invokeRole)
 import Lockstep.Foundation.Fleece (encodeText)
-import Lockstep.Kernel.Identity (PlanDraftId (..), PlanId (..), PlanRevisionId (..), ProjectId (..), TaskId (..), TicketId (..), Uuid, identityText, parseIdentity)
+import Lockstep.Kernel.Identity (PlanDraftId (..), PlanId (..), PlanRevisionId (..), ProjectId (..), TaskId (..), TicketId (..), TransactionId, Uuid, identityText, parseIdentity)
 import Lockstep.Kernel.Plan
   ( PlanContext (..)
   , PlanCriterion (..)
@@ -70,12 +71,15 @@ import Lockstep.Kernel.Profile (Hasher (..), contentDigestText, profileIdText)
 import Lockstep.Kernel.Roles (PlanDraft (..), Role (Planner), RoleAnswer (..))
 import Lockstep.Kernel.Task (mkAcceptance, mkTaskTitle, priorityOf, priorityValue)
 import Lockstep.Kernel.Ticket (TicketInput (TicketAccept, TicketBlock, TicketUnblock))
+import Lockstep.Kernel.Transaction (TxState (..))
 import Lockstep.Kernel.Transition (Command (..), Principal (Human))
+import Lockstep.Persistence.Execution qualified as Execution
 import Lockstep.Persistence.Integrity (integrityViolation)
 import Lockstep.Persistence.Plans qualified as Store
 import Lockstep.Persistence.Profiles qualified as Profiles
 import Lockstep.Persistence.Projects qualified as Projects
 import Lockstep.Persistence.Tasks qualified as Tasks
+import Lockstep.Persistence.Transactions qualified as Transactions
 
 -- | A refused proposal: its code and, for an invalid plan, each problem in words.
 data ProposalRefusal
@@ -469,11 +473,28 @@ approve project row previousEffective approvedBefore uuids actor = do
             [ Store.EdgeRow (Store.revisionRowId row) (unitKeyText (edgeDependent e)) (unitKeyText (edgePrerequisite e)) (edgeKindCode (edgeKind e))
             | e <- planEdges document
             ]
+          let
+            reconciled = reconcilePlan sha256Hasher (listToMaybe previousDocument) document
           Store.insertReconciliations
             [ Store.ReconciliationRow (Store.revisionRowId row) (unitKeyText k) (unitOutcomeCode o) (fmap Store.revisionRowId (listToMaybe previousEffective))
-            | (k, o) <- reconcilePlan sha256Hasher (listToMaybe previousDocument) document
+            | (k, o) <- reconciled
             ]
+          -- C-P6.7 V2 c: a changed unit's work, and work built on it, stops counting.
+          redo <- catMaybes <$> traverse liveFix (mapMaybe taskOf [k | (k, o) <- reconciled, unitOutcomeCode o `L.elem` fmap T.pack ["changed", "invalidated"]])
+          planChangedIn (Store.revisionRowId row) redo
           pure (Right ())
+
+-- | A task's latest fix that has not ended (running, halted or accepted), if any.
+liveFix :: TaskId -> O.Orville (Maybe TransactionId)
+liveFix t = do
+  admission <- Execution.findAdmissionByTask t
+  tx <- maybe (pure Nothing) (Transactions.findTransactionByWorkOrder . Execution.admissionRowWorkOrder) admission
+  pure $
+    case fmap Transactions.txRowState tx of
+      Just (Running _) -> Transactions.txRowId <$> tx
+      Just (Halted _ _) -> Transactions.txRowId <$> tx
+      Just Accepted -> Transactions.txRowId <$> tx
+      _ -> Nothing
 
 acceptanceOf :: PlanUnit -> T.Text
 acceptanceOf u =

@@ -35,7 +35,8 @@ import Lockstep.Application.Profiles (sha256Hasher, storedDefinition)
 import Lockstep.Application.ProjectChecks (ExpectedChecks (..))
 import Lockstep.Application.Projects (ProjectFolders (..))
 import Lockstep.Application.Repositories (ownershipHolds)
-import Lockstep.Application.Tasks (TaskView (..), findTaskWithProjectIn)
+import Lockstep.Application.Tasks (TaskView (..), findTaskWithProjectIn, fixFactOf)
+import Lockstep.Kernel.Dispatch (FixFact (FixStopped))
 import Lockstep.Kernel.Execution
   ( admissionBlock
   , admissionRequestText
@@ -517,12 +518,14 @@ admitTask runtime folders options key rawId expected
                 (Right (), Just (Right (projectId, task))) -> do
                   project <- Projects.findProjectById projectId
                   enablement <- Store.findEnablementByProject projectId
-                  already <- Store.findAdmissionByTask tid
-                  case (project, enablement, already) of
+                  -- C-P6.7 V6: a task is handed over again only once its latest fix has stopped.
+                  latest <- Store.findAdmissionByTask tid
+                  live <- maybe (pure False) (const ((/= FixStopped) <$> fixFactOf tid)) latest
+                  case (project, enablement, live) of
                     (Nothing, _, _) -> pure (refuse "unknown-task")
                     (_, Nothing, _) -> pure (refuse "execution-not-enabled")
-                    (_, _, Just _) -> pure (refuse "already-admitted")
-                    (Just row, Just e, Nothing)
+                    (_, _, True) -> pure (refuse "already-admitted")
+                    (Just row, Just e, False)
                       | taskTicketRevision task /= expected -> pure (refuse "stale-revision")
                       | Just code <- admissionBlock (taskReadinessOf task) -> pure (Left code)
                       | not (writable folders row) -> pure (refuse "folder-read-only")

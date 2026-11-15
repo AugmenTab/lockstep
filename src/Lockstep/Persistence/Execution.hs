@@ -173,9 +173,10 @@ admissionWorkOrderField :: O.FieldDefinition O.NotNull WorkOrderId
 admissionWorkOrderField =
   foreignKeyTo workOrderTable workOrderIdField "work_order_id"
 
+-- | A task's latest hand-over (C-P6.7 V6: a task handed over again once its fix stopped; the latest counts).
 findAdmissionByTask :: O.MonadOrville m => TaskId -> m (Maybe AdmissionRow)
 findAdmissionByTask task =
-  O.findFirstEntityBy admissionTable (O.where_ (O.fieldEquals admissionTaskField task))
+  O.findFirstEntityBy admissionTable (O.where_ (O.fieldEquals admissionTaskField task) <> O.orderBy (O.orderByField admissionIdField O.descendingOrder))
 
 -- | C-P6.3: the hand-over that made a Work Order, if one did.
 findAdmissionByWorkOrder :: O.MonadOrville m => WorkOrderId -> m (Maybe AdmissionRow)

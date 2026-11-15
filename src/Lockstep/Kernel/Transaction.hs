@@ -55,6 +55,7 @@ import Flipstone.Prelude
 import Text.Show (Show)
 
 import Lockstep.Kernel.Enum (parseEnumText)
+import Lockstep.Kernel.Invalidation (stopOnlyCodes)
 import Lockstep.Kernel.Roles (Check (..))
 import Lockstep.Kernel.Runner (RunOutcome (..))
 import Lockstep.Kernel.Transition (Principal (..))
@@ -119,6 +120,8 @@ basis again. Otherwise retrying the stage ('retryOperation') or stopping.
 -}
 haltChoices :: Stage -> T.Text -> [T.Text]
 haltChoices stage code
+  -- C-P6.7 V4: nothing may run again on what was rejected or changed.
+  | code `L.elem` stopOnlyCodes = [T.pack "stop"]
   | replanHalt stage code = [T.pack "accept-non-reproduction", T.pack "replan", T.pack "stop"]
   -- A protected test changed in the candidate: verifying the same commit again can only find it again.
   | stage == StageVerify && haltCodeFromText code == HaltFixed FixedProtectedTestChanged = [T.pack "stop"]
@@ -612,11 +615,14 @@ stepTransaction principal input tx
     case state of
       Running stage
         | HumanStop <- input -> to (Stopped (fixed FixedStoppedByPerson))
+        -- C-P6.7 V4: an invalidated fix halts at the stage it is at, before anything runs on it.
+        | Invalidated cause <- input -> refusedAt stage cause
         | Just next <- roleEnd stage -> next
         | otherwise -> running stage
       Halted stage code ->
         case input of
           HumanStop -> to (Stopped code)
+          Invalidated cause -> refusedAt stage cause
           HumanRetry -> to (Running stage)
           HumanAcceptNonReproduction
             | replanHalt stage code -> to (Running StageCandidate)

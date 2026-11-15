@@ -89,6 +89,7 @@ import Lockstep.Application.EngineRecords
   )
 import Lockstep.Application.EngineRecords qualified as Records
 import Lockstep.Application.Identity (newIdentity)
+import Lockstep.Application.Invalidations (invalidationOf, rejectedIn)
 import Lockstep.Application.Repositories (ownershipHolds)
 import Lockstep.Application.Tasks (TaskView (..), basisCandidates, findTaskIn)
 import Lockstep.Effects.GitSupervisor (Basis (..), CommitMeta (..), advanceBranch, branchHead, commitBasis, commitChanges, commitTime, createWorkBranch, isAncestor, observeBasis, snapshotChanges, treeEntries, writeSnapshot)
@@ -513,10 +514,14 @@ advanceRow runtime engine row =
   case Store.txRowState row of
     Running stage -> do
       settled <- settleUnfinished runtime row stage
-      case settled of
-        Left code -> pure (Left code)
-        Right (Just input) -> report input
-        Right Nothing -> do
+      -- C-P6.7 V4: an invalidated fix runs no further stage; it halts here (after an unfinished run is settled).
+      cause <- db runtime (Right <$> invalidationOf (Store.txRowId row))
+      case (settled, cause) of
+        (Left code, _) -> pure (Left code)
+        (Right (Just input), _) -> report input
+        (_, Left code) -> pure (Left code)
+        (Right Nothing, Right (Just code)) -> invalidate code
+        (Right Nothing, Right Nothing) -> do
           -- C-P4.R1 R-K1: every workspace made for the stage, removed once it has ended
           -- (a stage cut short by an exception keeps them: they may still be in use).
           -- C-P4.R2 R2-K: so does a stage in which any run's outcome is not known.
@@ -547,22 +552,34 @@ advanceRow runtime engine row =
             Left code -> pure (Left code)
             Right input -> report input
     Halted stage code -> do
-      opened <- ensureRequest runtime row stage code
-      case fmap resumeOf opened of
-        -- The halt's request could not be opened or read: its code, never "idle".
+      -- C-P6.7 V4: halted for something else, it halts again for the invalidation, so no answer runs a stage on it.
+      cause <- db runtime (Right <$> invalidationOf (Store.txRowId row))
+      case cause of
         Left c -> pure (Left c)
-        Right Nothing -> idle (T.pack "halted")
-        Right (Just (request, choice, input)) -> do
-          let
-            body = record resumeSchema (Resume (storedRequestId request) choice (fromIntegral (storedRevision request)))
-          applied <- applyInput runtime (Store.txRowId row) (Store.txRowRevision row) Human input [(RecordResume, body)] id
-          case applied of
-            Left c -> pure (Left c)
-            Right _ -> report input
+        Right (Just invalid) | invalid /= code -> invalidate invalid
+        _ -> resumeHalted stage code
     Accepted -> idle (T.pack "accepted")
     Done -> idle (T.pack "done")
     Stopped _ -> idle (T.pack "stopped")
  where
+  invalidate code = do
+    applied <- applyInput runtime (Store.txRowId row) (Store.txRowRevision row) Supervisor (Invalidated code) [] id
+    case applied of
+      Left c -> pure (Left c)
+      Right _ -> report (Invalidated code)
+  resumeHalted stage code = do
+    opened <- ensureRequest runtime row stage code
+    case fmap resumeOf opened of
+      -- The halt's request could not be opened or read: its code, never "idle".
+      Left c -> pure (Left c)
+      Right Nothing -> idle (T.pack "halted")
+      Right (Just (request, choice, input)) -> do
+        let
+          body = record resumeSchema (Resume (storedRequestId request) choice (fromIntegral (storedRevision request)))
+        applied <- applyInput runtime (Store.txRowId row) (Store.txRowRevision row) Human input [(RecordResume, body)] id
+        case applied of
+          Left c -> pure (Left c)
+          Right _ -> report input
   current =
     db runtime (maybe (Left (T.pack "unknown-transaction")) Right <$> loadView (Store.txRowId row))
   idle why = fmap (Idle why) <$> current
@@ -616,12 +633,19 @@ decideCompletion runtime raw sender choice =
           Done -> refuse "closed"
           Stopped _ -> refuse "closed"
           Accepted -> do
+            invalid <- withDatabase runtime (invalidationOf txId)
             let
               body = record completionSchema (Completion choice (senderChannel sender) (senderEvidence sender))
-            applied <- applyInput runtime txId (Store.txRowRevision row) Human input [(RecordCompletion, body)] id
-            case applied of
-              Left code -> pure (Right (Left code))
-              Right _ -> Right <$> db runtime (maybe (Left (T.pack "unknown-transaction")) Right <$> loadView txId)
+            case (invalid, input) of
+              (Left reason, _) -> pure (Left reason)
+              -- C-P6.7 V3: an acceptance that no longer counts cannot be the person's Done; Not done stays theirs.
+              (Right (Just _), HumanDone) -> refuse "acceptance-invalidated"
+              _ -> do
+                -- C-P6.7 V2: Not done rejects this fix; every fix built on it stops counting, in the same transaction.
+                applied <- applyInputWith runtime txId (Store.txRowRevision row) Human input [(RecordCompletion, body)] id (when (input == HumanStop) (rejectedIn txId))
+                case applied of
+                  Left code -> pure (Right (Left code))
+                  Right _ -> Right <$> db runtime (maybe (Left (T.pack "unknown-transaction")) Right <$> loadView txId)
           Running _ -> refuse "illegal-input"
           Halted _ _ -> refuse "illegal-input"
 
@@ -1751,6 +1775,32 @@ compare-and-swap. Anything else halts with its reason; nothing is pushed.
 -}
 acceptStage :: DatabaseRuntime -> Store.TransactionRow -> IO (Either T.Text TxInput)
 acceptStage runtime row = do
+  -- C-P6.7 V4: every accepted fix this one was built on must still count, or its basis is stale.
+  stale <- db runtime (Right <$> staleBasis (Store.txRowId row))
+  case stale of
+    Left code -> pure (Left code)
+    Right True -> settle runtime row (Invalidated (T.pack "basis-stale")) [] id
+    Right False -> acceptChecked runtime row
+
+-- | Whether a recorded ancestor of the fix no longer counts (not accepted or done, or invalidated).
+staleBasis :: TransactionId -> O.Orville Bool
+staleBasis tx = do
+  bases <- Dispatches.fixBasesOf tx
+  L.or
+    <$> traverse
+      ( \b -> do
+          ancestor <- Store.findTransaction (Dispatches.fixBaseAncestor b)
+          invalid <- invalidationOf (Dispatches.fixBaseAncestor b)
+          pure $
+            case fmap Store.txRowState ancestor of
+              Just Accepted -> isJust invalid
+              Just Done -> False
+              _ -> True
+      )
+      bases
+
+acceptChecked :: DatabaseRuntime -> Store.TransactionRow -> IO (Either T.Text TxInput)
+acceptChecked runtime row = do
   records <- db runtime (Right <$> Store.transactionRecords (Store.txRowId row))
   owned <-
     db runtime $ do

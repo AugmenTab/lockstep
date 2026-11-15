@@ -11,6 +11,10 @@ module Lockstep.Persistence.Dispatch
   , RefusalRow (..)
   , insertRefusal
   , latestRefusal
+  , allFixBases
+  , InvalidationRow (..)
+  , insertInvalidation
+  , invalidationsOf
   ) where
 
 import Data.Text qualified as T
@@ -73,6 +77,43 @@ insertFixBase =
 fixBasesOf :: O.MonadOrville m => TransactionId -> m [FixBaseRow]
 fixBasesOf tx =
   O.findEntitiesBy fixBaseTable (O.where_ (O.fieldEquals fixBaseTransactionField tx))
+
+-- | C-P6.7: every recorded basis (a fix and one accepted fix it was built on).
+allFixBases :: O.MonadOrville m => m [FixBaseRow]
+allFixBases =
+  O.findEntitiesBy fixBaseTable mempty
+
+-- | C-P6.7 V2: a fix that stopped counting, why, and what caused it.
+data InvalidationRow
+  = InvalidationRow
+  { invalidationTransaction :: TransactionId
+  , invalidationCodeOf :: T.Text
+  , invalidationCauseTransaction :: Maybe TransactionId
+  , invalidationCauseRevision :: Maybe PlanRevisionId
+  }
+  deriving (Eq, Show)
+
+invalidationTable :: O.TableDefinition O.NoKey InvalidationRow InvalidationRow
+invalidationTable =
+  O.mkTableDefinitionWithoutKey "lockstep_fix_invalidations" $
+    InvalidationRow
+      <$> O.marshallField invalidationTransaction invalidationTransactionField
+      <*> O.marshallField invalidationCodeOf (O.unboundedTextField "code")
+      <*> O.marshallField invalidationCauseTransaction (O.nullableField (keyField "cause_transaction_id"))
+      <*> O.marshallField invalidationCauseRevision (O.nullableField (keyField "cause_revision_id"))
+
+invalidationTransactionField :: O.FieldDefinition O.NotNull TransactionId
+invalidationTransactionField =
+  keyField "transaction_id"
+
+insertInvalidation :: O.MonadOrville m => InvalidationRow -> m ()
+insertInvalidation =
+  O.insertEntity invalidationTable
+
+-- | A fix's invalidations, if any.
+invalidationsOf :: O.MonadOrville m => TransactionId -> m [InvalidationRow]
+invalidationsOf tx =
+  O.findEntitiesBy invalidationTable (O.where_ (O.fieldEquals invalidationTransactionField tx))
 
 -- | R-P6.5-6: a refused hand-over of a unit of a revision, and its code.
 data RefusalRow
