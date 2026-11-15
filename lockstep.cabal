@@ -447,6 +447,7 @@ test-suite lockstep-integration
       Lockstep.ProjectsBrowserTest
       Lockstep.ProjectsPageTest
       Lockstep.ProjectsTest
+      Lockstep.ProposalReviewTest
       Lockstep.ProposalTest
       Lockstep.ProvisionalReviewTest
       Lockstep.ProvisionalTest
@@ -584,6 +585,7 @@ test-suite lockstep-unit
       Lockstep.Kernel.ProfileTest
       Lockstep.Kernel.ProgressTest
       Lockstep.Kernel.ProjectTest
+      Lockstep.Kernel.ProposalReviewTest
       Lockstep.Kernel.ProposalTest
       Lockstep.Kernel.ReconciliationTest
       Lockstep.Kernel.RecoveryTest

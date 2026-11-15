@@ -57,6 +57,7 @@ import Lockstep.Kernel.PolicyTest qualified as PolicyTest
 import Lockstep.Kernel.ProfileTest qualified as ProfileTest
 import Lockstep.Kernel.ProgressTest qualified as ProgressTest
 import Lockstep.Kernel.ProjectTest qualified as ProjectTest
+import Lockstep.Kernel.ProposalReviewTest qualified as KernelProposalReviewTest
 import Lockstep.Kernel.ProposalTest qualified as KernelProposalTest
 import Lockstep.Kernel.ReconciliationTest qualified as ReconciliationTest
 import Lockstep.Kernel.RecoveryTest qualified as RecoveryTest
@@ -189,4 +190,5 @@ main =
       , KernelSummaryTest.tests
       , KernelSummaryReviewTest.tests
       , KernelProposalTest.tests
+      , KernelProposalReviewTest.tests
       ]
