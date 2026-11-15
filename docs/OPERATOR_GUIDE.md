@@ -459,6 +459,27 @@ the proposal's, or for a `profile-rule` not the catalog's latest version of that
 skill or instruction changes; adopting an approved proposal is a separate change you make. No summary or agent
 output creates or decides a proposal.
 
+### The host network boundary attestation (C-P6.10b)
+
+`scripts/capsule-preflight` also reports `host-boundary`: whether the host packet-filter boundary that keeps a
+capsule off the Mac's own addresses and the LAN (`docs/gates/P6.10/design.md`) is loaded as recorded. It only reads
+pf's state (`pfctl -s info`, `pfctl -a com.lockstep.capsule -s rules`); it never changes a rule or uses `sudo`.
+
+The boundary is not installed yet (it waits for the owner's D6-SEC decision), so today every preflight prints
+`WARN host-boundary: boundary-expected-missing: …`. For an attended run that is a warning. With `--unattended`,
+any refusal (`boundary-expected-missing`, `boundary-expected-not-private`, `boundary-expected-malformed`,
+`pf-unreadable`, `pf-disabled`, `anchor-absent`, `anchor-altered`, `runtime-user-wrong`) is a `FAIL`, and an
+unattended run must not start. The LAN listener exception never stands in for the boundary.
+
+When the boundary is installed, the owner records it in `HELPER-STATE/capsule/host-boundary` (mode 0600):
+
+```text
+lockstep-host-boundary 1
+anchor com.lockstep.capsule
+capsule-user _lockstep_capsule
+rules-sha256 <the digest the preflight prints as "NOTE host-boundary rules-sha256 …">
+```
+
 ### Questions about a stopped fix (C-P6.3)
 
 When a fix stops for your decision, **Decisions → Fixes waiting for your answer** lists it with its project, task,

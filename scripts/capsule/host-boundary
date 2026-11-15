@@ -1,5 +1,98 @@
 #!/usr/bin/env bash
-# Host-enforced capsule network boundary attestation (contract C-P6.10b). Stub for the frozen check: it
-# attests nothing yet.
+# Host-enforced capsule network boundary attestation (contract C-P6.10b; docs/gates/P6.10/design.md §6).
+# Read-only: it reads pf's state and compares the loaded anchor with the owner's recorded expectation.
+# It never loads, changes or enables a rule, and never uses sudo.
+#
+#   scripts/capsule/host-boundary --helper-state DIR [--unattended]
+#
+# The expectation is DIR/capsule/host-boundary, written by the owner when the boundary is installed
+# (D6-SEC), a regular file of mode 0600:
+#
+#   lockstep-host-boundary 1
+#   anchor com.lockstep.capsule
+#   capsule-user _lockstep_capsule
+#   rules-sha256 <64 hex digits of the anchor's rules as `pfctl -a ANCHOR -s rules` prints them>
+#
+# Prints exactly one line and, when the rules could be read, a NOTE with their digest:
+#   PASS host-boundary
+#   FAIL host-boundary: CODE: detail     (unattended: the run must not start; exit 1)
+#   WARN host-boundary: CODE: detail     (attended: recorded, not a failure; exit 0)
+# Codes: boundary-expected-missing, boundary-expected-not-private, boundary-expected-malformed,
+# pf-unreadable, pf-disabled, anchor-absent, anchor-altered, runtime-user-wrong.
+# Nothing falls back to the listener exception (scripts/capsule/lan-exposure).
+set -u
+export LC_ALL=C
+
+hstate="" unattended=no
+while [ $# -gt 0 ]; do
+  case $1 in
+    --helper-state) [ $# -ge 2 ] || { echo "host-boundary: --helper-state needs a value" >&2; exit 64; }; hstate=$2; shift 2 ;;
+    --unattended) unattended=yes; shift ;;
+    *) echo "usage: scripts/capsule/host-boundary --helper-state DIR [--unattended]" >&2; exit 64 ;;
+  esac
+done
+[ -n "$hstate" ] || { echo "host-boundary: --helper-state is required" >&2; exit 64; }
+
+refuse() {
+  if [ "$unattended" = yes ]; then
+    printf 'FAIL host-boundary: %s: %s\n' "$1" "$2"
+    exit 1
+  fi
+  printf 'WARN host-boundary: %s: %s (an unattended run would not start)\n' "$1" "$2"
+  exit 0
+}
+
+# GNU stat first: there `stat -f` means the file system and can succeed with the wrong answer.
+mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
+owner_of() { stat -c %U "$1" 2>/dev/null || stat -f %Su "$1"; }
+digest() {
+  if command -v shasum > /dev/null 2>&1; then shasum -a 256 | cut -d ' ' -f 1
+  else sha256sum | cut -d ' ' -f 1
+  fi
+}
+
+# ---- the owner's expectation
+exp=$hstate/capsule/host-boundary
+if [ -L "$exp" ] || { [ -e "$exp" ] && [ ! -f "$exp" ]; }; then
+  refuse boundary-expected-not-private "$exp must be a regular file of mode 0600"
+fi
+[ -f "$exp" ] || refuse boundary-expected-missing "no $exp: the host boundary has not been installed (D6-SEC)"
+[ "$(mode_of "$exp")" = 600 ] || refuse boundary-expected-not-private "$exp must be a regular file of mode 0600"
+header=$(sed -n '1p' "$exp")
+anchor=$(sed -n 's/^anchor //p' "$exp")
+cuser=$(sed -n 's/^capsule-user //p' "$exp")
+want=$(sed -n 's/^rules-sha256 //p' "$exp")
+lines=$(grep -c '' "$exp")
+case $anchor in "" | *[!A-Za-z0-9._-]*) anchor="" ;; esac
+case $cuser in "" | *[!A-Za-z0-9._-]*) cuser="" ;; esac
+case $want in *[!0-9a-f]*) want="" ;; esac
+if [ "$header" != "lockstep-host-boundary 1" ] || [ "$lines" != 4 ] || [ -z "$anchor" ] || [ -z "$cuser" ] || [ ${#want} != 64 ]; then
+  refuse boundary-expected-malformed "$exp is not a lockstep-host-boundary 1 record (header, anchor, capsule-user, rules-sha256)"
+fi
+
+# ---- pf's state, read-only. A failing or unreadable command proves nothing, so nothing passes.
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/lockstep-host-boundary.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+pfctl -s info > "$tmp/info" 2> "$tmp/info.err"
+rc=$?
+[ "$rc" = 0 ] || refuse pf-unreadable "pfctl -s info exited $rc: $(head -c 200 "$tmp/info.err" | tr '\n' ' ')"
+grep -q '^Status: Enabled' "$tmp/info" || refuse pf-disabled "pf is not enabled (pfctl -s info: $(grep -m 1 '^Status:' "$tmp/info" || echo 'no Status line'))"
+pfctl -a "$anchor" -s rules > "$tmp/rules" 2> "$tmp/rules.err"
+rc=$?
+[ "$rc" = 0 ] || refuse pf-unreadable "pfctl -a $anchor -s rules exited $rc: $(head -c 200 "$tmp/rules.err" | tr '\n' ' ')"
+# pf prints its own canonical form; only trailing blanks and empty lines are ignored.
+sed -e 's/[[:space:]]*$//' -e '/^$/d' "$tmp/rules" > "$tmp/rules.norm"
+[ -s "$tmp/rules.norm" ] || refuse anchor-absent "the anchor $anchor has no rules loaded"
+got=$(digest < "$tmp/rules.norm")
+printf 'NOTE host-boundary rules-sha256 %s\n' "$got"
+[ "$got" = "$want" ] || refuse anchor-altered "the anchor $anchor's rules differ from the recorded ones"
+
+# ---- the capsules run as the boundary's user: its runtime state belongs to it
+cfg=$hstate/capsule/config
+cstate=$(sed -n 's/^runtime-state //p' "$cfg" 2>/dev/null)
+[ -n "$cstate" ] && [ -d "$cstate" ] || refuse runtime-user-wrong "no capsule runtime state in $cfg"
+runner=$(owner_of "$cstate")
+[ "$runner" = "$cuser" ] || refuse runtime-user-wrong "the capsule runtime state $cstate belongs to $runner, not $cuser; the rules would not match its traffic"
+
 printf 'PASS host-boundary\n'
 exit 0

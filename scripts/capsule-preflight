@@ -20,14 +20,15 @@ here=$(cd "$(dirname "$0")" && pwd -P)
 root=$(dirname "$here")
 rt=$root/scripts/capsule-runtime
 
-hstate="" repo="" probe="" instance=main
+hstate="" repo="" probe="" instance=main unattended=no
 while [ $# -gt 0 ]; do
   case $1 in
     --helper-state) hstate=$2; shift 2 ;;
     --repo) repo=$2; shift 2 ;;
     --toolchain-probe) probe=$2; shift 2 ;;
     --instance) instance=$2; shift 2 ;;
-    *) echo "usage: scripts/capsule-preflight --helper-state DIR [--repo PATH] [--toolchain-probe FILE] [--instance NAME]" >&2; exit 64 ;;
+    --unattended) unattended=yes; shift ;;
+    *) echo "usage: scripts/capsule-preflight --helper-state DIR [--repo PATH] [--toolchain-probe FILE] [--instance NAME] [--unattended]" >&2; exit 64 ;;
   esac
 done
 [ -n "$hstate" ] || { echo "capsule-preflight: --helper-state is required" >&2; exit 64; }
@@ -206,6 +207,13 @@ elif [ "$lan_ok" = 0 ]; then pass host-network-exposure
 else
   fail host-network-exposure "host services reachable from the guest through the Mac's other addresses:$(printf '%s\n' "$lan" | sed -n 's/^exposure refused://p'); bind them to 127.0.0.1, stop them, or have the owner name them in $exc"
 fi
+
+# ---- The host-enforced network boundary (C-P6.10b; docs/gates/P6.10/design.md §6). Read-only. An unattended
+# run requires it (FAIL otherwise); an attended one is told (WARN). The listener exception above is never a
+# substitute for it.
+unattended_arg=()
+[ "$unattended" = yes ] && unattended_arg=(--unattended)
+"$here/capsule/host-boundary" --helper-state "$hstate" ${unattended_arg[@]+"${unattended_arg[@]}"} || failures=$((failures + 1))
 
 echo "capsule-preflight: $failures failure(s)"
 [ "$failures" = 0 ]
