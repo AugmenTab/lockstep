@@ -98,6 +98,7 @@ import Lockstep.SnapshotBoundsTest qualified as SnapshotBoundsTest
 import Lockstep.StabilizationReproductionTest qualified as StabilizationReproductionTest
 import Lockstep.StabilizationReviewTest qualified as StabilizationReviewTest
 import Lockstep.StabilizationSessionTest qualified as StabilizationSessionTest
+import Lockstep.SummaryTest qualified as SummaryTest
 import Lockstep.TasksBrowserTest qualified as TasksBrowserTest
 import Lockstep.TasksPageTest qualified as TasksPageTest
 import Lockstep.TasksTest qualified as TasksTest
@@ -203,4 +204,5 @@ main =
       , ProfileParityReviewTest.tests
       , ProvisionalTest.tests
       , ProvisionalReviewTest.tests
+      , SummaryTest.tests
       ]

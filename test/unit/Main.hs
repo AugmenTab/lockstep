@@ -69,6 +69,7 @@ import Lockstep.Kernel.RolesTest qualified as KernelRolesTest
 import Lockstep.Kernel.RunnerTest qualified as RunnerTest
 import Lockstep.Kernel.SchedulerPropertyTest qualified as SchedulerPropertyTest
 import Lockstep.Kernel.SchedulerTest qualified as SchedulerTest
+import Lockstep.Kernel.SummaryTest qualified as KernelSummaryTest
 import Lockstep.Kernel.TaskTest qualified as TaskTest
 import Lockstep.Kernel.TicketTest qualified as TicketTest
 import Lockstep.Kernel.TraceTest qualified as TraceTest
@@ -183,4 +184,5 @@ main =
       , WorkPolicyReviewTest.tests
       , InvalidationTest.tests
       , InvalidationReviewTest.tests
+      , KernelSummaryTest.tests
       ]
