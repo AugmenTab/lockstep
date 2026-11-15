@@ -3,10 +3,13 @@
 {- | The project's Progress page (contract C-P6.2 C2, C4, C5, C7): a read-only
 fragment rendered from a 'ProgressView'. Plain words (FR-UX-06); the typed
 standing appears only as each row's @data-standing@ code. Technical acceptance
-is never called Done, and nothing is called published.
+is never called Done, and nothing is called published. C-P6.8: with the
+project's evidence-linked summary, what happened and the evidence for it, and
+the tokens helpers reported.
 -}
 module Lockstep.Web.ProgressPage
   ( progressPage
+  , progressPageWith
   ) where
 
 import Brigid.HTML.Attributes qualified as A
@@ -19,14 +22,22 @@ import Flipstone.Prelude
 import Text.Show (show)
 
 import Lockstep.Application.Progress (Placement (..), ProgressRow (..), ProgressView (..), WhereItRuns (..))
+import Lockstep.Application.Summary (InterventionItem (..), ProjectSummary (..), SummaryItem (..))
+import Lockstep.Kernel.Identity (TaskId (..), parseIdentity)
 import Lockstep.Kernel.Progress (Publication (..), Standing (..), standingCode)
+import Lockstep.Kernel.Summary (Evidence (..), Usage (..), categoryCode, checksCode, interventionCode, reviewOutcomeCode, usageKnown)
 import Lockstep.Kernel.Transaction (haltCodeFromText)
 import Lockstep.Web.ExecutionPages (haltWords, stepWords, stoppedWords)
 import Lockstep.Web.Fragment (attr, cls, elementId, fragment)
-import Lockstep.Web.Routes.App (projectLink, taskLink)
+import Lockstep.Web.Routes.App (progressLink, projectLink, taskLink)
 
 progressPage :: ProgressView -> LBS.ByteString
 progressPage view =
+  progressPageWith view Nothing
+
+-- | C-P6.8: the page with the project's evidence-linked summary.
+progressPageWith :: ProgressView -> Maybe ProjectSummary -> LBS.ByteString
+progressPageWith view summary =
   fragment $
     [ E.h1 [] [E.text ("Progress: " <> progressName view)]
     , E.p [] [E.text "Where every task of this project stands now, read from Lockstep's own records each time this page is shown."]
@@ -59,16 +70,92 @@ progressPage view =
             [ E.thead [] [E.tr [] [E.th [attr "scope" "col"] [E.text h] | h <- ["Task", "Came from", "Where it stands", "Published"]]]
             , E.tbody [] (fmap row (progressRows view))
             ]
-    , E.h2 [] [E.text "Who works on it, and where"]
     ]
+      <> maybe [] evidenceSection summary
+      <> [E.h2 [] [E.text "Who works on it, and where"]]
       <> whereWords (progressWhere view)
       <> [ E.h2 [] [E.text "Usage"]
-         , E.p [] [E.text "Model usage: not recorded. Lockstep does not yet record the tokens its helpers use for each project, so no figure is shown."]
+         , usageWords
          , E.p [cls "ls-muted"] [E.text "Running capsules and their resources are shown on the project's page; this page does not count a stopped capsule as using anything."]
          , E.p [] [E.text "Nothing is published: Lockstep commits only on each fix's own work branch on this computer, and Lockstep never pushes."]
          , E.p [] [E.a [A.href (projectLink (progressProject view))] [E.text ("Back to " <> progressName view)]]
          ]
  where
+  -- C-P6.8 E5: the tokens helpers reported, per class; never a cost.
+  usageWords =
+    case summary of
+      Just s
+        | usageKnown (summaryUsage s) ->
+            E.p
+              [A.id (elementId 'u' "sage")]
+              [ E.text
+                  ( "Tokens the helpers reported: "
+                      <> T.intercalate
+                        ", "
+                        [ label <> " " <> maybe "not reported" (T.pack . show) n
+                        | (label, n) <-
+                            [ ("input", usageInput (summaryUsage s))
+                            , ("output", usageOutput (summaryUsage s))
+                            , ("cache written", usageCacheCreation (summaryUsage s))
+                            , ("cache read", usageCacheRead (summaryUsage s))
+                            ]
+                        ]
+                      <> ". "
+                      <> T.pack (show (summaryRunsUnknown s))
+                      <> " of "
+                      <> T.pack (show (summaryRuns s))
+                      <> " role runs reported nothing, so these totals leave them out. Lockstep shows no money: these are subscription tokens."
+                  )
+              ]
+      _ -> E.p [] [E.text "Model usage: not recorded. Lockstep does not yet record the tokens its helpers use for each project, so no figure is shown."]
+  -- C-P6.8: what happened, task by task, from the records, with the evidence each line rests on.
+  evidenceSection s =
+    [ E.section
+        [A.id (elementId 'e' "vidence")]
+        ( [ E.h2 [] [E.text "What happened, with its evidence"]
+          , E.p [] [E.text "Each line is chosen from Lockstep's own records by fixed rules, never from what a helper said. A check that never ran is not a pass; a review that did not finish is not an approval."]
+          , E.ul
+              []
+              [ E.li
+                  [attr "data-category" (categoryCode (summaryCategory i))]
+                  ( [ E.a [A.href (taskLinkText (summaryTask i))] [E.text (summaryTitle i)]
+                    , E.text
+                        ( " \8212 "
+                            <> categoryCode (summaryCategory i)
+                            <> "; checks "
+                            <> checksCode (summaryChecks i)
+                            <> "; review "
+                            <> reviewOutcomeCode (summaryReview i)
+                            <> "; "
+                            <> (if summaryPublication i == "local" then "committed on this computer only" else "no commit")
+                            <> ". Evidence: "
+                        )
+                    ]
+                      <> L.intersperse (E.text ", ") [E.code [] [E.text (evidenceText e)] | e <- summaryEvidence i]
+                      <> [E.text (if L.null (summaryEvidence i) then "none recorded." else ".")]
+                  )
+              | i <- summaryItems s
+              ]
+          , E.h3 [] [E.text "Your interventions"]
+          ]
+            <> case summaryInterventions s of
+              [] -> [E.p [] [E.text "None recorded."]]
+              xs -> [E.ul [] [E.li [attr "data-intervention" (interventionCode (interventionKind x))] [E.text (interventionTask x <> ": " <> interventionWhat x <> " (" <> interventionCode (interventionKind x) <> "), "), E.code [] [E.text (evidenceText (interventionEvidence x))]] | x <- xs]]
+            <> [ E.p
+                   [cls "ls-muted"]
+                   [E.text ("Made for the plan revision " <> fromMaybe "none (no approved plan)" (summaryRevision s) <> ", from the records as they are now.")]
+               ]
+        )
+    ]
+  taskLinkText t =
+    maybe (progressLink (progressProject view)) taskLink (parseIdentity t)
+  evidenceText e =
+    case e of
+      OfFix t -> "fix " <> t
+      OfRecord t n -> "record " <> T.pack (show n) <> " of fix " <> t
+      OfCommit c -> "commit " <> c
+      OfInvalidation t -> "invalidation of fix " <> t
+      OfRequest r -> "request " <> r
   waiting = [r | r <- progressRows view, isWaitingForYou (rowStanding r)]
   verified = [r | r <- progressRows view, standingCode (rowStanding r) == "technically-verified"]
   notAllowed =

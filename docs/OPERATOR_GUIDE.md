@@ -423,6 +423,16 @@ collects its evidence anew. Lockstep never hands a stopped unit over again by it
 Mark fixes Done in the order they were built: a fix built on another is not Done until that one is
 (`ancestor-not-done`).
 
+**What happened, with its evidence (C-P6.8).** The Progress page also lists every task in one category: planned,
+eligible, active, waiting for you, verified (checked and committed on this computer, not Done), done, invalidated,
+uncertain, stopped, canceled or waiting. For each it gives the outcome of its checks and review, and the exact
+records and commit the line rests on.
+
+The lines are chosen from Lockstep's own records by fixed rules, never from what a helper said. A check that never
+ran is "not-run", not a pass, and a review that did not finish is not an approval. Your interventions are listed as
+*necessary* (decisions only you can take) or *avoidable* (a helper or the environment failed). The tokens the
+helpers reported are shown per class. Runs that reported none are counted, not guessed, and no money is ever shown.
+
 ### Questions about a stopped fix (C-P6.3)
 
 When a fix stops for your decision, **Decisions → Fixes waiting for your answer** lists it with its project, task,

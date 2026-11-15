@@ -67,6 +67,7 @@ import Lockstep.Application.Projects
   , offeredFolders
   , projectFoldersFromEnvironment
   )
+import Lockstep.Application.Summary (projectSummary)
 import Lockstep.Application.Tasks
   ( NewTask (..)
   , TaskDecision (..)
@@ -123,7 +124,7 @@ import Lockstep.Web.Form (Form, FormField, readForm)
 import Lockstep.Web.Fragment (attr, cls, elementId, fragment)
 import Lockstep.Web.Json (SessionBody (..), sessionSchema)
 import Lockstep.Web.PlanPage (planDecisionWords, planPage)
-import Lockstep.Web.ProgressPage (progressPage)
+import Lockstep.Web.ProgressPage (progressPageWith)
 import Lockstep.Web.RequestGuard (RouteClass (..))
 import Lockstep.Web.Routes.App
   ( ActionRoutes
@@ -439,11 +440,13 @@ progressFragment ctx pid =
   withSession ctx $ \_ -> do
     folders <- projectFoldersFromEnvironment
     found <- loadProgress (ctxDb ctx) folders (identityText pid)
+    -- C-P6.8: what happened, with its evidence, made fresh from the records.
+    summary <- projectSummary (ctxDb ctx) (identityText pid)
     pure $
-      case found of
-        Right (Just view) -> pathAnswer (progressLink pid) (progressPage view)
-        Right Nothing -> notFound
-        Left _ -> notReady
+      case (found, summary) of
+        (Right (Just view), Right s) -> pathAnswer (progressLink pid) (progressPageWith view s)
+        (Right Nothing, _) -> notFound
+        _ -> notReady
 
 checksFragment :: Ctx -> ProjectId -> IO Wai.Response
 checksFragment ctx pid =
