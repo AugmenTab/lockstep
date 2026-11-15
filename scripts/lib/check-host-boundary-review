@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# The independent review of C-P6.10b (R-P6.10b), model-free: the attestation accepts only Lockstep's own anchor
+# and compares the runtime's owner by uid; the preflight names an attestation that did not run and checks the
+# uid each capsule's hostagent actually runs as. A stand-in pfctl answers; no host rule is read or changed.
+#
+#   scripts/lib/check-host-boundary-review
+set -uo pipefail
+cd "$(dirname "$0")/../.."
+root=$PWD
+hb=$root/scripts/capsule/host-boundary
+pf=$root/scripts/capsule-preflight
+work=$(mktemp -d "${TMPDIR:-/tmp}/lockstep-check-host-boundary-review.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+failures=0
+record() { printf '%s %s\n' "$1" "$2"; [ "$1" = PASS ] || failures=$((failures + 1)); }
+expect() { local d=$1; shift; if "$@" > /dev/null 2>&1; then record PASS "$d"; else record FAIL "$d"; fi; }
+digest() {
+  if command -v shasum > /dev/null 2>&1; then shasum -a 256 | cut -d ' ' -f 1
+  else sha256sum | cut -d ' ' -f 1
+  fi
+}
+
+me=$(id -un)
+printf 'block return out quick proto tcp from any to (self) user = 499\n' > "$work/rules.txt"
+want=$(digest < "$work/rules.txt")
+printf 'Status: Enabled for 0 days 01:02:03           Debug: Urgent\n' > "$work/info.txt"
+mkdir -p "$work/bin"
+# The stand-in answers for any anchor name, as a pf that has that anchor loaded would.
+cat > "$work/bin/pfctl" <<'EOF'
+#!/bin/sh
+case "$*" in
+  "-s info") cat "$LOCKSTEP_TEST_PFCTL_FIXTURES/info.txt"; exit 0 ;;
+  "-a "*" -s rules") cat "$LOCKSTEP_TEST_PFCTL_FIXTURES/rules.txt"; exit 0 ;;
+esac
+exit 2
+EOF
+chmod 755 "$work/bin/pfctl"
+export LOCKSTEP_TEST_PFCTL_FIXTURES=$work
+st=$work/state
+mkdir -p "$st/capsule" "$work/cvm"
+chmod 700 "$st" "$st/capsule"
+printf 'lockstep-capsule 1\nruntime-state %s\ncapsule vmq1\nproject vmq-project\nverify-capsule vmv1\nlockstep-project 0b6f7d1e-2c4a-4e8b-9f10-3a5c7e9b1d24\n' "$work/cvm" > "$st/capsule/config"
+chmod 600 "$st/capsule/config"
+expectation() { # ANCHOR USER
+  printf 'lockstep-host-boundary 1\nanchor %s\ncapsule-user %s\nrules-sha256 %s\n' "$1" "$2" "$want" > "$st/capsule/host-boundary"
+  chmod 600 "$st/capsule/host-boundary"
+}
+run() { PATH="$work/bin:$PATH" "$hb" --helper-state "$st" --unattended > "$work/out" 2>&1; rc=$?; }
+
+# ---- R1 (R-P6.10b-5): only Lockstep's own anchor is attested
+expectation com.lockstep.capsule "$me"
+run
+expect "R1 control: Lockstep's anchor, as recorded, passes (exit $rc)" bash -c "[ $rc = 0 ] && grep -qx 'PASS host-boundary' '$work/out'"
+for other in com.apple/250.ApplicationFirewall com.lockstep.capsule2 lockstep; do
+  expectation "$other" "$me"
+  run
+  expect "R1 a record naming another anchor ($other) is malformed, never PASS" bash -c "[ $rc = 1 ] && grep -q '^FAIL host-boundary: boundary-expected-malformed: ' '$work/out' && ! grep -q '^PASS' '$work/out'"
+done
+
+# ---- R2 (R-P6.10b-1): the runtime's owner is compared by uid; a user that does not exist owns nothing
+expectation com.lockstep.capsule "_lockstep_no_such_user_$$"
+run
+expect "R2 a capsule user that does not exist on this host is runtime-user-wrong" bash -c "[ $rc = 1 ] && grep -q '^FAIL host-boundary: runtime-user-wrong: ' '$work/out'"
+expect "R2 the attestation compares uids" grep -qF 'id -u "$cuser"' "$hb"
+
+# ---- R3 (R-P6.10b-7): the preflight names an attestation that did not run
+expect "R3 the preflight names an attestation that exited other than 0 or 1" grep -qF 'fail host-boundary "the attestation did not run' "$pf"
+
+# ---- R4 (R-P6.10b-1): the preflight checks the uid each capsule's hostagent runs as
+expect "R4 the preflight reads each capsule's hostagent pid" grep -qF 'ha.pid' "$pf"
+expect "R4 and compares its uid with the boundary's user" grep -qF 'host-boundary-runtime' "$pf"
+
+echo "check-host-boundary-review: $failures failure(s)"
+[ "$failures" = 0 ]

@@ -51,6 +51,7 @@ case "${1:-}" in
     scripts/lib/check-henforcer-configs
     # C-P6.10b: the host-boundary attestation, against a stand-in pfctl (model-free, no host rule).
     scripts/lib/check-host-boundary
+    scripts/lib/check-host-boundary-review
     ;;
 
   build)
