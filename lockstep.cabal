@@ -138,6 +138,7 @@ library
       Lockstep.Persistence.Connection
       Lockstep.Persistence.Conversation
       Lockstep.Persistence.DecisionReceipts
+      Lockstep.Persistence.Dispatch
       Lockstep.Persistence.Entity
       Lockstep.Persistence.Execution
       Lockstep.Persistence.Fields

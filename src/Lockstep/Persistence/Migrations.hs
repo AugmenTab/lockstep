@@ -899,4 +899,31 @@ ALTER TABLE lockstep_plan_revisions DROP CONSTRAINT lockstep_plan_revisions_plan
 CREATE INDEX lockstep_plan_revisions_digest ON lockstep_plan_revisions (plan_id, digest);
 |]
       )
+    ,
+      ( [Interpolate.i|C-P6.5: the scheduler's hand-overs of plan units, and the accepted fixes a fix was built on|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_plan_dispatches (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  revision_id uuid NOT NULL REFERENCES lockstep_plan_decisions (revision_id),
+  unit_key text NOT NULL,
+  task_id uuid NOT NULL UNIQUE REFERENCES lockstep_project_tasks (ticket_id),
+  work_order_id uuid NOT NULL UNIQUE REFERENCES lockstep_work_orders (id),
+  idempotency_key text NOT NULL UNIQUE,
+  dispatched_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  FOREIGN KEY (revision_id, unit_key) REFERENCES lockstep_plan_units (revision_id, unit_key)
+);
+CREATE TRIGGER lockstep_plan_dispatches_immutable BEFORE UPDATE OR DELETE ON lockstep_plan_dispatches FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_plan_dispatches_no_truncate BEFORE TRUNCATE ON lockstep_plan_dispatches FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TABLE lockstep_fix_bases (
+  transaction_id uuid NOT NULL REFERENCES lockstep_transactions (id),
+  ancestor_transaction_id uuid NOT NULL REFERENCES lockstep_transactions (id),
+  accepted_commit text NOT NULL CHECK (accepted_commit ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'),
+  recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (transaction_id, ancestor_transaction_id),
+  CHECK (transaction_id <> ancestor_transaction_id)
+);
+CREATE TRIGGER lockstep_fix_bases_immutable BEFORE UPDATE OR DELETE ON lockstep_fix_bases FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_fix_bases_no_truncate BEFORE TRUNCATE ON lockstep_fix_bases FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+|]
+      )
     ]

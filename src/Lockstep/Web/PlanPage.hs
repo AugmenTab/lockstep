@@ -4,7 +4,8 @@
 newest first, with its state, digest, who proposed it, its units and their
 needs, and its open questions; and for a proposed revision the owner's
 digest-bound decision form. A proposal is shown as a proposal: nothing on this
-page runs anything.
+page runs anything. C-P6.5 S7: for the plan in effect, what Lockstep hands over
+next and why each other unit waits.
 -}
 module Lockstep.Web.PlanPage
   ( planPage
@@ -22,6 +23,7 @@ import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (show)
 
+import Lockstep.Application.Dispatch (DispatchView (..))
 import Lockstep.Application.Plans (DraftView (..), PlanView (..), RevisionView (..))
 import Lockstep.Kernel.Identity (ProjectId)
 import Lockstep.Kernel.Plan (EdgeKind (..), PlanDocument (..), PlanEdge (..), PlanUnit (..), Uncertainty (..), unitKeyText)
@@ -33,8 +35,8 @@ hidden :: B.Name -> T.Text -> E.ChildHTML E.Form E.Division
 hidden name value =
   E.input [A.type_ HTML.InputHidden, A.name name, attr "value" value]
 
-planPage :: ProjectId -> T.Text -> PlanView -> Maybe T.Text -> LBS.ByteString
-planPage project name view notice =
+planPage :: ProjectId -> T.Text -> PlanView -> Maybe DispatchView -> Maybe T.Text -> LBS.ByteString
+planPage project name view next notice =
   fragment $
     [E.h1 [] [E.text ("Plan: " <> name)]]
       <> maybe [] (\n -> [E.p [A.id (elementId 'n' "otice"), attr "role" "status"] [E.text n]]) notice
@@ -42,10 +44,28 @@ planPage project name view notice =
          , E.h2 [] [E.text "In effect"]
          , E.p [A.id (elementId 'e' "ffective")] [E.text effectiveWords]
          ]
+      <> maybe [] runsNext next
       <> L.concatMap revision (planViewRevisions view)
       <> drafts
       <> [E.p [] [E.a [A.href (projectLink project)] [E.text ("Back to " <> name)]]]
  where
+  -- C-P6.5 S7: what Lockstep hands over next by itself, and why each other unit waits.
+  runsNext d =
+    let
+      units = maybe [] (planUnits . revisionDocument) (planViewEffective view)
+      titleOf k = maybe k unitTitle (L.find ((== k) . unitKeyText . unitKey) units)
+    in
+      [ E.h2 [] [E.text "What runs next"]
+      , E.p [] [E.text "Lockstep hands the approved work over by itself, one piece at a time in this project's folder, as soon as what it needs is ready. It never marks anything Done: that stays yours."]
+      , E.p
+          [A.id (elementId 'n' "ext")]
+          [E.text (maybe "Nothing can be handed over now." (\k -> "Next: " <> titleOf k <> ".") (dispatchViewNext d))]
+      , E.ul
+          [A.id (elementId 'w' "aiting")]
+          [ E.li [attr "data-reason" code] [E.text (titleOf k <> ": " <> fromMaybe code (L.lookup k (dispatchViewWords d)))]
+          | (k, code) <- dispatchViewWaiting d
+          ]
+      ]
   effectiveWords =
     case planViewEffective view of
       Nothing -> "No plan is approved for this project."

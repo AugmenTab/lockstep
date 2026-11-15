@@ -22,6 +22,8 @@ the person's working tree.
 module Lockstep.Effects.GitSupervisor
   ( Basis (..)
   , observeBasis
+  , commitBasis
+  , isAncestor
   , createWorkBranch
   , branchHead
   , treeEntries
@@ -200,6 +202,28 @@ observeBasis repo = do
                     (Right c, Right t') | isCommitId c && isCommitId t' -> Right (Basis c t')
                     _ -> Left (T.pack "no-commit")
         _ -> pure (Left (haltCodeText (HaltFixed FixedNotARepository)))
+
+{- | C-P6.5 S8: a commit of the repository as a basis (its commit and tree),
+whatever the checkout holds; @commit-invalid@ if it is not a commit there.
+-}
+commitBasis :: FilePath -> T.Text -> IO (Either T.Text Basis)
+commitBasis repo commit
+  | not (isCommitId commit) = pure (Left (T.pack "commit-invalid"))
+  | otherwise = do
+      found <- gitText repo ["rev-parse", "--verify", "--quiet", T.unpack commit <> "^{commit}"]
+      tree <- gitText repo ["rev-parse", "--verify", "--quiet", T.unpack commit <> "^{tree}"]
+      pure $ case (found, tree) of
+        (Right c, Right t) | c == commit && isCommitId t -> Right (Basis c t)
+        _ -> Left (T.pack "commit-invalid")
+
+{- | C-P6.5 S8: whether the first commit is an ancestor of the second, or the
+same commit (no commit reachable from the first is missing from the second).
+-}
+isAncestor :: FilePath -> T.Text -> T.Text -> IO (Either T.Text Bool)
+isAncestor repo ancestor descendant
+  | not (isCommitId ancestor && isCommitId descendant) = pure (Left (T.pack "commit-invalid"))
+  | otherwise =
+      fmap T.null <$> gitText repo ["rev-list", "--max-count=1", T.unpack ancestor, "^" <> T.unpack descendant, "--"]
 
 {- | C-P4.R1 R-G1: options that switch off every content filter driver named
 in the repository's configuration (any scope), so @git status@ compares the

@@ -25,12 +25,14 @@ module Lockstep.Kernel.Dispatch
   , chooseBasis
   ) where
 
+import Data.List qualified as L
+import Data.Maybe (isNothing, listToMaybe)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (Show)
 
-import Lockstep.Kernel.Plan (EdgeKind, UnitKey)
-import Lockstep.Kernel.Task (TaskReadiness (..))
+import Lockstep.Kernel.Plan (EdgeKind (Technical), UnitKey)
+import Lockstep.Kernel.Task (DependencyFact (..), TaskFacts (..), TaskReadiness (..), taskReadiness)
 
 -- | Where a task's latest fix stands, as far as its dependents are concerned.
 data FixFact
@@ -46,8 +48,15 @@ data FixFact
   deriving (Eq, Show, Enum, Bounded)
 
 fixFactCode :: FixFact -> T.Text
-fixFactCode _ =
-  T.empty
+fixFactCode f =
+  T.pack $
+    case f of
+      NoFix -> "none"
+      FixUnderWay -> "under-way"
+      FixAccepted -> "accepted"
+      FixAcceptanceInvalidated -> "acceptance-invalidated"
+      FixDone -> "done"
+      FixStopped -> "stopped"
 
 data PrerequisiteFact
   = PrerequisiteFact
@@ -63,16 +72,30 @@ data PrerequisiteFact
 
 -- | S1.
 prerequisiteSatisfied :: PrerequisiteFact -> Bool
-prerequisiteSatisfied _ =
-  False
+prerequisiteSatisfied p =
+  prerequisiteTicketState p == T.pack "done"
+    || prerequisiteFix p == FixDone
+    || ( prerequisiteFix p == FixAccepted
+           && prerequisiteEdge p == Just Technical
+           && prerequisiteProvisional p
+       )
 
 {- | A task's readiness with S1: the task's state and block reason, and its
 prerequisites. A satisfied prerequisite counts as finished; nothing else
 changes ('Lockstep.Kernel.Task.taskReadiness').
 -}
 readinessWith :: T.Text -> Maybe T.Text -> [PrerequisiteFact] -> TaskReadiness
-readinessWith _ _ _ =
-  NotYetReady
+readinessWith state reason prerequisites =
+  taskReadiness (TaskFacts state reason (fmap fact prerequisites))
+ where
+  canceled = T.pack "canceled"
+  fact p =
+    DependencyFact
+      (prerequisiteTitle p)
+      ( if prerequisiteTicketState p /= canceled && prerequisiteSatisfied p
+          then T.pack "done"
+          else prerequisiteTicketState p
+      )
 
 -- | One unit of the effective revision, with its task's facts.
 data UnitFacts
@@ -121,12 +144,39 @@ data WaitReason
   deriving (Eq, Show)
 
 waitReasonCode :: WaitReason -> T.Text
-waitReasonCode _ =
-  T.empty
+waitReasonCode r =
+  T.pack $
+    case r of
+      WaitingForPrerequisites _ -> "waiting-for"
+      WriterBusy _ -> "writer-busy"
+      ExecutionNotEnabled -> "execution-not-enabled"
+      UsageNotKnown -> "usage-unknown"
+      QueuedBehind _ -> "queued-behind"
+      HandedOver -> "handed-over"
+      FinishedUnit -> "finished"
+      NotYetAccepted -> "not-ready"
+      BlockedUnit _ -> "blocked"
+      CannotStartUnit _ -> "cannot-start"
+      CanceledUnit -> "canceled"
+      NotLocal -> "not-local"
+      UnrecognisedState _ -> "unknown"
 
 waitReasonWords :: WaitReason -> T.Text
-waitReasonWords _ =
-  T.empty
+waitReasonWords r =
+  case r of
+    WaitingForPrerequisites titles -> T.pack "Waiting for: " <> T.intercalate (T.pack ", ") titles <> T.pack "."
+    WriterBusy title -> T.pack "Waiting: Lockstep is working on " <> title <> T.pack " in this project's folder, and works on one thing there at a time."
+    ExecutionNotEnabled -> T.pack "Waiting: Lockstep may not work in this project yet."
+    UsageNotKnown -> T.pack "Waiting: this plan limits model usage, and Lockstep does not record usage yet, so it cannot tell whether the limit allows more work."
+    QueuedBehind title -> T.pack "Ready; it comes after " <> title <> T.pack "."
+    HandedOver -> T.pack "Handed over: its fix is under way, waiting for you, or checked and waiting for your Done."
+    FinishedUnit -> T.pack "Finished."
+    NotYetAccepted -> T.pack "Not yet ready to work on."
+    BlockedUnit reason -> T.pack "Blocked: " <> reason
+    CannotStartUnit titles -> T.pack "Cannot start: a task it needs was canceled (" <> T.intercalate (T.pack ", ") titles <> T.pack ")."
+    CanceledUnit -> T.pack "Canceled."
+    NotLocal -> T.pack "Not handed over: it has effects outside this computer, which no plan may have yet."
+    UnrecognisedState name -> T.pack "Lockstep cannot tell where this stands (" <> name <> T.pack ")."
 
 data DispatchDecision
   = DispatchDecision
@@ -138,13 +188,55 @@ data DispatchDecision
 
 -- | S2, S3: the one unit to hand over now, if any, and why each other unit waits.
 dispatchDecision :: ProjectFacts -> [UnitFacts] -> DispatchDecision
-dispatchDecision _ _ =
-  DispatchDecision Nothing []
+dispatchDecision project units =
+  DispatchDecision
+    { decisionNext = fmap unitFactKey next
+    , decisionWaiting =
+        [ (unitFactKey u, reason)
+        | u <- ordered
+        , Just reason <- [waitOf u]
+        ]
+    }
+ where
+  ordered = L.sortOn (\u -> (unitFactOrdinal u, unitFactKey u)) units
+  own u =
+    case (unitFactHandedOver u, unitFactReadiness u) of
+      (Just FixDone, _) -> Just FinishedUnit
+      (Just _, _) -> Just HandedOver
+      (Nothing, ReadyToWork) -> Nothing
+      (Nothing, NotYetReady) -> Just NotYetAccepted
+      (Nothing, WaitingFor titles) -> Just (WaitingForPrerequisites titles)
+      (Nothing, BlockedBecause why) -> Just (BlockedUnit why)
+      (Nothing, CannotStart titles) -> Just (CannotStartUnit titles)
+      (Nothing, Finished) -> Just FinishedUnit
+      (Nothing, TaskCanceled) -> Just CanceledUnit
+      (Nothing, BeingWorkedOn) -> Just HandedOver
+      (Nothing, StateUnrecognised name) -> Just (UnrecognisedState name)
+  -- The project's own conditions, in a fixed order; each holds every otherwise eligible unit.
+  projectReason
+    | not (projectEnabled project) = Just ExecutionNotEnabled
+    | projectBudget project == UsageUnknown = Just UsageNotKnown
+    | otherwise = fmap WriterBusy (projectWriter project)
+  candidateReason u
+    | not (unitFactLocal u) = Just NotLocal
+    | otherwise = projectReason
+  eligible = [u | u <- units, isNothing (own u), isNothing (candidateReason u)]
+  next = listToMaybe (L.sortOn (\u -> (negate (unitFactPriority u), unitFactOrdinal u, unitFactKey u)) eligible)
+  waitOf u
+    | Just u' <- next, unitFactKey u' == unitFactKey u = Nothing
+    | Just r <- own u = Just r
+    | Just r <- candidateReason u = Just r
+    | otherwise = Just (QueuedBehind (maybe T.empty unitFactTitle next))
 
 {- | S8: the basis among candidate accepted commits: the one that contains
 every other (@isAncestor a b@: @a@ is an ancestor of, or equal to, @b@);
 Nothing without candidates; Left @basis-ambiguous@ when none contains all.
 -}
 chooseBasis :: (T.Text -> T.Text -> Bool) -> [T.Text] -> Either T.Text (Maybe T.Text)
-chooseBasis _ _ =
-  Right Nothing
+chooseBasis isAncestor candidates =
+  case L.nub candidates of
+    [] -> Right Nothing
+    distinct ->
+      case [c | c <- distinct, L.all (`isAncestor` c) distinct] of
+        c : _ -> Right (Just c)
+        [] -> Left (T.pack "basis-ambiguous")

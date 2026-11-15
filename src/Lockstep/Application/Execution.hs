@@ -12,6 +12,8 @@ module Lockstep.Application.Execution
   , executionStatus
   , enableExecution
   , admitBug
+  , AdmitOptions (..)
+  , admitTask
   , findAdmission
   ) where
 
@@ -397,7 +399,30 @@ registerBugFix =
 
 -- | X6, in its order; a refusal writes nothing.
 admitBug :: DatabaseRuntime -> ProjectFolders -> IdempotencyKey -> T.Text -> Int -> IO (Either NotReadyReason (Either T.Text Admission))
-admitBug runtime folders key rawId expected
+admitBug runtime folders key rawId expected =
+  fmap (fmap fst) <$> admitTask runtime folders personOptions key rawId expected
+
+{- | Who hands a task over, and what else its hand-over checks and writes
+inside its transaction (C-P6.5 S4): a guard run after the locks, whose
+refusal writes nothing, and a write given the new Work Order.
+-}
+data AdmitOptions
+  = AdmitOptions
+  { admitActor :: T.Text
+  , admitGuard :: O.Orville (Either T.Text ())
+  , admitAfter :: WorkOrderId -> O.Orville ()
+  }
+
+-- | A person's hand-over, in the application (X6).
+personOptions :: AdmitOptions
+personOptions =
+  AdmitOptions {admitActor = actor, admitGuard = pure (Right ()), admitAfter = const (pure ())}
+
+{- | X6 with its options; the admission and whether this call made it (a key
+replayed gives the recorded admission, not made now).
+-}
+admitTask :: DatabaseRuntime -> ProjectFolders -> AdmitOptions -> IdempotencyKey -> T.Text -> Int -> IO (Either NotReadyReason (Either T.Text (Admission, Bool)))
+admitTask runtime folders options key rawId expected
   | expected < 0 || expected > 2147483647 = pure (Right (refuse "revision-out-of-range"))
   | otherwise =
       whenReady runtime $ do
@@ -413,14 +438,16 @@ admitBug runtime folders key rawId expected
           byKey <- Store.findAdmissionByKey keyText
           case (byKey, parsed, digest) of
             (Just a, _, _)
-              | Just (Store.admissionRowDigest a) == digest -> pure (Right (admissionOf a))
+              | Just (Store.admissionRowDigest a) == digest -> pure (Right (admissionOf a, False))
               | otherwise -> pure (refuse "key-conflict")
             (Nothing, Just tid, Just requestDigest) -> do
+              guarded <- admitGuard options
               found <- findTaskWithProjectIn tid
-              case found of
-                Nothing -> pure (refuse "unknown-task")
-                Just (Left code) -> pure (Left code)
-                Just (Right (projectId, task)) -> do
+              case (guarded, found) of
+                (Left code, _) -> pure (Left code)
+                (_, Nothing) -> pure (refuse "unknown-task")
+                (_, Just (Left code)) -> pure (Left code)
+                (Right (), Just (Right (projectId, task))) -> do
                   project <- Projects.findProjectById projectId
                   enablement <- Store.findEnablementByProject projectId
                   already <- Store.findAdmissionByTask tid
@@ -432,7 +459,7 @@ admitBug runtime folders key rawId expected
                       | taskTicketRevision task /= expected -> pure (refuse "stale-revision")
                       | Just code <- admissionBlock (taskReadinessOf task) -> pure (Left code)
                       | not (writable folders row) -> pure (refuse "folder-read-only")
-                      | otherwise -> handOver u keyText requestDigest tid task e
+                      | otherwise -> fmap (\a -> (a, True)) <$> handOver u keyText requestDigest tid task e
             _ -> pure (refuse "unknown-task")
  where
   -- A task and its Ticket share one UUID (C-P3.6 K2).
@@ -480,9 +507,10 @@ admitBug runtime folders key rawId expected
                     , Store.admissionRowProject = Store.enablementRowProject enablement
                     , Store.admissionRowWorkOrder = workOrder
                     , Store.admissionRowEffectiveDigest = effective
-                    , Store.admissionRowActor = actor
+                    , Store.admissionRowActor = admitActor options
                     , Store.admissionRowAt = T.empty
                     }
+                admitAfter options workOrder
                 -- Inserted just above in this transaction: not finding it is a violation that rolls everything back.
                 stored <- maybe (integrityViolation "an admission inserted in this transaction cannot be read back") pure =<< Store.findAdmissionByTask tid
                 pure (Right (admissionOf stored))

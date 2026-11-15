@@ -15,6 +15,8 @@ module Lockstep.Persistence.Plans
   , DraftRow (..)
   , lockPlans
   , findPlanOf
+  , allPlans
+  , effectiveRevision
   , insertPlan
   , planRevisions
   , findRevisionByKey
@@ -36,7 +38,9 @@ module Lockstep.Persistence.Plans
   , finishDraft
   ) where
 
+import Control.Monad (filterM)
 import Data.List.NonEmpty (NonEmpty ((:|)))
+import Data.Maybe (listToMaybe)
 import Data.Text qualified as T
 import Data.Time (UTCTime)
 import Flipstone.Prelude
@@ -90,6 +94,20 @@ findPlanOf project =
 insertPlan :: O.MonadOrville m => PlanRow -> m ()
 insertPlan =
   O.insertEntity planTable
+
+-- | C-P6.5: every project's plan, in project order.
+allPlans :: O.MonadOrville m => m [PlanRow]
+allPlans =
+  O.findEntitiesBy planTable (O.orderBy (O.orderByField planProjectField O.ascendingOrder))
+
+-- | C-P6.5: the project's effective revision, its newest approved one (as C-P6.4's views count it).
+effectiveRevision :: O.MonadOrville m => ProjectId -> m (Maybe RevisionRow)
+effectiveRevision project = do
+  plan <- findPlanOf project
+  revisions <- maybe (pure []) (planRevisions . planRowId) plan
+  approved <- filterM (fmap (maybe False ((== T.pack "approved") . decisionRowDecision)) . decisionOf . revisionRowId) revisions
+  -- Newest first: the first approved one is the effective one.
+  pure (listToMaybe approved)
 
 -- lockstep_plan_revisions --------------------------------------------------------------
 

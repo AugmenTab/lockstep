@@ -19,11 +19,14 @@ module Lockstep.Application.Tasks
   , findTaskById
   , findTaskIn
   , findTaskWithProjectIn
+  , fixFactOf
+  , acceptedBases
   , mostImportantReadyTask
   , requestDigest
   ) where
 
 import Data.List qualified as L
+import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
@@ -35,13 +38,13 @@ import Lockstep.Application.Identity (newUuid)
 import Lockstep.Application.Ledger (createTicketIn, decideTicketIn, reviseTicketIn, ticketFactsIn)
 import Lockstep.Application.LedgerRefusal (LedgerError (..), LedgerRefusal (StaleRevision), ledgerRefusalCode)
 import Lockstep.Application.Profiles (sha256Hasher)
+import Lockstep.Kernel.Dispatch (FixFact (..), PrerequisiteFact (..), prerequisiteSatisfied, readinessWith)
 import Lockstep.Kernel.Evidence (mkHumanSignoff)
-import Lockstep.Kernel.Identity (ProjectId (..), TaskId (..), TicketId (..), identityText, parseIdentity)
+import Lockstep.Kernel.Identity (ProjectId (..), TaskId (..), TicketId (..), TransactionId, identityText, parseIdentity)
+import Lockstep.Kernel.Plan (EdgeKind, parseEdgeKind)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
 import Lockstep.Kernel.Task
-  ( DependencyFact (..)
-  , Priority
-  , TaskFacts (..)
+  ( Priority
   , TaskReadiness
   , TaskTitle
   , createsCycleOf
@@ -49,16 +52,19 @@ import Lockstep.Kernel.Task
   , mkTaskTitle
   , mostImportantReady
   , priorityValue
-  , taskReadiness
   , taskRequestText
   , taskRuleCode
   , taskTitleText
   )
 import Lockstep.Kernel.Ticket (TicketInput (..))
+import Lockstep.Kernel.Transaction (TxState (..))
 import Lockstep.Kernel.Transition (Command (..), Principal (Human))
+import Lockstep.Persistence.Execution qualified as Execution
 import Lockstep.Persistence.Integrity (integrityViolation)
+import Lockstep.Persistence.Plans qualified as Plans
 import Lockstep.Persistence.Projects qualified as Projects
 import Lockstep.Persistence.Tasks qualified as Store
+import Lockstep.Persistence.Transactions qualified as Transactions
 
 data NewTask
   = NewTask
@@ -137,17 +143,123 @@ taskTicket :: TaskId -> TicketId
 taskTicket (TaskId u) =
   TicketId u
 
--- | The view of a stored task: its row, its Ticket's facts and its dependencies' facts.
+{- | C-P6.5 S1: where a task's fix stands, and its transaction: none without a
+hand-over; under way from the hand-over until it is accepted, done or stopped.
+-}
+fixOf :: TaskId -> O.Orville (FixFact, Maybe Transactions.TransactionRow)
+fixOf tid = do
+  admission <- Execution.findAdmissionByTask tid
+  case admission of
+    Nothing -> pure (NoFix, Nothing)
+    Just a -> do
+      tx <- Transactions.findTransactionByWorkOrder (Execution.admissionRowWorkOrder a)
+      pure (maybe FixUnderWay (stateFact . Transactions.txRowState) tx, tx)
+ where
+  stateFact state =
+    case state of
+      Running _ -> FixUnderWay
+      Halted _ _ -> FixUnderWay
+      Accepted -> FixAccepted
+      Done -> FixDone
+      Stopped _ -> FixStopped
+
+-- | C-P6.5 S1: where a task's fix stands, inside the caller's transaction.
+fixFactOf :: TaskId -> O.Orville FixFact
+fixFactOf tid =
+  fst <$> fixOf tid
+
+-- | The effective plan's units and edges of a project, by task: which units are provisional, and each edge's kind.
+data PlanLinks
+  = PlanLinks
+  { linkProvisional :: [(TaskId, Bool)]
+  , linkEdges :: [((TaskId, TaskId), EdgeKind)]
+  }
+
+planLinks :: ProjectId -> O.Orville PlanLinks
+planLinks project = do
+  effective <- Plans.effectiveRevision project
+  case effective of
+    Nothing -> pure (PlanLinks [] [])
+    Just revision -> do
+      units <- Plans.revisionUnits (Plans.revisionRowId revision)
+      edges <- Plans.revisionEdges (Plans.revisionRowId revision)
+      let
+        taskOf k = Plans.unitRowTask <$> L.find ((== k) . Plans.unitRowKey) units
+      pure
+        PlanLinks
+          { linkProvisional = [(Plans.unitRowTask u, Plans.unitRowProvisional u) | u <- units]
+          , -- A stored kind that does not read is no kind: the edge then needs the person's Done (S1).
+            linkEdges =
+              [ ((dependent, prerequisite), kind)
+              | e <- edges
+              , Just dependent <- [taskOf (Plans.edgeRowDependent e)]
+              , Just prerequisite <- [taskOf (Plans.edgeRowPrerequisite e)]
+              , Just kind <- [parseEdgeKind (Plans.edgeRowKind e)]
+              ]
+          }
+
+-- | A task's prerequisites as S1 reads them, each with its fix's transaction.
+prerequisitesOf :: Store.TaskRow -> O.Orville (Either T.Text [(PrerequisiteFact, Maybe Transactions.TransactionRow)])
+prerequisitesOf row = do
+  let
+    tid = Store.rowTaskId row
+  deps <- Store.dependenciesOf tid
+  links <- if L.null deps then pure (PlanLinks [] []) else planLinks (Store.rowProjectId row)
+  facts <-
+    traverse
+      ( \d -> do
+          ticket <- ticketFactsIn (taskTicket d) >>= ledgerStep
+          (fix, tx) <- fixOf d
+          pure $
+            fmap
+              ( \(state, _, _, title) ->
+                  ( PrerequisiteFact
+                      { prerequisiteTitle = title
+                      , prerequisiteTicketState = state
+                      , prerequisiteEdge = L.lookup (tid, d) (linkEdges links)
+                      , prerequisiteProvisional = fromMaybe False (L.lookup d (linkProvisional links))
+                      , prerequisiteFix = fix
+                      }
+                  , tx
+                  )
+              )
+              ticket
+      )
+      deps
+  pure (sequenceA facts)
+
+{- | C-P6.5 S8: the prerequisites of a task satisfied by a technical acceptance
+alone (not by a done Ticket or the person's Done): each one's transaction and
+accepted commit.
+-}
+acceptedBases :: TaskId -> O.Orville (Either T.Text [(TransactionId, T.Text)])
+acceptedBases tid = do
+  found <- Store.findTaskRow tid
+  case found of
+    Nothing -> pure (Right [])
+    Just row ->
+      fmap
+        ( \ps ->
+            [ (Transactions.txRowId tx, commit)
+            | (p, Just tx) <- ps
+            , prerequisiteSatisfied p
+            , prerequisiteTicketState p /= T.pack "done"
+            , prerequisiteFix p == FixAccepted
+            , Just commit <- [Transactions.txRowAccepted tx]
+            ]
+        )
+        <$> prerequisitesOf row
+
+-- | The view of a stored task: its row, its Ticket's facts and its prerequisites' facts (C-P6.5 S1).
 loadView :: Store.TaskRow -> O.Orville (Either T.Text TaskView)
 loadView row = do
   facts <- ticketFactsIn (taskTicket (Store.rowTaskId row))
-  deps <- Store.dependenciesOf (Store.rowTaskId row)
-  depFacts <- traverse (ticketFactsIn . taskTicket) deps
   own <- ledgerStep facts
-  dependencies <- traverse ledgerStep depFacts
+  prerequisites <- prerequisitesOf row
+  deps <- Store.dependenciesOf (Store.rowTaskId row)
   pure $ do
     (state, reason, revision, _) <- own
-    dependencyFacts <- traverse (fmap (\(s, _, _, title) -> DependencyFact title s)) dependencies
+    prerequisiteFacts <- fmap fst <$> prerequisites
     pure
       TaskView
         { taskKey = Store.rowTaskId row
@@ -160,7 +272,7 @@ loadView row = do
         , taskState = state
         , taskBlockReason = reason
         , taskDependencies = fmap identityText deps
-        , taskReadinessOf = taskReadiness (TaskFacts state reason dependencyFacts)
+        , taskReadinessOf = readinessWith state reason prerequisiteFacts
         , taskRevision = Store.rowRevision row
         , taskTicketRevision = revision
         }
@@ -295,9 +407,13 @@ decideTask runtime session rawId expected decision =
             withDatabase runtime . O.withTransaction $ do
               Store.lockTasks
               found <- Store.findTaskRow tid
+              fix <- fixFactOf tid
               case (found, input) of
                 (Nothing, _) -> pure (refuse "unknown-task")
                 (Just _, Left code) -> pure (Left code)
+                -- C-P6.5 S10: no cancel while the fix is handed over, running, halted or accepted; stop it first.
+                (Just _, Right (TicketCancel _))
+                  | fix `L.elem` [FixUnderWay, FixAccepted, FixAcceptanceInvalidated] -> pure (refuse "fix-active")
                 (Just row, Right ticketInput) -> do
                   decided <- decideTicketIn (taskTicket tid) expected (Command Human ticketInput)
                   case decided of

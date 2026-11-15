@@ -46,6 +46,7 @@ import Lockstep.Application.Command (IdempotencyKey, WorkspaceState (..), genera
 import Lockstep.Application.Conversation (Channel (..), Conversation (..), Sender (..), StoredRequest (..), conversation, postMessage)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason (..), Readiness (..), checkReadiness, revisionNumber)
 import Lockstep.Application.Decisions (DecisionReceipt (..), applyDecision, decidedReceipt, findDecision, listDecisions, receiptApplied)
+import Lockstep.Application.Dispatch (dispatchView)
 import Lockstep.Application.Engine (TransactionView (..), decideCompletion, haltRequest, projectStarted, transactionForWorkOrder, transactionView)
 import Lockstep.Application.Execution (Admission (..), ExecutionStatus (..), admitBug, enableExecution, executionStatus, findAdmission)
 import Lockstep.Application.Inbox (inboxEntries)
@@ -837,11 +838,14 @@ planAnswer :: DatabaseRuntime -> ProjectId -> Maybe T.Text -> IO Wai.Response
 planAnswer db pid notice = do
   project <- findProject db (identityText pid)
   view <- planView db (identityText pid)
+  -- C-P6.5 S7: what runs next; a database that cannot say is not taken for "nothing".
+  next <- dispatchView db (identityText pid)
   pure $
-    case (project, view) of
-      (Right (Just p), Right (Right v)) -> pathAnswer (planLink pid) (planPage pid (projectName p) v notice)
-      (Right Nothing, _) -> notFound
-      (_, Right (Left _)) -> notFound
+    case (project, view, next) of
+      (_, _, Left _) -> notReady
+      (Right (Just p), Right (Right v), Right n) -> pathAnswer (planLink pid) (planPage pid (projectName p) v (either (const Nothing) Just n) notice)
+      (Right Nothing, _, _) -> notFound
+      (_, Right (Left _), _) -> notFound
       _ -> notReady
 
 -- | A refused question in words.

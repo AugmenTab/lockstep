@@ -378,6 +378,19 @@ changed, never over your own edits (it is then refused `locally-edited`), keeps 
 blocks the task of a unit it withdraws. A rejected or replaced plan can be proposed again. The open questions stay
 on the page.
 
+**Running an approved plan (C-P6.5).** Once a revision is approved, `lockstep serve` hands its units over by itself:
+each engine pass first hands over, per project, the one unit that is ready (highest priority first, then the plan's
+order), then starts and advances fixes as before. Nobody presses Continue between units. A unit is ready when every
+task it needs is done: its Ticket is done, or you marked its fix Done, or — only for a *needs it working* edge on a
+unit the plan marks provisional — its fix was verified, reviewed and committed by Lockstep on its work branch. Such a
+dependent fix starts from that accepted commit (not from your checkout) and records which fix it built on; when
+several fixes it needs do not contain each other, it stops at its basis (`basis-ambiguous`) and asks you. One
+project works on one thing at a time; a fix waiting for your decision holds only its own project. A plan with a
+token budget waits (`usage-unknown`): Lockstep does not record usage yet, so it never assumes the budget allows
+more. The Plan page's **What runs next** shows the next unit and why each other one waits. Lockstep never marks
+anything Done, pushes or merges. A task whose fix is handed over, running, waiting for you, or checked and waiting
+for your Done cannot be canceled (`fix-active`): stop the fix first (its Stop choice), then cancel the task.
+
 ### Questions about a stopped fix (C-P6.3)
 
 When a fix stops for your decision, **Decisions → Fixes waiting for your answer** lists it with its project, task,

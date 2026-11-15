@@ -1,5 +1,7 @@
 {- | The engine worker (contract C-P4.15 W1; C-P4.R1 R-W1, R-W2): one thread
-that keeps coding transactions moving. Each pass first starts a transaction
+that keeps coding transactions moving. Each pass first hands over the next
+unit of each owner-approved plan whose prerequisites are satisfied (C-P6.5;
+'Lockstep.Application.Dispatch'), then starts a transaction
 for every handed-over bug that has none, in hand-over order (an Engineer whose
 one writer is busy is tried again next pass), then advances every running or
 halted transaction once, in the order they were started; a halted one only
@@ -17,6 +19,7 @@ uncertain and never run again by itself.
 module Lockstep.Application.EngineWorker
   ( EngineWorker
   , startEngineWorker
+  , startEngineWorkerWith
   , stopEngineWorker
   , stopEngineWorkerWithin
   , requestEngineStop
@@ -29,6 +32,7 @@ import Control.Concurrent (ThreadId, forkFinally, killThread, threadDelay)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, readMVar, tryPutMVar, tryReadMVar)
 import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
 import Control.Monad (unless)
+import Data.List qualified as L
 import Data.Maybe (catMaybes, isJust)
 import Data.Text qualified as T
 import Flipstone.Prelude
@@ -37,10 +41,11 @@ import Text.Show (Show)
 
 import Lockstep.Application.Clarification (ClarificationOutcome (..), ClarificationReport (..), answerClarificationsUntil, clarificationOutcomeCode)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, reasonDiagnosis)
+import Lockstep.Application.Dispatch (DispatchReport (..), dispatchOnce)
 import Lockstep.Application.Engine (Engine, StepReport (..), activeTransactionIds, advanceTransaction, pendingWorkOrders, startTransactionFor)
 import Lockstep.Application.Plans (DraftOutcome (..), draftOutcomeCode, draftPlansUntil)
 import Lockstep.Application.Plans qualified as Plans
-import Lockstep.Application.Projects (ProjectFolders)
+import Lockstep.Application.Projects (ProjectFolders, projectFoldersFromEnvironment)
 import Lockstep.Kernel.Identity (TransactionId (..), WorkOrderId (..), identityText)
 
 data EngineWorker
@@ -64,19 +69,29 @@ reported under its name, never taken as empty.
 -}
 engineOnce :: DatabaseRuntime -> Engine -> IO [(T.Text, Either PassFailure T.Text)]
 engineOnce runtime engine =
-  enginePass runtime engine (pure False)
+  enginePass runtime engine projectFoldersFromEnvironment (pure False)
 
 -- | 'engineOnce' with the projects folders the dispatcher checks a hand-over against (C-P6.5).
 engineOnceWith :: DatabaseRuntime -> Engine -> ProjectFolders -> IO [(T.Text, Either PassFailure T.Text)]
-engineOnceWith runtime engine _ =
-  engineOnce runtime engine
+engineOnceWith runtime engine folders =
+  enginePass runtime engine (pure folders) (pure False)
 
--- | A pass that ends early, between transactions, once the check says so.
-enginePass :: DatabaseRuntime -> Engine -> IO Bool -> IO [(T.Text, Either PassFailure T.Text)]
-enginePass runtime engine stopping = do
+{- | A pass that ends early, between transactions, once the check says so.
+C-P6.5 S5: it first hands over the next unit of each approved plan, so the
+transactions it then starts include them.
+-}
+enginePass :: DatabaseRuntime -> Engine -> IO ProjectFolders -> IO Bool -> IO [(T.Text, Either PassFailure T.Text)]
+enginePass runtime engine foldersOf stopping = do
+  folders <- foldersOf
+  dispatched <- dispatchOnce runtime folders
+  let
+    handedOver =
+      case dispatched of
+        Left reason -> [(T.pack "plan dispatch", Left (PassDatabase reason))]
+        Right reports -> [(T.pack "dispatch " <> reportUnit r, either (Left . PassRefused) Right (reportResult r)) | r <- reports]
   pending <- pendingWorkOrders runtime
   started <-
-    case pending of
+    (handedOver <>) <$> case pending of
       Left reason -> pure [(T.pack "pending work orders", Left (PassDatabase reason))]
       Right workOrders -> catMaybes <$> traverse start workOrders
   active <- activeTransactionIds runtime
@@ -146,7 +161,12 @@ enginePass runtime engine stopping = do
 
 -- | Starts the worker: a pass every interval (milliseconds) until stopped.
 startEngineWorker :: DatabaseRuntime -> Engine -> Int -> (String -> IO ()) -> IO EngineWorker
-startEngineWorker runtime engine interval logLine = do
+startEngineWorker runtime engine =
+  startEngineWorkerWith runtime engine projectFoldersFromEnvironment
+
+-- | 'startEngineWorker' with where each pass reads the projects folders from (C-P6.5).
+startEngineWorkerWith :: DatabaseRuntime -> Engine -> IO ProjectFolders -> Int -> (String -> IO ()) -> IO EngineWorker
+startEngineWorkerWith runtime engine foldersOf interval logLine = do
   stop <- newEmptyMVar
   done <- newEmptyMVar
   let
@@ -154,7 +174,7 @@ startEngineWorker runtime engine interval logLine = do
     loop = do
       halt <- stopping
       unless halt $ do
-        passed <- try (enginePass runtime engine stopping)
+        passed <- try (enginePass runtime engine foldersOf stopping)
         case passed of
           Left (e :: SomeException)
             | Just (_ :: SomeAsyncException) <- fromException e -> throwIO e
@@ -163,7 +183,7 @@ startEngineWorker runtime engine interval logLine = do
             -- A database failure is logged with its diagnosis; refusals are the engine's own record.
             traverse_ (\(what, failure) -> quietly (logLine ("engine pass: " <> T.unpack what <> ": " <> T.unpack (reasonDiagnosis failure)))) [(what, r) | (what, Left (PassDatabase r)) <- results]
               -- R-P6.3: a question Lockstep could not answer is logged too (the database keeps its code).
-              >> traverse_ (\(what, code) -> quietly (logLine ("engine pass: " <> T.unpack what <> ": " <> T.unpack code))) [(what, c) | (what, Left (PassRefused c)) <- results, T.pack "clarify " `T.isPrefixOf` what]
+              >> traverse_ (\(what, code) -> quietly (logLine ("engine pass: " <> T.unpack what <> ": " <> T.unpack code))) [(what, c) | (what, Left (PassRefused c)) <- results, L.any (`T.isPrefixOf` what) [T.pack "clarify ", T.pack "dispatch "]]
         threadDelay (interval * 1000)
         loop
     -- A log that fails is not a reason to stop working; a stop still is.

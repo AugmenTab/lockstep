@@ -90,8 +90,8 @@ import Lockstep.Application.EngineRecords
 import Lockstep.Application.EngineRecords qualified as Records
 import Lockstep.Application.Identity (newIdentity)
 import Lockstep.Application.Repositories (ownershipHolds)
-import Lockstep.Application.Tasks (TaskView (..), findTaskIn)
-import Lockstep.Effects.GitSupervisor (Basis (..), CommitMeta (..), advanceBranch, branchHead, commitChanges, commitTime, createWorkBranch, observeBasis, snapshotChanges, treeEntries, writeSnapshot)
+import Lockstep.Application.Tasks (TaskView (..), acceptedBases, findTaskIn)
+import Lockstep.Effects.GitSupervisor (Basis (..), CommitMeta (..), advanceBranch, branchHead, commitBasis, commitChanges, commitTime, createWorkBranch, isAncestor, observeBasis, snapshotChanges, treeEntries, writeSnapshot)
 import Lockstep.Effects.Process (RunResult (..))
 import Lockstep.Effects.Roles (Adapter (..), Runner (..), RunnerFailure (..), Workspace (..), decodeAnswer, prepareRole, readAnswer, runPrepared)
 import Lockstep.Effects.Roles qualified as Roles
@@ -100,6 +100,7 @@ import Lockstep.Foundation.Fleece (decodeText)
 import Lockstep.Foundation.Json (Json (..), renderJson, string, strings)
 import Lockstep.Foundation.RunnerProtocol (RunProfile (..))
 import Lockstep.Kernel.Candidate (MutantRun (..), classifyTest, disposeFinding, quoteGrounded)
+import Lockstep.Kernel.Dispatch (chooseBasis)
 import Lockstep.Kernel.GitBasis (Change (..), TreeEntry (..), TreeMode (..), protectedPathValid, treeModeText, treePathValid, workBranch)
 import Lockstep.Kernel.Identity (InvocationId (..), ProjectId (..), TaskId (..), TransactionId (..), WorkOrderId (..), identityText, parseIdentity)
 import Lockstep.Kernel.Roles
@@ -158,6 +159,7 @@ import Lockstep.Kernel.Transaction
   , txStateName
   )
 import Lockstep.Kernel.Transition (Principal (..), principalLabel)
+import Lockstep.Persistence.Dispatch qualified as Dispatches
 import Lockstep.Persistence.Transactions qualified as Store
 
 -- | What the engine runs roles with: the runner, and the adapter for a role's nth invocation.
@@ -695,13 +697,13 @@ settle runtime row input records change =
 
 {- | E5: the Engineer still owns the repository (C-P4.1), its main worktree is
 clean and @HEAD@ is a commit; that commit is the basis, and the Work Order's
-branch is created at it.
+branch is created at it. C-P6.5 S8: a fix whose prerequisites are satisfied by
+technical acceptances alone is built on the accepted commit that contains the
+others (@basis-ambiguous@ if none does), whatever the checkout holds, and
+records the acceptances it builds on.
 -}
 basisStage :: DatabaseRuntime -> Store.TransactionRow -> IO (Either T.Text TxInput)
 basisStage runtime row = do
-  let
-    folder = T.unpack (Store.txRowFolder row)
-    refuse code = settle runtime row (BasisRefused code) [(RecordBasisRefused, record refusalSchema (Refusal code))] id
   owned <-
     db runtime $ do
       facts <- Store.admissionFacts (Store.txRowWorkOrder row)
@@ -712,26 +714,53 @@ basisStage runtime row = do
     Left code -> pure (Left code)
     Right (Left code) -> refuse code
     Right (Right ()) -> do
-      observed <- observeBasis folder
-      case observed of
-        Left code -> refuse code
-        Right basis -> do
+      inherited <- db runtime (acceptedBases (Store.txRowTask row))
+      case inherited of
+        Left code -> pure (Left code)
+        Right [] -> observeBasis folder >>= either refuse (begin [])
+        Right bases -> do
+          -- C-P6.5 S8: built on the accepted commit that contains every other accepted prerequisite.
           let
-            branch = workBranch (identityText (Store.txRowWorkOrder row))
-          made <- createWorkBranch folder branch (basisCommit basis)
-          case made of
+            commits = L.nub (fmap snd bases)
+          related <- traverse (\(a, b) -> fmap (\r -> ((a, b), r)) <$> isAncestor folder a b) [(a, b) | a <- commits, b <- commits, a /= b]
+          case sequenceA related of
             Left code -> refuse code
-            Right () ->
-              settle
-                runtime
-                row
-                BasisReady
-                [
-                  ( RecordBasis
-                  , record basisSchema (BasisRecord (basisCommit basis) (basisTree basis) branch)
-                  )
-                ]
-                (\r -> r {Store.txRowBasis = Just (basisCommit basis), Store.txRowBranch = Just branch})
+            Right pairs ->
+              case chooseBasis (\a b -> a == b || L.lookup (a, b) pairs == Just True) commits of
+                Left code -> refuse code
+                Right Nothing -> observeBasis folder >>= either refuse (begin [])
+                Right (Just commit) -> commitBasis folder commit >>= either refuse (begin bases)
+ where
+  folder = T.unpack (Store.txRowFolder row)
+  refuse code = settle runtime row (BasisRefused code) [(RecordBasisRefused, record refusalSchema (Refusal code))] id
+  begin bases basis = do
+    let
+      branch = workBranch (identityText (Store.txRowWorkOrder row))
+    made <- createWorkBranch folder branch (basisCommit basis)
+    case made of
+      Left code -> refuse code
+      Right () -> do
+        -- Each accepted fix this one builds on, recorded once (a retried stage finds them recorded).
+        provenance <-
+          db runtime $ do
+            recorded <- fmap Dispatches.fixBaseAncestor <$> Dispatches.fixBasesOf (Store.txRowId row)
+            traverse_
+              (\(ancestor, commit) -> Dispatches.insertFixBase (Dispatches.FixBaseRow (Store.txRowId row) ancestor commit))
+              [b | b@(ancestor, _) <- bases, ancestor `L.notElem` recorded]
+            pure (Right ())
+        case provenance of
+          Left code -> pure (Left code)
+          Right () ->
+            settle
+              runtime
+              row
+              BasisReady
+              [
+                ( RecordBasis
+                , record basisSchema (BasisRecord (basisCommit basis) (basisTree basis) branch)
+                )
+              ]
+              (\r -> r {Store.txRowBasis = Just (basisCommit basis), Store.txRowBranch = Just branch})
 
 -- Workspaces ---------------------------------------------------------------------------
 
