@@ -56,4 +56,9 @@ provisional; a human-acceptance edge) pass and are kept as guards. `.local/evals
 
 ## After remediation
 
-(filled after the trial and the full check)
+Trial: P6.5 integration **15/15** (C-P6.5 8, R-P6.5 7), unit **16/16** (`.local/evals/phase-06/p65r-trial.log`).
+Contract text corrections are in `amendments.md`.
+
+Full check of the remediation commit (`fix(dispatch): resolve the independent review of C-P6.5 (R-P6.5)`): format,
+lint/static, build, unit **1001/1001**, no-live-model guard, integration **654/654**, backup/restore — **all PASSED**
+(`.local/evals/phase-06/p65r-full-check.log`). P6.5 is locally qualified; owner acceptance pending.
