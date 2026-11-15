@@ -54,4 +54,9 @@ Formatted and linted before the digests were taken. Baseline against `f3b3c71`:
 
 ## After remediation
 
-(filled after the trial and the full check)
+Trial: Phase 6 unit **156/156**, integration **93/93** (`.local/evals/phase-06/p67r-trial-*.log`). Contract text
+corrections and limitations are in `amendments.md`.
+
+Full check of `ee3b73a` (`fix(provisional): resolve the independent review of C-P6.7 (R-P6.7)`): format,
+lint/static, build, unit **1043/1043**, no-live-model guard, integration **676/676**, backup/restore — **all
+PASSED** (`.local/evals/phase-06/p67r-full-check.log`). P6.7 is locally qualified; owner acceptance pending.
