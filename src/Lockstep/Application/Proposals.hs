@@ -10,19 +10,20 @@ module Lockstep.Application.Proposals
   , listProposals
   ) where
 
+import Data.Char qualified as Char
 import Data.List qualified as L
-import Data.Maybe (mapMaybe)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
 import Text.Show (Show, show)
 
 import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
-import Lockstep.Application.Conversation (Sender (..))
+import Lockstep.Application.Conversation (Sender (..), senderPrincipal)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness (..), checkReadiness, withDatabase)
 import Lockstep.Application.Identity (newUuid)
+import Lockstep.Application.Invalidations (invalidationOf)
 import Lockstep.Application.Profiles (sha256Hasher)
-import Lockstep.Kernel.Identity (TransactionId (..), parseIdentity, uuidText)
+import Lockstep.Kernel.Identity (HumanRequestId (..), TransactionId (..), identityText, parseIdentity, uuidText)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText, mkProfileId, profileIdText)
 import Lockstep.Kernel.Proposal
   ( Decision
@@ -41,7 +42,8 @@ import Lockstep.Kernel.Proposal
   , scopeCode
   , validateProposal
   )
-import Lockstep.Kernel.Transition (Principal (..))
+import Lockstep.Kernel.Summary (Evidence (..))
+import Lockstep.Persistence.Conversation qualified as Requests
 import Lockstep.Persistence.Ledger qualified as Ledger
 import Lockstep.Persistence.Profiles qualified as Profiles
 import Lockstep.Persistence.Proposals qualified as Store
@@ -114,18 +116,23 @@ proposeImprovement runtime key raw =
         case inputProposer raw of
           ByPerson who -> pure (Just (ByPerson who))
           ByFix tx _ -> maybe (pure Nothing) (fmap (fmap (ByFix tx)) . boundProfiles) (parseIdentity tx)
-      case proposer of
-        Nothing -> pure (Left [T.pack "unknown-fix"])
-        Just p ->
-          case validateProposal raw {inputProposer = p} of
+      -- R-P6.9-1, -2: every link names a row of Lockstep's own, in its one spelling.
+      resolved <- sequenceA <$> traverse canonicalEvidence (inputEvidence raw)
+      case (proposer, resolved) of
+        (Nothing, _) -> pure (Left [T.pack "unknown-fix"])
+        (_, Nothing) -> pure (Left [T.pack "evidence-unknown"])
+        (Just p, Just evidence) ->
+          case validateProposal raw {inputProposer = p, inputEvidence = evidence} of
             Left problems -> pure (Left (fmap problemCode problems))
             Right proposal -> do
               let
                 i = proposalInput proposal
                 digest = sha (proposalText proposal)
+              stale <- profileRuleStale i
               byKey <- Store.findProposalByKey (idempotencyKeyText key)
               byDigest <- Store.findProposalByDigest digest
               case (byKey, byDigest) of
+                _ | stale -> pure (Left [T.pack "stale-target"])
                 (Just row, _)
                   | Store.proposalRowDigest row == digest -> Right . viewOf row <$> Store.decisionOf (Store.proposalRowId row)
                   | otherwise -> pure (Left [T.pack "key-conflict"])
@@ -154,10 +161,58 @@ proposeImprovement runtime key raw =
                   Store.insertProposal row
                   pure (Right (viewOf row Nothing))
 
--- | A stored proposal as the Kernel's, to decide on.
+{- | R-P6.9-1, -2: a link as Lockstep's own row names it, in its one spelling;
+Nothing when it names none. A commit is checked for its form only: a full SHA,
+in lower case (R-P6.9-1, limited; docs/gates/P6.9/review.md).
+-}
+canonicalEvidence :: Evidence -> O.Orville (Maybe Evidence)
+canonicalEvidence e =
+  case e of
+    OfFix t -> withFix t (pure . Just . OfFix . identityText)
+    OfRecord t n ->
+      withFix t $ \tx -> do
+        records <- Transactions.transactionRecords tx
+        pure $
+          if L.any ((== n) . fromIntegral . Transactions.recordRowSequence) records
+            then Just (OfRecord (identityText tx) n)
+            else Nothing
+    OfInvalidation t -> withFix t (\tx -> fmap (const (OfInvalidation (identityText tx))) <$> invalidationOf tx)
+    OfRequest r ->
+      case parseIdentity (T.toLower r) of
+        Nothing -> pure Nothing
+        Just q -> fmap (const (OfRequest (identityText (q :: HumanRequestId)))) <$> Requests.findRequest q
+    OfCommit c ->
+      let
+        commit = T.toLower c
+      in
+        pure (if T.length commit == 40 && T.all Char.isHexDigit commit then Just (OfCommit commit) else Nothing)
+ where
+  -- An id in any letter case is the same id; its canonical spelling is lower case.
+  withFix t found =
+    case parseIdentity (T.toLower t) of
+      Nothing -> pure Nothing
+      Just tx -> Transactions.findTransaction tx >>= maybe (pure Nothing) (const (found tx))
+
+{- | R-P6.9-4 (in part): a rule for a catalog Profile is about its latest
+version. A target that is not a catalog Profile is not refused here
+(docs/gates/P6.9/review.md OQ-P6.9-1).
+-}
+profileRuleStale :: ProposalInput -> O.Orville Bool
+profileRuleStale i
+  | inputScope i /= ProfileRule = pure False
+  | otherwise =
+      case mkProfileId (inputTarget i) of
+        Nothing -> pure False
+        Just profile -> maybe False (\r -> T.pack (show (Profiles.profileRowVersion r)) /= inputCurrent i) <$> Profiles.findProfile profile Nothing
+
+{- | A stored proposal as the Kernel's, to decide on; Nothing unless its stored
+evidence reads back to exactly what was stored (R-P6.9-3).
+-}
 storedInput :: Store.ProposalRow -> Maybe ProposalInput
 storedInput row = do
   scope <- parseScope (Store.proposalRowScope row)
+  evidence <- traverse evidenceFromKey (T.words (Store.proposalRowEvidence row))
+  if T.unwords (fmap evidenceKey evidence) == Store.proposalRowEvidence row then Just () else Nothing
   pure
     ProposalInput
       { inputScope = scope
@@ -167,7 +222,7 @@ storedInput row = do
       , inputTitle = Store.proposalRowTitle row
       , inputBenefit = Store.proposalRowBenefit row
       , inputRisks = Store.proposalRowRisks row
-      , inputEvidence = mapMaybe evidenceFromKey (T.words (Store.proposalRowEvidence row))
+      , inputEvidence = evidence
       , inputPrivate = Store.proposalRowPrivate row
       , inputProposer = ByPerson (Store.proposalRowProposer row)
       }
@@ -191,7 +246,7 @@ decideImprovement runtime sender rawId seen decision =
         case storedInput row >>= either (const Nothing) Just . validateProposal of
           Nothing -> pure (Left (T.pack "proposal-unreadable"))
           Just proposal ->
-            case decideProposal (principalOf sender) seen (parseDecision . Store.decisionRowDecision =<< earlier) proposal of
+            case decideProposal (senderPrincipal sender) seen (parseDecision . Store.decisionRowDecision =<< earlier) proposal of
               Left code -> pure (Left code)
               Right ()
                 -- P5: a Profile rule is about the catalog's latest version of that Profile.
@@ -204,12 +259,6 @@ decideImprovement runtime sender rawId seen decision =
  where
   parseDecision code =
     L.find ((== code) . decisionCode) [minBound .. maxBound]
-  principalOf s =
-    case s of
-      SenderHuman _ -> Human
-      SenderSupervisor -> Supervisor
-      SenderPlanner _ -> Agent
-      SenderAgent _ -> Agent
   actorOf s =
     case s of
       SenderHuman _ -> T.pack "person"
@@ -222,4 +271,5 @@ listProposals :: DatabaseRuntime -> Bool -> IO (Either NotReadyReason [ProposalV
 listProposals runtime private =
   whenReady runtime . withDatabase runtime $ do
     rows <- Store.allProposals
-    traverse (\r -> viewOf r <$> Store.decisionOf (Store.proposalRowId r)) [r | r <- rows, Store.proposalRowPrivate r == private]
+    decisions <- Store.allDecisions
+    pure [viewOf r (L.find ((== Store.proposalRowId r) . Store.decisionRowProposal) decisions) | r <- rows, Store.proposalRowPrivate r == private]

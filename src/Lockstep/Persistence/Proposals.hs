@@ -12,6 +12,7 @@ module Lockstep.Persistence.Proposals
   , allProposals
   , insertProposal
   , decisionOf
+  , allDecisions
   , insertDecision
   ) where
 
@@ -126,6 +127,11 @@ insertProposal =
 decisionOf :: O.MonadOrville m => T.Text -> m (Maybe DecisionRow)
 decisionOf i =
   O.findFirstEntityBy decisionTable (O.where_ (O.fieldEquals decisionProposalField i))
+
+-- | R-P6.9-7: every decision, in one query (one row per decided proposal).
+allDecisions :: O.MonadOrville m => m [DecisionRow]
+allDecisions =
+  O.findEntitiesBy decisionTable mempty
 
 insertDecision :: O.MonadOrville m => DecisionRow -> m ()
 insertDecision =

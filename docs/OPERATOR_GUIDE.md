@@ -447,7 +447,9 @@ lockstep proposal reject PROPOSAL-ID --current 1
 A proposal names what it would change (scope `engineering-practice`, `profile-rule`, `test-adequacy`,
 `review-instructions` or `skill`; a target; its current and proposed versions), why (title, benefit, risks), and
 its evidence: links to Lockstep's own records (`fix:`, `record:`, `commit:`, `invalidation:`, `request:`), never
-free text. The same evidence given twice counts once. The same proposal made again, by any key or proposer, is
+free text. Each link must name an existing fix, record, invalidation or request (`evidence-unknown` otherwise); a
+commit must be given as its full SHA. The same evidence given twice, in any letter case, counts once. A
+`profile-rule` proposal for a catalog Profile must name its latest version as `--current`. The same proposal made again, by any key or proposer, is
 the same proposal. A fix may not propose a rule for the Profile its own Work Order is bound to, and may not make a
 private proposal. Private proposals appear only in `proposal list --private`.
 

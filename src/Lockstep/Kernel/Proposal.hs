@@ -121,22 +121,30 @@ evidenceKey e =
     OfInvalidation t -> T.pack "invalidation:" <> t
     OfRequest r -> T.pack "request:" <> r
 
--- | The evidence a key names; Nothing for text that is not one.
+{- | The evidence a key names; Nothing for text that is not one. R-P6.9-3: an id
+is not empty and holds no space, control character or @:@, so every key reads
+back exactly.
+-}
 evidenceFromKey :: T.Text -> Maybe Evidence
 evidenceFromKey key =
   case T.splitOn (T.pack ":") key of
     [kind, t]
+      | not (idOk t) -> Nothing
       | kind == T.pack "fix" -> Just (OfFix t)
       | kind == T.pack "commit" -> Just (OfCommit t)
       | kind == T.pack "invalidation" -> Just (OfInvalidation t)
       | kind == T.pack "request" -> Just (OfRequest t)
     [kind, t, n]
       | kind == T.pack "record"
+      , idOk t
       , not (T.null n)
       , T.all Char.isDigit n
       , T.length n <= 9 ->
           Just (OfRecord t (T.foldl' (\acc c -> acc * 10 + (Char.ord c - Char.ord '0')) 0 n))
     _ -> Nothing
+ where
+  idOk t =
+    not (T.null t) && not (T.any (\c -> Char.isSpace c || Char.isControl c) t)
 
 -- | P1–P4: every problem, in a fixed order; or the proposal as stored.
 validateProposal :: ProposalInput -> Either [ProposalProblem] Proposal
