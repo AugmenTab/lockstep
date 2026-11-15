@@ -73,6 +73,7 @@ import Lockstep.Kernel.TraceTest qualified as TraceTest
 import Lockstep.Kernel.TransactionTest qualified as KernelTransactionTest
 import Lockstep.Kernel.TransitionTest qualified as TransitionTest
 import Lockstep.Kernel.WorkOrderTest qualified as WorkOrderTest
+import Lockstep.Kernel.WorkPolicyReviewTest qualified as WorkPolicyReviewTest
 import Lockstep.Kernel.WorkPolicyTest qualified as WorkPolicyTest
 import Lockstep.Kernel.WorkUnitLifecycleTest qualified as WorkUnitLifecycleTest
 import Lockstep.Kernel.WorkUnitTest qualified as WorkUnitTest
@@ -177,4 +178,5 @@ main =
       , PlanDocumentTest.tests
       , KernelDispatchTest.tests
       , WorkPolicyTest.tests
+      , WorkPolicyReviewTest.tests
       ]
