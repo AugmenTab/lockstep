@@ -500,6 +500,8 @@ data TxInput
   | -- | C-P6.6 G5: a green-only kind's candidate tests, as classified at the basis
     CandidateCharacterized [BaselineClass]
   | CandidateRejected T.Text
+  | -- | C-P6.7 V4: the fix stopped counting (its cause's code); it halts at its stage.
+    Invalidated T.Text
   | RegressionFailed
   | ChallengeDisposed [Disposition]
   | TestsFrozen
@@ -537,6 +539,7 @@ txInputName input =
       CandidateClassified _ -> "candidate-classified"
       CandidateCharacterized _ -> "candidate-characterized"
       CandidateRejected _ -> "candidate-rejected"
+      Invalidated _ -> "invalidated"
       RegressionFailed -> "regression-failed"
       ChallengeDisposed _ -> "challenge-disposed"
       TestsFrozen -> "tests-frozen"

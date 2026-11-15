@@ -83,6 +83,7 @@ import Lockstep.ProjectChecksTest qualified as ProjectChecksTest
 import Lockstep.ProjectsBrowserTest qualified as ProjectsBrowserTest
 import Lockstep.ProjectsPageTest qualified as ProjectsPageTest
 import Lockstep.ProjectsTest qualified as ProjectsTest
+import Lockstep.ProvisionalTest qualified as ProvisionalTest
 import Lockstep.ReconciliationTest qualified as ReconciliationTest
 import Lockstep.RemediationFinalReviewTest qualified as RemediationFinalReviewTest
 import Lockstep.RemediationReviewTest qualified as RemediationReviewTest
@@ -199,4 +200,5 @@ main =
       , DispatchReviewTest.tests
       , ProfileParityTest.tests
       , ProfileParityReviewTest.tests
+      , ProvisionalTest.tests
       ]

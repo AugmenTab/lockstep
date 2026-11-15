@@ -145,6 +145,8 @@ data WaitReason
     StoppedUnit
   | -- | R-P6.5-6: its hand-over was refused, with the refusal's code; it is tried again on each pass.
     RefusedHandOver T.Text
+  | -- | C-P6.7 V3: its accepted fix no longer counts; it must be redone.
+    InvalidatedUnit
   deriving (Eq, Show)
 
 waitReasonCode :: WaitReason -> T.Text
@@ -166,6 +168,7 @@ waitReasonCode r =
       UnrecognisedState _ -> "unknown"
       StoppedUnit -> "stopped"
       RefusedHandOver _ -> "refused"
+      InvalidatedUnit -> ""
 
 waitReasonWords :: WaitReason -> T.Text
 waitReasonWords r =
@@ -185,6 +188,7 @@ waitReasonWords r =
     UnrecognisedState name -> T.pack "Lockstep cannot tell where this stands (" <> name <> T.pack ")."
     StoppedUnit -> T.pack "Stopped: its fix was stopped, so Lockstep will not work on it again. Cancel its task, or change the plan; work that needs it waits."
     RefusedHandOver code -> T.pack "Lockstep could not hand it over (" <> code <> T.pack "); it tries again on each pass."
+    InvalidatedUnit -> T.empty
 
 data DispatchDecision
   = DispatchDecision
