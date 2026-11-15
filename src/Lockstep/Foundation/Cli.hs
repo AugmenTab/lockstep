@@ -10,6 +10,8 @@ module Lockstep.Foundation.Cli
   , EvidenceArgs (..)
   , ExecuteArgs (..)
   , EffectChoice (..)
+  , ProposalArgs (..)
+  , ProposalChoice (..)
   , parseArgs
   , renderCliError
   , usage
@@ -76,6 +78,33 @@ data Command
     PlanPropose String FilePath
   | -- | C-P6.4 M10: a project, its PRD file and optionally its architecture file, for the Planner to draft from.
     PlanDraft String FilePath (Maybe FilePath)
+  | -- | C-P6.9: a person's improvement proposal.
+    ProposalPropose ProposalArgs
+  | -- | C-P6.9: the shared proposals, or with @--private@ the owner's private ones.
+    ProposalList Bool
+  | -- | C-P6.9: the owner's decision on a proposal and the current version they looked at.
+    ProposalDecide ProposalChoice String String
+  deriving (Eq, Show)
+
+-- | @proposal propose@ options (contract C-P6.9 P1).
+data ProposalArgs
+  = ProposalArgs
+  { proposalArgScope :: String
+  , proposalArgTarget :: String
+  , proposalArgCurrent :: String
+  , proposalArgProposed :: String
+  , proposalArgTitle :: String
+  , proposalArgBenefit :: String
+  , proposalArgRisks :: String
+  , proposalArgEvidence :: [String]
+  , proposalArgPrivate :: Bool
+  }
+  deriving (Eq, Show)
+
+-- | The owner's choice on a proposal (contract C-P6.9 P5).
+data ProposalChoice
+  = ChooseApproveProposal
+  | ChooseRejectProposal
   deriving (Eq, Show)
 
 -- | @work-order create@ options (contract C-P2.8 §5).
@@ -207,7 +236,41 @@ parseArgs args =
     "control" : rest -> parseControlCommand rest
     "backlog" : rest -> parseBacklogCommand rest
     "plan" : rest -> parsePlanCommand rest
+    "proposal" : rest -> parseProposalCommand rest
     command : _ -> Left (UnknownCommand command)
+
+{- | Contract C-P6.9: @proposal propose --scope S --target T --current V
+--proposed V --title T --benefit T --risks T --evidence KEY... [--private]@,
+@proposal list [--private]@, @proposal approve|reject ID --current V@.
+-}
+parseProposalCommand :: [String] -> Either CliError Command
+parseProposalCommand args =
+  case args of
+    [] -> Left (MissingSubcommand "proposal")
+    "propose" : options -> do
+      (acc, flags, mbArgument) <- parseWithFlags ["--scope", "--target", "--current", "--proposed", "--title", "--benefit", "--risks", "--evidence"] ["--evidence"] ["--private"] options
+      noArgument mbArgument
+      scope <- required "--scope" acc
+      target <- required "--target" acc
+      current <- required "--current" acc
+      proposed <- required "--proposed" acc
+      title <- required "--title" acc
+      benefit <- required "--benefit" acc
+      risks <- required "--risks" acc
+      pure (ProposalPropose (ProposalArgs scope target current proposed title benefit risks [value | ("--evidence", value) <- acc] ("--private" `L.elem` flags)))
+    "list" : options -> do
+      (_, flags, mbArgument) <- parseWithFlags [] [] ["--private"] options
+      noArgument mbArgument
+      pure (ProposalList ("--private" `L.elem` flags))
+    "approve" : options -> decision ChooseApproveProposal options
+    "reject" : options -> decision ChooseRejectProposal options
+    command : _ -> Left (UnknownCommand ("proposal " <> command))
+ where
+  decision choice options = do
+    (acc, mbId) <- parseOptionsAndArgument ["--current"] [] options
+    proposal <- argument "ID" mbId
+    current <- required "--current" acc
+    pure (ProposalDecide choice proposal current)
 
 -- | Contract C-P6.4: @plan propose --project ID FILE@, @plan draft --project ID --prd FILE [--architecture FILE]@.
 parsePlanCommand :: [String] -> Either CliError Command
@@ -937,6 +1000,10 @@ usage =
     , "       lockstep backlog export --project PROJECT"
     , "       lockstep plan propose --project PROJECT FILE"
     , "       lockstep plan draft --project PROJECT --prd FILE [--architecture FILE]"
+    , "       lockstep proposal propose --scope SCOPE --target NAME --current VERSION --proposed VERSION"
+    , "                                 --title TEXT --benefit TEXT --risks TEXT --evidence KEY... [--private]"
+    , "       lockstep proposal list [--private]"
+    , "       lockstep proposal approve|reject ID --current VERSION"
     , ""
     , "  serve        run the local service on 127.0.0.1 (default port 8000)"
     , "  --port N     listen on port N (1-65535)"
@@ -970,7 +1037,12 @@ usage =
     , "                        revision; only your approval on the plan page makes it work"
     , "  plan draft            ask Lockstep's Planner to draft a plan from a PRD (and an"
     , "                        architecture); lockstep serve drafts it; you decide on the plan page"
-    , "  schedule run-once     run the deterministic scheduler once"
+    , "  proposal propose      propose an improvement, backed by evidence (fix:ID, record:ID:N,"
+    , "                        commit:SHA); nothing changes until you decide, and not even then"
+    , "  proposal list         the proposals and their decisions (--private: only your private ones)"
+    , "  proposal approve      record your decision on the version you looked at; an approval"
+    , "  proposal reject       installs nothing: adopting it is a separate change you make"
+    , "  schedule run-once    run the deterministic scheduler once"
     , "  supervisor            run Lockstep's own deterministic supervisor steps once: start a"
     , "                        claimed work order with sandbox effects, execute or recover one"
     , "                        effect, reconcile one uncertain effect (model-free; no daemon)"

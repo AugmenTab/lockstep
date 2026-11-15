@@ -974,4 +974,40 @@ CREATE INDEX lockstep_bug_admissions_task ON lockstep_bug_admissions (task_id, i
 CREATE UNIQUE INDEX lockstep_fix_invalidations_one ON lockstep_fix_invalidations (transaction_id);
 |]
       )
+    ,
+      ( [Interpolate.i|C-P6.9: improvement proposals and the owner's decisions on them, never installed|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_improvement_proposals (
+  id text PRIMARY KEY,
+  idempotency_key text NOT NULL UNIQUE,
+  digest text NOT NULL UNIQUE,
+  scope text NOT NULL CHECK (scope IN ('engineering-practice', 'profile-rule', 'test-adequacy', 'review-instructions', 'skill')),
+  target text NOT NULL CHECK (length(target) BETWEEN 1 AND 200),
+  current_version text NOT NULL CHECK (length(current_version) BETWEEN 1 AND 100),
+  proposed_version text NOT NULL CHECK (length(proposed_version) BETWEEN 1 AND 100),
+  title text NOT NULL CHECK (length(title) BETWEEN 1 AND 200),
+  benefit text NOT NULL CHECK (length(benefit) BETWEEN 1 AND 4000),
+  risks text NOT NULL CHECK (length(risks) BETWEEN 1 AND 4000),
+  evidence text NOT NULL CHECK (length(evidence) > 0),
+  support integer NOT NULL CHECK (support > 0),
+  private boolean NOT NULL,
+  proposed_by text NOT NULL CHECK (proposed_by IN ('person', 'fix')),
+  proposer text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  CHECK (current_version <> proposed_version),
+  CHECK (NOT (private AND proposed_by = 'fix'))
+);
+CREATE TRIGGER lockstep_improvement_proposals_immutable BEFORE UPDATE OR DELETE ON lockstep_improvement_proposals FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_improvement_proposals_no_truncate BEFORE TRUNCATE ON lockstep_improvement_proposals FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TABLE lockstep_improvement_decisions (
+  proposal_id text PRIMARY KEY REFERENCES lockstep_improvement_proposals (id),
+  decision text NOT NULL CHECK (decision IN ('approved', 'rejected')),
+  version_seen text NOT NULL,
+  actor text NOT NULL CHECK (actor = 'person'),
+  decided_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE TRIGGER lockstep_improvement_decisions_immutable BEFORE UPDATE OR DELETE ON lockstep_improvement_decisions FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_improvement_decisions_no_truncate BEFORE TRUNCATE ON lockstep_improvement_decisions FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+|]
+      )
     ]

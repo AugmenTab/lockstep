@@ -7,6 +7,7 @@ module Main
 
 import Control.Exception.Safe (finally)
 import Data.List qualified as L
+import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Network.Wai.Handler.Warp qualified as Warp
@@ -34,6 +35,7 @@ import Lockstep.Application.Command
   , revisionInt
   , submitCommand
   )
+import Lockstep.Application.Conversation (Channel (CliChannel), Sender (SenderHuman))
 import Lockstep.Application.Database
   ( DatabaseRuntime
   , MigrateError (..)
@@ -94,6 +96,8 @@ import Lockstep.Application.Profiles
   , setRepositoryProfile
   , showProfile
   )
+import Lockstep.Application.Proposals (decideImprovement, listProposals, proposeImprovement)
+import Lockstep.Application.Proposals qualified as Proposals
 import Lockstep.Application.Reconciler (ReconcileOutcome (..), Reconciliation (..), reconcileOnce)
 import Lockstep.Application.Repositories
   ( EngineerRecord (..)
@@ -117,6 +121,8 @@ import Lockstep.Foundation.Cli
   , EffectChoice (..)
   , EvidenceArgs (..)
   , ExecuteArgs (..)
+  , ProposalArgs (..)
+  , ProposalChoice (..)
   , QueueArgs (..)
   , RegisterArgs (..)
   , RenameArgs (..)
@@ -136,6 +142,7 @@ import Lockstep.Kernel.Capsule (capsuleNameText)
 import Lockstep.Kernel.Effect (Intent (..), IntentRequest (..), OperationId (..), effectKeyText, intentStateName)
 import Lockstep.Kernel.Identity (EngineerId (..), JobId (..), ReceiptId (..), RepositoryId (..), TicketId (..), Uuid, WorkOrderId (..), WorkUnitId (..), identityText, jobIdNumber, parseUuid, uuidText)
 import Lockstep.Kernel.Profile (profileIdText)
+import Lockstep.Kernel.Proposal (Decision (..), ProposalInput (..), Proposer (..), evidenceFromKey, parseScope)
 import Lockstep.Kernel.Reconciliation (Resolution (..))
 import Lockstep.Kernel.Ticket qualified as Ticket
 import Lockstep.Kernel.Transition qualified as K
@@ -199,6 +206,12 @@ main = do
       withRequiredDatabase (planPropose project file)
     Right (PlanDraft project prd architecture) ->
       withRequiredDatabase (planDraft project prd architecture)
+    Right (ProposalPropose proposalArgs) ->
+      withRequiredDatabase (proposalPropose proposalArgs)
+    Right (ProposalList private) ->
+      withRequiredDatabase (proposalList private)
+    Right (ProposalDecide choice proposal current) ->
+      withRequiredDatabase (proposalDecide choice proposal current)
     Right command ->
       -- C-P2.8 §5: the ledger commands (every other command is matched above).
       withRequiredDatabase (ledgerCommand command)
@@ -566,6 +579,75 @@ planDraft project prd architecture runtime = do
       refuse ("plan draft refused (" <> T.unpack code <> ")")
     Right (Right d) ->
       putStrLn ("draft " <> T.unpack (draftId d) <> " requested (PRD " <> T.unpack (draftPrdDigest d) <> "); lockstep serve drafts it")
+
+{- | C-P6.9 P1, P2: records a person's proposal (or gives the same one back)
+and prints its id; a refusal prints @refused CODE@ for each problem and exits 65.
+-}
+proposalPropose :: ProposalArgs -> DatabaseRuntime -> IO ()
+proposalPropose a runtime =
+  case (parseScope (T.pack (proposalArgScope a)), traverse (evidenceFromKey . T.pack) (proposalArgEvidence a)) of
+    (Nothing, _) -> refusedWith ["scope-unknown"]
+    (_, Nothing) -> refusedWith ["evidence-invalid"]
+    (Just scope, Just evidence) -> do
+      key <- generateIdempotencyKey
+      result <-
+        proposeImprovement runtime key $
+          ProposalInput
+            { inputScope = scope
+            , inputTarget = T.pack (proposalArgTarget a)
+            , inputCurrent = T.pack (proposalArgCurrent a)
+            , inputProposed = T.pack (proposalArgProposed a)
+            , inputTitle = T.pack (proposalArgTitle a)
+            , inputBenefit = T.pack (proposalArgBenefit a)
+            , inputRisks = T.pack (proposalArgRisks a)
+            , inputEvidence = evidence
+            , inputPrivate = proposalArgPrivate a
+            , inputProposer = ByPerson (T.pack "command-line")
+            }
+      case result of
+        Left reason -> notReady reason
+        Right (Left codes) -> refusedWith (fmap T.unpack codes)
+        Right (Right v) -> putStrLn ("proposal " <> T.unpack (Proposals.proposalId v) <> " support " <> show (Proposals.proposalSupport' v) <> "; nothing changes until you decide")
+ where
+  refusedWith codes = do
+    traverse_ (putStrLn . ("refused " <>)) codes
+    refuse "proposal propose refused"
+
+-- | C-P6.9 P4: one line per proposal.
+proposalList :: Bool -> DatabaseRuntime -> IO ()
+proposalList private runtime = do
+  result <- listProposals runtime private
+  case result of
+    Left reason -> notReady reason
+    Right views -> traverse_ (putStrLn . T.unpack . line) views
+ where
+  line v =
+    T.intercalate
+      (T.pack " ")
+      [ Proposals.proposalId v
+      , Proposals.proposalScope v
+      , Proposals.proposalTarget v
+      , Proposals.proposalCurrent v <> T.pack "->" <> Proposals.proposalProposed v
+      , T.pack ("support=" <> show (Proposals.proposalSupport' v))
+      , fromMaybe (T.pack "undecided") (Proposals.proposalDecision v)
+      , Proposals.proposalTitle v
+      ]
+
+-- | C-P6.9 P5, P6: the person's decision; it installs nothing.
+proposalDecide :: ProposalChoice -> String -> String -> DatabaseRuntime -> IO ()
+proposalDecide choice proposal current runtime = do
+  let
+    decision =
+      case choice of
+        ChooseApproveProposal -> ApproveProposal
+        ChooseRejectProposal -> RejectProposal
+  result <- decideImprovement runtime (SenderHuman CliChannel) (T.pack proposal) (T.pack current) decision
+  case result of
+    Left reason -> notReady reason
+    Right (Left code) -> do
+      putStrLn ("refused " <> T.unpack code)
+      refuse ("proposal decision refused (" <> T.unpack code <> ")")
+    Right (Right v) -> putStrLn ("proposal " <> T.unpack (Proposals.proposalId v) <> " " <> maybe "undecided" T.unpack (Proposals.proposalDecision v) <> "; nothing was installed")
 
 -- | C-P2.1 I10.
 engineerAdd :: String -> DatabaseRuntime -> IO ()

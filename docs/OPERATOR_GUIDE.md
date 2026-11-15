@@ -433,6 +433,30 @@ ran is "not-run", not a pass, and a review that did not finish is not an approva
 *necessary* (decisions only you can take) or *avoidable* (a helper or the environment failed). The tokens the
 helpers reported are shown per class. Runs that reported none are counted, not guessed, and no money is ever shown.
 
+### Improvement proposals (C-P6.9)
+
+```sh
+lockstep proposal propose --scope engineering-practice --target commit-messages --current 1 --proposed 2 \
+  --title "Name the test in every fix's commit message" --benefit "..." --risks "..." \
+  --evidence fix:TRANSACTION-ID --evidence record:TRANSACTION-ID:7 [--private]
+lockstep proposal list [--private]
+lockstep proposal approve PROPOSAL-ID --current 1
+lockstep proposal reject PROPOSAL-ID --current 1
+```
+
+A proposal names what it would change (scope `engineering-practice`, `profile-rule`, `test-adequacy`,
+`review-instructions` or `skill`; a target; its current and proposed versions), why (title, benefit, risks), and
+its evidence: links to Lockstep's own records (`fix:`, `record:`, `commit:`, `invalidation:`, `request:`), never
+free text. The same evidence given twice counts once. The same proposal made again, by any key or proposer, is
+the same proposal. A fix may not propose a rule for the Profile its own Work Order is bound to, and may not make a
+private proposal. Private proposals appear only in `proposal list --private`.
+
+Only you decide, from the command line, on the current version you looked at (`--current`): a version that is not
+the proposal's, or for a `profile-rule` not the catalog's latest version of that Profile, is refused
+`stale-target`; a proposal is decided once. **An approval installs nothing.** No Profile, choice, plan, binding,
+skill or instruction changes; adopting an approved proposal is a separate change you make. No summary or agent
+output creates or decides a proposal.
+
 ### Questions about a stopped fix (C-P6.3)
 
 When a fix stops for your decision, **Decisions → Fixes waiting for your answer** lists it with its project, task,

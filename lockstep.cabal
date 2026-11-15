@@ -159,6 +159,7 @@ library
       Lockstep.Persistence.Plans
       Lockstep.Persistence.Profiles
       Lockstep.Persistence.Projects
+      Lockstep.Persistence.Proposals
       Lockstep.Persistence.Queries
       Lockstep.Persistence.Repositories
       Lockstep.Persistence.Sandbox
