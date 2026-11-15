@@ -59,4 +59,8 @@ Logs: `.local/evals/phase-06/p68r-baseline-*.log`.
 
 ## After remediation
 
-(filled after the trial and the full check)
+- Trial of the frozen remediation tests against the remediation: unit 175/175, integration 104/104 (the C-P6.8
+  and R-P6.8 groups).
+- Full check of `543f9d6` (`scripts/check --integration`): all passed: build, unit tests (1062), no-live-model
+  guard, integration + backup/restore (687). Log: `.local/evals/phase-06/p68r-full-check.log`.
+- C-P6.8 is locally qualified; owner acceptance is pending.
