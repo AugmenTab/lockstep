@@ -49,6 +49,7 @@ import Lockstep.Kernel.ExecutionTest qualified as KernelExecutionTest
 import Lockstep.Kernel.GitBasisTest qualified as GitBasisTest
 import Lockstep.Kernel.IdentityTest qualified as IdentityTest
 import Lockstep.Kernel.InboxTest qualified as InboxTest
+import Lockstep.Kernel.InvalidationReviewTest qualified as InvalidationReviewTest
 import Lockstep.Kernel.InvalidationTest qualified as InvalidationTest
 import Lockstep.Kernel.LifecyclePropertyTest qualified as LifecyclePropertyTest
 import Lockstep.Kernel.PlanTest qualified as PlanTest
@@ -181,4 +182,5 @@ main =
       , WorkPolicyTest.tests
       , WorkPolicyReviewTest.tests
       , InvalidationTest.tests
+      , InvalidationReviewTest.tests
       ]
