@@ -38,7 +38,7 @@ import Data.ByteString qualified as BS
 import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List qualified as L
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Text.Encoding.Error (lenientDecode)
@@ -103,6 +103,7 @@ import Lockstep.Kernel.Candidate (MutantRun (..), classifyTest, disposeFinding, 
 import Lockstep.Kernel.Dispatch (chooseBasis)
 import Lockstep.Kernel.GitBasis (Change (..), TreeEntry (..), TreeMode (..), protectedPathValid, treeModeText, treePathValid, workBranch)
 import Lockstep.Kernel.Identity (InvocationId (..), ProjectId (..), TaskId (..), TransactionId (..), WorkOrderId (..), identityText, parseIdentity)
+import Lockstep.Kernel.Plan (WorkKind)
 import Lockstep.Kernel.Roles
   ( Candidate (..)
   , CandidateTest (..)
@@ -159,6 +160,7 @@ import Lockstep.Kernel.Transaction
   , txStateName
   )
 import Lockstep.Kernel.Transition (Principal (..), principalLabel)
+import Lockstep.Kernel.WorkPolicy (TestFirst (GreenOnly), WorkPolicy (..), documentationOnly, workPolicy)
 import Lockstep.Persistence.Dispatch qualified as Dispatches
 import Lockstep.Persistence.Transactions qualified as Store
 
@@ -768,6 +770,11 @@ basisStage runtime row = do
             (\r -> r {Store.txRowBasis = Just (basisCommit basis), Store.txRowBranch = Just branch})
             (traverse_ (\(ancestor, commit) -> Dispatches.insertFixBase (Dispatches.FixBaseRow (Store.txRowId row) ancestor commit)) bases)
 
+-- | C-P6.6: the kind of work the transaction's hand-over is.
+workKindOf :: DatabaseRuntime -> Store.TransactionRow -> IO (Either T.Text WorkKind)
+workKindOf runtime row =
+  db runtime (maybe (Left (T.pack "not-admitted")) (Right . Store.factWorkKind) <$> Store.admissionFacts (Store.txRowWorkOrder row))
+
 -- Workspaces ---------------------------------------------------------------------------
 
 -- | A file added to a snapshot: its tree path and bytes.
@@ -842,9 +849,15 @@ discoveryStage runtime engine row =
               case answer of
                 AnswerDiscovery d -> do
                   cited <- citationsHold (workspaceTree workspace) entries (discoveryCitations d)
-                  if not cited
-                    then settle runtime row (RoleFailed (T.pack "citation-outside-source")) [] id
-                    else settle runtime row DiscoveryAnswered [(RecordDiscovery, discoveryJson d)] id
+                  kind <- workKindOf runtime row
+                  case kind of
+                    Left code -> pure (Left code)
+                    Right k
+                      | not cited -> settle runtime row (RoleFailed (T.pack "citation-outside-source")) [] id
+                      -- C-P6.6 G5 a: nothing is broken in a refactor or a documentation change, so there is nothing to reproduce.
+                      | isJust (discoveryReproduction d) && not (policyReproduction (workPolicy k)) ->
+                          settle runtime row (RoleFailed (T.pack "reproduction-not-expected")) [] id
+                      | otherwise -> settle runtime row DiscoveryAnswered [(RecordDiscovery, discoveryJson d)] id
                 _ -> settle runtime row (RoleFailed (T.pack "answer-invalid wrong-stage")) [] id
 
 -- | Every citation names a file of the snapshot and lines it has.
@@ -1250,9 +1263,15 @@ candidateStage runtime engine row =
                   bodies = records <> [(RecordBaseline, body) | (_, _, body) <- classified]
                   existingFailed =
                     L.or [cls == GreenCandidateFailed && unchangedAtBasis entries t | (t, (cls, _, _)) <- L.zip (candidateTests c) classified]
-                if existingFailed
-                  then settle runtime row RegressionFailed bodies id
-                  else settle runtime row (CandidateClassified [cls | (cls, _, _) <- classified]) bodies id
+                  classes = [cls | (cls, _, _) <- classified]
+                kind <- workKindOf runtime row
+                case kind of
+                  Left code -> pure (Left code)
+                  Right k
+                    | existingFailed -> settle runtime row RegressionFailed bodies id
+                    -- C-P6.6 G5 b: a refactor or a documentation change keeps behaviour; its tests are all green.
+                    | policyTestFirst (workPolicy k) == GreenOnly -> settle runtime row (CandidateCharacterized classes) bodies id
+                    | otherwise -> settle runtime row (CandidateClassified classes) bodies id
   baselineRun basis c t = do
     ws <- workspaceAt engine row basis (testFiles c)
     case ws of
@@ -1753,7 +1772,21 @@ acceptStage runtime row = do
           | not (passedOn summary) -> settle runtime row (SupervisorFailed (T.pack "verification-not-passed")) [] id
           | not (approvedOn review) -> settle runtime row (SupervisorFailed (T.pack "review-not-approved")) [] id
           | otherwise -> do
-              moved <- advanceBranch (T.unpack (Store.txRowFolder row)) branch freeze candidate
+              -- C-P6.6 G5 c: a documentation change is accepted only when its implementation changed documentation alone.
+              kind <- workKindOf runtime row
+              behaviour <-
+                case kind of
+                  Right k
+                    | policyNonBehavioural (workPolicy k) ->
+                        fmap (\(changed, _) -> if documentationOnly changed then Nothing else Just (T.pack "behaviour-in-documentation"))
+                          <$> changeScope (Store.txRowFolder row) (Just freeze) candidate
+                  Right _ -> pure (Right Nothing)
+                  Left code -> pure (Left code)
+              moved <-
+                case behaviour of
+                  Left code -> pure (Left code)
+                  Right (Just code) -> pure (Left code)
+                  Right Nothing -> advanceBranch (T.unpack (Store.txRowFolder row)) branch freeze candidate
               case moved of
                 Left code -> settle runtime row (SupervisorFailed code) [] id
                 Right () ->

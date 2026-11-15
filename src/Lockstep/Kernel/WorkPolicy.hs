@@ -2,7 +2,7 @@
 G5): its class tag, its legitimate test-first rule, whether a reproduction is
 expected, whether it is non-behavioural, its budgets, the checks every Profile
 for it must hold (its floor), the built-in Profile that holds every floor, and
-the classification of a changed path. Stub (the freeze's RED baseline).
+the classification of a changed path. Pure.
 -}
 module Lockstep.Kernel.WorkPolicy
   ( TestFirst (..)
@@ -19,12 +19,15 @@ module Lockstep.Kernel.WorkPolicy
   , documentationOnly
   ) where
 
+import Data.List qualified as L
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (Show)
 
-import Lockstep.Kernel.Plan (WorkKind (..))
-import Lockstep.Kernel.Profile (Gate, PathClass (..), ProfileDefinition, ProfileRefusal, RawGate, RawProfile (..), mkProfileDefinition)
+import Lockstep.Kernel.Execution (bugClass, bugFixRaw)
+import Lockstep.Kernel.Plan (WorkKind (..), workKindCode)
+import Lockstep.Kernel.Profile (Gate, PathClass (..), ProfileDefinition, ProfileRefusal, RawGate (..), RawProfile (..), definitionGates, gateId, gateIdText, mkProfileDefinition)
+import Lockstep.Kernel.Transaction (maxAttempts, maxCorrections)
 
 -- | The legitimate test-first behaviour of a kind.
 data TestFirst
@@ -35,8 +38,11 @@ data TestFirst
   deriving (Eq, Show, Enum, Bounded)
 
 testFirstCode :: TestFirst -> T.Text
-testFirstCode _ =
-  T.empty
+testFirstCode t =
+  T.pack $
+    case t of
+      RedFirst -> "red-first"
+      GreenOnly -> "green-only"
 
 data WorkPolicy
   = WorkPolicy
@@ -51,32 +57,89 @@ data WorkPolicy
   }
   deriving (Eq, Show)
 
+-- | G1. The budgets are the engine's own, for every kind.
 workPolicy :: WorkKind -> WorkPolicy
 workPolicy k =
-  WorkPolicy k T.empty RedFirst True False 0 0
+  WorkPolicy
+    { policyKind = k
+    , policyClass = kindClass k
+    , policyTestFirst = rule
+    , policyReproduction = rule == RedFirst
+    , policyNonBehavioural = k == Documentation
+    , policyCorrections = maxCorrections
+    , policyAttempts = maxAttempts
+    }
+ where
+  rule = if k `L.elem` [Refactor, Documentation] then GreenOnly else RedFirst
 
 kindClass :: WorkKind -> T.Text
-kindClass _ =
-  T.empty
+kindClass k =
+  case k of
+    BugFix -> bugClass
+    Feature -> T.pack "feature"
+    GreenfieldBuild -> T.pack "greenfield"
+    Refactor -> T.pack "refactor"
+    Documentation -> T.pack "documentation"
 
--- | The checks every Profile used for this kind must hold unchanged.
+-- | One floor check: engineering work of the kind's class, before acceptance, never excepted.
+check :: WorkKind -> String -> [String] -> [String] -> String -> RawGate
+check k name artifacts verifiers approval =
+  RawGate
+    { rawGateId = T.pack name
+    , rawGateStage = T.pack "before-acceptance"
+    , rawGateArtifacts = fmap T.pack artifacts
+    , rawGateKinds = Just [T.pack "engineering"]
+    , rawGateClasses = Just [kindClass k]
+    , rawGatePathClasses = Nothing
+    , rawGateVerifiers = fmap T.pack verifiers
+    , rawGateApproval = T.pack approval
+    , rawGateExceptionPath = False
+    }
+
+-- | G2: the checks every Profile used for this kind must hold unchanged.
 kindFloor :: WorkKind -> [RawGate]
-kindFloor _ =
-  []
+kindFloor k =
+  case k of
+    BugFix -> rawGates bugFixRaw
+    Feature ->
+      [ check k "feature-requirements" ["requirements-basis"] ["digest-check"] supervisor
+      , check k "feature-tests" ["frozen-tests"] ["deterministic-command", "digest-check"] supervisor
+      , check k "feature-verification" ["verification-record"] ["deterministic-command"] supervisor
+      , check k "feature-review" ["review-record"] ["independent-review"] supervisor
+      ]
+    GreenfieldBuild ->
+      [ check k "greenfield-requirements" ["requirements-basis", "architecture-assessment"] ["digest-check"] supervisor
+      , check k "greenfield-tests" ["frozen-tests"] ["deterministic-command", "digest-check"] supervisor
+      , check k "greenfield-verification" ["verification-record"] ["deterministic-command"] supervisor
+      , check k "greenfield-review" ["review-record"] ["independent-review"] supervisor
+      ]
+    Refactor ->
+      [ check k "refactor-authorization" ["human-approval"] ["digest-check"] "human"
+      , check k "refactor-characterization" ["frozen-tests"] ["deterministic-command", "digest-check"] supervisor
+      , check k "refactor-verification" ["regression-evidence", "verification-record"] ["deterministic-command"] supervisor
+      , check k "refactor-review" ["review-record"] ["independent-review"] supervisor
+      ]
+    Documentation ->
+      [ check k "documentation-classification" ["classification-rationale"] ["digest-check"] supervisor
+      , check k "documentation-verification" ["verification-record"] ["deterministic-command"] supervisor
+      , check k "documentation-review" ["review-record"] ["independent-review"] supervisor
+      ]
+ where
+  supervisor = "supervisor"
 
 engineeringProfileId :: T.Text
 engineeringProfileId =
   T.pack "lockstep-engineering"
 
--- | The built-in Profile that holds every kind's floor.
+-- | G3: the built-in Profile that holds every kind's floor, allowing non-behavioural work.
 engineeringRaw :: RawProfile
 engineeringRaw =
   RawProfile
     { rawProfileId = engineeringProfileId
     , rawProfileVersion = 1
-    , rawAllowsNonBehavioural = Nothing
+    , rawAllowsNonBehavioural = Just True
     , rawInvariantExceptions = []
-    , rawGates = []
+    , rawGates = L.concatMap kindFloor [minBound .. maxBound]
     , rawSpecializations = []
     }
 
@@ -84,17 +147,51 @@ engineeringDefinition :: Either ProfileRefusal ProfileDefinition
 engineeringDefinition =
   mkProfileDefinition engineeringRaw
 
--- | The kind's floor checks that are not among these gates unchanged, sorted by id.
+{- | G4: the kind's floor checks that are not among these gates unchanged,
+sorted by id. A changed check counts as missing, stronger or not (as C-P4.1 X2).
+-}
 missingChecks :: WorkKind -> [Gate] -> [T.Text]
-missingChecks _ _ =
-  []
+missingChecks k gates =
+  case mkProfileDefinition floorProfile of
+    Left _ -> L.sort (fmap rawGateId (kindFloor k))
+    Right floorDefinition -> L.sort [gateIdText (gateId g) | g <- definitionGates floorDefinition, g `L.notElem` gates]
+ where
+  floorProfile = engineeringRaw {rawProfileId = T.pack "lockstep-floor-" <> workKindCode k, rawGates = kindFloor k}
 
--- | The class of a changed path, by its name.
+{- | G5 c: the class of a changed path, by its name, conservatively: only a
+documentation extension, or a well-known documentation name without one, is
+documentation.
+-}
 pathClassOf :: T.Text -> PathClass
-pathClassOf _ =
-  PathDocs
+pathClassOf path
+  | name `L.elem` dependencyNames || extension == T.pack "lock" = PathDependencies
+  | name `L.elem` buildNames || extension == T.pack "cabal" = PathBuild
+  | L.any (`L.elem` testDirectories) directories || T.pack "test_" `T.isPrefixOf` name || L.any (`T.isInfixOf` base) [T.pack "_test", T.pack "test."] = PathTests
+  | extension `L.elem` docExtensions = PathDocs
+  | T.null extension && L.any (`T.isPrefixOf` name) docNames = PathDocs
+  | extension `L.elem` configExtensions = PathConfiguration
+  | otherwise = PathSource
+ where
+  lower = T.toLower path
+  segments = T.splitOn (T.pack "/") lower
+  directories = L.take (L.length segments - 1) segments
+  name =
+    case L.reverse segments of
+      n : _ -> n
+      [] -> lower
+  (base, extension) =
+    case T.breakOnEnd (T.pack ".") name of
+      (prefix, ext)
+        | T.length prefix > 1 -> (T.dropEnd 1 prefix, ext)
+        | otherwise -> (name, T.empty)
+  docExtensions = fmap T.pack ["md", "markdown", "rst", "adoc", "txt"]
+  docNames = fmap T.pack ["readme", "changelog", "license", "notice", "authors", "contributing", "copying"]
+  dependencyNames = fmap T.pack ["stack.yaml.lock", "package-lock.json", "yarn.lock", "cargo.lock", "poetry.lock", "requirements.txt", "go.sum", "gemfile.lock"]
+  buildNames = fmap T.pack ["makefile", "dockerfile", "package.yaml", "stack.yaml", "cabal.project", "setup.py", "pyproject.toml", "build.gradle", "pom.xml", "cmakelists.txt"]
+  testDirectories = fmap T.pack ["test", "tests", "spec"]
+  configExtensions = fmap T.pack ["yaml", "yml", "toml", "json", "ini", "cfg", "conf"]
 
 -- | Whether every path is documentation.
 documentationOnly :: [T.Text] -> Bool
-documentationOnly _ =
-  True
+documentationOnly =
+  L.all ((== PathDocs) . pathClassOf)

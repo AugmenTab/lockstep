@@ -394,6 +394,19 @@ the dependent stops at its basis (`prerequisite-unsatisfied`). Lockstep never ma
 anything Done, pushes or merges. A task whose fix is handed over, running, waiting for you, or checked and waiting
 for your Done cannot be canceled (`fix-active`): stop the fix first (its Stop choice), then cancel the task.
 
+**Kinds of work and their checks (C-P6.6).** Each plan unit is a *bug fix*, a *feature*, a *greenfield* build, a
+*refactor* or *documentation*, and all of them run through the same engine. Features and new builds are test-first
+like bug fixes: a frozen test fails before the change, for its stated reason. A refactor or a documentation change
+keeps behaviour: its frozen tests pass before and after, and a test made to fail is corrected, never accepted. A
+documentation change may change documentation only. Otherwise it stops before acceptance
+(`behaviour-in-documentation`).
+
+Each kind needs its own checks, a frozen-test check and an independent review among them, and no exception turns
+tests off. A project enabled for bug fixes has only the bug checks, so other work is refused `kind-checks-missing`.
+The Plan page then offers **Use Lockstep's engineering checks** (`lockstep-engineering`), which covers every kind
+and keeps every bug check. A unit whose own Profile lacks its kind's checks is refused `profile-too-weak`. The
+correction and attempt budgets are the same for every kind, and nothing in a plan or a Profile changes them.
+
 ### Questions about a stopped fix (C-P6.3)
 
 When a fix stops for your decision, **Decisions → Fixes waiting for your answer** lists it with its project, task,

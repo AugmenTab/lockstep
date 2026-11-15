@@ -36,7 +36,7 @@ import Text.Show (Show)
 
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, withDatabase)
 import Lockstep.Application.Ledger (SchedulePreview (..), ledgerFailureCode, previewSchedule)
-import Lockstep.Application.ProfileDocument (decodeProfileDocument, encodeProfileDocument)
+import Lockstep.Application.ProfileDocument (decodeProfileDocument, encodeProfileDocument, encodeRawProfile)
 import Lockstep.Application.Profiles (loadStoredDefinition, sha256Hasher)
 import Lockstep.Application.Projects (ProjectView (..), findProject)
 import Lockstep.Kernel.Identity (RepositoryId, WorkOrderId (..), identityText)
@@ -66,6 +66,7 @@ import Lockstep.Kernel.Profile
 import Lockstep.Kernel.Scheduler (Ineligibility, decisionEligible, decisionIneligible)
 import Lockstep.Kernel.Transition (Principal (Human))
 import Lockstep.Kernel.WorkOrder (WorkOrderKind)
+import Lockstep.Kernel.WorkPolicy (engineeringDefinition, engineeringProfileId, engineeringRaw)
 import Lockstep.Persistence.Profiles qualified as Store
 
 -- | The built-in starting choice: the always-on rules and no extra checks.
@@ -344,6 +345,8 @@ chooseChecksTyped runtime pid expected choice confirmed = do
               then refuse decision ChecksChanged
               else do
                 when (choice == basicChecksId) registerBasic
+                -- C-P6.6 G3: Lockstep's engineering checks, registered when the owner first chooses them.
+                when (choice == engineeringProfileId) registerEngineering
                 -- A choice that is no Profile id names no registered Profile.
                 row <- maybe (pure Nothing) (`Store.findProfile` Nothing) (mkProfileId choice)
                 case row of
@@ -374,6 +377,43 @@ chooseChecksTyped runtime pid expected choice confirmed = do
                                   _ <- Store.insertProfileDecision known
                                   pure (Right ChecksChosen)
           _ -> pure (Left ProjectHasNoFolder)
+
+-- | The built-in engineering checks document (C-P6.6 G3), through the Profile document schema.
+engineeringText :: T.Text
+engineeringText =
+  encodeRawProfile engineeringRaw
+
+{- | Registers the built-in engineering checks as version 1 when none exist,
+with their C-P2.3 decision row; the stored document decodes to the Kernel's
+definition, or nothing is registered.
+-}
+registerEngineering :: O.Orville ()
+registerEngineering = do
+  let
+    stored =
+      either (const Nothing) Just (decodeProfileDocument (LBS.fromStrict (TE.encodeUtf8 engineeringText)))
+        >>= either (const Nothing) Just . mkProfileDefinition
+  existing <- traverse (\d -> Store.findProfile (definitionId d) Nothing) stored
+  case (existing, stored, engineeringDefinition) of
+    (Just Nothing, Just d, Right kernel)
+      | d == kernel -> do
+          let
+            digest = contentDigestText (refDigest (profileRef sha256Hasher d))
+          Store.insertProfile (Store.ProfileRow (definitionId d) 1 digest engineeringText)
+          _ <-
+            Store.insertProfileDecision
+              Store.NewProfileDecision
+                { Store.profileDecisionOperation = T.pack "profile-add"
+                , Store.profileDecisionProfile = Just engineeringProfileId
+                , Store.profileDecisionVersion = Just 1
+                , Store.profileDecisionDigest = Just digest
+                , Store.profileDecisionEngineer = Nothing
+                , Store.profileDecisionRepository = Nothing
+                , Store.profileDecisionOutcome = T.pack "accepted"
+                , Store.profileDecisionRefusal = Nothing
+                }
+          pure ()
+    _ -> pure ()
 
 -- | Registers the built-in document as version 1 when no @lockstep-basic@ exists, with its C-P2.3 decision row.
 registerBasic :: O.Orville ()

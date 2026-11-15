@@ -39,35 +39,43 @@ import Lockstep.Application.Tasks (TaskView (..), findTaskWithProjectIn)
 import Lockstep.Kernel.Execution
   ( admissionBlock
   , admissionRequestText
-  , bugClass
+  , bugFixDefinition
   , bugFixProfileId
   , enablementRequestText
   , insideProjectsFolder
   , missingBugChecks
   )
 import Lockstep.Kernel.Identity (ProjectId (..), RepositoryId (..), TaskId (..), TicketId (..), WorkOrderId (..), identityText, parseIdentity)
+import Lockstep.Kernel.Plan (WorkKind (..))
 import Lockstep.Kernel.Policy (checksLost)
 import Lockstep.Kernel.Profile
   ( Behaviour (..)
+  , Gate
   , Hasher (..)
+  , PathClass (PathDocs)
   , ProfileDefinition
   , ProfileId
   , ProfileRef (..)
+  , RawProfile (..)
   , ResolutionInput (..)
+  , WorkFacts
   , contentDigestText
   , definitionId
   , effectiveGates
   , gateApplies
   , mkClassTag
+  , mkNonBehaviouralBasis
   , mkProfileDefinition
   , mkWorkFacts
   , profileIdText
   , profileRef
+  , profileRefusalCode
   , resolveProfile
   )
 import Lockstep.Kernel.Project (SetupState (Connected))
 import Lockstep.Kernel.Transition (Principal (Human))
 import Lockstep.Kernel.WorkOrder (WorkOrderKind (Engineering))
+import Lockstep.Kernel.WorkPolicy (WorkPolicy (..), engineeringDefinition, engineeringRaw, kindClass, missingChecks, workPolicy)
 import Lockstep.Persistence.Execution qualified as Store
 import Lockstep.Persistence.Integrity (integrityViolation)
 import Lockstep.Persistence.Profiles qualified as Profiles
@@ -214,15 +222,70 @@ document that does not reproduce counts as lacking all of them.
 -}
 missingFor :: Maybe ProfileDefinition -> Maybe [ProfileDefinition] -> [T.Text]
 missingFor current catalogDefinitions =
-  case (current, catalogDefinitions, mkClassTag bugClass) of
-    (Just definition, Just catalog, Just tag) ->
-      case mkWorkFacts Human Engineering [tag] [] BehaviourChanging of
-        Left _ -> missingBugChecks []
-        Right facts ->
-          case resolveProfile sha256Hasher (ResolutionInput definition catalog [] facts) of
-            Left _ -> missingBugChecks []
-            Right effective -> missingBugChecks (L.filter (gateApplies facts) (effectiveGates effective))
+  case (current, catalogDefinitions) of
+    (Just definition, Just catalog) -> either (const (missingBugChecks [])) missingBugChecks (kindGates BugFix definition catalog)
     _ -> missingBugChecks []
+
+-- | C-P6.6 G4: the facts of engineering work of this kind, as its Work Order is created with them.
+kindFacts :: WorkKind -> Either T.Text WorkFacts
+kindFacts kind =
+  case (mkClassTag (kindClass kind), workPolicy kind) of
+    (Nothing, _) -> Left (T.pack "kind-invalid")
+    (Just tag, policy)
+      | policyNonBehavioural policy ->
+          case mkNonBehaviouralBasis documentationRationale (T.pack "operator") of
+            Nothing -> Left (T.pack "kind-invalid")
+            Just basis -> either (Left . profileRefusalCode) Right (mkWorkFacts Human Engineering [tag] [PathDocs] (NonBehavioural basis))
+      | otherwise -> either (Left . profileRefusalCode) Right (mkWorkFacts Human Engineering [tag] [] BehaviourChanging)
+
+-- | Why a documentation Work Order is non-behavioural.
+documentationRationale :: T.Text
+documentationRationale =
+  T.pack "documentation work, as its approved plan unit says"
+
+-- | The checks a Profile applies to work of this kind (resolved against the catalog), or why it cannot be resolved.
+kindGates :: WorkKind -> ProfileDefinition -> [ProfileDefinition] -> Either T.Text [Gate]
+kindGates kind definition catalog = do
+  facts <- kindFacts kind
+  effective <- either (Left . profileRefusalCode) Right (resolveProfile sha256Hasher (ResolutionInput definition catalog [] facts))
+  pure (L.filter (gateApplies facts) (effectiveGates effective))
+
+-- | A Profile a plan unit names: the catalog's latest, else a built-in one.
+namedDefinition :: [ProfileDefinition] -> T.Text -> Maybe ProfileDefinition
+namedDefinition catalog name =
+  case L.find ((== name) . profileIdText . definitionId) catalog of
+    Just d -> Just d
+    Nothing ->
+      L.find
+        ((== name) . profileIdText . definitionId)
+        (rights [engineeringDefinition, bugFixDefinition, mkProfileDefinition basicRaw])
+ where
+  basicRaw = engineeringRaw {rawProfileId = T.pack "lockstep-basic", rawAllowsNonBehavioural = Nothing, rawGates = []}
+
+{- | C-P6.6 G4, in its order: the repository's checks hold the kind's floor;
+the unit's named Profile holds it; the repository's checks hold every check of
+the named Profile. Nothing when the hand-over may go on.
+-}
+kindRefusal :: WorkKind -> Maybe T.Text -> Maybe ProfileDefinition -> [ProfileDefinition] -> Maybe T.Text
+kindRefusal kind named current catalog =
+  case fmap (\d -> kindGates kind d catalog) current of
+    Nothing -> Just (missingCode kind)
+    Just (Left _) -> Just (missingCode kind)
+    Just (Right repositoryGates)
+      | not (L.null (missingChecks kind repositoryGates)) -> Just (missingCode kind)
+      | otherwise ->
+          case named of
+            Nothing -> Nothing
+            Just name ->
+              case fmap (\d -> kindGates kind d catalog) (namedDefinition catalog name) of
+                Nothing -> Just (T.pack "profile-unknown")
+                Just (Left _) -> Just (T.pack "profile-too-weak")
+                Just (Right namedGates)
+                  | not (L.null (missingChecks kind namedGates)) -> Just (T.pack "profile-too-weak")
+                  | not (L.all (`L.elem` repositoryGates) namedGates) -> Just (T.pack "profile-checks-missing")
+                  | otherwise -> Nothing
+ where
+  missingCode k = T.pack (if k == BugFix then "bug-checks-missing" else "kind-checks-missing")
 
 -- | The repository's current checks: the default's id and its latest stored row.
 currentChecks :: RepositoryId -> O.Orville (Maybe ProfileId, Maybe Profiles.ProfileRow)
@@ -411,12 +474,16 @@ data AdmitOptions
   { admitActor :: T.Text
   , admitGuard :: O.Orville (Either T.Text ())
   , admitAfter :: WorkOrderId -> O.Orville ()
+  , admitKind :: WorkKind
+  -- ^ C-P6.6 G4: the kind of work, which sets its class and the checks it needs.
+  , admitProfile :: Maybe T.Text
+  -- ^ The Profile a plan unit names: a floor the repository's checks must hold.
   }
 
--- | A person's hand-over, in the application (X6).
+-- | A person's hand-over, in the application (X6): a bug fix.
 personOptions :: AdmitOptions
 personOptions =
-  AdmitOptions {admitActor = actor, admitGuard = pure (Right ()), admitAfter = const (pure ())}
+  AdmitOptions {admitActor = actor, admitGuard = pure (Right ()), admitAfter = const (pure ()), admitKind = BugFix, admitProfile = Nothing}
 
 {- | X6 with its options; the admission and whether this call made it (a key
 replayed gives the recorded admission, not made now).
@@ -473,10 +540,13 @@ admitTask runtime folders options key rawId expected
         (_, currentRow) <- currentChecks (Store.enablementRowRepository enablement)
         catalogRows <- Profiles.latestProfiles
         currentDefinition <- traverse storedDefinition currentRow
-        catalog <- Just <$> traverse storedDefinition catalogRows
-        if not (L.null (missingFor currentDefinition catalog))
-          then pure (refuse "bug-checks-missing")
-          else do
+        catalog <- traverse storedDefinition catalogRows
+        let
+          kind = admitKind options
+          documentation = policyNonBehavioural (workPolicy kind)
+        case kindRefusal kind (admitProfile options) currentDefinition catalog of
+          Just code -> pure (Left code)
+          Nothing -> do
             created <-
               createWorkOrderIn
                 u
@@ -486,9 +556,9 @@ admitTask runtime folders options key rawId expected
                   , newKind = Engineering
                   , newPriority = taskPriority task
                   , newDependencies = []
-                  , newClasses = [bugClass]
-                  , newPathClasses = []
-                  , newNonBehavioural = Nothing
+                  , newClasses = [kindClass kind]
+                  , newPathClasses = [T.pack "docs" | documentation]
+                  , newNonBehavioural = if documentation then Just documentationRationale else Nothing
                   }
             case created of
               Left (LedgerRefusedBy TicketNotReady) -> pure (refuse "task-not-ready")
@@ -509,6 +579,7 @@ admitTask runtime folders options key rawId expected
                     , Store.admissionRowEffectiveDigest = effective
                     , Store.admissionRowActor = admitActor options
                     , Store.admissionRowAt = T.empty
+                    , Store.admissionRowWorkKind = admitKind options
                     }
                 admitAfter options workOrder
                 -- Inserted just above in this transaction: not finding it is a violation that rolls everything back.

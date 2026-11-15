@@ -55,7 +55,7 @@ import Lockstep.Application.LedgerView (EffectLine (..), LedgerProjection (..), 
 import Lockstep.Application.OperatorTrust (Session (..), exchangeSignIn, lookupSession, revokeSession)
 import Lockstep.Application.Plans (PlanDecision (..), decidePlan, planView)
 import Lockstep.Application.Progress (loadProgress)
-import Lockstep.Application.ProjectChecks (ChecksOutcome (..), ChecksRefusal (FewerChecksUnconfirmed), ExpectedChecks (..), ProjectChecks (..), QueueEntry (..), checksRefusalCode, chooseChecksTyped, projectChecks)
+import Lockstep.Application.ProjectChecks (ChecksChoice (..), ChecksOutcome (..), ChecksRefusal (FewerChecksUnconfirmed), ExpectedChecks (..), ProjectChecks (..), QueueEntry (..), checksRefusalCode, chooseChecksTyped, projectChecks)
 import Lockstep.Application.Projects
   ( NewProject (..)
   , ProjectFolders (..)
@@ -840,13 +840,20 @@ planAnswer db pid notice = do
   view <- planView db (identityText pid)
   -- C-P6.5 S7: what runs next; a database that cannot say is not taken for "nothing".
   next <- dispatchView db (identityText pid)
+  -- C-P6.6 G3: the project's current checks, for the offer of Lockstep's engineering checks.
+  checks <- projectChecks db (identityText pid)
   pure $
-    case (project, view, next) of
-      (_, _, Left _) -> notReady
-      (Right (Just p), Right (Right v), Right n) -> pathAnswer (planLink pid) (planPage pid (projectName p) v (either (const Nothing) Just n) notice)
-      (Right Nothing, _, _) -> notFound
-      (_, Right (Left _), _) -> notFound
+    case (project, view, next, checks) of
+      (_, _, Left _, _) -> notReady
+      (_, _, _, Left _) -> notReady
+      (Right (Just p), Right (Right v), Right n, Right c) ->
+        pathAnswer (planLink pid) (planPage pid (projectName p) v (either (const Nothing) Just n) (currentChecksOf <$> c) notice)
+      (Right Nothing, _, _, _) -> notFound
+      (_, Right (Left _), _, _) -> notFound
       _ -> notReady
+ where
+  -- The current choice's id, or "none" when nothing is chosen (the checks form's own expectation).
+  currentChecksOf c = maybe (T.pack "none") choiceId (checksCurrent c)
 
 -- | A refused question in words.
 questionWords :: T.Text -> T.Text

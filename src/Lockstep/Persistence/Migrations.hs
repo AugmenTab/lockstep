@@ -942,4 +942,10 @@ CREATE TRIGGER lockstep_plan_dispatch_refusals_immutable BEFORE UPDATE OR DELETE
 CREATE TRIGGER lockstep_plan_dispatch_refusals_no_truncate BEFORE TRUNCATE ON lockstep_plan_dispatch_refusals FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
 |]
       )
+    ,
+      ( [Interpolate.i|C-P6.6: the kind of work each hand-over is (every earlier one a bug fix)|]
+      , [Interpolate.i|
+ALTER TABLE lockstep_bug_admissions ADD COLUMN work_kind text NOT NULL DEFAULT 'bug-fix' CHECK (work_kind IN ('bug-fix', 'feature', 'greenfield', 'refactor', 'documentation'));
+|]
+      )
     ]

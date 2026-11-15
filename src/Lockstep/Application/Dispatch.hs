@@ -40,7 +40,7 @@ import Lockstep.Kernel.Dispatch
   , waitReasonWords
   )
 import Lockstep.Kernel.Identity (PlanRevisionId (..), ProjectId (..), TaskId (..), identityText, parseIdentity)
-import Lockstep.Kernel.Plan (EffectClass (..), Envelope (..), PlanDocument (..), PlanUnit (..), mkUnitKey, unitKeyText)
+import Lockstep.Kernel.Plan (EffectClass (..), Envelope (..), PlanDocument (..), PlanUnit (..), mkUnitKey, parseWorkKind, unitKeyText)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
 import Lockstep.Kernel.Task (TaskReadiness (StateUnrecognised))
 import Lockstep.Persistence.Dispatch qualified as Dispatches
@@ -233,9 +233,10 @@ handOver runtime folders project digest unit =
       Right (Right (_, _, Left code)) -> pure (Right (Left code))
       Right (Right (revision, u, Right task)) ->
         -- R-P6.5-11: the key is fixed by the revision's identity (a digest may come back in a later revision) and the unit.
-        case mkIdempotencyKey (T.pack "plan-" <> T.take 40 (sha (identityText project <> T.pack "\n" <> identityText (Plans.revisionRowId revision) <> T.pack "\n" <> unit))) of
-          Left _ -> pure (Right (Left (T.pack "invalid-key")))
-          Right key -> do
+        case (mkIdempotencyKey (T.pack "plan-" <> T.take 40 (sha (identityText project <> T.pack "\n" <> identityText (Plans.revisionRowId revision) <> T.pack "\n" <> unit))), parseWorkKind (Plans.unitRowWorkKind u)) of
+          (Left _, _) -> pure (Right (Left (T.pack "invalid-key")))
+          (_, Nothing) -> pure (Right (Left (T.pack "unknown-work-kind")))
+          (Right key, Just kind) -> do
             let
               stillNext = do
                 decided <- decideIn project
@@ -252,7 +253,14 @@ handOver runtime folders project digest unit =
               admitTask
                 runtime
                 folders
-                AdmitOptions {admitActor = T.pack "scheduler", admitGuard = stillNext, admitAfter = recordDispatch}
+                AdmitOptions
+                  { admitActor = T.pack "scheduler"
+                  , admitGuard = stillNext
+                  , admitAfter = recordDispatch
+                  , -- C-P6.6 G4: the unit's kind and the Profile it names.
+                    admitKind = kind
+                  , admitProfile = Just (Plans.unitRowProfile u)
+                  }
                 key
                 (identityText (Plans.unitRowTask u))
                 (taskTicketRevision task)

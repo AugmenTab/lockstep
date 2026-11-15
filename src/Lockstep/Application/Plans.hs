@@ -189,7 +189,7 @@ catalog. P6.6 binds each work kind to its checks.
 knownProfiles :: O.Orville [T.Text]
 knownProfiles = do
   rows <- Profiles.allProfiles
-  pure (L.nub ([T.pack "lockstep-bug-fix", T.pack "lockstep-basic"] <> fmap (profileIdText . Profiles.profileRowId) rows))
+  pure (L.nub ([T.pack "lockstep-bug-fix", T.pack "lockstep-basic", T.pack "lockstep-engineering"] <> fmap (profileIdText . Profiles.profileRowId) rows))
 
 -- Proposals -------------------------------------------------------------------------
 

@@ -44,6 +44,7 @@ import Orville.PostgreSQL.Expr qualified as Expr
 import Orville.PostgreSQL.Raw.SqlValue qualified as SqlValue
 
 import Lockstep.Kernel.Identity (InvocationId (..), ProjectId, RepositoryId, TaskId, TransactionId (..), WorkOrderId)
+import Lockstep.Kernel.Plan (WorkKind)
 import Lockstep.Kernel.Transaction
   ( RecordKind
   , Stage
@@ -65,6 +66,7 @@ import Lockstep.Persistence.Execution
   , admissionProjectField
   , admissionTable
   , admissionTaskField
+  , admissionWorkKindField
   , admissionWorkOrderField
   , enablementEngineerField
   , enablementFolderField
@@ -592,6 +594,8 @@ data AdmissionFacts
   , factRepository :: RepositoryId
   , factEngineer :: T.Text
   , factFolder :: T.Text
+  , factWorkKind :: WorkKind
+  -- ^ C-P6.6: the kind of work handed over.
   }
   deriving (Eq)
 
@@ -614,6 +618,7 @@ admissionFacts workOrder =
           <*> enablementColumn enablementRepositoryField
           <*> enablementColumn enablementEngineerField
           <*> enablementColumn enablementFolderField
+          <*> admissionColumn admissionWorkKindField
       )
       ( joinedOn
           admissionTable

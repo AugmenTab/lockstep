@@ -648,6 +648,20 @@ stepTransaction principal input tx
                   if candidatesMade made <= maxCorrections
                     then toWith (Running StageCandidate) made
                     else toWith (Halted StageCandidate (fixed FixedCandidatesExhausted)) made
+      -- C-P6.6 G5 b: a green-only kind goes on only when every test passes at the basis; a red one is corrected, never accepted.
+      (StageCandidate, CandidateCharacterized classes) ->
+        let
+          made = counters {candidatesMade = candidatesMade counters + 1}
+        in
+          if not (L.null classes) && L.all (== GreenConfirmed) classes
+            then toWith (Running StageChallengePre) made
+            else
+              if RunFailed `L.elem` classes
+                then toWith (Halted StageCandidate (fixed FixedBaselineRunFailed)) made
+                else
+                  if candidatesMade made <= maxCorrections
+                    then toWith (Running StageCandidate) made
+                    else toWith (Halted StageCandidate (fixed FixedCandidatesExhausted)) made
       (StageCandidate, CandidateRejected _) ->
         let
           made = counters {candidatesMade = candidatesMade counters + 1}

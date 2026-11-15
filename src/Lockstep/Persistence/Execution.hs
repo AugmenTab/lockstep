@@ -25,6 +25,7 @@ module Lockstep.Persistence.Execution
   , admissionTaskField
   , admissionProjectField
   , admissionWorkOrderField
+  , admissionWorkKindField
   ) where
 
 import Data.Text qualified as T
@@ -34,9 +35,10 @@ import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
 
 import Lockstep.Kernel.Identity (ProjectId, RepositoryId, TaskId, WorkOrderId)
+import Lockstep.Kernel.Plan (WorkKind, parseWorkKind, workKindCode)
 import Lockstep.Kernel.Profile (ProfileId)
 import Lockstep.Persistence.Entity (foreignKeyTo)
-import Lockstep.Persistence.Fields (headMay, selectJoined, tableReference)
+import Lockstep.Persistence.Fields (codeField, headMay, selectJoined, tableReference)
 import Lockstep.Persistence.Ledger (WorkOrderRow (..), workOrderIdField, workOrderTable)
 import Lockstep.Persistence.Profiles (profileIdColumn)
 import Lockstep.Persistence.Projects (projectIdField, projectRepositoryField, projectTable)
@@ -68,6 +70,8 @@ data AdmissionRow
   , admissionRowEffectiveDigest :: T.Text
   , admissionRowActor :: T.Text
   , admissionRowAt :: T.Text
+  , admissionRowWorkKind :: WorkKind
+  -- ^ C-P6.6 G4: the kind of work handed over (a plain task is a bug fix).
   }
 
 {- | The time a row was recorded, as text in UTC to the second (what
@@ -142,6 +146,11 @@ admissionTable =
       <*> O.marshallField admissionRowEffectiveDigest (O.unboundedTextField "effective_digest")
       <*> O.marshallField admissionRowActor (O.unboundedTextField "actor")
       <*> recordedAt "admitted_at"
+      <*> O.marshallField admissionRowWorkKind admissionWorkKindField
+
+admissionWorkKindField :: O.FieldDefinition O.NotNull WorkKind
+admissionWorkKindField =
+  codeField "work kind" workKindCode parseWorkKind "work_kind"
 
 admissionKeyField :: O.FieldDefinition O.NotNull T.Text
 admissionKeyField =

@@ -6,6 +6,7 @@ module Lockstep.Application.ProfileDocument
   ( decodeProfileDocument
   , GateDocument (..)
   , encodeProfileDocument
+  , encodeRawProfile
   ) where
 
 import Data.ByteString.Lazy qualified as LBS
@@ -125,6 +126,38 @@ data GateDocument
   , gateDocumentApproval :: T.Text
   , gateDocumentExceptionPath :: Maybe Bool
   }
+
+{- | C-P6.6 G3: the document of a built-in Profile given as its raw
+definition (its non-behavioural allowance and its gates; it has no invariant
+exceptions or specializations), through the same schema.
+-}
+encodeRawProfile :: RawProfile -> T.Text
+encodeRawProfile raw =
+  encodeText
+    profileSchema
+    DocProfile
+      { docId = rawProfileId raw
+      , docVersion = rawProfileVersion raw
+      , docAllowsNonBehavioural = rawAllowsNonBehavioural raw
+      , docInvariantExceptions = Nothing
+      , docGates =
+          [ DocGate
+              { docGateId = rawGateId g
+              , docGateStage = rawGateStage g
+              , docGateArtifacts = rawGateArtifacts g
+              , docGateKinds = rawGateKinds g
+              , docGateClasses = rawGateClasses g
+              , docGatePathClasses = rawGatePathClasses g
+              , docGateVerifiers = rawGateVerifiers g
+              , docGateApproval = rawGateApproval g
+              , docGateExceptionPath = Just (rawGateExceptionPath g)
+              , docGateExtra = Map.empty
+              }
+          | g <- rawGates raw
+          ]
+      , docSpecializations = Nothing
+      , docExtra = Map.empty
+      }
 
 {- | A Profile document with these gates and no optional top-level keys,
 through the schema 'decodeProfileDocument' reads (so the built-in Profiles

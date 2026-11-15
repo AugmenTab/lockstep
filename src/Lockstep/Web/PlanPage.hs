@@ -27,16 +27,16 @@ import Lockstep.Application.Dispatch (DispatchView (..))
 import Lockstep.Application.Plans (DraftView (..), PlanView (..), RevisionView (..))
 import Lockstep.Kernel.Identity (ProjectId)
 import Lockstep.Kernel.Plan (EdgeKind (..), PlanDocument (..), PlanEdge (..), PlanUnit (..), Uncertainty (..), unitKeyText)
-import Lockstep.Web.Fields (decisionField, digestField, revisionField)
+import Lockstep.Web.Fields (choiceField, decisionField, digestField, expectedField, expectedSetField, revisionField)
 import Lockstep.Web.Fragment (attr, cls, elementId, fragment)
-import Lockstep.Web.Routes.App (decidePlanAction, projectLink)
+import Lockstep.Web.Routes.App (chooseChecksAction, decidePlanAction, projectLink)
 
 hidden :: B.Name -> T.Text -> E.ChildHTML E.Form E.Division
 hidden name value =
   E.input [A.type_ HTML.InputHidden, A.name name, attr "value" value]
 
-planPage :: ProjectId -> T.Text -> PlanView -> Maybe DispatchView -> Maybe T.Text -> LBS.ByteString
-planPage project name view next notice =
+planPage :: ProjectId -> T.Text -> PlanView -> Maybe DispatchView -> Maybe T.Text -> Maybe T.Text -> LBS.ByteString
+planPage project name view next currentChecks notice =
   fragment $
     [E.h1 [] [E.text ("Plan: " <> name)]]
       <> maybe [] (\n -> [E.p [A.id (elementId 'n' "otice"), attr "role" "status"] [E.text n]]) notice
@@ -45,10 +45,29 @@ planPage project name view next notice =
          , E.p [A.id (elementId 'e' "ffective")] [E.text effectiveWords]
          ]
       <> maybe [] runsNext next
+      <> engineeringOffer
       <> L.concatMap revision (planViewRevisions view)
       <> drafts
       <> [E.p [] [E.a [A.href (projectLink project)] [E.text ("Back to " <> name)]]]
  where
+  {- C-P6.6 G3: a plan in effect with work other than bug fixes needs checks for that work; Lockstep's
+  engineering checks hold them (and every bug check). The choice stays the owner's, on the checks' own form. -}
+  engineeringOffer =
+    case (currentChecks, planViewEffective view) of
+      (Just current, Just r)
+        | current /= "lockstep-engineering"
+        , L.any ((/= "bug-fix") . unitWorkKind) (planUnits (revisionDocument r)) ->
+            [ E.h2 [] [E.text "Checks for this plan's work"]
+            , E.p [] [E.text "This plan has work other than bug fixes: new features, a new build, tidying or documentation. Lockstep hands that work over only when this project's checks cover it. Lockstep's engineering checks do, and keep every bug check."]
+            , E.form
+                [A.id (elementId 'u' "se-engineering"), A.method B.FormPOST, A.action (chooseChecksAction project)]
+                [ hidden expectedField current
+                , hidden expectedSetField (if current == "none" then "no" else "yes")
+                , hidden choiceField "lockstep-engineering"
+                , E.button [attr "type" "submit"] [E.text "Use Lockstep's engineering checks"]
+                ]
+            ]
+      _ -> []
   -- C-P6.5 S7: what Lockstep hands over next by itself, and why each other unit waits.
   runsNext d =
     let
