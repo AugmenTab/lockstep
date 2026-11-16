@@ -27,7 +27,7 @@ import Text.Show (Show)
 
 import Lockstep.Kernel.Execution (bugClass, bugFixRaw)
 import Lockstep.Kernel.Plan (WorkKind (..), workKindCode)
-import Lockstep.Kernel.Profile (Gate, PathClass (..), ProfileDefinition, ProfileRefusal, RawGate (..), RawProfile (..), definitionGates, gateId, gateIdText, mkProfileDefinition)
+import Lockstep.Kernel.Profile (Gate, PathClass (..), ProfileDefinition, ProfileRefusal (WeakensGate), RawGate (..), RawProfile (..), checkStronger, definitionGates, gateId, gateIdText, mkProfileDefinition)
 import Lockstep.Kernel.Transaction (maxAttempts, maxCorrections)
 
 -- | The legitimate test-first behaviour of a kind.
@@ -148,16 +148,38 @@ engineeringDefinition :: Either ProfileRefusal ProfileDefinition
 engineeringDefinition =
   mkProfileDefinition engineeringRaw
 
-{- | G4: the kind's floor checks that are not among these gates unchanged,
-sorted by id. A changed check counts as missing, stronger or not (as C-P4.1 X2).
+{- | G4, Update 2 R6.4: the kind's floor checks these gates do not hold,
+sorted by id ('floorStandings': only @as-required@ and @stronger@ hold).
 -}
 missingChecks :: WorkKind -> [Gate] -> [T.Text]
 missingChecks k gates =
+  [gate | (gate, standing) <- floorStandings k gates, standing `L.notElem` fmap T.pack ["as-required", "stronger"]]
+
+{- | Update 2 R6.4: how these gates hold each floor check of the kind, by
+value, sorted by id: @as-required@ (the same check), @stronger@ (the same id
+and stage, every axis at least as strong, no exception path: the Profile
+kernel's own comparison), @weaker@, @incomparable@ (another stage: a stage
+change cannot be proved stronger) or @missing@. A floor that cannot be read
+holds nothing.
+-}
+floorStandings :: WorkKind -> [Gate] -> [(T.Text, T.Text)]
+floorStandings k gates =
   case mkProfileDefinition floorProfile of
-    Left _ -> L.sort (fmap rawGateId (kindFloor k))
-    Right floorDefinition -> L.sort [gateIdText (gateId g) | g <- definitionGates floorDefinition, g `L.notElem` gates]
+    Left _ -> L.sort [(rawGateId g, T.pack "missing") | g <- kindFloor k]
+    Right floorDefinition -> L.sortOn fst [(gateIdText (gateId g), standing g) | g <- definitionGates floorDefinition]
  where
   floorProfile = engineeringRaw {rawProfileId = T.pack "lockstep-floor-" <> workKindCode k, rawGates = kindFloor k}
+  standing required =
+    T.pack $
+      case L.find ((== gateId required) . gateId) gates of
+        Nothing -> "missing"
+        Just g
+          | g == required -> "as-required"
+          | otherwise ->
+              case checkStronger required g of
+                Right () -> "stronger"
+                Left (WeakensGate _ _) -> "weaker"
+                Left _ -> "incomparable"
 
 {- | G5 c (R-P6.6-2, R-P6.6-3): the class of a changed path, by its name,
 conservatively. Dependency pins, build files, instructions for model roles and
@@ -209,8 +231,3 @@ pathClassOf path
 documentationOnly :: [T.Text] -> Bool
 documentationOnly =
   L.all ((== PathDocs) . pathClassOf)
-
--- | Update 2 R6.4 (stub).
-floorStandings :: WorkKind -> [Gate] -> [(T.Text, T.Text)]
-floorStandings _ _ =
-  []

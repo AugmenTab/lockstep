@@ -39,6 +39,7 @@ import Flipstone.Prelude
 import System.Timeout (timeout)
 import Text.Show (Show)
 
+import Lockstep.Application.Cancellation (settleCancellations)
 import Lockstep.Application.Clarification (ClarificationOutcome (..), ClarificationReport (..), answerClarificationsUntil, clarificationOutcomeCode)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, reasonDiagnosis)
 import Lockstep.Application.Dispatch (DispatchReport (..), dispatchOnce)
@@ -95,10 +96,18 @@ enginePass runtime engine foldersOf stopping = do
       Left reason -> pure [(T.pack "pending work orders", Left (PassDatabase reason))]
       Right workOrders -> catMaybes <$> traverse start workOrders
   active <- activeTransactionIds runtime
-  advanced <-
+  stepped <-
     case active of
       Left reason -> pure (started <> [(T.pack "active transactions", Left (PassDatabase reason))])
       Right ids -> (started <>) <$> each ids
+  -- Update 2 R6.3: then the cancels whose fixes have stopped are settled; nothing is reported when there are none.
+  canceled <- settleCancellations runtime
+  let
+    advanced =
+      stepped
+        <> case canceled of
+          Left reason -> [(T.pack "cancellations", Left (PassDatabase reason))]
+          Right settled -> [(T.pack "cancel " <> task, either (Left . PassRefused) Right outcome) | (task, outcome) <- settled]
   -- C-P6.3 I4, I8: then the questions people asked, each answered once; nothing is reported when there are none.
   stop <- stopping
   if stop

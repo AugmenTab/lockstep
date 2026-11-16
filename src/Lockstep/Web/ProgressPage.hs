@@ -25,7 +25,7 @@ import Lockstep.Application.Progress (Placement (..), ProgressRow (..), Progress
 import Lockstep.Application.Summary (InterventionItem (..), ProjectSummary (..), SummaryItem (..))
 import Lockstep.Kernel.Identity (TaskId (..), parseIdentity)
 import Lockstep.Kernel.Progress (Publication (..), Standing (..), standingCode)
-import Lockstep.Kernel.Summary (Evidence (..), Usage (..), categoryCode, checksCode, interventionCode, reviewOutcomeCode, usageKnown)
+import Lockstep.Kernel.Summary (Evidence (..), Usage (..), UsageStanding (..), categoryCode, checksCode, interventionCode, reviewOutcomeCode, usageKnown, usageStandingCode)
 import Lockstep.Kernel.Transaction (haltCodeFromText)
 import Lockstep.Web.ExecutionPages (haltWords, stepWords, stoppedWords)
 import Lockstep.Web.Fragment (attr, cls, elementId, fragment)
@@ -76,11 +76,26 @@ progressPageWith view summary =
       <> whereWords (progressWhere view)
       <> [ E.h2 [] [E.text "Usage"]
          , usageWords
+         , usageStandingWords
          , E.p [cls "ls-muted"] [E.text "Running capsules and their resources are shown on the project's page; this page does not count a stopped capsule as using anything."]
          , E.p [] [E.text "Nothing is published: Lockstep commits only on each fix's own work branch on this computer, and Lockstep never pushes."]
          , E.p [] [E.a [A.href (projectLink (progressProject view))] [E.text ("Back to " <> progressName view)]]
          ]
  where
+  -- Update 2 R6.5: what the usage evidence establishes, so a partial total is never read as complete.
+  usageStandingWords =
+    case summary of
+      Nothing -> E.p [] []
+      Just s ->
+        E.p
+          [A.id (elementId 'u' "sage-standing"), attr "data-usage" (usageStandingCode (summaryUsageStanding s))]
+          [ E.text $
+              case summaryUsageStanding s of
+                NoProviderInvocation -> "Usage: no helper has run for this project, so there is no usage to show (not zero)."
+                UsageComplete _ -> "Usage is complete: every helper run reported every token class, and Lockstep kept its whole output."
+                UsagePartial _ -> "Usage is partial: some runs reported nothing, left a class out, or were kept only in part, so the numbers above are what is known, not totals."
+                UsageUnavailable -> "Usage is unavailable: helpers ran, and none reported its tokens."
+          ]
   -- C-P6.8 E5: the tokens helpers reported, per class; never a cost.
   usageWords =
     case summary of

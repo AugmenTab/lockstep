@@ -13,9 +13,11 @@ module Lockstep.Application.Summary
   , usageFromOutput
   ) where
 
+import Data.ByteString qualified as BS
 import Data.List qualified as L
 import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe, mapMaybe)
 import Data.Text qualified as T
+import Data.Text.Encoding qualified as TE
 import Fleece.Core ((#+))
 import Fleece.Core qualified as FC
 import Flipstone.Prelude
@@ -30,7 +32,7 @@ import Lockstep.Application.EngineRecords qualified as Records
 import Lockstep.Application.Invalidations (invalidationOf)
 import Lockstep.Application.Tasks (TaskView (..), listTasks)
 import Lockstep.Foundation.Fleece (decodeText)
-import Lockstep.Kernel.Identity (ProjectId (..), TaskId (..), TransactionId (..), WorkOrderId (..), identityText, parseIdentity)
+import Lockstep.Kernel.Identity (InvocationId (..), ProjectId (..), TaskId (..), TransactionId (..), WorkOrderId (..), identityText, parseIdentity)
 import Lockstep.Kernel.Roles (Role (..), Verdict (..), roleName)
 import Lockstep.Kernel.Summary
   ( Category
@@ -40,13 +42,16 @@ import Lockstep.Kernel.Summary
   , Intervention
   , ItemFacts (..)
   , ReviewOutcome (..)
+  , RunUsage (..)
   , Usage (..)
+  , UsageStanding
   , addUsage
   , categoryOf
   , interventionOf
   , noUsage
+  , runEvidence
   , usageKnown
-  , UsageStanding (..)
+  , usageStanding
   )
 import Lockstep.Kernel.Transaction (RecordKind (..), TxState (Halted), stateColumns, txStateName)
 import Lockstep.Persistence.Execution qualified as Execution
@@ -157,6 +162,7 @@ data FixRead
   , readHaltRecord :: Maybe Int
   , readInterventions :: [(T.Text, Evidence)]
   , readUsage :: [Usage]
+  , readRuns :: [RunUsage]
   , readRecords :: Int
   }
 
@@ -207,6 +213,21 @@ fixOfRow row = do
           , Just (reviewCommit v) == candidate ->
               (verdictOutcome (reviewVerdict v), Just (sequenceOf r))
         _ -> (ReviewNotRun, Nothing)
+    {- Update 2 R6.5: each role run's usage, from its recorded invocation. Its counts are read from the output's kept
+    tail, so they are complete accounting only when the run finished and the tail is its whole output. -}
+    runs =
+      [ RunUsage
+          { runSource = identityText (Transactions.invocationRowId i)
+          , runUsage = usageFromOutput tailText
+          , runComplete =
+              isJust (Transactions.invocationRowOutcome i)
+                && Transactions.invocationRowStdoutBytes i == Just (fromIntegral (BS.length (TE.encodeUtf8 tailText)))
+          }
+      | i <- invocations
+      , Transactions.invocationRowWhat i `L.elem` roleNames
+      , let
+          tailText = fromMaybe T.empty (Transactions.invocationRowStdoutTail i)
+      ]
   pure
     FixRead
       { readSummary =
@@ -224,11 +245,8 @@ fixOfRow row = do
       , readWorkOrder = identityText (Transactions.txRowWorkOrder row)
       , readHaltRecord = if halted then sequenceOf <$> latestRow RecordHalt records else Nothing
       , readInterventions = interventionsOf tx records
-      , readUsage =
-          [ usageFromOutput (fromMaybe T.empty (Transactions.invocationRowStdoutTail i))
-          | i <- invocations
-          , Transactions.invocationRowWhat i `L.elem` roleNames
-          ]
+      , readUsage = fmap runUsage runs
+      , readRuns = runs
       , readRecords = L.length records
       }
  where
@@ -356,8 +374,8 @@ projectSummary runtime rawProject =
         , summaryRunsUnknown = L.length (L.filter (not . usageKnown) usages)
         , summaryConstraints = [(k, c) | (k, c) <- waiting, c `L.elem` fmap T.pack ["usage-unknown", "writer-busy", "execution-not-enabled", "refused"]]
         , summaryRecords = L.sum (fmap (readRecords . snd) allFixes)
-        , summaryUsageStanding = NoProviderInvocation
-        , summaryUsageRuns = []
+        , summaryUsageStanding = usageStanding (L.concatMap (readRuns . snd) allFixes)
+        , summaryUsageRuns = [(runSource r, runEvidence r) | r <- L.concatMap (readRuns . snd) allFixes]
         }
   queued =
     FixSummary

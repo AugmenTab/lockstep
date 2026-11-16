@@ -16,7 +16,9 @@ import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
 
+import Lockstep.Application.Conversation (withdrawOpenIn)
 import Lockstep.Kernel.Identity (PlanRevisionId, TransactionId)
+import Lockstep.Kernel.Inbox (WithdrawalReason (..))
 import Lockstep.Kernel.Invalidation (InvalidationCause (..), descendantsOf, invalidationCode)
 import Lockstep.Persistence.Dispatch qualified as Store
 import Lockstep.Persistence.Transactions qualified as Transactions
@@ -32,11 +34,15 @@ that fix, the person's Done among them.
 -}
 recordOnce :: Store.InvalidationRow -> O.Orville Bool
 recordOnce row = do
-  _ <- Transactions.lockTransaction (Store.invalidationTransaction row)
+  locked <- Transactions.lockTransaction (Store.invalidationTransaction row)
   existing <- invalidationOf (Store.invalidationTransaction row)
   case existing of
     Just _ -> pure False
-    Nothing -> True <$ Store.insertInvalidation row
+    Nothing -> do
+      Store.insertInvalidation row
+      -- Update 2 R6.3: its open requests lose their authority in the same transaction; they stay as records.
+      traverse_ (\tx -> withdrawOpenIn (Transactions.txRowWorkOrder tx) Nothing (WithdrawnInvalidated (Store.invalidationCodeOf row))) locked
+      pure True
 
 -- | Every fix built on this one, directly or not, as the recorded bases say.
 descendants :: TransactionId -> O.Orville [TransactionId]

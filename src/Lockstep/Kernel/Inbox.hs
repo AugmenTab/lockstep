@@ -47,15 +47,28 @@ data RequestStanding
   | StandingWithdrawn
   deriving (Eq, Show, Enum, Bounded)
 
--- | Update 2 R6.3 (stub).
 requestStandingCode :: RequestStanding -> T.Text
-requestStandingCode _ =
-  T.empty
+requestStandingCode s =
+  T.pack $
+    case s of
+      StandingCurrent -> "current"
+      StandingSuperseded -> "superseded"
+      StandingResolved -> "resolved"
+      StandingInvalidated -> "invalidated"
+      StandingAwaitingEffect -> "answered-not-acted"
+      StandingWithdrawn -> "withdrawn"
 
--- | Update 2 R6.3 (stub).
+-- | Plain words for the page; no character in them is escaped in HTML.
 requestStandingWords :: RequestStanding -> T.Text
-requestStandingWords _ =
-  T.empty
+requestStandingWords s =
+  T.pack $
+    case s of
+      StandingCurrent -> "Waiting for your answer now."
+      StandingSuperseded -> "Superseded: the fix moved on, so this request no longer decides anything. Kept as a record."
+      StandingResolved -> "Resolved: you answered, and Lockstep acted on the answer."
+      StandingInvalidated -> "Invalidated: its fix no longer counts, so this request no longer decides anything. Kept as a record."
+      StandingAwaitingEffect -> "Answered: Lockstep has not acted on the answer yet."
+      StandingWithdrawn -> "Withdrawn. Kept as a record."
 
 -- | What a request's standing is read from.
 data RequestFacts
@@ -73,10 +86,36 @@ data RequestFacts
   }
   deriving (Eq, Show)
 
--- | Update 2 R6.3 (stub).
+{- | Update 2 R6.3. An open request is the current one while its fix is
+halted on it (for a fix that no longer counts, that is its Stop-only request);
+any other open request is invalidated when its fix no longer counts, else
+superseded. An answer is resolved once the fix recorded acting on it. A
+withdrawal says why by the Supervisor's own text ('withdrawalText').
+-}
 requestStanding :: RequestFacts -> RequestStanding
-requestStanding _ =
-  StandingWithdrawn
+requestStanding f =
+  case T.unpack (requestFactState f) of
+    "open"
+      | requestFactCurrent f -> StandingCurrent
+      | requestFactFixInvalidated f -> StandingInvalidated
+      | otherwise -> StandingSuperseded
+    "answered"
+      | requestFactActedOn f -> StandingResolved
+      | otherwise -> StandingAwaitingEffect
+    _ ->
+      case requestFactWithdrawal f of
+        Just body
+          | invalidatedPrefix `T.isPrefixOf` body -> StandingInvalidated
+          | supersededPrefix `T.isPrefixOf` body -> StandingSuperseded
+        _ -> StandingWithdrawn
+
+invalidatedPrefix :: T.Text
+invalidatedPrefix =
+  T.pack "Invalidated ("
+
+supersededPrefix :: T.Text
+supersededPrefix =
+  T.pack "Superseded ("
 
 -- | Why the Supervisor withdrew a request.
 data WithdrawalReason
@@ -88,7 +127,13 @@ data WithdrawalReason
     WithdrawnCanceled
   deriving (Eq, Show)
 
--- | Update 2 R6.3 (stub).
+-- | The message the Supervisor withdraws a request with: its cause first, then that it is kept.
 withdrawalText :: WithdrawalReason -> T.Text
-withdrawalText _ =
-  T.empty
+withdrawalText reason =
+  case reason of
+    WithdrawnInvalidated code ->
+      invalidatedPrefix <> code <> T.pack "): this fix no longer counts, so an answer here can no longer change it. This request is kept as a record."
+    WithdrawnSuperseded code ->
+      supersededPrefix <> code <> T.pack "): the fix stopped again for another reason; answer its newer request instead. This request is kept as a record."
+    WithdrawnCanceled ->
+      supersededPrefix <> T.pack "canceled): you canceled the task, so Lockstep stopped this fix. This request is kept as a record."

@@ -395,8 +395,16 @@ more. The Plan page's **What runs next** shows the next unit and why each other 
 stopped is *stopped* (cancel its task or change the plan), and a hand-over Lockstep could not make is *refused*
 with its reason (it tries again on each pass). If a fix it needs is marked Not done before a dependent fix starts,
 the dependent stops at its basis (`prerequisite-unsatisfied`). Lockstep never marks
-anything Done, pushes or merges. A task whose fix is handed over, running, waiting for you, or checked and waiting
-for your Done cannot be canceled (`fix-active`): stop the fix first (its Stop choice), then cancel the task.
+anything Done, pushes or merges. Cancel on a task whose fix is handed over, running or waiting for you does not hide
+that fix: Lockstep stops the fix at its next safe point (between steps, as your Stop), withdraws its open request,
+and only then cancels the task; the task page says where that stands. If what a helper did is not known, the fix
+waits for your own decision first. A fix that is checked and waiting for your Done is never canceled this way
+(`fix-accepted`): mark it Done or Not done first (Update 2 R6.3).
+
+**Phase sign-off (DG-08, Update 2).** A plan marks a human gate where a unit of one phase depends on a unit of
+another phase by a *needs your acceptance* edge: that unit waits for your Done, whatever the scheduler could do by
+itself. Any other phase boundary is crossed provisionally. A plan the Planner drafts may not remove a gate the plan in
+effect has (`human-gate-removed`); your own revision may.
 
 **Kinds of work and their checks (C-P6.6).** Each plan unit is a *bug fix*, a *feature*, a *greenfield* build, a
 *refactor* or *documentation*, and all of them run through the same engine. Features and new builds are test-first
@@ -434,6 +442,22 @@ Mark fixes Done in the order they were built: a fix built on another is not Done
 eligible, active, waiting for you, verified (checked and committed on this computer, not Done), done, invalidated,
 uncertain, stopped, canceled or waiting. For each it gives the outcome of its checks and review, and the exact
 records and commit the line rests on.
+
+**Requests that no longer decide anything (Update 2 R6.3).** When a fix stops counting (you rejected something it was
+built on, or the plan changed), its open request is withdrawn at once and kept as a record; answering it is refused.
+The Decisions page lists earlier requests with where each stands: resolved, superseded, invalidated, or answered and
+not acted on yet.
+
+**Checks a task runs under (Update 2 R6.4).** The task page shows the Profile and version its work is bound to, and
+each check its kind requires: held as required, or more strictly. Checks that weaken, drop, except or move one of
+them are refused (`kind-checks-missing`).
+
+**Usage (Update 2 R6.5).** The Progress page says whether the usage shown is complete (every run reported every
+class, whole output kept), partial, unavailable, or that no helper ran. Partial numbers are what is known, not totals.
+
+**Proposal evidence (Update 2 R6.6).** A `commit:` link must name a commit one of Lockstep's fixes recorded, and a
+Profile rule must name a Profile Lockstep knows at its current version (`unknown-target`, `stale-target`). A
+proposal whose target moved on may still be rejected, never approved.
 
 The lines are chosen from Lockstep's own records by fixed rules, never from what a helper said. A check that never
 ran is "not-run", not a pass, and a review that did not finish is not an approval. Your interventions are listed as

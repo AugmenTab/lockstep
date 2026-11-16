@@ -17,7 +17,7 @@ module Lockstep.Application.Inbox
 
 import Control.Monad.Except (ExceptT (..), runExceptT)
 import Data.List qualified as L
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, isJust)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
@@ -26,11 +26,13 @@ import Text.Show (Show)
 import Lockstep.Application.Command (IdempotencyKey)
 import Lockstep.Application.Conversation (Channel (..), Conversation (..), Sender (..), StoredMessage, StoredRequest (..), conversation, openRequests, postMessage)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, withDatabase)
+import Lockstep.Application.Invalidations (invalidationOf)
 import Lockstep.Kernel.Conversation (RequestInput (HumanSays))
-import Lockstep.Kernel.Identity (HumanRequestId (..), ProjectId, TaskId, WorkOrderId (..), parseIdentity)
-import Lockstep.Kernel.Inbox (RequestStanding, choiceConsequence, maxClarifications)
-import Lockstep.Kernel.Transaction (Stage, TxState (..))
+import Lockstep.Kernel.Identity (HumanRequestId (..), ProjectId, TaskId (..), WorkOrderId (..), identityText, parseIdentity)
+import Lockstep.Kernel.Inbox (RequestFacts (..), RequestStanding, choiceConsequence, maxClarifications, requestStanding)
+import Lockstep.Kernel.Transaction (RecordKind (..), Stage, TxState (..))
 import Lockstep.Persistence.Clarification qualified as Clarifications
+import Lockstep.Persistence.Conversation qualified as Conversations
 import Lockstep.Persistence.Execution qualified as Execution
 import Lockstep.Persistence.Projects qualified as Projects
 import Lockstep.Persistence.Tasks qualified as Tasks
@@ -174,12 +176,70 @@ data RequestRecord
   }
   deriving (Eq, Show)
 
--- | Update 2 R6.3 (stub).
+{- | Update 2 R6.3: every Human Request about the task's fixes (each of its
+hand-overs), oldest first, with where each stands. Nothing is left out: a
+request that no longer decides anything is shown as such.
+-}
 requestsOfTask :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Either T.Text [RequestRecord]))
-requestsOfTask _ _ =
-  pure (Right (Right []))
+requestsOfTask runtime rawId =
+  case parseIdentity rawId of
+    Nothing -> pure (Right (Left (T.pack "unknown-task")))
+    Just tid ->
+      withDatabase runtime $ do
+        admissions <- Execution.taskAdmissions tid
+        rows <- L.concat <$> traverse (Conversations.requestsForWorkOrder . Execution.admissionRowWorkOrder) admissions
+        Right . catMaybes <$> traverse recordOf rows
 
--- | Update 2 R6.3 (stub).
+-- | Update 2 R6.3: the requests that are closed (answered or withdrawn), most recently changed first, at most 30.
 recentRequests :: DatabaseRuntime -> IO (Either NotReadyReason [RequestRecord])
-recentRequests _ =
-  pure (Right [])
+recentRequests runtime =
+  withDatabase runtime $ do
+    rows <- Conversations.closedRequestRows 30
+    catMaybes <$> traverse recordOf rows
+
+-- | A request about a handed-over task as a record; Nothing for one about no task.
+recordOf :: Conversations.RequestRow -> O.Orville (Maybe RequestRecord)
+recordOf row = do
+  let
+    workOrder = Conversations.requestRowWorkOrder row
+    requestId = Conversations.requestRowId row
+  admission <- Execution.findAdmissionByWorkOrder workOrder
+  case admission of
+    Nothing -> pure Nothing
+    Just a -> do
+      task <- Tasks.findTaskRow (Execution.admissionRowTask a)
+      project <- Projects.findProjectById (Execution.admissionRowProject a)
+      fix <- Transactions.findTransactionByWorkOrder workOrder
+      messages <- Conversations.requestMessages requestId
+      siblings <- Conversations.requestsForWorkOrder workOrder
+      invalid <- maybe (pure Nothing) (invalidationOf . Transactions.txRowId) fix
+      records <- maybe (pure []) (Transactions.transactionRecords . Transactions.txRowId) fix
+      let
+        idText = identityText requestId
+        newest = fmap (Conversations.requestRowId . fst) (L.uncons (L.reverse siblings))
+        halted =
+          case Transactions.txRowState <$> fix of
+            Just (Halted _ _) -> True
+            _ -> False
+        facts =
+          RequestFacts
+            { requestFactState = Conversations.requestRowState row
+            , requestFactWithdrawal = Conversations.messageRowBody <$> L.find ((== T.pack "withdrawal") . Conversations.messageRowKind) (L.reverse messages)
+            , requestFactFixInvalidated = isJust invalid
+            , requestFactCurrent = halted && newest == Just requestId
+            , requestFactActedOn = L.any (\r -> Transactions.recordRowKind r `L.elem` [RecordResume, RecordCancellation] && idText `T.isInfixOf` Transactions.recordRowBody r) records
+            }
+      pure $
+        ( \t p ->
+            RequestRecord
+              { recordRequest = idText
+              , recordTask = Tasks.rowTaskId t
+              , recordTaskTitle = Tasks.rowTitle t
+              , recordProjectName = Projects.rowName p
+              , recordQuestion = Conversations.requestRowQuestion row
+              , recordStanding = requestStanding facts
+              , recordNote = requestFactWithdrawal facts
+              }
+        )
+          <$> task
+          <*> project

@@ -33,6 +33,7 @@ module Lockstep.Kernel.Summary
   ) where
 
 import Data.List qualified as L
+import Data.Maybe (isJust)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (Show)
@@ -281,17 +282,42 @@ data UsageStanding
   | UsageUnavailable
   deriving (Eq, Show)
 
--- | Update 2 R6.5 (stub).
+{- | Update 2 R6.5: what the runs' usage establishes. No run is no provider
+invocation (not zero). Every run reporting every class, with its whole output
+kept, is complete (zeros included). No run reporting anything is unavailable.
+Anything else is partial: the known counts only, a missing class unknown,
+never zero, and a run kept only as its tail never complete accounting.
+-}
 usageStanding :: [RunUsage] -> UsageStanding
-usageStanding _ =
-  UsageUnavailable
+usageStanding runs
+  | L.null runs = NoProviderInvocation
+  | L.all ((== T.pack "complete") . runEvidence) runs = UsageComplete total
+  | not (L.any (usageKnown . runUsage) runs) = UsageUnavailable
+  | otherwise = UsagePartial total
+ where
+  total = L.foldl' addUsage noUsage (fmap runUsage runs)
 
--- | Update 2 R6.5 (stub).
 usageStandingCode :: UsageStanding -> T.Text
-usageStandingCode _ =
-  T.empty
+usageStandingCode s =
+  T.pack $
+    case s of
+      NoProviderInvocation -> "no-invocation"
+      UsageComplete _ -> "complete"
+      UsagePartial _ -> "partial"
+      UsageUnavailable -> "unavailable"
 
--- | Update 2 R6.5 (stub).
+{- | Update 2 R6.5: one run's own usage evidence: @complete@ (every class,
+whole output kept), @partial@ (some classes), @truncated@ (counts read from a
+kept tail only) or @missing@ (none).
+-}
 runEvidence :: RunUsage -> T.Text
-runEvidence _ =
-  T.empty
+runEvidence r =
+  T.pack $
+    case (usageKnown u, everyClass, runComplete r) of
+      (False, _, _) -> "missing"
+      (True, _, False) -> "truncated"
+      (True, True, True) -> "complete"
+      (True, False, True) -> "partial"
+ where
+  u = runUsage r
+  everyClass = L.all isJust [usageInput u, usageOutput u, usageCacheCreation u, usageCacheRead u]

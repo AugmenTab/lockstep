@@ -29,9 +29,10 @@ import Flipstone.Prelude
 import Text.Show (show)
 
 import Lockstep.Application.Decisions (DecisionReceipt (..), OpenDecision (..), StoppedFacts (..), UnknownFacts (..), decisionId)
-import Lockstep.Application.Inbox (InboxChoice (..), InboxEntry (..), RequestRecord)
+import Lockstep.Application.Inbox (InboxChoice (..), InboxEntry (..), RequestRecord (..))
 import Lockstep.Kernel.Decision (DecisionRequest (..), choiceWords)
 import Lockstep.Kernel.Identity (WorkOrderId (..), uuidText)
+import Lockstep.Kernel.Inbox (requestStandingWords)
 import Lockstep.Web.ExecutionPages (stepWords)
 import Lockstep.Web.Fields (acknowledgeField, choiceField, expectedField, keyField, textField)
 import Lockstep.Web.Fragment (attr, cls, elementId, fragment)
@@ -103,7 +104,7 @@ titleOf decision =
     UnknownOutcome u -> unknownTitle u
 
 decisionsOverview :: Maybe [OpenDecision] -> Maybe [InboxEntry] -> Maybe [RequestRecord] -> LBS.ByteString
-decisionsOverview open inbox _ =
+decisionsOverview open inbox closed =
   fragment $
     [ E.h1 [] [E.text "Decisions"]
     , E.p [] [E.text "Things only you can decide. Open one to see what it is about and what each answer will do."]
@@ -118,7 +119,31 @@ decisionsOverview open inbox _ =
             ]
     ]
       <> inboxSection inbox
+      <> closedSection closed
       <> [E.p [cls "ls-muted"] [E.text "Approving work Lockstep does, signing finished work off and confirming changed checks arrive in a later update of Lockstep."]]
+
+{- | Update 2 R6.3: requests that no longer wait for an answer, kept as
+records with where each stands (resolved, superseded, invalidated, or answered
+and not acted on yet). Links only: nothing here can be answered.
+-}
+closedSection :: Maybe [RequestRecord] -> [E.ChildHTML E.Division E.Body]
+closedSection closed =
+  case closed of
+    Nothing -> []
+    Just [] -> []
+    Just records ->
+      [ E.h2 [A.id (elementId 'e' "arlier-requests")] [E.text "Earlier requests"]
+      , E.ul [cls "ls-projects"] (fmap item records)
+      ]
+ where
+  item r =
+    E.li
+      []
+      [ E.a [A.href (taskLink (recordTask r))] [E.text (recordTaskTitle r)]
+      , E.text (" (" <> recordProjectName r <> ")")
+      , E.p [] [E.text (recordQuestion r)]
+      , E.p [cls "ls-muted"] [E.text (requestStandingWords (recordStanding r))]
+      ]
 
 {- | C-P6.3 I1, I2: every fix waiting for a person's answer, across projects,
 with what each answer would do. Links only: answering and asking happen on the

@@ -21,6 +21,7 @@ module Lockstep.Application.Conversation
   , conversation
   , openRequests
   , requestByKey
+  , withdrawOpenIn
   ) where
 
 import Data.Char qualified as Char
@@ -54,6 +55,7 @@ import Lockstep.Kernel.Conversation
   , stepRequestChecked
   )
 import Lockstep.Kernel.Identity (HumanRequestId (..), WorkOrderId (..), identityText, parseIdentity)
+import Lockstep.Kernel.Inbox (WithdrawalReason, withdrawalText)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
 import Lockstep.Kernel.Transition (Command (..), Principal (..), principalLabel)
 import Lockstep.Persistence.Conversation qualified as Store
@@ -377,6 +379,49 @@ postMessage runtime key rawId sender input =
                           Store.insertMessage message
                           Store.updateRequest requestId (fromIntegral (requestRevision next)) (requestStateName (requestState next)) choice
                           pure (Right (messageOf message))
+
+{- | Update 2 R6.3: the Supervisor withdraws every open request about the Work
+Order, except the one kept, with the reason as its message (C-P4.3 H2's
+@Withdraw@, one message each, under the request's row lock), inside the
+caller's transaction. Nothing is deleted: each request stays, withdrawn, with
+its conversation. A request already closed is left as it is, so a repeat
+withdraws nothing. How many it withdrew.
+-}
+withdrawOpenIn :: WorkOrderId -> Maybe HumanRequestId -> WithdrawalReason -> O.Orville Int
+withdrawOpenIn workOrder keep reason = do
+  rows <- Store.requestsForWorkOrder workOrder
+  withdrawn <- traverse withdrawOne [Store.requestRowId r | r <- rows, Store.requestRowState r == requestStateName Open, Just (Store.requestRowId r) /= keep]
+  pure (L.length (L.filter id withdrawn))
+ where
+  body =
+    withdrawalText reason
+  withdrawOne requestId = do
+    locked <- Store.lockRequest requestId
+    case locked >>= kernelRequest of
+      Nothing -> pure False
+      Just current -> do
+        let
+          input = Withdraw (requestRevision current) body
+        case stepRequestChecked current (Command Supervisor input) of
+          Left _ -> pure False
+          Right (next, text) -> do
+            messages <- Store.requestMessages requestId
+            Store.insertMessage
+              Store.MessageRow
+                { Store.messageRowRequest = requestId
+                , Store.messageRowSequence = fromIntegral (L.length messages + 1)
+                , Store.messageRowKey = T.pack "withdraw-" <> T.filter (/= '-') (identityText requestId)
+                , Store.messageRowDigest = sha256Text (messagePayloadText (identityText requestId) Supervisor (senderEvidence SenderSupervisor) input)
+                , Store.messageRowKind = messageKindName (inputMessageKind input)
+                , Store.messageRowPrincipal = principalLabel Supervisor
+                , Store.messageRowEvidence = senderEvidence SenderSupervisor
+                , Store.messageRowChannel = senderChannel SenderSupervisor
+                , Store.messageRowRevision = fromIntegral (requestRevision current)
+                , Store.messageRowBody = text
+                , Store.messageRowChoice = Nothing
+                }
+            Store.updateRequest requestId (fromIntegral (requestRevision next)) (requestStateName (requestState next)) Nothing
+            pure True
 
 conversation :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe Conversation))
 conversation runtime rawId =

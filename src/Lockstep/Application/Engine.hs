@@ -50,7 +50,7 @@ import System.IO (FilePath)
 import Text.Show (Show, show)
 
 import Lockstep.Application.Command (IdempotencyKey, mkIdempotencyKey)
-import Lockstep.Application.Conversation (RequestDetails (..), Sender (..), StoredRequest (..), openRequestAbout, requestByKey, senderChannel, senderEvidence)
+import Lockstep.Application.Conversation (RequestDetails (..), Sender (..), StoredRequest (..), openRequestAbout, requestByKey, senderChannel, senderEvidence, withdrawOpenIn)
 import Lockstep.Application.Database (DatabaseRuntime, LockFailure (..), NotReadyReason (DatabaseCorrupt), Readiness (..), SessionLock (..), checkReadiness, withDatabase, withSessionLock)
 import Lockstep.Application.EngineCandidate (baselineJson, candidateJson, findingJson, frozenContract, recordedCandidate, testFiles, unchangedAtBasis)
 import Lockstep.Application.EngineRecords
@@ -104,7 +104,8 @@ import Lockstep.Foundation.RunnerProtocol (RunProfile (..))
 import Lockstep.Kernel.Candidate (MutantRun (..), classifyTest, disposeFinding, quoteGrounded)
 import Lockstep.Kernel.Dispatch (chooseBasis)
 import Lockstep.Kernel.GitBasis (Change (..), TreeEntry (..), TreeMode (..), protectedPathValid, treeModeText, treePathValid, workBranch)
-import Lockstep.Kernel.Identity (InvocationId (..), ProjectId (..), TaskId (..), TransactionId (..), WorkOrderId (..), identityText, parseIdentity)
+import Lockstep.Kernel.Identity (HumanRequestId (..), InvocationId (..), ProjectId (..), TaskId (..), TransactionId (..), WorkOrderId (..), identityText, parseIdentity)
+import Lockstep.Kernel.Inbox (WithdrawalReason (..))
 import Lockstep.Kernel.Invalidation (stopOnlyCodes)
 import Lockstep.Kernel.Plan (WorkKind)
 import Lockstep.Kernel.Profile (PathClass (PathDocs, PathTests))
@@ -165,6 +166,7 @@ import Lockstep.Kernel.Transaction
   )
 import Lockstep.Kernel.Transition (Principal (..), principalLabel)
 import Lockstep.Kernel.WorkPolicy (TestFirst (GreenOnly), WorkPolicy (..), pathClassOf, workPolicy)
+import Lockstep.Persistence.Cancellations (pendingCancellation)
 import Lockstep.Persistence.Dispatch qualified as Dispatches
 import Lockstep.Persistence.Transactions qualified as Store
 
@@ -534,13 +536,16 @@ advanceRow runtime engine row =
         db runtime . fmap Right $ do
           invalid <- invalidationOf (Store.txRowId row)
           stale <- staleBasis (Store.txRowId row)
-          pure (invalid <|> (if stale then Just (T.pack "basis-stale") else Nothing))
+          canceled <- pendingCancellation (Store.txRowWorkOrder row)
+          pure (invalid <|> (if stale then Just (T.pack "basis-stale") else Nothing), canceled)
       case (settled, cause) of
         (Left code, _) -> pure (Left code)
         (Right (Just input), _) -> report input
         (_, Left code) -> pure (Left code)
-        (Right Nothing, Right (Just code)) -> invalidate code
-        (Right Nothing, Right Nothing) -> do
+        (Right Nothing, Right (Just code, _)) -> invalidate code
+        -- Update 2 R6.3: the person canceled the task; the fix stops here, between stages, before anything else runs.
+        (Right Nothing, Right (Nothing, Just session)) -> stopForCancel session
+        (Right Nothing, Right (Nothing, Nothing)) -> do
           -- C-P4.R1 R-K1: every workspace made for the stage, removed once it has ended
           -- (a stage cut short by an exception keeps them: they may still be in use).
           -- C-P4.R2 R2-K: so does a stage in which any run's outcome is not known.
@@ -572,10 +577,12 @@ advanceRow runtime engine row =
             Right input -> report input
     Halted stage code -> do
       -- C-P6.7 V4: halted for something else, it halts again for the invalidation, so no answer runs a stage on it.
-      cause <- db runtime (Right <$> invalidationOf (Store.txRowId row))
+      cause <- db runtime (Right <$> ((,) <$> invalidationOf (Store.txRowId row) <*> pendingCancellation (Store.txRowWorkOrder row)))
       case cause of
         Left c -> pure (Left c)
-        Right (Just invalid) | invalid /= code -> invalidate invalid
+        Right (Just invalid, _) | invalid /= code -> invalidate invalid
+        -- Update 2 R6.3: a cancel stops a fix waiting for a person, unless an outcome is uncertain: that waits for the person.
+        Right (_, Just session) | not (T.pack "uncertain-invocation " `T.isPrefixOf` code) -> stopForCancel session
         _ -> resumeHalted stage code
     Accepted -> idle (T.pack "accepted")
     Done -> idle (T.pack "done")
@@ -586,6 +593,21 @@ advanceRow runtime engine row =
     case applied of
       Left c -> pure (Left c)
       Right _ -> report (Invalidated code)
+  -- The person's cancel is their Stop, recorded as such; the fix's open requests are withdrawn in the same transaction.
+  stopForCancel session = do
+    applied <-
+      applyInputWith
+        runtime
+        (Store.txRowId row)
+        (Store.txRowRevision row)
+        Human
+        HumanStop
+        [(RecordCancellation, record completionSchema (Completion (T.pack "cancel") (T.pack "application") session))]
+        id
+        (void (withdrawOpenIn (Store.txRowWorkOrder row) Nothing WithdrawnCanceled))
+    case applied of
+      Left c -> pure (Left c)
+      Right _ -> report HumanStop
   resumeHalted stage code = do
     opened <- ensureRequest runtime row stage code
     case fmap resumeOf opened of
@@ -1934,10 +1956,14 @@ ensureRequest runtime row stage code = do
                 , detailsEvidence = T.pack "Transaction " <> identityText (Store.txRowId row) <> T.pack ", record " <> T.pack (show (Store.recordRowSequence h)) <> T.pack ": " <> code
                 , detailsAuthority = T.pack "Whether Lockstep tries this step again, accepts it as it is, or stops this bug fix."
                 }
-          pure $ case opened of
-            Left _ -> Left (T.pack "database-unavailable")
-            Right (Left c) -> Left c
-            Right (Right request) -> Right request
+          case opened of
+            Left _ -> pure (Left (T.pack "database-unavailable"))
+            Right (Left c) -> pure (Left c)
+            Right (Right request) ->
+              -- Update 2 R6.3: any older request about this fix still open is superseded by this halt (kept, withdrawn).
+              case parseIdentity (storedRequestId request) of
+                Nothing -> pure (Right request)
+                Just kept -> (request <$) <$> db runtime (Right <$> withdrawOpenIn (Store.txRowWorkOrder row) (Just kept) (WithdrawnSuperseded code))
 
 -- | The key of the request for the latest halt record, and that record.
 haltKey :: Store.TransactionRow -> [Store.RecordRow] -> Either T.Text (IdempotencyKey, Store.RecordRow)

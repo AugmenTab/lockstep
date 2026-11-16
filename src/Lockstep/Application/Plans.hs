@@ -50,6 +50,7 @@ import Lockstep.Application.Tasks (requestDigest)
 import Lockstep.Effects.Roles (RoleOutcome (..), Runner (..), invokeRole)
 import Lockstep.Foundation.Fleece (encodeText)
 import Lockstep.Kernel.Identity (PlanDraftId (..), PlanId (..), PlanRevisionId (..), ProjectId (..), TaskId (..), TicketId (..), TransactionId, Uuid, identityText, parseIdentity)
+import Lockstep.Kernel.PhaseGate (gatesRemoved)
 import Lockstep.Kernel.Plan
   ( PlanContext (..)
   , PlanCriterion (..)
@@ -261,25 +262,34 @@ proposeIn planUuid revisionUuid keyText project proposer document = do
             -- R-P6.4-4: the same plan is refused only while it waits for a decision or is in effect; a
             -- rejected or superseded one may be proposed again as a new revision.
             live (r, d) = Store.revisionRowDigest r == digest && (isNothing d || Just (Store.revisionRowNumber r) == effective)
-          if L.any live decided
-            then pure (refusal "already-proposed")
-            else do
-              let
-                row =
-                  Store.RevisionRow
-                    { Store.revisionRowId = PlanRevisionId revisionUuid
-                    , Store.revisionRowPlan = Store.planRowId plan
-                    , Store.revisionRowNumber = 1 + L.foldl' max 0 (fmap Store.revisionRowNumber revisions)
-                    , Store.revisionRowDigest = digest
-                    , Store.revisionRowDocument = encodePlanDocument valid
-                    , Store.revisionRowProposedBy = T.pack (case proposer of ByHuman _ -> "Human"; ByPlanner _ -> "Planner")
-                    , Store.revisionRowProposer = case proposer of ByHuman a -> T.take 200 a; ByPlanner d -> identityText d
-                    , Store.revisionRowDraft = case proposer of ByHuman _ -> Nothing; ByPlanner d -> Just d
-                    , Store.revisionRowKey = keyText
-                    , Store.revisionRowUncertainties = fromIntegral (L.length (planUncertainties valid))
-                    }
-              Store.insertRevision row
-              Right <$> revisionView row
+          -- DG-08 Phase signoff (Update 2): a Planner refinement never removes a human gate of the plan in effect.
+          inEffect <- traverse stored (L.find ((== effective) . Just . Store.revisionRowNumber) revisions)
+          let
+            removesGate =
+              case (proposer, inEffect) of
+                (ByPlanner _, Just current) -> not (L.null (gatesRemoved current valid))
+                _ -> False
+          case () of
+            _
+              | L.any live decided -> pure (refusal "already-proposed")
+              | removesGate -> pure (refusal "human-gate-removed")
+              | otherwise -> do
+                  let
+                    row =
+                      Store.RevisionRow
+                        { Store.revisionRowId = PlanRevisionId revisionUuid
+                        , Store.revisionRowPlan = Store.planRowId plan
+                        , Store.revisionRowNumber = 1 + L.foldl' max 0 (fmap Store.revisionRowNumber revisions)
+                        , Store.revisionRowDigest = digest
+                        , Store.revisionRowDocument = encodePlanDocument valid
+                        , Store.revisionRowProposedBy = T.pack (case proposer of ByHuman _ -> "Human"; ByPlanner _ -> "Planner")
+                        , Store.revisionRowProposer = case proposer of ByHuman a -> T.take 200 a; ByPlanner d -> identityText d
+                        , Store.revisionRowDraft = case proposer of ByHuman _ -> Nothing; ByPlanner d -> Just d
+                        , Store.revisionRowKey = keyText
+                        , Store.revisionRowUncertainties = fromIntegral (L.length (planUncertainties valid))
+                        }
+                  Store.insertRevision row
+                  Right <$> revisionView row
 
 -- Views -----------------------------------------------------------------------------
 

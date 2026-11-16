@@ -15,6 +15,7 @@ module Lockstep.Application.Execution
   , AdmitOptions (..)
   , admitTask
   , findAdmission
+  , kindGates
   ) where
 
 import Data.ByteString.Lazy qualified as LBS
@@ -62,10 +63,12 @@ import Lockstep.Kernel.Profile
   , RawProfile (..)
   , ResolutionInput (..)
   , WorkFacts
+  , checkStronger
   , contentDigestText
   , definitionId
   , effectiveGates
   , gateApplies
+  , gateId
   , mkClassTag
   , mkNonBehaviouralBasis
   , mkProfileDefinition
@@ -286,10 +289,13 @@ kindRefusal kind named current catalog =
                 Just (Left _) -> Just (T.pack "profile-too-weak")
                 Just (Right namedGates)
                   | not (L.null (missingChecks kind namedGates)) -> Just (T.pack "profile-too-weak")
-                  | not (L.all (`L.elem` repositoryGates) namedGates) -> Just (T.pack "profile-checks-missing")
+                  -- Update 2 R6.4: each of the named Profile's checks is held by value, as it is or more strongly.
+                  | not (L.all (heldBy repositoryGates) namedGates) -> Just (T.pack "profile-checks-missing")
                   | otherwise -> Nothing
  where
   missingCode k = T.pack (if k == BugFix then "bug-checks-missing" else "kind-checks-missing")
+  heldBy gates g =
+    L.any (\r -> gateId r == gateId g && isRight (checkStronger g r)) gates
 
 -- | The repository's current checks: the default's id and its latest stored row.
 currentChecks :: RepositoryId -> O.Orville (Maybe ProfileId, Maybe Profiles.ProfileRow)

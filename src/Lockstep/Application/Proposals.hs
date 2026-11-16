@@ -26,7 +26,7 @@ import Lockstep.Application.Profiles (sha256Hasher)
 import Lockstep.Kernel.Identity (HumanRequestId (..), TransactionId (..), identityText, parseIdentity, uuidText)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText, mkProfileId, profileIdText)
 import Lockstep.Kernel.Proposal
-  ( Decision
+  ( Decision (..)
   , ProposalInput (..)
   , Proposer (..)
   , Scope (ProfileRule)
@@ -128,11 +128,11 @@ proposeImprovement runtime key raw =
               let
                 i = proposalInput proposal
                 digest = sha (proposalText proposal)
-              stale <- profileRuleStale i
+              problem <- profileRuleProblem i
               byKey <- Store.findProposalByKey (idempotencyKeyText key)
               byDigest <- Store.findProposalByDigest digest
               case (byKey, byDigest) of
-                _ | stale -> pure (Left [T.pack "stale-target"])
+                _ | Just code <- problem -> pure (Left [code])
                 (Just row, _)
                   | Store.proposalRowDigest row == digest -> Right . viewOf row <$> Store.decisionOf (Store.proposalRowId row)
                   | otherwise -> pure (Left [T.pack "key-conflict"])
@@ -181,11 +181,14 @@ canonicalEvidence e =
       case parseIdentity (T.toLower r) of
         Nothing -> pure Nothing
         Just q -> fmap (const (OfRequest (identityText (q :: HumanRequestId)))) <$> Requests.findRequest q
+    -- Update 2 R6.6 (OQ-P6.9-1): a commit is evidence only when a fix of Lockstep's recorded it.
     OfCommit c ->
       let
         commit = T.toLower c
       in
-        pure (if T.length commit == 40 && T.all Char.isHexDigit commit then Just (OfCommit commit) else Nothing)
+        if T.length commit == 40 && T.all Char.isHexDigit commit
+          then (\recorded -> if recorded then Just (OfCommit commit) else Nothing) <$> Transactions.commitRecorded commit
+          else pure Nothing
  where
   -- An id in any letter case is the same id; its canonical spelling is lower case.
   withFix t found =
@@ -193,17 +196,36 @@ canonicalEvidence e =
       Nothing -> pure Nothing
       Just tx -> Transactions.findTransaction tx >>= maybe (pure Nothing) (const (found tx))
 
-{- | R-P6.9-4 (in part): a rule for a catalog Profile is about its latest
-version. A target that is not a catalog Profile is not refused here
-(docs/gates/P6.9/review.md OQ-P6.9-1).
+{- | R-P6.9-4, Update 2 R6.6 (OQ-P6.9-1): a Profile rule targets a Profile
+Lockstep knows, at its current version: a catalog Profile's latest version, or
+version 1 of one of Lockstep's own not yet in the catalog. Any other target is
+@unknown-target@; another version is @stale-target@.
 -}
-profileRuleStale :: ProposalInput -> O.Orville Bool
-profileRuleStale i
-  | inputScope i /= ProfileRule = pure False
-  | otherwise =
-      case mkProfileId (inputTarget i) of
-        Nothing -> pure False
-        Just profile -> maybe False (\r -> T.pack (show (Profiles.profileRowVersion r)) /= inputCurrent i) <$> Profiles.findProfile profile Nothing
+profileRuleProblem :: ProposalInput -> O.Orville (Maybe T.Text)
+profileRuleProblem i
+  | inputScope i /= ProfileRule = pure Nothing
+  | otherwise = do
+      current <- currentProfileVersion (inputTarget i)
+      pure $
+        case current of
+          Nothing -> Just (T.pack "unknown-target")
+          Just v
+            | v /= T.strip (inputCurrent i) -> Just (T.pack "stale-target")
+            | otherwise -> Nothing
+
+-- | The current version of a Profile Lockstep knows, as text: the catalog's latest, else 1 for one of its own.
+currentProfileVersion :: T.Text -> O.Orville (Maybe T.Text)
+currentProfileVersion target =
+  case mkProfileId target of
+    Nothing -> pure Nothing
+    Just profile -> do
+      row <- Profiles.findProfile profile Nothing
+      pure $
+        case row of
+          Just r -> Just (T.pack (show (Profiles.profileRowVersion r)))
+          Nothing
+            | target `L.elem` fmap T.pack ["lockstep-bug-fix", "lockstep-basic", "lockstep-engineering"] -> Just (T.pack "1")
+            | otherwise -> Nothing
 
 {- | A stored proposal as the Kernel's, to decide on; Nothing unless its stored
 evidence reads back to exactly what was stored (R-P6.9-3).
@@ -241,7 +263,7 @@ decideImprovement runtime sender rawId seen decision =
         earlier <- Store.decisionOf rawId
         latest <-
           if Store.proposalRowScope row == scopeCode ProfileRule
-            then maybe (pure Nothing) (fmap (fmap Profiles.profileRowVersion) . (`Profiles.findProfile` Nothing)) (mkProfileId (Store.proposalRowTarget row))
+            then currentProfileVersion (Store.proposalRowTarget row)
             else pure Nothing
         case storedInput row >>= either (const Nothing) Just . validateProposal of
           Nothing -> pure (Left (T.pack "proposal-unreadable"))
@@ -249,8 +271,9 @@ decideImprovement runtime sender rawId seen decision =
             case decideProposal (senderPrincipal sender) seen (parseDecision . Store.decisionRowDecision =<< earlier) proposal of
               Left code -> pure (Left code)
               Right ()
-                -- P5: a Profile rule is about the catalog's latest version of that Profile.
-                | Store.proposalRowScope row == scopeCode ProfileRule && fmap (T.pack . show) latest /= Just (T.strip seen) -> pure (Left (T.pack "stale-target"))
+                {- P5: a Profile rule is approved only on the catalog's latest version of that Profile. Update 2 R6.6
+                (OQ-P6.9-2): a stale proposal may still be rejected, a terminal decision that authorizes nothing. -}
+                | decision == ApproveProposal && Store.proposalRowScope row == scopeCode ProfileRule && latest /= Just (T.strip seen) -> pure (Left (T.pack "stale-target"))
                 | otherwise -> do
                     let
                       decided = Store.DecisionRow rawId (decisionCode decision) (T.strip seen) (actorOf sender)
