@@ -41,15 +41,17 @@ import System.IO (FilePath)
 import Text.Show (show)
 
 import Lockstep.Application.Activity (readActivity)
+import Lockstep.Application.Cancellation (CancelOutcome (..), cancellationOf, requestCancel)
 import Lockstep.Application.CapsuleStatus (StopOutcome (..), capsuleStatusFromEnvironment, stopCapsuleRun)
 import Lockstep.Application.Command (IdempotencyKey, WorkspaceState (..), generateIdempotencyKey, idempotencyKeyText, mkIdempotencyKey, readWorkspace)
 import Lockstep.Application.Conversation (Channel (..), Conversation (..), Sender (..), StoredRequest (..), conversation, postMessage)
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason (..), Readiness (..), checkReadiness, revisionNumber)
 import Lockstep.Application.Decisions (DecisionReceipt (..), applyDecision, decidedReceipt, findDecision, listDecisions, receiptApplied)
 import Lockstep.Application.Dispatch (dispatchView)
+import Lockstep.Application.EffectiveChecks (effectiveChecksOf)
 import Lockstep.Application.Engine (TransactionView (..), decideCompletion, haltRequest, projectStarted, transactionForWorkOrder, transactionView)
 import Lockstep.Application.Execution (Admission (..), ExecutionStatus (..), admitBug, enableExecution, executionStatus, findAdmission)
-import Lockstep.Application.Inbox (inboxEntries)
+import Lockstep.Application.Inbox (inboxEntries, recentRequests)
 import Lockstep.Application.Inbox qualified as Inbox
 import Lockstep.Application.LedgerView (EffectLine (..), LedgerProjection (..), OrderLine (..), projectLedger)
 import Lockstep.Application.OperatorTrust (Session (..), exchangeSignIn, lookupSession, revokeSession)
@@ -93,7 +95,7 @@ import Lockstep.Kernel.Task (Priority, parsePriority, taskRefusalWords)
 import Lockstep.Web.ActivityPage (activityPage)
 import Lockstep.Web.ChecksPages (checksPage, choiceLosses, projectChecksSection)
 import Lockstep.Web.DecisionPages (DecisionChoice, choiceFits, decisionChoiceCode, decisionPage, decisionRequest, decisionsOverview, donePage)
-import Lockstep.Web.ExecutionPages (capsuleSection, projectExecutionSection, taskFixingSection)
+import Lockstep.Web.ExecutionPages (cancellationSection, capsuleSection, effectiveChecksSection, projectExecutionSection, taskFixingSection)
 import Lockstep.Web.Fields
   ( acceptanceField
   , acknowledgeField
@@ -632,17 +634,27 @@ decideTaskRoute ctx tid =
     case found of
       Left _ -> pure notReady
       Right Nothing -> pure notFound
-      Right (Just task) ->
+      Right (Just task) -> do
+        let
+          refusedWith code = do
+            latest <- findTask db (identityText tid)
+            taskAnswer db (either (const task) (fromMaybe task) latest) (Just (taskRefusalWords code))
         case V.runValidator ((,) <$> ticketRevisionField `V.required` V.decimalUpTo integerMax <*> taskDecision) fields of
           Left _ -> taskAnswer db task (Just unreadableTryAgain)
+          -- Update 2 R6.3: Cancel of a task whose fix is live stops the fix first, then cancels the task.
+          Right (r, CancelTask) -> do
+            requested <- requestCancel db "application" (identityText tid) r
+            case requested of
+              Left _ -> pure notReady
+              Right (Right (CancelSettled updated)) -> taskAnswer db updated Nothing
+              Right (Right (CancelStopping updated)) -> taskAnswer db updated (Just (taskRefusalWords "cancel-requested"))
+              Right (Left code) -> refusedWith code
           Right (r, d) -> do
             decided <- decideTask db "application" (identityText tid) r d
             case decided of
               Left _ -> pure notReady
               Right (Right updated) -> taskAnswer db updated Nothing
-              Right (Left code) -> do
-                latest <- findTask db (identityText tid)
-                taskAnswer db (either (const task) (fromMaybe task) latest) (Just (taskRefusalWords code))
+              Right (Left code) -> refusedWith code
 
 chooseChecksRoute :: Ctx -> ProjectId -> IO Wai.Response
 chooseChecksRoute ctx pid =
@@ -975,9 +987,12 @@ taskAnswer db task notice = do
             pure (Just (v, request, maybe [] conversationMessages (fromRight Nothing talk), fromRight [] attempts))
           _ -> pure Nothing
   key <- idempotencyKeyText <$> generateIdempotencyKey
+  -- Update 2 R6.3, R6.4: a pending cancel's standing, and the checks the work runs under.
+  canceling <- fromRight Nothing <$> cancellationOf db (taskId task)
+  effective <- fromRight Nothing <$> effectiveChecksOf db (taskId task)
   case project of
     Right (Just p) ->
-      pure (pathAnswer (taskLink (taskKey task)) (taskPage p siblings task (isJust work) (taskFixingSection task status admission standing work key) notice))
+      pure (pathAnswer (taskLink (taskKey task)) (taskPage p siblings task (isJust work) (cancellationSection canceling <> taskFixingSection task status admission standing work key <> effectiveChecksSection effective) notice))
     Right Nothing -> pure notFound
     Left _ -> pure notReady
 
@@ -1058,7 +1073,8 @@ renderSection db section session =
     Decisions -> do
       decisions <- listDecisions db
       inbox <- inboxEntries db
-      pure (decisionsOverview (either (const Nothing) Just decisions) (either (const Nothing) Just inbox))
+      closed <- recentRequests db
+      pure (decisionsOverview (either (const Nothing) Just decisions) (either (const Nothing) Just inbox) (either (const Nothing) Just closed))
     Activity -> activityPage <$> readActivity db
     Settings -> do
       projects <- fromRight [] <$> listProjects db

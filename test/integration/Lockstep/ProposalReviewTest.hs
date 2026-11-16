@@ -188,7 +188,7 @@ halted sc = do
   gitIn folder ["commit", "-q", "-m", "start"]
   ek <- idem "enable"
   void (accepted (ready (enableExecution (scRuntime sc) (folders sc) ek (projectId view) ExpectNothing)))
-  writeFile (folder <> "/notes.txt") "uncommitted\n"
+  -- A-U2-3 (Update 2): a clean folder, so the fix records its basis commit and halts at its discovery (no helper).
   ik <- idem "plan"
   r <- accepted (ready (proposePlan (scRuntime sc) ik (projectId view) "owner-session" (LBS.fromStrict (TE.encodeUtf8 (encodePlanDocument plan)))))
   revision <- accepted (ready (decidePlan (scRuntime sc) "owner-session" (projectId view) (revisionNumber r) (revisionDigest r) ApprovePlan))
@@ -285,7 +285,8 @@ spelling =
     h <- halted sc
     let
       fix = haltedFix h
-      sha = "0123456789abcdef0123456789abcdef01234567"
+    -- A-U2-3 (Update 2): a commit the fix recorded, its basis.
+    sha <- ready (transactionView (scRuntime sc) fix) >>= maybe (assertFailure "no fix") (maybe (assertFailure "no basis recorded") pure . viewBasis)
     a <- proposed sc "lower" (proposal [OfFix fix, OfCommit sha])
     b <- proposed sc "upper" (proposal [OfFix (T.toUpper fix), OfFix fix, OfCommit (T.toUpper sha)])
     proposalId b @?= proposalId a

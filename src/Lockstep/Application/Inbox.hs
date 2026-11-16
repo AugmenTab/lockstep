@@ -10,6 +10,9 @@ module Lockstep.Application.Inbox
   , askQuestion
   , AttemptView (..)
   , requestAttempts
+  , RequestRecord (..)
+  , requestsOfTask
+  , recentRequests
   ) where
 
 import Control.Monad.Except (ExceptT (..), runExceptT)
@@ -25,7 +28,7 @@ import Lockstep.Application.Conversation (Channel (..), Conversation (..), Sende
 import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, withDatabase)
 import Lockstep.Kernel.Conversation (RequestInput (HumanSays))
 import Lockstep.Kernel.Identity (HumanRequestId (..), ProjectId, TaskId, WorkOrderId (..), parseIdentity)
-import Lockstep.Kernel.Inbox (choiceConsequence, maxClarifications)
+import Lockstep.Kernel.Inbox (RequestStanding, choiceConsequence, maxClarifications)
 import Lockstep.Kernel.Transaction (Stage, TxState (..))
 import Lockstep.Persistence.Clarification qualified as Clarifications
 import Lockstep.Persistence.Execution qualified as Execution
@@ -156,3 +159,27 @@ stepOf state =
 askQuestion :: DatabaseRuntime -> IdempotencyKey -> T.Text -> Int -> T.Text -> IO (Either NotReadyReason (Either T.Text StoredMessage))
 askQuestion runtime key request revision text =
   postMessage runtime key request (SenderHuman ApplicationChannel) (HumanSays revision text)
+
+-- | Update 2 R6.3: one Human Request about a task, as a record, with where it stands.
+data RequestRecord
+  = RequestRecord
+  { recordRequest :: T.Text
+  , recordTask :: TaskId
+  , recordTaskTitle :: T.Text
+  , recordProjectName :: T.Text
+  , recordQuestion :: T.Text
+  , recordStanding :: RequestStanding
+  , recordNote :: Maybe T.Text
+  -- ^ The Supervisor's withdrawal message, when it was withdrawn.
+  }
+  deriving (Eq, Show)
+
+-- | Update 2 R6.3 (stub).
+requestsOfTask :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Either T.Text [RequestRecord]))
+requestsOfTask _ _ =
+  pure (Right (Right []))
+
+-- | Update 2 R6.3 (stub).
+recentRequests :: DatabaseRuntime -> IO (Either NotReadyReason [RequestRecord])
+recentRequests _ =
+  pure (Right [])

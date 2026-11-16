@@ -47,12 +47,14 @@ import Lockstep.Kernel.EffectTest qualified as EffectTest
 import Lockstep.Kernel.EffectViewTest qualified as EffectViewTest
 import Lockstep.Kernel.EventCodecTest qualified as EventCodecTest
 import Lockstep.Kernel.ExecutionTest qualified as KernelExecutionTest
+import Lockstep.Kernel.FloorStrengthTest qualified as FloorStrengthTest
 import Lockstep.Kernel.GitBasisTest qualified as GitBasisTest
 import Lockstep.Kernel.IdentityTest qualified as IdentityTest
 import Lockstep.Kernel.InboxTest qualified as InboxTest
 import Lockstep.Kernel.InvalidationReviewTest qualified as InvalidationReviewTest
 import Lockstep.Kernel.InvalidationTest qualified as InvalidationTest
 import Lockstep.Kernel.LifecyclePropertyTest qualified as LifecyclePropertyTest
+import Lockstep.Kernel.PhaseGateTest qualified as PhaseGateTest
 import Lockstep.Kernel.PlanTest qualified as PlanTest
 import Lockstep.Kernel.PolicyTest qualified as PolicyTest
 import Lockstep.Kernel.ProfileTest qualified as ProfileTest
@@ -68,6 +70,7 @@ import Lockstep.Kernel.RemediationThirdReviewTest qualified as RemediationThirdR
 import Lockstep.Kernel.RemoteTest qualified as RemoteTest
 import Lockstep.Kernel.RepositoryTest qualified as RepositoryTest
 import Lockstep.Kernel.ReproductionRetryTest qualified as ReproductionRetryTest
+import Lockstep.Kernel.RequestStandingTest qualified as RequestStandingTest
 import Lockstep.Kernel.RolesTest qualified as KernelRolesTest
 import Lockstep.Kernel.RunnerTest qualified as RunnerTest
 import Lockstep.Kernel.SchedulerPropertyTest qualified as SchedulerPropertyTest
@@ -79,6 +82,7 @@ import Lockstep.Kernel.TicketTest qualified as TicketTest
 import Lockstep.Kernel.TraceTest qualified as TraceTest
 import Lockstep.Kernel.TransactionTest qualified as KernelTransactionTest
 import Lockstep.Kernel.TransitionTest qualified as TransitionTest
+import Lockstep.Kernel.UsageEvidenceTest qualified as UsageEvidenceTest
 import Lockstep.Kernel.WorkOrderTest qualified as WorkOrderTest
 import Lockstep.Kernel.WorkPolicyReviewTest qualified as WorkPolicyReviewTest
 import Lockstep.Kernel.WorkPolicyTest qualified as WorkPolicyTest
@@ -193,4 +197,8 @@ main =
       , KernelProposalTest.tests
       , KernelProposalReviewTest.tests
       , BasisAuthorityTest.tests
+      , RequestStandingTest.tests
+      , FloorStrengthTest.tests
+      , UsageEvidenceTest.tests
+      , PhaseGateTest.tests
       ]

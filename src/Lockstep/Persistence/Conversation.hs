@@ -12,6 +12,8 @@ module Lockstep.Persistence.Conversation
   , findRequest
   , lockRequest
   , openRequestRows
+  , requestsForWorkOrder
+  , closedRequestRows
   , insertRequest
   , updateRequest
   , findMessageByKey
@@ -80,7 +82,7 @@ requestTable =
       <$> O.marshallField requestRowId requestIdField
       <*> O.marshallField requestRowKey requestKeyField
       <*> O.marshallField requestRowDigest (O.unboundedTextField "payload_digest")
-      <*> O.marshallField requestRowWorkOrder (foreignKeyTo workOrderTable workOrderIdField "work_order_id")
+      <*> O.marshallField requestRowWorkOrder requestWorkOrderField
       <*> O.marshallField requestRowEngineer (O.unboundedTextField "engineer_name")
       <*> O.marshallField requestRowContract (O.nullableField (O.unboundedTextField "contract_digest"))
       <*> O.marshallField requestRowKind (O.unboundedTextField "kind")
@@ -95,6 +97,10 @@ requestTable =
 requestIdField :: O.FieldDefinition O.NotNull HumanRequestId
 requestIdField =
   keyField "id"
+
+requestWorkOrderField :: O.FieldDefinition O.NotNull WorkOrderId
+requestWorkOrderField =
+  foreignKeyTo workOrderTable workOrderIdField "work_order_id"
 
 requestKeyField :: O.FieldDefinition O.NotNull T.Text
 requestKeyField =
@@ -140,6 +146,25 @@ openRequestRows =
     requestTable
     ( O.where_ (O.fieldEquals requestStateField (T.pack "open"))
         <> O.orderBy (O.orderByField requestCreatedAtField O.ascendingOrder <> O.orderByField requestIdField O.ascendingOrder)
+    )
+
+-- | Update 2 R6.3: every request about the Work Order, oldest first.
+requestsForWorkOrder :: O.MonadOrville m => WorkOrderId -> m [RequestRow]
+requestsForWorkOrder workOrder =
+  O.findEntitiesBy
+    requestTable
+    ( O.where_ (O.fieldEquals requestWorkOrderField workOrder)
+        <> O.orderBy (O.orderByField requestCreatedAtField O.ascendingOrder <> O.orderByField requestIdField O.ascendingOrder)
+    )
+
+-- | Update 2 R6.3: the requests no longer open, most recently changed first, at most this many.
+closedRequestRows :: O.MonadOrville m => Int -> m [RequestRow]
+closedRequestRows n =
+  O.findEntitiesBy
+    requestTable
+    ( O.where_ (O.fieldIn requestStateField (T.pack "answered" :| [T.pack "withdrawn"]))
+        <> O.orderBy (O.orderByField requestUpdatedAtField O.descendingOrder <> O.orderByField requestIdField O.descendingOrder)
+        <> O.limit n
     )
 
 insertRequest :: O.MonadOrville m => RequestRow -> m ()

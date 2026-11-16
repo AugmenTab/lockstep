@@ -24,6 +24,11 @@ module Lockstep.Kernel.Summary
   , noUsage
   , addUsage
   , usageKnown
+  , RunUsage (..)
+  , UsageStanding (..)
+  , usageStanding
+  , usageStandingCode
+  , runEvidence
   , summaryStale
   ) where
 
@@ -255,3 +260,38 @@ usageKnown u =
 summaryStale :: Maybe T.Text -> Maybe T.Text -> Bool
 summaryStale madeFor inEffect =
   madeFor /= inEffect
+
+-- | Update 2 R6.5: one provider run's usage and whether its whole output was kept.
+data RunUsage
+  = RunUsage
+  { runSource :: T.Text
+  -- ^ The recorded invocation.
+  , runUsage :: Usage
+  , runComplete :: Bool
+  -- ^ Whether the run finished and Lockstep kept its whole output, not only its tail.
+  }
+  deriving (Eq, Show)
+
+-- | Update 2 R6.5: what the runs' usage evidence establishes.
+data UsageStanding
+  = NoProviderInvocation
+  | UsageComplete Usage
+  | -- | The known counts only; never presented as a total.
+    UsagePartial Usage
+  | UsageUnavailable
+  deriving (Eq, Show)
+
+-- | Update 2 R6.5 (stub).
+usageStanding :: [RunUsage] -> UsageStanding
+usageStanding _ =
+  UsageUnavailable
+
+-- | Update 2 R6.5 (stub).
+usageStandingCode :: UsageStanding -> T.Text
+usageStandingCode _ =
+  T.empty
+
+-- | Update 2 R6.5 (stub).
+runEvidence :: RunUsage -> T.Text
+runEvidence _ =
+  T.empty

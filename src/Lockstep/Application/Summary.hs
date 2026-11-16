@@ -46,6 +46,7 @@ import Lockstep.Kernel.Summary
   , interventionOf
   , noUsage
   , usageKnown
+  , UsageStanding (..)
   )
 import Lockstep.Kernel.Transaction (RecordKind (..), TxState (Halted), stateColumns, txStateName)
 import Lockstep.Persistence.Execution qualified as Execution
@@ -98,6 +99,10 @@ data ProjectSummary
   -- ^ Plan units waiting on a resource: the unit and its waiting code.
   , summaryRecords :: Int
   -- ^ How many fix records it was made from (R-P6.8-9).
+  , summaryUsageStanding :: UsageStanding
+  -- ^ Update 2 R6.5: what the usage evidence establishes (complete, partial, unavailable, no invocation).
+  , summaryUsageRuns :: [(T.Text, T.Text)]
+  -- ^ Update 2 R6.5: each role run counted, by its recorded invocation, with what its own evidence is.
   }
   deriving (Eq, Show)
 
@@ -351,6 +356,8 @@ projectSummary runtime rawProject =
         , summaryRunsUnknown = L.length (L.filter (not . usageKnown) usages)
         , summaryConstraints = [(k, c) | (k, c) <- waiting, c `L.elem` fmap T.pack ["usage-unknown", "writer-busy", "execution-not-enabled", "refused"]]
         , summaryRecords = L.sum (fmap (readRecords . snd) allFixes)
+        , summaryUsageStanding = NoProviderInvocation
+        , summaryUsageRuns = []
         }
   queued =
     FixSummary

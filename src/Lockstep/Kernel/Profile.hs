@@ -73,6 +73,7 @@ module Lockstep.Kernel.Profile
   , layerName
   , EffectiveProfile
   , resolveProfile
+  , checkStronger
   , effectiveSources
   , effectiveGates
   , effectiveInvariants

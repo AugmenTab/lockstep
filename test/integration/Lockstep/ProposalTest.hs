@@ -28,7 +28,7 @@ import Text.Show (Show, show)
 import Lockstep.Application.Command (IdempotencyKey, mkIdempotencyKey)
 import Lockstep.Application.Conversation (Channel (..), Sender (..))
 import Lockstep.Application.Database (DatabaseRuntime, runMigrations)
-import Lockstep.Application.Engine (Engine (..), TransactionView (..), transactionForWorkOrder)
+import Lockstep.Application.Engine (Engine (..), TransactionView (..), transactionForWorkOrder, transactionView)
 import Lockstep.Application.EngineWorker (engineOnceWith)
 import Lockstep.Application.Execution (Admission (..), enableExecution, findAdmission)
 import Lockstep.Application.PlanDocument (encodePlanDocument)
@@ -187,7 +187,7 @@ haltedFix sc = do
   gitIn folder ["commit", "-q", "-m", "start"]
   ek <- idem "enable"
   void (accepted (ready (enableExecution (scRuntime sc) (folders sc) ek (projectId view) ExpectNothing)))
-  writeFile (folder <> "/notes.txt") "uncommitted\n"
+  -- A-U2-2 (Update 2, OQ-P6.9-1): a clean folder, so the fix records its basis commit and halts at its discovery (no helper).
   ik <- idem "plan"
   r <- accepted (ready (proposePlan (scRuntime sc) ik (projectId view) "owner-session" (LBS.fromStrict (TE.encodeUtf8 (encodePlanDocument plan)))))
   revision <- accepted (ready (decidePlan (scRuntime sc) "owner-session" (projectId view) (revisionNumber r) (revisionDigest r) ApprovePlan))
@@ -208,9 +208,14 @@ haltedFix sc = do
   fix <- ready (transactionForWorkOrder (scRuntime sc) (admissionWorkOrder admission)) >>= maybe (assertFailure "no fix") pure
   pure (view, viewId fix)
 
--- | A person's proposal about the commit messages, version 1 to 2.
-proposal :: ProposalInput
-proposal =
+-- | A-U2-2 (Update 2, OQ-P6.9-1): the commit a fix recorded (its basis), for evidence.
+recordedCommit :: Scenario -> T.Text -> IO T.Text
+recordedCommit sc fix =
+  ready (transactionView (scRuntime sc) fix) >>= maybe (assertFailure "no fix") (maybe (assertFailure "no basis recorded") pure . viewBasis)
+
+-- | A person's proposal about the commit messages, version 1 to 2, citing a commit a fix recorded (A-U2-2).
+proposal :: T.Text -> ProposalInput
+proposal commit =
   ProposalInput
     { inputScope = EngineeringPractice
     , inputTarget = "commit-messages"
@@ -219,7 +224,7 @@ proposal =
     , inputTitle = "Name the test in every fix's commit message"
     , inputBenefit = "A reader finds the frozen test from the commit."
     , inputRisks = "Longer messages."
-    , inputEvidence = [OfCommit "0123456789abcdef0123456789abcdef01234567"]
+    , inputEvidence = [OfCommit commit]
     , inputPrivate = False
     , inputProposer = ByPerson "owner-session"
     }
@@ -252,21 +257,25 @@ teamChecks sc version =
 duplicates :: Assertion
 duplicates =
   withScenario $ \sc -> do
-    a <- proposed sc "a" proposal
+    (_, fix) <- haltedFix sc
+    commit <- recordedCommit sc fix
+    a <- proposed sc "a" (proposal commit)
     -- Another key, another proposer, the evidence repeated and the title padded: the same proposal.
-    b <- proposed sc "b" proposal {inputProposer = ByPerson "someone-else", inputTitle = "  Name the test in every fix's commit message ", inputEvidence = inputEvidence proposal <> inputEvidence proposal}
+    b <- proposed sc "b" (proposal commit) {inputProposer = ByPerson "someone-else", inputTitle = "  Name the test in every fix's commit message ", inputEvidence = inputEvidence (proposal commit) <> inputEvidence (proposal commit)}
     proposalId b @?= proposalId a
     proposalSupport' b @?= 1
-    c <- proposed sc "a" proposal
+    c <- proposed sc "a" (proposal commit)
     proposalId c @?= proposalId a
     -- The key of one proposal does not record another.
-    propose sc "a" proposal {inputProposed = "3"} >>= (@?= Left ["key-conflict"])
+    propose sc "a" (proposal commit) {inputProposed = "3"} >>= (@?= Left ["key-conflict"])
     count sc "lockstep_improvement_proposals" >>= (@?= 1)
 
 forged :: Assertion
 forged =
   withScenario $ \sc -> do
-    p <- proposed sc "forged" proposal
+    (_, fix) <- haltedFix sc
+    commit <- recordedCommit sc fix
+    p <- proposed sc "forged" (proposal commit)
     traverse_
       (\sender -> decideAs sc sender p "1" ApproveProposal >>= (@?= Left "not-authorized"))
       [SenderAgent "implementer", SenderPlanner "planner", SenderSupervisor]
@@ -279,21 +288,24 @@ forged =
 stale :: Assertion
 stale =
   withScenario $ \sc -> do
-    p <- proposed sc "stale" proposal
+    (_, fix) <- haltedFix sc
+    commit <- recordedCommit sc fix
+    p <- proposed sc "stale" (proposal commit)
     decideAs sc person p "2" ApproveProposal >>= (@?= Left "stale-target")
     teamChecks sc 1
-    rule <- proposed sc "rule" proposal {inputScope = ProfileRule, inputTarget = "team-checks", inputCurrent = "1", inputProposed = "2"}
+    rule <- proposed sc "rule" (proposal commit) {inputScope = ProfileRule, inputTarget = "team-checks", inputCurrent = "1", inputProposed = "2"}
     -- The catalog moved on: version 1 is no longer the latest.
     teamChecks sc 2
     decideAs sc person rule "1" ApproveProposal >>= (@?= Left "stale-target")
     count sc "lockstep_improvement_decisions" >>= (@?= 0)
-    current <- proposed sc "current" proposal {inputScope = ProfileRule, inputTarget = "team-checks", inputCurrent = "2", inputProposed = "3"}
+    current <- proposed sc "current" (proposal commit) {inputScope = ProfileRule, inputTarget = "team-checks", inputCurrent = "2", inputProposed = "3"}
     decideAs sc person current "2" ApproveProposal >>= either (\e -> assertFailure ("refused: " <> T.unpack e)) (\v -> proposalDecision v @?= Just "approved")
 
 noMutation :: Assertion
 noMutation =
   withScenario $ \sc -> do
     (_, fix) <- haltedFix sc
+    commit <- recordedCommit sc fix
     teamChecks sc 1
     let
       tables =
@@ -310,7 +322,7 @@ noMutation =
         ]
       counts = traverse (count sc) tables
     before <- counts
-    rule <- proposed sc "rule" proposal {inputScope = ProfileRule, inputTarget = "team-checks", inputProposed = "2", inputEvidence = [OfFix fix]}
+    rule <- proposed sc "rule" (proposal commit) {inputScope = ProfileRule, inputTarget = "team-checks", inputProposed = "2", inputEvidence = [OfFix fix]}
     _ <- decideAs sc person rule "1" ApproveProposal >>= either (\e -> assertFailure ("refused: " <> T.unpack e)) pure
     after <- counts
     after @?= before
@@ -319,9 +331,10 @@ privateScope :: Assertion
 privateScope =
   withScenario $ \sc -> do
     (_, fix) <- haltedFix sc
-    shared <- proposed sc "shared" proposal
-    private <- proposed sc "private" proposal {inputPrivate = True, inputTitle = "My own habit"}
-    propose sc "from-fix" proposal {inputPrivate = True, inputTitle = "A fix's private wish", inputProposer = ByFix fix []} >>= (@?= Left ["private-scope"])
+    commit <- recordedCommit sc fix
+    shared <- proposed sc "shared" (proposal commit)
+    private <- proposed sc "private" (proposal commit) {inputPrivate = True, inputTitle = "My own habit"}
+    propose sc "from-fix" (proposal commit) {inputPrivate = True, inputTitle = "A fix's private wish", inputProposer = ByFix fix []} >>= (@?= Left ["private-scope"])
     ready (listProposals (scRuntime sc) False) >>= (@?= [proposalId shared]) . fmap proposalId
     ready (listProposals (scRuntime sc) True) >>= (@?= [proposalId private]) . fmap proposalId
 
@@ -329,9 +342,10 @@ noAutoInstall :: Assertion
 noAutoInstall =
   withScenario $ \sc -> do
     (view, fix) <- haltedFix sc
+    commit <- recordedCommit sc fix
     void (ready (projectSummary (scRuntime sc) (projectId view)))
     count sc "lockstep_improvement_proposals" >>= (@?= 0)
-    p <- proposed sc "fix" proposal {inputEvidence = [OfFix fix], inputProposer = ByFix fix []}
+    p <- proposed sc "fix" (proposal commit) {inputEvidence = [OfFix fix], inputProposer = ByFix fix []}
     (proposalBy p, proposalDecision p) @?= ("fix", Nothing)
     count sc "lockstep_improvement_decisions" >>= (@?= 0)
 
@@ -339,10 +353,13 @@ selfPrivilege :: Assertion
 selfPrivilege =
   withScenario $ \sc -> do
     (_, fix) <- haltedFix sc
+    commit <- recordedCommit sc fix
+    -- A-U2-2 (Update 2, OQ-P6.9-1): team-checks is a catalog Profile, so a proposal for it can be decided.
+    teamChecks sc 1
     let
-      fromFix target = proposal {inputScope = ProfileRule, inputTarget = target, inputEvidence = [OfFix fix], inputProposer = ByFix fix []}
+      fromFix target = (proposal commit) {inputScope = ProfileRule, inputTarget = target, inputEvidence = [OfFix fix], inputProposer = ByFix fix []}
     -- The fix claims it is bound to nothing; what it is bound to is read from its Work Order.
     propose sc "own" (fromFix "lockstep-bug-fix") >>= (@?= Left ["self-privilege"])
     other <- propose sc "other" (fromFix "team-checks")
     assertBool ("refused: " <> show other) (either (const False) (const True) other)
-    propose sc "nobody" proposal {inputProposer = ByFix "00000000-0000-4000-8000-000000000000" []} >>= (@?= Left ["unknown-fix"])
+    propose sc "nobody" (proposal commit) {inputProposer = ByFix "00000000-0000-4000-8000-000000000000" []} >>= (@?= Left ["unknown-fix"])

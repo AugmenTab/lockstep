@@ -15,6 +15,7 @@ module Lockstep.Kernel.WorkPolicy
   , engineeringRaw
   , engineeringDefinition
   , missingChecks
+  , floorStandings
   , pathClassOf
   , documentationOnly
   ) where
@@ -208,3 +209,8 @@ pathClassOf path
 documentationOnly :: [T.Text] -> Bool
 documentationOnly =
   L.all ((== PathDocs) . pathClassOf)
+
+-- | Update 2 R6.4 (stub).
+floorStandings :: WorkKind -> [Gate] -> [(T.Text, T.Text)]
+floorStandings _ _ =
+  []

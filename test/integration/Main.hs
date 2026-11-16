@@ -69,12 +69,14 @@ import Lockstep.MigrationDbTest qualified as MigrationDbTest
 import Lockstep.OperatorCommandTest qualified as OperatorCommandTest
 import Lockstep.OperatorLedgerTest qualified as OperatorLedgerTest
 import Lockstep.OperatorTrustTest qualified as OperatorTrustTest
+import Lockstep.PhaseGateTest qualified as PhaseGateTest
 import Lockstep.PlanPageTest qualified as PlanPageTest
 import Lockstep.PlanProfileTest qualified as PlanProfileTest
 import Lockstep.PlanReviewTest qualified as PlanReviewTest
 import Lockstep.PlanTest qualified as PlanTest
 import Lockstep.ProcessRunnerTest qualified as ProcessRunnerTest
 import Lockstep.ProcessTest qualified as ProcessTest
+import Lockstep.ProfileFloorTest qualified as ProfileFloorTest
 import Lockstep.ProfileParityReviewTest qualified as ProfileParityReviewTest
 import Lockstep.ProfileParityTest qualified as ProfileParityTest
 import Lockstep.ProfileRegistryTest qualified as ProfileRegistryTest
@@ -85,6 +87,7 @@ import Lockstep.ProjectChecksTest qualified as ProjectChecksTest
 import Lockstep.ProjectsBrowserTest qualified as ProjectsBrowserTest
 import Lockstep.ProjectsPageTest qualified as ProjectsPageTest
 import Lockstep.ProjectsTest qualified as ProjectsTest
+import Lockstep.ProposalIntegrityTest qualified as ProposalIntegrityTest
 import Lockstep.ProposalReviewTest qualified as ProposalReviewTest
 import Lockstep.ProposalTest qualified as ProposalTest
 import Lockstep.ProvisionalReviewTest qualified as ProvisionalReviewTest
@@ -102,11 +105,13 @@ import Lockstep.SnapshotBoundsTest qualified as SnapshotBoundsTest
 import Lockstep.StabilizationReproductionTest qualified as StabilizationReproductionTest
 import Lockstep.StabilizationReviewTest qualified as StabilizationReviewTest
 import Lockstep.StabilizationSessionTest qualified as StabilizationSessionTest
+import Lockstep.StaleAuthorityTest qualified as StaleAuthorityTest
 import Lockstep.SummaryReviewTest qualified as SummaryReviewTest
 import Lockstep.SummaryTest qualified as SummaryTest
 import Lockstep.TasksBrowserTest qualified as TasksBrowserTest
 import Lockstep.TasksPageTest qualified as TasksPageTest
 import Lockstep.TasksTest qualified as TasksTest
+import Lockstep.UsageEvidenceTest qualified as UsageEvidenceTest
 
 main :: IO ()
 main =
@@ -215,4 +220,9 @@ main =
       , ProposalReviewTest.tests
       , AuthoritativeBasisTest.tests
       , PlanProfileTest.tests
+      , StaleAuthorityTest.tests
+      , ProfileFloorTest.tests
+      , UsageEvidenceTest.tests
+      , ProposalIntegrityTest.tests
+      , PhaseGateTest.tests
       ]

@@ -9,6 +9,8 @@ module Lockstep.Web.ExecutionPages
   ( projectExecutionSection
   , capsuleSection
   , taskFixingSection
+  , effectiveChecksSection
+  , cancellationSection
   , stepWords
   , haltWords
   , stoppedWords
@@ -24,8 +26,10 @@ import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (show)
 
+import Lockstep.Application.Cancellation (CancellationView (..))
 import Lockstep.Application.CapsuleStatus (CapsuleStatus (..))
 import Lockstep.Application.Conversation (StoredMessage (..), StoredRequest (..))
+import Lockstep.Application.EffectiveChecks (EffectiveChecks (..))
 import Lockstep.Application.Engine (InvocationView (..), TransactionView (..))
 import Lockstep.Application.EngineEvidence (CheckRun (..), Evidence (..), FindingTime (..), FindingView (..), ReviewView (..), transactionEvidence)
 import Lockstep.Application.Execution (Admission (..), Enablement (..), ExecutionStatus (..))
@@ -547,3 +551,35 @@ verdictWords verdict =
     Approve -> "The reviewer approved the change."
     Reject -> "The reviewer rejected the change."
     NeedsHuman -> "The reviewer asked for a person to look at the change."
+
+{- | Update 2 R6.4: the checks the task's latest fix runs under, as they are:
+the Profile and version its Work Order is bound to, the kind of work, each
+floor check and how it is held, exceptions and budgets. Nothing to submit.
+-}
+effectiveChecksSection :: Maybe EffectiveChecks -> [E.ChildHTML E.Division E.Body]
+effectiveChecksSection effective =
+  case effective of
+    Nothing -> []
+    Just c ->
+      [ E.h3 [A.id (elementId 'e' "ffective-checks")] [E.text "Checks this work runs under"]
+      , E.p [] [E.text (checksProfile c <> ", version " <> T.pack (show (checksVersion c)) <> ", for " <> checksKind c <> " work" <> (if checksNonBehavioural c then " that changes no behaviour." else "."))]
+      , E.ul [] [E.li [] [E.text (gate <> ": " <> floorWords standing)] | (gate, standing) <- checksFloor c]
+      , E.p [cls "ls-muted"] [E.text (exceptionWords (checksExceptions c) <> " At most " <> T.pack (show (checksCorrections c)) <> " correction rounds and " <> T.pack (show (checksAttempts c)) <> " implementation attempts.")]
+      ]
+ where
+  floorWords s =
+    case T.unpack s of
+      "as-required" -> "held as required"
+      "stronger" -> "held more strictly than required"
+      "weaker" -> "weaker than required"
+      "incomparable" -> "cannot be compared with what is required"
+      _ -> "missing"
+  exceptionWords es =
+    if L.null es then "No exception applies." else "Exceptions: " <> T.intercalate ", " es <> "."
+
+-- | Update 2 R6.3: where a person's cancel of this task stands, while its fix is stopped first.
+cancellationSection :: Maybe CancellationView -> [E.ChildHTML E.Division E.Body]
+cancellationSection cancel =
+  case cancel of
+    Nothing -> []
+    Just c -> [E.p [cls "ls-notice", A.id (elementId 'c' "ancel-standing")] [E.text (cancellationWords c)]]

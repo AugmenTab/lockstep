@@ -9,6 +9,7 @@ module Lockstep.Persistence.Execution
   , insertEnablement
   , AdmissionRow (..)
   , findAdmissionByTask
+  , taskAdmissions
   , findAdmissionByKey
   , projectAdmissions
   , findAdmissionByWorkOrder
@@ -177,6 +178,11 @@ admissionWorkOrderField =
 findAdmissionByTask :: O.MonadOrville m => TaskId -> m (Maybe AdmissionRow)
 findAdmissionByTask task =
   O.findFirstEntityBy admissionTable (O.where_ (O.fieldEquals admissionTaskField task) <> O.orderBy (O.orderByField admissionIdField O.descendingOrder))
+
+-- | Update 2 R6.3: every hand-over of a task, oldest first.
+taskAdmissions :: O.MonadOrville m => TaskId -> m [AdmissionRow]
+taskAdmissions task =
+  O.findEntitiesBy admissionTable (O.where_ (O.fieldEquals admissionTaskField task) <> O.orderBy (O.orderByField admissionIdField O.ascendingOrder))
 
 -- | C-P6.3: the hand-over that made a Work Order, if one did.
 findAdmissionByWorkOrder :: O.MonadOrville m => WorkOrderId -> m (Maybe AdmissionRow)

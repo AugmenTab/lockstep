@@ -380,6 +380,8 @@ data RecordKind
   | RecordPostFinding
   | RecordReview
   | RecordAcceptance
+  | -- | Update 2 R6.3: a person's cancel of the task stopped this fix.
+    RecordCancellation
   deriving (Eq, Show, Enum, Bounded)
 
 recordKindText :: RecordKind -> T.Text
@@ -409,6 +411,7 @@ recordKindText kind =
       RecordPostFinding -> "post-finding"
       RecordReview -> "review"
       RecordAcceptance -> "acceptance"
+      RecordCancellation -> "cancellation"
 
 parseRecordKind :: T.Text -> Maybe RecordKind
 parseRecordKind =

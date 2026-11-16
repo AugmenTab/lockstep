@@ -34,6 +34,7 @@ library
       Lockstep.Application.Backlog
       Lockstep.Application.BacklogDocument
       Lockstep.Application.BacklogJira
+      Lockstep.Application.Cancellation
       Lockstep.Application.CapsuleStatus
       Lockstep.Application.Clarification
       Lockstep.Application.Command
@@ -44,6 +45,7 @@ library
       Lockstep.Application.Decisions
       Lockstep.Application.Dispatch
       Lockstep.Application.Dispatcher
+      Lockstep.Application.EffectiveChecks
       Lockstep.Application.Engine
       Lockstep.Application.EngineCandidate
       Lockstep.Application.EngineEvidence
@@ -58,6 +60,7 @@ library
       Lockstep.Application.LedgerRefusal
       Lockstep.Application.LedgerView
       Lockstep.Application.OperatorTrust
+      Lockstep.Application.PhaseGates
       Lockstep.Application.PlanDocument
       Lockstep.Application.Plans
       Lockstep.Application.ProfileDocument
@@ -117,6 +120,7 @@ library
       Lockstep.Kernel.Inbox
       Lockstep.Kernel.Invalidation
       Lockstep.Kernel.KeyLifetime
+      Lockstep.Kernel.PhaseGate
       Lockstep.Kernel.Plan
       Lockstep.Kernel.Policy
       Lockstep.Kernel.Profile
@@ -139,6 +143,7 @@ library
       Lockstep.Kernel.WorkUnit
       Lockstep.Kernel.WorkUnitLifecycle
       Lockstep.Persistence.Backlog
+      Lockstep.Persistence.Cancellations
       Lockstep.Persistence.Clarification
       Lockstep.Persistence.CommandCenter
       Lockstep.Persistence.Commands
@@ -433,12 +438,14 @@ test-suite lockstep-integration
       Lockstep.OperatorCommandTest
       Lockstep.OperatorLedgerTest
       Lockstep.OperatorTrustTest
+      Lockstep.PhaseGateTest
       Lockstep.PlanPageTest
       Lockstep.PlanProfileTest
       Lockstep.PlanReviewTest
       Lockstep.PlanTest
       Lockstep.ProcessRunnerTest
       Lockstep.ProcessTest
+      Lockstep.ProfileFloorTest
       Lockstep.ProfileParityReviewTest
       Lockstep.ProfileParityTest
       Lockstep.ProfileRegistryTest
@@ -449,6 +456,7 @@ test-suite lockstep-integration
       Lockstep.ProjectsBrowserTest
       Lockstep.ProjectsPageTest
       Lockstep.ProjectsTest
+      Lockstep.ProposalIntegrityTest
       Lockstep.ProposalReviewTest
       Lockstep.ProposalTest
       Lockstep.ProvisionalReviewTest
@@ -466,6 +474,7 @@ test-suite lockstep-integration
       Lockstep.StabilizationReproductionTest
       Lockstep.StabilizationReviewTest
       Lockstep.StabilizationSessionTest
+      Lockstep.StaleAuthorityTest
       Lockstep.SummaryReviewTest
       Lockstep.SummaryTest
       Lockstep.Support.App
@@ -482,6 +491,7 @@ test-suite lockstep-integration
       Lockstep.TasksBrowserTest
       Lockstep.TasksPageTest
       Lockstep.TasksTest
+      Lockstep.UsageEvidenceTest
   hs-source-dirs:
       test/integration
   default-extensions:
@@ -577,6 +587,7 @@ test-suite lockstep-unit
       Lockstep.Kernel.EffectViewTest
       Lockstep.Kernel.EventCodecTest
       Lockstep.Kernel.ExecutionTest
+      Lockstep.Kernel.FloorStrengthTest
       Lockstep.Kernel.GitBasisTest
       Lockstep.Kernel.IdentityTest
       Lockstep.Kernel.InboxTest
@@ -584,6 +595,7 @@ test-suite lockstep-unit
       Lockstep.Kernel.InvalidationTest
       Lockstep.Kernel.LifecycleFixtures
       Lockstep.Kernel.LifecyclePropertyTest
+      Lockstep.Kernel.PhaseGateTest
       Lockstep.Kernel.PlanTest
       Lockstep.Kernel.PolicyTest
       Lockstep.Kernel.ProfileTest
@@ -599,6 +611,7 @@ test-suite lockstep-unit
       Lockstep.Kernel.RemoteTest
       Lockstep.Kernel.RepositoryTest
       Lockstep.Kernel.ReproductionRetryTest
+      Lockstep.Kernel.RequestStandingTest
       Lockstep.Kernel.RolesTest
       Lockstep.Kernel.RunnerTest
       Lockstep.Kernel.SchedulerFixtures
@@ -611,6 +624,7 @@ test-suite lockstep-unit
       Lockstep.Kernel.TraceTest
       Lockstep.Kernel.TransactionTest
       Lockstep.Kernel.TransitionTest
+      Lockstep.Kernel.UsageEvidenceTest
       Lockstep.Kernel.WorkOrderTest
       Lockstep.Kernel.WorkPolicyReviewTest
       Lockstep.Kernel.WorkPolicyTest

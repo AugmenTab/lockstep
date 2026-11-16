@@ -14,6 +14,7 @@ module Lockstep.Persistence.Transactions
   , Finish (..)
   , insertTransaction
   , findTransaction
+  , commitRecorded
   , lockTransaction
   , findTransactionByWorkOrder
   , transactionsForWorkOrders
@@ -36,6 +37,7 @@ module Lockstep.Persistence.Transactions
 
 import Data.List qualified as L
 import Data.List.NonEmpty (NonEmpty ((:|)))
+import Data.Maybe (isJust)
 import Data.Text qualified as T
 import Data.Time (UTCTime)
 import Flipstone.Prelude
@@ -324,6 +326,20 @@ insertTransaction =
 findTransaction :: O.MonadOrville m => TransactionId -> m (Maybe TransactionRow)
 findTransaction =
   O.findEntity transactionTable
+
+-- | Update 2 R6.6: whether a fix recorded this commit, as its basis, freeze, candidate or accepted commit.
+commitRecorded :: O.MonadOrville m => T.Text -> m Bool
+commitRecorded commit =
+  isJust
+    <$> O.findFirstEntityBy
+      transactionTable
+      ( O.where_
+          ( O.fieldEquals txBasisField (Just commit)
+              `O.orExpr` O.fieldEquals txFreezeField (Just commit)
+              `O.orExpr` O.fieldEquals txCandidateField (Just commit)
+              `O.orExpr` O.fieldEquals txAcceptedField (Just commit)
+          )
+      )
 
 -- | The transaction row, locked until the database transaction ends.
 lockTransaction :: O.MonadOrville m => TransactionId -> m (Maybe TransactionRow)

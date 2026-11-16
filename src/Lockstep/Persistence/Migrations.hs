@@ -1010,4 +1010,26 @@ CREATE TRIGGER lockstep_improvement_decisions_immutable BEFORE UPDATE OR DELETE 
 CREATE TRIGGER lockstep_improvement_decisions_no_truncate BEFORE TRUNCATE ON lockstep_improvement_decisions FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
 |]
       )
+    ,
+      ( [Interpolate.i|Update 2 R6.3: a person's cancel of a task whose fix is live, and how it was settled once the fix stopped|]
+      , [Interpolate.i|
+CREATE TABLE lockstep_task_cancellations (
+  work_order_id uuid PRIMARY KEY REFERENCES lockstep_work_orders (id),
+  task_id uuid NOT NULL REFERENCES lockstep_project_tasks (ticket_id),
+  session text NOT NULL CHECK (char_length(session) BETWEEN 1 AND 200),
+  requested_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX lockstep_task_cancellations_task ON lockstep_task_cancellations (task_id, requested_at);
+CREATE TRIGGER lockstep_task_cancellations_immutable BEFORE UPDATE OR DELETE ON lockstep_task_cancellations FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_task_cancellations_no_truncate BEFORE TRUNCATE ON lockstep_task_cancellations FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TABLE lockstep_task_cancellation_settlements (
+  work_order_id uuid PRIMARY KEY REFERENCES lockstep_task_cancellations (work_order_id),
+  outcome text NOT NULL CHECK (outcome IN ('canceled', 'not-canceled')),
+  reason text NOT NULL CHECK (char_length(reason) BETWEEN 1 AND 200),
+  settled_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE TRIGGER lockstep_task_cancellation_settlements_immutable BEFORE UPDATE OR DELETE ON lockstep_task_cancellation_settlements FOR EACH ROW EXECUTE FUNCTION lockstep_refuse_change();
+CREATE TRIGGER lockstep_task_cancellation_settlements_no_truncate BEFORE TRUNCATE ON lockstep_task_cancellation_settlements FOR EACH STATEMENT EXECUTE FUNCTION lockstep_refuse_change();
+|]
+      )
     ]

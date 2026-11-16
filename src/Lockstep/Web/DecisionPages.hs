@@ -29,7 +29,7 @@ import Flipstone.Prelude
 import Text.Show (show)
 
 import Lockstep.Application.Decisions (DecisionReceipt (..), OpenDecision (..), StoppedFacts (..), UnknownFacts (..), decisionId)
-import Lockstep.Application.Inbox (InboxChoice (..), InboxEntry (..))
+import Lockstep.Application.Inbox (InboxChoice (..), InboxEntry (..), RequestRecord)
 import Lockstep.Kernel.Decision (DecisionRequest (..), choiceWords)
 import Lockstep.Kernel.Identity (WorkOrderId (..), uuidText)
 import Lockstep.Web.ExecutionPages (stepWords)
@@ -102,8 +102,8 @@ titleOf decision =
     StoppedWork s -> stoppedTitle s
     UnknownOutcome u -> unknownTitle u
 
-decisionsOverview :: Maybe [OpenDecision] -> Maybe [InboxEntry] -> LBS.ByteString
-decisionsOverview open inbox =
+decisionsOverview :: Maybe [OpenDecision] -> Maybe [InboxEntry] -> Maybe [RequestRecord] -> LBS.ByteString
+decisionsOverview open inbox _ =
   fragment $
     [ E.h1 [] [E.text "Decisions"]
     , E.p [] [E.text "Things only you can decide. Open one to see what it is about and what each answer will do."]
