@@ -1,5 +1,11 @@
 # Phase 6 — return packet for update 2 (§12)
 
+**Summary.** R6.1–R6.6 are implemented, reviewed and qualified, and DG-08 Phase signoff is implemented as you
+decided. Gate D D-01–D-10 pass model-free through the real scheduler, engine, Git and PostgreSQL. In the three-unit
+demonstration, one approval drove three dependent units to technical acceptance with no person between them. The
+final full check passed at `ff314a2`: unit 1110, integration 739, backup/restore. D-11 is BLOCKED. Gate D acceptance
+is yours.
+
 - Branch `phase-6` (local; nothing pushed). Writer: the single Implementer. **Nothing here is accepted on the
   owner's behalf; Gate D is not self-accepted.**
 - Authority: `.local/plans/phase-06_update2.md`; owner decisions `docs/gates/P6/update2-decisions.md` (A-U2-1,
@@ -14,7 +20,7 @@
 - Carried limitations inspected in the code before any change: `docs/gates/P6-U2/contract.md` "Baseline inspection".
   All were still present; the untyped-basis gap was wider than recorded (human-acceptance and external edges too).
 - Commits: `21b39fb` (U2-A freeze) → `aa28633` (U2-A) → `159bd3d` (U2-B freeze) → `4763843` (U2-B) → R-U2 and Gate D
-  freeze → R-U2 remediation (see `git log`). Final revision: FINAL-REVISION.
+  freeze → R-U2 remediation → packet draft. Final tested revision: `ff314a2` (clean tree).
 
 ## 2. R6.1–R6.6 status and changed files
 
@@ -36,7 +42,12 @@ Decisions and test mapping: `docs/gates/P6-U2/contract.md`. Operator wording: `d
 |---|---|---|
 | U2-A full check, `aa28633` | all passed: unit 1084, integration 707, backup/restore | `.local/evals/phase-06/u2a-full-check.log` |
 | U2-B full check, `4763843` | all passed: unit 1110, integration 727, backup/restore | `u2b-full-check.log` |
-| Final full check, FINAL-REVISION | FINAL-RESULT | `final-full-check.log` |
+| Final full check, `ff314a2` (clean) | **all passed**: format, lint/static, build, unit **1110**, no-live-model guard, integration **739**, backup/restore | `final-full-check.log` |
+
+The final integration run includes every P6.1–P6.9 suite (backlog, plan/DAG, scheduler, Profiles, invalidation,
+Scribe, proposals), the Phase 4 transaction regressions, the Phase 5 checks that run in the integration step, all U2
+suites and Gate D. The Phase 5 capsule VM checks (`check-capsule-vm` etc.) were **NOT_RUN**: they need the host's
+virtualization and were not touched by update 2.
 
 ## 4–9. Evidence per correction
 
@@ -64,46 +75,61 @@ need frozen-fixture amendments).
 
 ## 11. Gate D D-01–D-10
 
-See `docs/gates/P6.11/contract.md`. GATE-D-RESULTS
+See `docs/gates/P6.11/contract.md`. All results from the final full check at `ff314a2`; model-free; locally qualified,
+**owner acceptance pending**.
 
 | Gate | Result |
 |---|---|
-| D-01 | GD01 |
-| D-02 | GD02 |
-| D-03 | GD03 |
-| D-04 | GD04 |
-| D-05 | GD05 |
-| D-06 | GD06 |
-| D-07 | GD07 |
-| D-08 | GD08 |
-| D-09 | GD09 |
-| D-10 | GD10 (HTTP through the real `lockstep serve`; **no new browser-driven test** — see §16) |
+| D-01 | PASSED (`prdToDag`: valid draft proposed; cycle named and refused; contradiction refused; nothing approved) |
+| D-02 | PASSED (`threeUnits`: one approval; `counter` next with no hand-over until the worker's pass) |
+| D-03 | PASSED (`threeUnits`: three dependent units, full pipeline each) |
+| D-04 | PASSED (`threeUnits`: hand-over after the predecessor's acceptance record; no Done, no remote) |
+| D-05 | PASSED (`rejectionScope`) |
+| D-06 | PASSED (`refusals`; Git basis and uncertain effect by the U2 cases named in the P6.11 contract) |
+| D-07 | PASSED (`crashRecovery`) |
+| D-08 | PASSED (`sharedPipeline`: identical record sequences) |
+| D-09 | PASSED (`inboxDecision`) |
+| D-10 | PASSED over HTTP through the real `lockstep serve` (`pages`); **no new browser-driven test** — see §16 |
 | D-11 | **BLOCKED** (needs P6.10c → D6-SEC → attended M1–M3) |
 
 ## 12–13. Three-unit trace; Scheduler, Git and verification records
 
-TRACE
+From the final full check (`.local/evals/phase-06/gate-d-trace.txt`): the application `meter` — `syllables.py`
+(counter) → `scan.py` (imports it) → `meter.py` (command line through `scan`). One owner approval; 3 hand-overs, all
+by the scheduler.
+
+| Unit | Basis | Accepted commit (work branch head) | Records |
+|---|---|---|---|
+| counter | `57130c5` (repository start, no predecessor) | `c0ace3f` | started, basis, input, discovery, reproduction, candidate, baseline, contract, freeze, implementation, verification, verification-summary, review, acceptance |
+| scanner | `c0ace3f` = counter's accepted commit | `4008069` | same |
+| cli | `4008069` = scanner's accepted commit | `e9b9906` | same |
+
+Each fix's runs: discovery/Planner, reproduction (command), candidate/Planner, baseline (command), challenge-pre/
+Challenger, implement/Implementer, two verification commands, challenge-post/Challenger, review/Reviewer — all
+finished. Each branch: `Lockstep: frozen tests` then `Fix: …` on top of the predecessor's commits. Final checkout of
+`cli`'s branch: `python3 -m unittest` ran 4 tests, OK; `python3 -m meter poem.txt` printed `line 1: 3 syllables` /
+`line 2: 5 syllables`. Nothing is Done; no remote; the person's checkout is unchanged.
 
 ## 14. Adversarial cases (§9.3): expected → observed
 
 | Case | Expected | Test | Observed |
 |---|---|---|---|
-| Concurrent scheduler claims | one hand-over | `DispatchTest.contenders` | ADV |
-| Event replay after settlement | nothing re-dispatched | `DispatchTest.chain` (fresh runtime), `AuthoritativeBasisTest.plannedBasis` | ADV |
-| Restart before/after Git commitment | no duplicate, basis kept | `GateDScenariosTest.crashRecovery`; C-P4 `EngineRecoveryTest`, `EngineRecoveryTwoTest` | ADV |
-| Blocked high-priority unit | not taken | `DispatchTest.ordering` | ADV |
-| Stale Master Plan revision | `stale-plan-revision` | `DispatchTest.staleRevision` | ADV |
-| Wrong predecessor Git basis | refused | `AuthoritativeBasisTest.missingBasisRefused`, `legacyAndTypedBases` | ADV |
-| Profile mismatch on first planned unit | refused, never a bug fix | `PlanProfileTest.substitutionRefused` | ADV |
-| Invalidated ancestor, running descendant | halts, never accepted | `ProvisionalTest.lateRejection` | ADV |
-| Obsolete Human Request after invalidation | `request-closed` | `StaleAuthorityTest.rejectionWithdraws` | ADV |
-| Unknown provider quota | `usage-unknown` | `DispatchTest.waiting`, `GateDScenariosTest.refusals` | ADV |
-| Reviewer incomplete inspection | not accepted | `StabilizationReviewTest.undeclared` (an approval that does not say what it read); unit `ReviewScopeTest` | ADV |
-| Frozen-test tampering | refused | C-P4 `protected-test-changed` (`EngineImplementTest`) | ADV |
-| Verification failure as completion | never accepted | `GateDScenariosTest.refusals` | ADV |
-| Canceled task with live/uncertain fix | stop first / wait | `StaleAuthorityTest.cancel*`, `UpdateTwoReviewTest.uncertainKept` | ADV |
-| Human Done inferred from acceptance | never | `GateDThreeUnitTest`, `ProvisionalTest.unlocksWithoutDone` | ADV |
-| External publication from a local commit | never | `GateDThreeUnitTest` (no remote, checkout untouched) | ADV |
+| Concurrent scheduler claims | one hand-over | `DispatchTest.contenders` | as expected (passed at `ff314a2`) |
+| Event replay after settlement | nothing re-dispatched | `DispatchTest.chain` (fresh runtime), `AuthoritativeBasisTest.plannedBasis` | as expected (passed at `ff314a2`) |
+| Restart before/after Git commitment | no duplicate, basis kept | `GateDScenariosTest.crashRecovery`; C-P4 `EngineRecoveryTest`, `EngineRecoveryTwoTest` | as expected (passed at `ff314a2`) |
+| Blocked high-priority unit | not taken | `DispatchTest.ordering` | as expected (passed at `ff314a2`) |
+| Stale Master Plan revision | `stale-plan-revision` | `DispatchTest.staleRevision` | as expected (passed at `ff314a2`) |
+| Wrong predecessor Git basis | refused | `AuthoritativeBasisTest.missingBasisRefused`, `legacyAndTypedBases` | as expected (passed at `ff314a2`) |
+| Profile mismatch on first planned unit | refused, never a bug fix | `PlanProfileTest.substitutionRefused` | as expected (passed at `ff314a2`) |
+| Invalidated ancestor, running descendant | halts, never accepted | `ProvisionalTest.lateRejection` | as expected (passed at `ff314a2`) |
+| Obsolete Human Request after invalidation | `request-closed` | `StaleAuthorityTest.rejectionWithdraws` | as expected (passed at `ff314a2`) |
+| Unknown provider quota | `usage-unknown` | `DispatchTest.waiting`, `GateDScenariosTest.refusals` | as expected (passed at `ff314a2`) |
+| Reviewer incomplete inspection | not accepted | `StabilizationReviewTest.undeclared` (an approval that does not say what it read); unit `ReviewScopeTest` | as expected (passed at `ff314a2`) |
+| Frozen-test tampering | refused | C-P4 `protected-test-changed` (`EngineImplementTest`) | as expected (passed at `ff314a2`) |
+| Verification failure as completion | never accepted | `GateDScenariosTest.refusals` | as expected (passed at `ff314a2`) |
+| Canceled task with live/uncertain fix | stop first / wait | `StaleAuthorityTest.cancel*`, `UpdateTwoReviewTest.uncertainKept` | as expected (passed at `ff314a2`) |
+| Human Done inferred from acceptance | never | `GateDThreeUnitTest`, `ProvisionalTest.unlocksWithoutDone` | as expected (passed at `ff314a2`) |
+| External publication from a local commit | never | `GateDThreeUnitTest` (no remote, checkout untouched) | as expected (passed at `ff314a2`) |
 
 ## 15. Independent review
 
