@@ -26,7 +26,7 @@ module Lockstep.Application.Tasks
   ) where
 
 import Data.List qualified as L
-import Data.Maybe (catMaybes, fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
@@ -39,10 +39,10 @@ import Lockstep.Application.Invalidations (invalidationOf)
 import Lockstep.Application.Ledger (createTicketIn, decideTicketIn, reviseTicketIn, ticketFactsIn)
 import Lockstep.Application.LedgerRefusal (LedgerError (..), LedgerRefusal (StaleRevision), ledgerRefusalCode)
 import Lockstep.Application.Profiles (sha256Hasher)
-import Lockstep.Kernel.Dispatch (FixFact (..), PrerequisiteFact (..), prerequisiteSatisfied, readinessWith)
+import Lockstep.Kernel.Dispatch (BasisSource (..), FixFact (..), PrerequisiteFact (..), basisCommits, prerequisiteSatisfied, readinessWith)
 import Lockstep.Kernel.Evidence (mkHumanSignoff)
 import Lockstep.Kernel.Identity (ProjectId (..), TaskId (..), TicketId (..), TransactionId, identityText, parseIdentity)
-import Lockstep.Kernel.Plan (EdgeKind (Technical), parseEdgeKind)
+import Lockstep.Kernel.Plan (EdgeKind, parseEdgeKind)
 import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
 import Lockstep.Kernel.Task
   ( Priority
@@ -236,12 +236,12 @@ prerequisitesOf links row deps = do
       deps
   pure (sequenceA facts)
 
-{- | C-P6.5 S8 (R-P6.5-1): what a fix of the task is built on, read when its
-basis stage runs. Every prerequisite must still be satisfied (S1), else
-@prerequisite-unsatisfied@. The candidates are the prerequisites reached by a
-technical plan edge whose fix has an accepted commit (accepted, or marked Done
-since): each one's transaction and commit. An accepted or Done fix without its
-commit is stored state that does not hold, never "no candidate". The outer
+{- | C-P6.5 S8 (R-P6.5-1), Update 2 R6.1: what a fix of the task is built on,
+read when it is handed over and again when its basis stage runs: the accepted
+commit of every prerequisite whose latest fix is accepted or Done, with that
+fix's transaction, whatever kind of dependency reached it
+('Lockstep.Kernel.Dispatch.basisCommits' has the rules and refusals). A unit of
+the project's effective plan must build on recorded results only. The outer
 'Left' is a Ticket that does not replay.
 -}
 basisCandidates :: TaskId -> O.Orville (Either T.Text (Either T.Text [(TransactionId, T.Text)]))
@@ -253,19 +253,22 @@ basisCandidates tid = do
       deps <- Store.dependenciesOf tid
       links <- linksFor row deps
       prerequisites <- prerequisitesOf links row deps
-      case prerequisites of
-        Left code -> pure (Left code)
-        Right ps
-          | not (L.all (\(p, _) -> prerequisiteTicketState p /= T.pack "canceled" && prerequisiteSatisfied p) ps) ->
-              pure (Right (refuse "prerequisite-unsatisfied"))
-          | otherwise -> Right . Right . catMaybes <$> traverse candidate ps
+      pure $ do
+        ps <- prerequisites
+        let
+          planned = isJust (L.lookup tid (linkProvisional links))
+          sources = [BasisSource (satisfied p) (prerequisiteFix p) (tx >>= Transactions.txRowAccepted) | (p, tx) <- ps]
+          -- Exactly the prerequisites whose commits 'basisCommits' returns, in its order.
+          bases =
+            [ (Transactions.txRowId t, c)
+            | (p, Just t) <- ps
+            , prerequisiteFix p `L.elem` [FixAccepted, FixDone]
+            , Just c <- [Transactions.txRowAccepted t]
+            ]
+        pure (bases <$ basisCommits planned sources)
  where
-  candidate (p, tx)
-    | prerequisiteEdge p == Just Technical && prerequisiteFix p `L.elem` [FixAccepted, FixDone] =
-        case tx >>= \t -> (,) (Transactions.txRowId t) <$> Transactions.txRowAccepted t of
-          Just c -> pure (Just c)
-          Nothing -> integrityViolation "an accepted fix has no accepted commit"
-    | otherwise = pure Nothing
+  satisfied p =
+    prerequisiteTicketState p /= T.pack "canceled" && prerequisiteSatisfied p
 
 -- | The view of a stored task: its row, its Ticket's facts and its prerequisites' facts (C-P6.5 S1).
 loadView :: Store.TaskRow -> O.Orville (Either T.Text TaskView)

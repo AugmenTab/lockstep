@@ -30,7 +30,7 @@ module Lockstep.Kernel.Dispatch
   ) where
 
 import Data.List qualified as L
-import Data.Maybe (isNothing, listToMaybe)
+import Data.Maybe (catMaybes, isNothing, listToMaybe)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (Show)
@@ -271,7 +271,33 @@ data BasisSource
   }
   deriving (Eq, Show)
 
--- | Update 2 R6.1 (stub).
+{- | Update 2 R6.1: the accepted commits a dependent fix's basis must be built
+on, given whether the dependent is a unit of an approved plan, or why it
+cannot be built. Whatever kind of dependency reached a prerequisite (a
+technical or human-acceptance edge, or an untyped task dependency recorded the
+older way), the same rules apply, refusals in this order:
+
+* every prerequisite must still be satisfied (@prerequisite-unsatisfied@);
+* a prerequisite whose latest fix's acceptance no longer counts gives no basis,
+  even when its Ticket says done (@prerequisite-invalidated@);
+* a fix that is accepted or Done gives its accepted commit; one without it is
+  stored state that does not hold (@prerequisite-basis-unrecorded@);
+* a prerequisite satisfied without a Lockstep commit (its Ticket closed
+  through delivery) refuses a planned unit, which must build on recorded
+  results (@prerequisite-basis-unrecorded@), and gives nothing to standalone
+  work, which builds on the repository's current commit as before.
+
+The commits come in the prerequisites' order.
+-}
 basisCommits :: Bool -> [BasisSource] -> Either T.Text [T.Text]
-basisCommits _ _ =
-  Left (T.pack "not-implemented")
+basisCommits planned sources
+  | not (L.all sourceSatisfied sources) = refuse "prerequisite-unsatisfied"
+  | L.any ((== FixAcceptanceInvalidated) . sourceFix) sources = refuse "prerequisite-invalidated"
+  | otherwise = fmap catMaybes (traverse commitOf sources)
+ where
+  refuse =
+    Left . T.pack
+  commitOf s
+    | sourceFix s `L.elem` [FixAccepted, FixDone] = maybe (refuse "prerequisite-basis-unrecorded") (Right . Just) (sourceCommit s)
+    | planned = refuse "prerequisite-basis-unrecorded"
+    | otherwise = Right Nothing

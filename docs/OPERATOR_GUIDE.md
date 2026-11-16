@@ -382,9 +382,13 @@ on the page.
 each engine pass first hands over, per project, the one unit that is ready (highest priority first, then the plan's
 order), then starts and advances fixes as before. Nobody presses Continue between units. A unit is ready when every
 task it needs is done: its Ticket is done, or you marked its fix Done, or — only for a *needs it working* edge on a
-unit the plan marks provisional — its fix was verified, reviewed and committed by Lockstep on its work branch. Such a
-dependent fix starts from that accepted commit (not from your checkout) and records which fix it built on; when
-several fixes it needs do not contain each other, it stops at its basis (`basis-ambiguous`) and asks you. One
+unit the plan marks provisional — its fix was verified, reviewed and committed by Lockstep on its work branch. A
+dependent fix starts from the accepted commit of every fix it needs, whatever kind of dependency links them (also a
+plain task dependency, and a fix you marked Done) — never from your checkout — and records which fixes it built on;
+when several fixes it needs do not contain each other, it stops at its basis (`basis-ambiguous`) and asks you. If
+such a commit is no longer in the repository, nothing is handed over (`prerequisite-basis-missing`); a fix it needs
+whose acceptance stopped counting gives no basis (`prerequisite-invalidated`). Only work that needs no earlier fix
+starts from the repository's current commit (Update 2 R6.1). One
 project works on one thing at a time; a fix waiting for your decision holds only its own project. A plan with a
 token budget waits (`usage-unknown`): Lockstep does not record usage yet, so it never assumes the budget allows
 more. The Plan page's **What runs next** shows the next unit and why each other one waits: a unit whose fix you
@@ -405,7 +409,10 @@ Each kind needs its own checks, a frozen-test check and an independent review am
 tests off. A project enabled for bug fixes has only the bug checks, so other work is refused `kind-checks-missing`.
 The Plan page then offers **Use Lockstep's engineering checks** (`lockstep-engineering`), which covers every kind
 and keeps every bug check. A unit whose own Profile lacks its kind's checks is refused `profile-too-weak`. The
-correction and attempt budgets are the same for every kind, and nothing in a plan or a Profile changes them.
+correction and attempt budgets are the same for every kind, and nothing in a plan or a Profile changes them. A plan
+unit is always handed over as the kind and Profile its approved unit names, whether you hand it over or Lockstep
+does, the first time or as a rework (Update 2 R6.2); if the project's checks do not cover it, your hand-over is
+refused with the same reason as Lockstep's, never run as a bug fix instead.
 
 **Provisional progress and your authority (C-P6.7).** A fix that Lockstep verified, reviewed and committed on its
 work branch can unlock the work that needs it before you mark it Done. That is provisional: your Done stays yours,

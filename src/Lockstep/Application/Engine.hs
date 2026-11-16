@@ -786,8 +786,11 @@ basisStage runtime row = do
           -- C-P6.5 S8: built on the accepted commit that contains every other accepted prerequisite.
           let
             commits = L.nub (fmap snd bases)
-          related <- traverse (\(a, b) -> fmap (\r -> ((a, b), r)) <$> isAncestor folder a b) [(a, b) | a <- commits, b <- commits, a /= b]
+          -- Update 2 R6.1: a predecessor's accepted commit that is not in the repository refuses, never the checkout.
+          present <- traverse (commitBasis folder) commits
+          related <- traverse (\(a, b) -> fmap (\r -> ((a, b), r)) <$> isAncestor folder a b) [(a, b) | L.all isRight present, a <- commits, b <- commits, a /= b]
           case sequenceA related of
+            _ | not (L.all isRight present) -> refuse (T.pack "prerequisite-basis-missing")
             Left code -> refuse code
             Right pairs ->
               case chooseBasis (\a b -> a == b || L.lookup (a, b) pairs == Just True) commits of

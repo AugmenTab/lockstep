@@ -24,6 +24,7 @@ import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Flipstone.Prelude
 import Orville.PostgreSQL qualified as O
+import System.IO (FilePath)
 import Text.Show (Show)
 
 import Lockstep.Application.Command (IdempotencyKey, idempotencyKeyText)
@@ -35,7 +36,8 @@ import Lockstep.Application.Profiles (sha256Hasher, storedDefinition)
 import Lockstep.Application.ProjectChecks (ExpectedChecks (..))
 import Lockstep.Application.Projects (ProjectFolders (..))
 import Lockstep.Application.Repositories (ownershipHolds)
-import Lockstep.Application.Tasks (TaskView (..), findTaskWithProjectIn, fixFactOf)
+import Lockstep.Application.Tasks (TaskView (..), basisCandidates, findTaskWithProjectIn, fixFactOf)
+import Lockstep.Effects.GitSupervisor (commitBasis)
 import Lockstep.Kernel.Dispatch (FixFact (FixStopped))
 import Lockstep.Kernel.Execution
   ( admissionBlock
@@ -47,7 +49,7 @@ import Lockstep.Kernel.Execution
   , missingBugChecks
   )
 import Lockstep.Kernel.Identity (ProjectId (..), RepositoryId (..), TaskId (..), TicketId (..), WorkOrderId (..), identityText, parseIdentity)
-import Lockstep.Kernel.Plan (WorkKind (..))
+import Lockstep.Kernel.Plan (WorkKind (..), parseWorkKind)
 import Lockstep.Kernel.Policy (checksLost)
 import Lockstep.Kernel.Profile
   ( Behaviour (..)
@@ -465,22 +467,32 @@ registerBugFix =
 -- | X6, in its order; a refusal writes nothing.
 admitBug :: DatabaseRuntime -> ProjectFolders -> IdempotencyKey -> T.Text -> Int -> IO (Either NotReadyReason (Either T.Text Admission))
 admitBug runtime folders key rawId expected = do
-  {- R-P6.7-3: a rework keeps the kind its task was last handed over with, and the Profile its plan unit names;
-  a first hand-over by a person stays the plain C-P4.1 one (C-P6.4 M6: a plan-derived task is handed over like
-  any other). -}
+  {- Update 2 R6.2: a unit of the project's effective plan is handed over as the kind of work its approved unit
+  names, under the Profile it names, whether it is the first hand-over or a rework (R-P6.7-3) and whoever starts it,
+  exactly as the scheduler's hand-over ('Lockstep.Application.Dispatch'). A task outside the effective plan keeps
+  the kind it was last handed over with; a plain task is a bug fix (C-P4.1). -}
   previous <-
     maybe
       (pure (Right Nothing))
       (\tid -> withDatabase runtime (curry Just <$> Store.findAdmissionByTask tid <*> effectiveUnitOf tid))
       (parseIdentity rawId)
-  case previous of
+  case fmap (fmap governed) previous of
     Left reason -> pure (Left reason)
-    Right found -> fmap (fmap fst) <$> admitTask runtime folders (maybe personOptions reworkOptions found) key rawId expected
+    Right (Just (Left code)) -> whenReady runtime (pure (Right (Left code)))
+    Right (Just (Right options)) -> run options
+    Right Nothing -> run personOptions
  where
-  reworkOptions (latest, unit) =
-    case latest of
-      Nothing -> personOptions
-      Just a -> personOptions {admitKind = Store.admissionRowWorkKind a, admitProfile = Plans.unitRowProfile <$> unit}
+  run options =
+    fmap (fmap fst) <$> admitTask runtime folders options key rawId expected
+  governed (latest, unit) =
+    case (unit, latest) of
+      (Just u, _) ->
+        maybe
+          (Left (T.pack "unknown-work-kind"))
+          (\kind -> Right personOptions {admitKind = kind, admitProfile = Just (Plans.unitRowProfile u)})
+          (parseWorkKind (Plans.unitRowWorkKind u))
+      (Nothing, Just a) -> Right personOptions {admitKind = Store.admissionRowWorkKind a}
+      (Nothing, Nothing) -> Right personOptions
 
 -- | The unit of the project's effective plan revision whose task this is, if any.
 effectiveUnitOf :: TaskId -> O.Orville (Maybe Plans.UnitRow)
@@ -561,7 +573,9 @@ admitTask runtime folders options key rawId expected
     TicketId t
   handOver u keyText digest tid task enablement = do
     owned <- ownershipHolds (Store.enablementRowRepository enablement) (Store.enablementRowEngineer enablement) (T.unpack (Store.enablementRowFolder enablement))
-    case owned of
+    -- Update 2 R6.1: the predecessors' exact accepted commits must be known and in the repository, else nothing is handed over.
+    based <- either (pure . Left) (const (basisHolds (T.unpack (Store.enablementRowFolder enablement)) tid)) owned
+    case based of
       Left code -> pure (Left code)
       Right () -> do
         (_, currentRow) <- currentChecks (Store.enablementRowRepository enablement)
@@ -612,6 +626,21 @@ admitTask runtime folders options key rawId expected
                 -- Inserted just above in this transaction: not finding it is a violation that rolls everything back.
                 stored <- maybe (integrityViolation "an admission inserted in this transaction cannot be read back") pure =<< Store.findAdmissionByTask tid
                 pure (Right (admissionOf stored))
+
+{- | Update 2 R6.1, at the hand-over: the task's fix could be built now. Its
+basis candidates are established ('basisCandidates'), and every accepted
+commit it would build on is a commit of the repository
+(@prerequisite-basis-missing@ otherwise). The basis stage checks them again.
+-}
+basisHolds :: FilePath -> TaskId -> O.Orville (Either T.Text ())
+basisHolds folder tid = do
+  inherited <- basisCandidates tid
+  case inherited of
+    Left code -> integrityViolation ("task " <> T.unpack (identityText tid) <> " does not replay: " <> T.unpack code)
+    Right (Left code) -> pure (Left code)
+    Right (Right bases) -> do
+      present <- liftIO (traverse (commitBasis folder . snd) bases)
+      pure (if L.all isRight present then Right () else Left (T.pack "prerequisite-basis-missing"))
 
 findAdmission :: DatabaseRuntime -> T.Text -> IO (Either NotReadyReason (Maybe Admission))
 findAdmission runtime rawId =
