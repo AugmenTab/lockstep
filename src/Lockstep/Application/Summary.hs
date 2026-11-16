@@ -13,11 +13,9 @@ module Lockstep.Application.Summary
   , usageFromOutput
   ) where
 
-import Data.ByteString qualified as BS
 import Data.List qualified as L
 import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe, mapMaybe)
 import Data.Text qualified as T
-import Data.Text.Encoding qualified as TE
 import Fleece.Core ((#+))
 import Fleece.Core qualified as FC
 import Flipstone.Prelude
@@ -30,9 +28,11 @@ import Lockstep.Application.Dispatch (DispatchView (..), dispatchView)
 import Lockstep.Application.EngineRecords (Completion (completionChoice), Halt (haltCode), ReviewRecord (reviewCommit, reviewVerdict), VerificationSummary (summaryPassed), completionSchema, haltSchema, reviewSchema, verificationSummarySchema)
 import Lockstep.Application.EngineRecords qualified as Records
 import Lockstep.Application.Invalidations (invalidationOf)
+import Lockstep.Application.Profiles (sha256Hasher)
 import Lockstep.Application.Tasks (TaskView (..), listTasks)
 import Lockstep.Foundation.Fleece (decodeText)
 import Lockstep.Kernel.Identity (InvocationId (..), ProjectId (..), TaskId (..), TransactionId (..), WorkOrderId (..), identityText, parseIdentity)
+import Lockstep.Kernel.Profile (Hasher (..), contentDigestText)
 import Lockstep.Kernel.Roles (Role (..), Verdict (..), roleName)
 import Lockstep.Kernel.Summary
   ( Category
@@ -219,9 +219,10 @@ fixOfRow row = do
       [ RunUsage
           { runSource = identityText (Transactions.invocationRowId i)
           , runUsage = usageFromOutput tailText
-          , runComplete =
+          , -- R-U2-9: the kept tail is the whole output only when its own digest is the recorded output's.
+            runComplete =
               isJust (Transactions.invocationRowOutcome i)
-                && Transactions.invocationRowStdoutBytes i == Just (fromIntegral (BS.length (TE.encodeUtf8 tailText)))
+                && Transactions.invocationRowStdoutDigest i == Just (case sha256Hasher of Hasher f -> contentDigestText (f tailText))
           }
       | i <- invocations
       , Transactions.invocationRowWhat i `L.elem` roleNames

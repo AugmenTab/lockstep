@@ -11,6 +11,7 @@ module Lockstep.Application.EffectiveChecks
   ) where
 
 import Data.List qualified as L
+import Data.Maybe (catMaybes)
 import Data.Text qualified as T
 import Flipstone.Prelude
 import Text.Show (Show)
@@ -68,7 +69,9 @@ effectiveChecksOf runtime rawId =
                 Just source -> do
                   row <- Profiles.findProfile (Ledger.sourceRowProfile source) (Just (Ledger.sourceRowVersion source))
                   definition <- traverse storedDefinition row
-                  catalog <- Profiles.latestProfiles >>= traverse storedDefinition
+                  -- R-U2-7: every Profile the Work Order is bound to, at the version it was bound at.
+                  boundRows <- traverse (\s -> Profiles.findProfile (Ledger.sourceRowProfile s) (Just (Ledger.sourceRowVersion s))) sources
+                  catalog <- traverse storedDefinition (catMaybes boundRows)
                   let
                     kind = Execution.admissionRowWorkKind a
                     policy = workPolicy kind

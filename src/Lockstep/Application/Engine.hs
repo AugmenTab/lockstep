@@ -163,6 +163,7 @@ import Lockstep.Kernel.Transaction
   , stepTransaction
   , txInputName
   , txStateName
+  , uncertainOutstanding
   )
 import Lockstep.Kernel.Transition (Principal (..), principalLabel)
 import Lockstep.Kernel.WorkPolicy (TestFirst (GreenOnly), WorkPolicy (..), pathClassOf, workPolicy)
@@ -577,12 +578,18 @@ advanceRow runtime engine row =
             Right input -> report input
     Halted stage code -> do
       -- C-P6.7 V4: halted for something else, it halts again for the invalidation, so no answer runs a stage on it.
-      cause <- db runtime (Right <$> ((,) <$> invalidationOf (Store.txRowId row) <*> pendingCancellation (Store.txRowWorkOrder row)))
+      cause <-
+        db runtime . fmap Right $ do
+          invalid <- invalidationOf (Store.txRowId row)
+          canceled <- pendingCancellation (Store.txRowWorkOrder row)
+          records <- Store.transactionRecords (Store.txRowId row)
+          pure (invalid, canceled, uncertainOutstanding (fmap Store.recordRowKind records))
       case cause of
         Left c -> pure (Left c)
-        Right (Just invalid, _) | invalid /= code -> invalidate invalid
-        -- Update 2 R6.3: a cancel stops a fix waiting for a person, unless an outcome is uncertain: that waits for the person.
-        Right (_, Just session) | not (T.pack "uncertain-invocation " `T.isPrefixOf` code) -> stopForCancel session
+        Right (Just invalid, _, _) | invalid /= code -> invalidate invalid
+        {- Update 2 R6.3, R-U2-1: a cancel stops a fix waiting for a person, unless a helper's outcome is still
+        uncertain (read from the records, whatever the halt code now says): that waits for the person. -}
+        Right (_, Just session, False) -> stopForCancel session
         _ -> resumeHalted stage code
     Accepted -> idle (T.pack "accepted")
     Done -> idle (T.pack "done")
@@ -604,7 +611,7 @@ advanceRow runtime engine row =
         HumanStop
         [(RecordCancellation, record completionSchema (Completion (T.pack "cancel") (T.pack "application") session))]
         id
-        (void (withdrawOpenIn (Store.txRowWorkOrder row) Nothing WithdrawnCanceled))
+        (void (withdrawOpenIn (Store.txRowWorkOrder row) Nothing Nothing WithdrawnCanceled))
     case applied of
       Left c -> pure (Left c)
       Right _ -> report HumanStop
@@ -1963,7 +1970,7 @@ ensureRequest runtime row stage code = do
               -- Update 2 R6.3: any older request about this fix still open is superseded by this halt (kept, withdrawn).
               case parseIdentity (storedRequestId request) of
                 Nothing -> pure (Right request)
-                Just kept -> (request <$) <$> db runtime (Right <$> withdrawOpenIn (Store.txRowWorkOrder row) (Just kept) (WithdrawnSuperseded code))
+                Just kept -> (request <$) <$> db runtime (Right <$> withdrawOpenIn (Store.txRowWorkOrder row) (Just kept) (Just (haltKeyPrefix row)) (WithdrawnSuperseded code))
 
 -- | The key of the request for the latest halt record, and that record.
 haltKey :: Store.TransactionRow -> [Store.RecordRow] -> Either T.Text (IdempotencyKey, Store.RecordRow)
@@ -1974,7 +1981,12 @@ haltKey row rs =
       either
         (const (Left (T.pack "halt-key-invalid")))
         (\key -> Right (key, h))
-        (mkIdempotencyKey (T.pack "halt-" <> T.filter (/= '-') (identityText (Store.txRowId row)) <> T.pack "-" <> T.pack (show (Store.recordRowSequence h))))
+        (mkIdempotencyKey (haltKeyPrefix row <> T.pack (show (Store.recordRowSequence h))))
+
+-- | The start of the key of every halt request of this transaction.
+haltKeyPrefix :: Store.TransactionRow -> T.Text
+haltKeyPrefix row =
+  T.pack "halt-" <> T.filter (/= '-') (identityText (Store.txRowId row)) <> T.pack "-"
 
 {- | C-P4.16: the request for a halted transaction's current halt, as it
 stands (open or answered); Nothing when the transaction is not halted or

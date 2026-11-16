@@ -28,7 +28,7 @@ import Lockstep.Application.Database (DatabaseRuntime, NotReadyReason, Readiness
 import Lockstep.Application.Tasks (TaskDecision (CancelTask), TaskView (..), decideTask, findTaskIn, fixFactOf)
 import Lockstep.Kernel.Dispatch (FixFact (..))
 import Lockstep.Kernel.Identity (TaskId (..), identityText, parseIdentity)
-import Lockstep.Kernel.Transaction (TxState (..))
+import Lockstep.Kernel.Transaction (TxState (..), uncertainOutstanding)
 import Lockstep.Persistence.Cancellations qualified as Store
 import Lockstep.Persistence.Execution qualified as Execution
 import Lockstep.Persistence.Tasks qualified as Tasks
@@ -116,15 +116,17 @@ cancellationOf runtime rawId =
             Just c -> do
               settlement <- Store.settlementFor (Store.cancellationWorkOrder c)
               tx <- Transactions.findTransactionByWorkOrder (Store.cancellationWorkOrder c)
-              pure (Just (viewOf settlement (Transactions.txRowState <$> tx)))
+              records <- maybe (pure []) (Transactions.transactionRecords . Transactions.txRowId) tx
+              pure (Just (viewOf settlement (Transactions.txRowState <$> tx) (uncertainOutstanding (fmap Transactions.recordRowKind records))))
  where
-  viewOf settled state =
+  viewOf settled state uncertain =
     case (settled, state) of
       (Just s, _)
         | Store.settlementOutcome s == T.pack "canceled" -> CancellationView (T.pack "canceled") (T.pack "Canceled: its fix stopped first.")
         | otherwise -> CancellationView (T.pack "not-canceled") (T.pack "Not canceled: " <> Store.settlementReason s)
-      (Nothing, Just (Halted _ code))
-        | T.pack "uncertain-invocation " `T.isPrefixOf` code ->
+      -- R-U2-1: read from the records, whatever the halt code now says.
+      (Nothing, Just (Halted _ _))
+        | uncertain ->
             CancellationView (T.pack "waiting-for-you") (T.pack "Waiting for you: what a helper did is not known, so Lockstep does not stop the fix by itself. Decide on its request; the task is canceled once the fix has stopped.")
       _ -> CancellationView (T.pack "stopping") (T.pack "Cancel requested: Lockstep stops its fix at the next safe point, then cancels the task.")
 
@@ -143,15 +145,20 @@ settleCancellations runtime =
           ( \c -> do
               settlement <- Store.settlementFor (Store.cancellationWorkOrder c)
               tx <- Transactions.findTransactionByWorkOrder (Store.cancellationWorkOrder c)
-              pure (if isNothing settlement then Just (c, Transactions.txRowState <$> tx) else Nothing)
+              latest <- Execution.findAdmissionByTask (Store.cancellationTask c)
+              let
+                superseded = maybe False ((/= Store.cancellationWorkOrder c) . Execution.admissionRowWorkOrder) latest
+              pure (if isNothing settlement then Just (c, Transactions.txRowState <$> tx, superseded) else Nothing)
           )
           all'
     case pending of
       Left reason -> pure (Left reason)
       Right cs -> fmap catMaybes . sequenceA <$> traverse settle cs
  where
-  settle (c, state) =
+  settle (c, state, superseded) =
     case state of
+      -- R-U2-3: a cancel of an earlier fix never acts on a newer one; it is settled, not applied.
+      _ | superseded -> notCanceled c (T.pack "a newer fix of the task was handed over after this cancel")
       Just (Stopped _) -> cancelTask c
       Just Accepted -> notCanceled c (T.pack "its fix was accepted before it stopped; decide Done or Not done")
       Just Done -> notCanceled c (T.pack "its fix was marked Done before it stopped")

@@ -387,10 +387,19 @@ caller's transaction. Nothing is deleted: each request stays, withdrawn, with
 its conversation. A request already closed is left as it is, so a repeat
 withdraws nothing. How many it withdrew.
 -}
-withdrawOpenIn :: WorkOrderId -> Maybe HumanRequestId -> WithdrawalReason -> O.Orville Int
-withdrawOpenIn workOrder keep reason = do
+withdrawOpenIn :: WorkOrderId -> Maybe HumanRequestId -> Maybe T.Text -> WithdrawalReason -> O.Orville Int
+withdrawOpenIn workOrder keep keyPrefix reason = do
   rows <- Store.requestsForWorkOrder workOrder
-  withdrawn <- traverse withdrawOne [Store.requestRowId r | r <- rows, Store.requestRowState r == requestStateName Open, Just (Store.requestRowId r) /= keep]
+  -- R-U2-5: with a key prefix, only the requests opened with such a key (a fix's halt requests).
+  withdrawn <-
+    traverse
+      withdrawOne
+      [ Store.requestRowId r
+      | r <- rows
+      , Store.requestRowState r == requestStateName Open
+      , Just (Store.requestRowId r) /= keep
+      , maybe True (`T.isPrefixOf` Store.requestRowKey r) keyPrefix
+      ]
   pure (L.length (L.filter id withdrawn))
  where
   body =

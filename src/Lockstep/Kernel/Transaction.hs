@@ -46,6 +46,7 @@ module Lockstep.Kernel.Transaction
   , reproduces
   , haltChoices
   , retryOperation
+  , uncertainOutstanding
   ) where
 
 import Data.List qualified as L
@@ -416,6 +417,17 @@ recordKindText kind =
 parseRecordKind :: T.Text -> Maybe RecordKind
 parseRecordKind =
   parseEnumText recordKindText
+
+{- | Update 2 R-U2-1: whether a helper's uncertain outcome still waits for the
+person — an @uncertain@ record with no person's @resume@ after it — whatever
+the transaction's current halt code says (an invalidation re-halts with
+another code). The kinds are in record order.
+-}
+uncertainOutstanding :: [RecordKind] -> Bool
+uncertainOutstanding kinds =
+  case L.dropWhile (`L.notElem` [RecordUncertain, RecordResume]) (L.reverse kinds) of
+    RecordUncertain : _ -> True
+    _ -> False
 
 data Counters
   = Counters

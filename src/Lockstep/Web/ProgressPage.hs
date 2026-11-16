@@ -91,11 +91,14 @@ progressPageWith view summary =
           [A.id (elementId 'u' "sage-standing"), attr "data-usage" (usageStandingCode (summaryUsageStanding s))]
           [ E.text $
               case summaryUsageStanding s of
-                NoProviderInvocation -> "Usage: no helper has run for this project, so there is no usage to show (not zero)."
-                UsageComplete _ -> "Usage is complete: every helper run reported every token class, and Lockstep kept its whole output."
-                UsagePartial _ -> "Usage is partial: some runs reported nothing, left a class out, or were kept only in part, so the numbers above are what is known, not totals."
-                UsageUnavailable -> "Usage is unavailable: helpers ran, and none reported its tokens."
+                NoProviderInvocation -> "Usage: no helper has run on a fix of this project yet, so there is no usage to show (not zero)." <> uncounted
+                UsageComplete _ -> "Usage is complete for the fixes: every helper run on them reported every token class, and Lockstep kept its whole output." <> uncounted
+                UsagePartial _ -> "Usage is partial: some runs reported nothing, left a class out, or were kept only in part, so the numbers above are what is known, not totals." <> uncounted
+                UsageUnavailable -> "Usage is unavailable: helpers ran on the fixes, and none reported its tokens." <> uncounted
           ]
+  -- R-U2-4: what the standing does not cover.
+  uncounted =
+    " Runs that drafted a plan or answered your questions are not counted here."
   -- C-P6.8 E5: the tokens helpers reported, per class; never a cost.
   usageWords =
     case summary of

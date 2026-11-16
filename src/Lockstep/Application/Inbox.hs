@@ -221,13 +221,20 @@ recordOf row = do
           case Transactions.txRowState <$> fix of
             Just (Halted _ _) -> True
             _ -> False
+        ended =
+          case Transactions.txRowState <$> fix of
+            Just (Stopped _) -> True
+            Just Accepted -> True
+            Just Done -> True
+            _ -> False
         facts =
           RequestFacts
             { requestFactState = Conversations.requestRowState row
             , requestFactWithdrawal = Conversations.messageRowBody <$> L.find ((== T.pack "withdrawal") . Conversations.messageRowKind) (L.reverse messages)
             , requestFactFixInvalidated = isJust invalid
             , requestFactCurrent = halted && newest == Just requestId
-            , requestFactActedOn = L.any (\r -> Transactions.recordRowKind r `L.elem` [RecordResume, RecordCancellation] && idText `T.isInfixOf` Transactions.recordRowBody r) records
+            , -- R-U2-6: also when the fix has ended since (stopped, accepted or Done): nothing waits on the answer.
+              requestFactActedOn = ended || L.any (\r -> Transactions.recordRowKind r == RecordResume && idText `T.isInfixOf` Transactions.recordRowBody r) records
             }
       pure $
         ( \t p ->

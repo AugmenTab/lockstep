@@ -406,10 +406,18 @@ decidePlan runtime actor rawProject number digest decision =
               | otherwise -> do
                   let
                     previous = [r | n <- maybe [] pure effective, r <- revisions, Store.revisionRowNumber r == n]
-                  approved <- approve project row previous [r | (r, Just d) <- decided, Store.decisionRowDecision d == T.pack "approved"] uuids actor
-                  case approved of
-                    Left code -> pure (Left code)
-                    Right () -> Right <$> viewAmong (Just (Store.revisionRowNumber row)) row
+                  -- R-U2-2 (DG-08): a Planner revision never removes a gate of the plan in effect when it is approved.
+                  candidate <- stored row
+                  current <- traverse stored (L.take 1 previous)
+                  let
+                    removesGate = Store.revisionRowProposedBy row == T.pack "Planner" && L.any (\c -> not (L.null (gatesRemoved c candidate))) current
+                  if removesGate
+                    then pure (refuse "human-gate-removed")
+                    else do
+                      approved <- approve project row previous [r | (r, Just d) <- decided, Store.decisionRowDecision d == T.pack "approved"] uuids actor
+                      case approved of
+                        Left code -> pure (Left code)
+                        Right () -> Right <$> viewAmong (Just (Store.revisionRowNumber row)) row
 
 {- | M6, M7: the approval's writes. Every refusal is decided before the first
 write; a write that fails afterwards aborts the transaction.

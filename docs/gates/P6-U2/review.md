@@ -34,6 +34,14 @@ first. The remediation test uses that path.
 integration + backup/restore (727). Log `.local/evals/phase-06/u2b-full-check.log`. (The tree was dirty only with
 test files written after the build step; the binaries were HEAD's.)
 
+## After remediation
+
+The R-U2 fixes (one commit after the remediation freeze): R-U2-1 `Kernel.Transaction.uncertainOutstanding` used by
+the engine and `cancellationOf`; R-U2-2 the gate check at approval in `decidePlan`; R-U2-3 a superseded cancel settles
+`not-canceled`; R-U2-4 usage wording; R-U2-5 `withdrawOpenIn` key prefix; R-U2-6 an ended fix's answered request is
+resolved; R-U2-7 bound Profile versions; R-U2-9 `unknown-task`, digest-checked tail. Trial
+(`.local/evals/phase-06/ru2-trial.log`): R-U2, Gate D, R6, DG-08, C-P6 and R-P6 — **160/160 passed**.
+
 ## Remediation tests (frozen RED against `4763843`)
 
 - `test/integration/Lockstep/UpdateTwoReviewTest.hs` `424b39b9ca4b6707f25b395b5a139d85c2f9a8032152b0351d3346caeefcb060`

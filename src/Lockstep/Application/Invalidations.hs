@@ -41,7 +41,7 @@ recordOnce row = do
     Nothing -> do
       Store.insertInvalidation row
       -- Update 2 R6.3: its open requests lose their authority in the same transaction; they stay as records.
-      traverse_ (\tx -> withdrawOpenIn (Transactions.txRowWorkOrder tx) Nothing (WithdrawnInvalidated (Store.invalidationCodeOf row))) locked
+      traverse_ (\tx -> withdrawOpenIn (Transactions.txRowWorkOrder tx) Nothing Nothing (WithdrawnInvalidated (Store.invalidationCodeOf row))) locked
       pure True
 
 -- | Every fix built on this one, directly or not, as the recorded bases say.

@@ -248,7 +248,8 @@ basisCandidates :: TaskId -> O.Orville (Either T.Text (Either T.Text [(Transacti
 basisCandidates tid = do
   found <- Store.findTaskRow tid
   case found of
-    Nothing -> pure (Right (Right []))
+    -- R-U2-9: a task that is not there gives no basis at all, never the checkout.
+    Nothing -> pure (Right (refuse "unknown-task"))
     Just row -> do
       deps <- Store.dependenciesOf tid
       links <- linksFor row deps
