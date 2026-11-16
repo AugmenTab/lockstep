@@ -50,7 +50,7 @@ import Lockstep.Application.Plans
   , requestDraft
   )
 import Lockstep.Application.Profiles (sha256Hasher)
-import Lockstep.Application.ProjectChecks (ExpectedChecks (..))
+import Lockstep.Application.ProjectChecks (ChecksOutcome (..), ExpectedChecks (..), chooseChecks)
 import Lockstep.Application.Projects (NewProject (..), ProjectFolders (..), ProjectView (..), createProject)
 import Lockstep.Application.Tasks (NewTask (..), TaskDecision (..), TaskView (..), createTask, decideTask, listTasks)
 import Lockstep.Effects.Process (newCancel)
@@ -498,10 +498,14 @@ parity :: Assertion
 parity =
   withScenario $ \sc -> do
     (view, _) <- project sc "caesura"
-    r <- accepted (propose sc view "one" (caesura prdText))
+    -- A-U2-1 (Update 2 R6.2): core names the engineering checks, and the project uses them.
+    let
+      engineeringCore p = p {planUnits = [if unitKey u == k "core" then u {unitProfile = "lockstep-engineering"} else u | u <- planUnits p]}
+    r <- accepted (propose sc view "one" (engineeringCore (caesura prdText)))
     approved <- accepted (approve sc view r)
     ek <- idem "enable"
     _ <- accepted (ready (enableExecution (scRuntime sc) (folders sc) ek (projectId view) ExpectNothing))
+    accepted (ready (chooseChecks (scRuntime sc) (projectId view) "lockstep-bug-fix" "lockstep-engineering" False)) >>= (@?= ChecksChosen)
     tk <- idem "ticket"
     ticket <- accepted (ready (createTask (scRuntime sc) (NewTask tk (projectId view) "A ticket" "It works." Normal [])))
     ticketReady <- accepted (ready (decideTask (scRuntime sc) "test-session" (taskId ticket) (taskTicketRevision ticket) MarkReady))
@@ -515,6 +519,9 @@ parity =
     a2 <- accepted (ready (admitBug (scRuntime sc) (folders sc) ak2 (taskId ticketReady) (taskTicketRevision ticketReady)))
     assertBool "two Work Orders" (admissionWorkOrder a1 /= admissionWorkOrder a2)
     count sc "lockstep_bug_admissions" >>= (@?= 2)
+    -- A-U2-1: the plan task is handed over as the greenfield work its unit names; the ticket as a bug fix.
+    count sc "lockstep_bug_admissions WHERE work_kind = 'greenfield'" >>= (@?= 1)
+    count sc "lockstep_bug_admissions WHERE work_kind = 'bug-fix'" >>= (@?= 1)
     -- A plan task that is waiting is refused like any waiting task.
     cli <- taskFor approved ts "cli"
     ak3 <- idem "admit-cli"

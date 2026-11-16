@@ -37,6 +37,7 @@ import Lockstep.Foundation.SessionProtocolTest qualified as SessionProtocolTest
 import Lockstep.Foundation.SystemConfigTest qualified as SystemConfigTest
 import Lockstep.Kernel.ActivityTest qualified as ActivityTest
 import Lockstep.Kernel.BacklogTest qualified as BacklogTest
+import Lockstep.Kernel.BasisAuthorityTest qualified as BasisAuthorityTest
 import Lockstep.Kernel.CandidateTest qualified as KernelCandidateTest
 import Lockstep.Kernel.ConversationTest qualified as ConversationTest
 import Lockstep.Kernel.DecisionTest qualified as DecisionTest
@@ -191,4 +192,5 @@ main =
       , KernelSummaryReviewTest.tests
       , KernelProposalTest.tests
       , KernelProposalReviewTest.tests
+      , BasisAuthorityTest.tests
       ]

@@ -23,6 +23,10 @@ module Lockstep.Kernel.Dispatch
 
     -- * The basis of a dependent fix (S8)
   , chooseBasis
+
+    -- * The authoritative basis (Update 2 R6.1)
+  , BasisSource (..)
+  , basisCommits
   ) where
 
 import Data.List qualified as L
@@ -254,3 +258,20 @@ chooseBasis isAncestor candidates =
       case [c | c <- distinct, L.all (`isAncestor` c) distinct] of
         c : _ -> Right (Just c)
         [] -> Left (T.pack "basis-ambiguous")
+
+-- | Update 2 R6.1: what one prerequisite of a dependent fix gives its basis.
+data BasisSource
+  = BasisSource
+  { sourceSatisfied :: Bool
+  -- ^ S1, and the prerequisite was not canceled.
+  , sourceFix :: FixFact
+  -- ^ Where its latest fix stands.
+  , sourceCommit :: Maybe T.Text
+  -- ^ That fix's accepted commit, when it has one.
+  }
+  deriving (Eq, Show)
+
+-- | Update 2 R6.1 (stub).
+basisCommits :: Bool -> [BasisSource] -> Either T.Text [T.Text]
+basisCommits _ _ =
+  Left (T.pack "not-implemented")

@@ -8,6 +8,7 @@ import Test.Tasty (defaultMain, testGroup)
 import Lockstep.ActivityBrowserTest qualified as ActivityBrowserTest
 import Lockstep.ActivityPageTest qualified as ActivityPageTest
 import Lockstep.AppShellTest qualified as AppShellTest
+import Lockstep.AuthoritativeBasisTest qualified as AuthoritativeBasisTest
 import Lockstep.BacklogReviewTest qualified as BacklogReviewTest
 import Lockstep.BacklogTest qualified as BacklogTest
 import Lockstep.BrowserFormTest qualified as BrowserFormTest
@@ -69,6 +70,7 @@ import Lockstep.OperatorCommandTest qualified as OperatorCommandTest
 import Lockstep.OperatorLedgerTest qualified as OperatorLedgerTest
 import Lockstep.OperatorTrustTest qualified as OperatorTrustTest
 import Lockstep.PlanPageTest qualified as PlanPageTest
+import Lockstep.PlanProfileTest qualified as PlanProfileTest
 import Lockstep.PlanReviewTest qualified as PlanReviewTest
 import Lockstep.PlanTest qualified as PlanTest
 import Lockstep.ProcessRunnerTest qualified as ProcessRunnerTest
@@ -211,4 +213,6 @@ main =
       , SummaryReviewTest.tests
       , ProposalTest.tests
       , ProposalReviewTest.tests
+      , AuthoritativeBasisTest.tests
+      , PlanProfileTest.tests
       ]
