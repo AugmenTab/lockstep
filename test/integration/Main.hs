@@ -49,6 +49,9 @@ import Lockstep.GateCRemediationIdentityTest qualified as GateCRemediationIdenti
 import Lockstep.GateCRemediationPageTest qualified as GateCRemediationPageTest
 import Lockstep.GateCRemediationRetainTest qualified as GateCRemediationRetainTest
 import Lockstep.GateCRemediationTest qualified as GateCRemediationTest
+import Lockstep.GateDPagesTest qualified as GateDPagesTest
+import Lockstep.GateDScenariosTest qualified as GateDScenariosTest
+import Lockstep.GateDThreeUnitTest qualified as GateDThreeUnitTest
 import Lockstep.GitSupervisorTest qualified as GitSupervisorTest
 import Lockstep.HandoverTest qualified as HandoverTest
 import Lockstep.HelperRunnerTest qualified as HelperRunnerTest
@@ -111,6 +114,7 @@ import Lockstep.SummaryTest qualified as SummaryTest
 import Lockstep.TasksBrowserTest qualified as TasksBrowserTest
 import Lockstep.TasksPageTest qualified as TasksPageTest
 import Lockstep.TasksTest qualified as TasksTest
+import Lockstep.UpdateTwoReviewTest qualified as UpdateTwoReviewTest
 import Lockstep.UsageEvidenceTest qualified as UsageEvidenceTest
 
 main :: IO ()
@@ -225,4 +229,8 @@ main =
       , UsageEvidenceTest.tests
       , ProposalIntegrityTest.tests
       , PhaseGateTest.tests
+      , GateDThreeUnitTest.tests
+      , GateDScenariosTest.tests
+      , GateDPagesTest.tests
+      , UpdateTwoReviewTest.tests
       ]

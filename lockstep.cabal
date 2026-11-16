@@ -418,6 +418,9 @@ test-suite lockstep-integration
       Lockstep.GateCRemediationPageTest
       Lockstep.GateCRemediationRetainTest
       Lockstep.GateCRemediationTest
+      Lockstep.GateDPagesTest
+      Lockstep.GateDScenariosTest
+      Lockstep.GateDThreeUnitTest
       Lockstep.GitSupervisorTest
       Lockstep.HandoverTest
       Lockstep.HelperRunnerTest
@@ -491,6 +494,7 @@ test-suite lockstep-integration
       Lockstep.TasksBrowserTest
       Lockstep.TasksPageTest
       Lockstep.TasksTest
+      Lockstep.UpdateTwoReviewTest
       Lockstep.UsageEvidenceTest
   hs-source-dirs:
       test/integration
